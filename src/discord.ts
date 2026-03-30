@@ -19,12 +19,16 @@ import {
 import { config } from './config.js';
 import { logger } from './logger.js';
 import {
+  createDmChannel,
   getChannel,
   registerChannel as dbRegisterChannel,
   enqueueMessage,
 } from './db.js';
-import type { AttachmentMeta } from './media.js';
-import type { RegisteredChannel } from './types.js';
+import {
+  buildAttachmentOnlyPrompt,
+  selectAttachmentsWithinLimits,
+  type AttachmentMeta,
+} from './attachments.js';
 import { handleAutocomplete, handleChatCommand, registerGlobalCommands } from './slash-commands.js';
 
 let client: Client | null = null;
@@ -124,6 +128,7 @@ async function handleMessage(message: Message): Promise<void> {
   }
 
   // Attachments → extract metadata for downstream download
+  let acceptedAttachments: AttachmentMeta[] = [];
   let attachmentsJson: string | null = null;
   if (message.attachments.size > 0) {
     const metas: AttachmentMeta[] = [...message.attachments.values()].map((att) => ({
@@ -132,7 +137,31 @@ async function handleMessage(message: Message): Promise<void> {
       contentType: att.contentType || '',
       size: att.size || 0,
     }));
-    attachmentsJson = JSON.stringify(metas);
+
+    const selection = selectAttachmentsWithinLimits(metas, {
+      maxFileBytes: config.maxAttachmentBytes,
+      maxTotalBytes: config.maxTotalAttachmentBytes,
+    });
+
+    acceptedAttachments = selection.accepted;
+    if (selection.rejected.length > 0) {
+      logger.info(
+        {
+          jid,
+          skipped: selection.rejected.map(({ attachment, reason, limitBytes }) => ({
+            name: attachment.name,
+            size: attachment.size,
+            reason,
+            limitBytes,
+          })),
+        },
+        'Skipped oversized Discord attachments before enqueue',
+      );
+    }
+
+    if (acceptedAttachments.length > 0) {
+      attachmentsJson = JSON.stringify(acceptedAttachments);
+    }
   }
 
   // Reply context
@@ -151,15 +180,7 @@ async function handleMessage(message: Message): Promise<void> {
 
   // Auto-register DMs
   if (!channel && isDM && config.autoRegisterDMs) {
-    const reg: RegisteredChannel = {
-      jid,
-      name: `DM:${senderName}`,
-      folder: `dm_${sender}`,
-      requiresTrigger: false,
-      isMain: false,
-      modelOverride: '',
-      thinkingOverride: '',
-    };
+    const reg = createDmChannel(jid, sender, senderName);
     dbRegisterChannel(reg);
     channel = reg;
     logger.info({ jid, senderName }, 'Auto-registered DM channel');
@@ -178,6 +199,9 @@ async function handleMessage(message: Message): Promise<void> {
 
   // Strip trigger prefix from content sent to agent
   content = content.replace(triggerPattern, '').trim();
+  if (!content && acceptedAttachments.length > 0) {
+    content = buildAttachmentOnlyPrompt(acceptedAttachments.length);
+  }
   if (!content) return;
 
   // ── Enqueue ──
