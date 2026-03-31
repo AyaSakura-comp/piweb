@@ -1,5 +1,5 @@
 {
-  "name": "pi-discord-gw",
+  "name": "piscord",
   "version": "1.1.0",
   "description": "Lightweight Discord gateway for pi coding agent",
   "license": "MIT",
@@ -18,7 +18,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "pi-discord": "dist/cli.js"
+    "piscord": "dist/cli.js"
   },
   "files": [
     "dist",

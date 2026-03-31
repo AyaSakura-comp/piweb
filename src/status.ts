@@ -19,7 +19,7 @@ export function runStatus(): void {
   const sessionFolderCount = countSessionFolders(sessionsPath);
 
   const lines = [
-    'pi-discord status',
+    'piscord status',
     '',
     `Pi binary: ${piPath || 'not found'}`,
     `Pi version: ${piVersion || 'unknown'}`,

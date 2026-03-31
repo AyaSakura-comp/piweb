@@ -40,7 +40,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     case 'daemon': {
       if (!args[0]) {
-        throw new Error('Usage: pi-discord daemon <install|uninstall|start|stop|status|logs>');
+        throw new Error('Usage: piscord daemon <install|uninstall|start|stop|status|logs>');
       }
 
       const { runDaemon } = await import('./daemon.js');
@@ -72,22 +72,22 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 
 export function formatHelpText(): string {
   return [
-    'pi-discord - Lightweight Discord gateway for pi coding agent',
+    'piscord - Lightweight Discord gateway for pi coding agent',
     '',
     'USAGE:',
-    '  pi-discord setup [token]                         Interactive setup wizard',
-    '  pi-discord start                                 Start the gateway in the foreground',
-    '  pi-discord status                                Show local diagnostics',
-    '  pi-discord channels                              List registered channels',
-    '  pi-discord register <id> <name> [opts]          Register a Discord channel',
-    '  pi-discord unregister <id>                       Unregister a channel',
-    '  pi-discord daemon install                        Install systemd user service',
-    '  pi-discord daemon uninstall                      Remove systemd user service',
-    '  pi-discord daemon start                          Start systemd service',
-    '  pi-discord daemon stop                           Stop systemd service',
-    '  pi-discord daemon status                         Show systemd service status',
-    '  pi-discord daemon logs                           Tail systemd journal logs',
-    '  pi-discord help                                  Show this help',
+    '  piscord setup [token]                         Interactive setup wizard',
+    '  piscord start                                 Start the gateway in the foreground',
+    '  piscord status                                Show local diagnostics',
+    '  piscord channels                              List registered channels',
+    '  piscord register <id> <name> [opts]          Register a Discord channel',
+    '  piscord unregister <id>                       Unregister a channel',
+    '  piscord daemon install                        Install systemd user service',
+    '  piscord daemon uninstall                      Remove systemd user service',
+    '  piscord daemon start                          Start systemd service',
+    '  piscord daemon stop                           Stop systemd service',
+    '  piscord daemon status                         Show systemd service status',
+    '  piscord daemon logs                           Tail systemd journal logs',
+    '  piscord help                                  Show this help',
     '',
     'REGISTER OPTIONS:',
     '  --folder <name>    Relative session folder name (default: ch_<id>)',
@@ -102,7 +102,7 @@ function printHelp(): void {
 
 async function cliRegister(args: string[]): Promise<void> {
   if (args.length < 2) {
-    throw new Error('Usage: pi-discord register <channel-id> <name> [--folder <name>] [--no-trigger] [--main]');
+    throw new Error('Usage: piscord register <channel-id> <name> [--folder <name>] [--no-trigger] [--main]');
   }
 
   const { validateSessionFolder } = await import('./session-path.js');
@@ -127,7 +127,7 @@ async function cliRegister(args: string[]): Promise<void> {
 
 async function cliUnregister(args: string[]): Promise<void> {
   if (args.length < 1) {
-    throw new Error('Usage: pi-discord unregister <channel-id>');
+    throw new Error('Usage: piscord unregister <channel-id>');
   }
 
   await withDb(({ unregisterChannel }) => {

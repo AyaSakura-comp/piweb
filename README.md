@@ -1,4 +1,4 @@
-# pi-discord-gw
+# piscord
 
 A lightweight Discord gateway for [pi coding agent](https://github.com/badlogic/pi-mono). It receives Discord messages, queues them in SQLite, invokes `pi` as a subprocess, and sends responses back — keeping a persistent session per channel.
 
@@ -21,23 +21,23 @@ Discord ──discord.js──→ Gateway ──pi subprocess──→ Pi Agent
 - **Attachment relay** — Discord file uploads are downloaded and passed to `pi` via `@file`
 - **Typing indicators** — shows "bot is typing" while `pi` processes
 - **Message splitting** — handles Discord's 2000-character limit automatically
-- **systemd integration** — `pi-discord daemon install` generates a user service
+- **systemd integration** — `piscord daemon install` generates a user service
 - **XDG-compliant paths** — config in `~/.config/`, data in `~/.local/share/`
 
 ## Quick Start
 
 ```bash
 # 1. Install (requires pi to be installed and logged in)
-npm install -g pi-discord-gw
+npm install -g piscord
 
 # 2. Setup — walks you through config
-pi-discord setup
+piscord setup
 
 # 3. Register a channel
-pi-discord register 123456789012345678 "my-server #general" --no-trigger
+piscord register 123456789012345678 "my-server #general" --no-trigger
 
 # 4. Start
-pi-discord start
+piscord start
 ```
 
 ## Prerequisites
@@ -54,13 +54,13 @@ pi-discord start
 ### npm (recommended)
 
 ```bash
-npm install -g pi-discord-gw
+npm install -g piscord
 ```
 
 ### npx (quick trial)
 
 ```bash
-npx pi-discord-gw@latest setup
+npx piscord@latest setup
 ```
 
 ### From source
@@ -96,7 +96,7 @@ The gateway **does not embed or replace `pi`**. It finds and runs your installed
 3. **Model catalog** — the gateway imports `AuthStorage` + `ModelRegistry` from the pi SDK to populate slash command autocomplete
 4. **Invocation** — each message is processed as `pi --session-dir <dir> --continue -p <message>`
 
-If `pi-discord setup` finds `pi` in your PATH, it tells you. If not, set `PI_BIN=/full/path/to/pi` in your config.
+If `piscord setup` finds `pi` in your PATH, it tells you. If not, set `PI_BIN=/full/path/to/pi` in your config.
 
 ## Configuration
 
@@ -125,16 +125,16 @@ Override path: `export PIDG_CONFIG=/path/to/config.env`
 ## CLI Reference
 
 ```
-pi-discord setup [token]                         Interactive setup wizard
-pi-discord start                                 Start gateway (foreground)
-pi-discord status                                Show diagnostics
-pi-discord channels                              List registered channels
-pi-discord register <id> <name> [options]        Register a channel
-pi-discord unregister <id>                       Unregister a channel
-pi-discord daemon install                        Install systemd user service
-pi-discord daemon uninstall                      Remove systemd user service
-pi-discord daemon start|stop|status|logs         Control the service
-pi-discord help                                  Show help
+piscord setup [token]                         Interactive setup wizard
+piscord start                                 Start gateway (foreground)
+piscord status                                Show diagnostics
+piscord channels                              List registered channels
+piscord register <id> <name> [options]        Register a channel
+piscord unregister <id>                       Unregister a channel
+piscord daemon install                        Install systemd user service
+piscord daemon uninstall                      Remove systemd user service
+piscord daemon start|stop|status|logs         Control the service
+piscord help                                  Show help
 ```
 
 Register options:
@@ -157,15 +157,15 @@ The gateway registers a global `/pi` command on Discord:
 ## systemd Service
 
 ```bash
-pi-discord daemon install   # Generate + enable user service
-pi-discord daemon start     # Start
-pi-discord daemon status    # Check
-pi-discord daemon logs      # Tail journal
-pi-discord daemon stop      # Stop
-pi-discord daemon uninstall # Remove
+piscord daemon install   # Generate + enable user service
+piscord daemon start     # Start
+piscord daemon status    # Check
+piscord daemon logs      # Tail journal
+piscord daemon stop      # Stop
+piscord daemon uninstall # Remove
 ```
 
-The generated service uses the same config file from `pi-discord setup`.
+The generated service uses the same config file from `piscord setup`.
 
 ## Docker
 
@@ -191,14 +191,14 @@ volumes:
 ### Standalone
 
 ```bash
-docker build -t pi-discord-gw .
+docker build -t piscord .
 docker run -d \
   --env-file .env \
   -v pi-discord-data:/data \
   -v ~/.pi/agent/auth.json:/home/node/.pi/agent/auth.json:ro \
   -e SESSIONS_DIR=/data/sessions \
   -e DB_PATH=/data/gateway.db \
-  pi-discord-gw
+  piscord
 ```
 
 ## Data Locations
@@ -215,17 +215,17 @@ docker run -d \
 <details>
 <summary><strong>pi not found in PATH</strong></summary>
 
-`pi-discord status` shows "Pi binary: not found".
+`piscord status` shows "Pi binary: not found".
 
 - Check `pi --version` works in the same shell
 - Set `PI_BIN=/full/path/to/pi` in config.env
-- After changing config: `pi-discord daemon stop && pi-discord daemon start`
+- After changing config: `piscord daemon stop && piscord daemon start`
 </details>
 
 <details>
 <summary><strong>Missing auth.json</strong></summary>
 
-`pi-discord status` shows "Pi auth: missing".
+`piscord status` shows "Pi auth: missing".
 
 - Run `pi login`
 - Confirm `~/.pi/agent/auth.json` exists for the same user running the gateway
@@ -234,8 +234,8 @@ docker run -d \
 <details>
 <summary><strong>systemd service won't start</strong></summary>
 
-- `pi-discord daemon status` — check for errors
-- `pi-discord daemon logs` — see journal output
+- `piscord daemon status` — check for errors
+- `piscord daemon logs` — see journal output
 - Ensure `systemctl --user` works in your environment
 - For headless servers: enable user lingering (`loginctl enable-linger $USER`)
 </details>
@@ -243,7 +243,7 @@ docker run -d \
 <details>
 <summary><strong>Bot is online but doesn't respond</strong></summary>
 
-- Run `pi-discord channels` — at least one channel must be registered
+- Run `piscord channels` — at least one channel must be registered
 - For mention-only channels: mention the bot or use `@TriggerName`
 - DMs auto-register when `AUTO_REGISTER_DMS=true`
 </details>

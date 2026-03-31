@@ -5,10 +5,10 @@ describe('formatHelpText', () => {
   it('mentions the primary distribution commands', () => {
     const help = formatHelpText();
 
-    expect(help).toContain('pi-discord setup');
-    expect(help).toContain('pi-discord start');
-    expect(help).toContain('pi-discord status');
-    expect(help).toContain('pi-discord register');
-    expect(help).toContain('pi-discord daemon install');
+    expect(help).toContain('piscord setup');
+    expect(help).toContain('piscord start');
+    expect(help).toContain('piscord status');
+    expect(help).toContain('piscord register');
+    expect(help).toContain('piscord daemon install');
   });
 });
