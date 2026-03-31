@@ -1,12 +1,10 @@
-node_modules/
-dist/
-
+node_modules
+.git
 .env
-
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-
-sessions/
+sessions
+dist
 *.tgz
