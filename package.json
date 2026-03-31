@@ -1,16 +1,49 @@
 {
-  "name": "pi-discord-gateway",
-  "version": "1.0.0",
+  "name": "pi-discord-gw",
+  "version": "1.1.0",
   "description": "Lightweight Discord gateway for pi coding agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Crokily/pi-discord-gateway.git"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "pi",
+    "coding-agent",
+    "gateway",
+    "pi-package"
+  ],
   "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "pi-discord": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "build": "rm -rf dist && tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/cli.js start",
+    "dev": "tsx src/cli.ts start"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.63.1",
-    "@mariozechner/pi-coding-agent": "^0.63.1",
     "better-sqlite3": "^11.8.1",
     "discord.js": "^14.18.0",
     "dotenv": "^16.5.0",
@@ -18,9 +51,12 @@
     "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
+    "@mariozechner/pi-ai": "^0.63.1",
+    "@mariozechner/pi-coding-agent": "^0.63.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.2"
   }
 }

@@ -1,11 +1,81 @@
-import { config as loadDotenv } from 'dotenv';
-import { resolve } from 'node:path';
+import { parse } from 'dotenv';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { isAbsolute, resolve } from 'node:path';
 
-loadDotenv();
+const DEFAULT_CONFIG_PATH = resolve(homedir(), '.config/pi-discord-gateway/config.env');
+const DEFAULT_DATA_DIR = resolve(homedir(), '.local/share/pi-discord-gateway');
+const LEGACY_ENV_PATH = resolve(process.cwd(), '.env');
+const CONFIG_SOURCE = buildConfigSource();
+
+export function resolveConfigPath(): string {
+  const configuredPath = process.env.PIDG_CONFIG?.trim() ?? '';
+  if (configuredPath) {
+    return resolveUserPath(configuredPath);
+  }
+
+  return DEFAULT_CONFIG_PATH;
+}
+
+function resolveUserPath(inputPath: string): string {
+  const expanded = expandHome(inputPath.trim());
+  return isAbsolute(expanded) ? expanded : resolve(expanded);
+}
+
+function expandHome(inputPath: string): string {
+  if (inputPath === '~') {
+    return homedir();
+  }
+
+  if (inputPath.startsWith('~/')) {
+    return resolve(homedir(), inputPath.slice(2));
+  }
+
+  return inputPath;
+}
+
+function readEnvValue(key: string): string | undefined {
+  return CONFIG_SOURCE[key];
+}
+
+function buildConfigSource(): Record<string, string> {
+  return {
+    ...loadEnvFile(LEGACY_ENV_PATH),
+    ...loadEnvFile(resolveConfigPath()),
+    ...readProcessEnv(),
+  };
+}
+
+function loadEnvFile(filePath: string): Record<string, string> {
+  try {
+    return parse(readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+function readProcessEnv(): Record<string, string> {
+  const values: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      values[key] = value;
+    }
+  }
+
+  return values;
+}
+
+function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
 
 function env(key: string, fallback = ''): string {
-  return (process.env[key] ?? '').trim() || fallback;
+  return (readEnvValue(key) ?? '').trim() || fallback;
 }
 
 function envInt(key: string, fallback: number, opts: { min?: number } = {}): number {
@@ -38,10 +108,10 @@ export const config = {
   piThinking: env('PI_THINKING'),
 
   /** Base directory for per-channel session folders */
-  sessionsDir: env('SESSIONS_DIR', resolve(homedir(), 'pi-discord-gateway/sessions')),
+  sessionsDir: env('SESSIONS_DIR', resolve(DEFAULT_DATA_DIR, 'sessions')),
 
   /** SQLite database path */
-  dbPath: env('DB_PATH', resolve(homedir(), 'pi-discord-gateway/gateway.db')),
+  dbPath: env('DB_PATH', resolve(DEFAULT_DATA_DIR, 'gateway.db')),
 
   /** Bot trigger name (default: bot's own display name) */
   triggerName: env('TRIGGER_NAME', 'Andy'),

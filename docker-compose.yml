@@ -1,0 +1,14 @@
+services:
+  gateway:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - gateway-data:/data
+      - ${HOME}/.pi/agent/auth.json:/home/gateway/.pi/agent/auth.json:ro
+    environment:
+      - SESSIONS_DIR=/data/sessions
+      - DB_PATH=/data/gateway.db
+
+volumes:
+  gateway-data:
