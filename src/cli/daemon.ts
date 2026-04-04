@@ -72,13 +72,13 @@ function buildServiceFile(options: {
     '',
     '[Service]',
     'Type=simple',
-    `WorkingDirectory=${quoteForSystemd(workingDirectory)}`,
-    `ExecStart=${quoteForSystemd(nodePath)} ${quoteForSystemd(cliPath)} start`,
+    `WorkingDirectory=${workingDirectory}`,
+    `ExecStart=${nodePath} ${cliPath} start`,
     'Restart=on-failure',
     'RestartSec=10',
     'StandardOutput=journal',
     'StandardError=journal',
-    `Environment=${quoteForSystemd(`PIDG_CONFIG=${configPath}`)}`,
+    `Environment=PIDG_CONFIG=${configPath}`,
     '',
     '[Install]',
     'WantedBy=default.target',
@@ -100,10 +100,6 @@ function runCommand(command: string, args: string[], options: { allowFailure?: b
   if (!options.allowFailure && result.status !== 0) {
     throw new Error(`Command failed: ${command} ${args.join(' ')}`);
   }
-}
-
-function quoteForSystemd(value: string): string {
-  return JSON.stringify(value);
 }
 
 function resolveCliPath(): string {
