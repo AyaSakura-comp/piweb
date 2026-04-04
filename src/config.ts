@@ -94,6 +94,16 @@ function envBool(key: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(v);
 }
 
+const VALID_CHANNEL_POLICIES = ['open', 'open-trigger', 'allowlist'] as const;
+type ChannelPolicy = typeof VALID_CHANNEL_POLICIES[number];
+
+function parseChannelPolicy(value: string): ChannelPolicy {
+  if ((VALID_CHANNEL_POLICIES as readonly string[]).includes(value)) {
+    return value as ChannelPolicy;
+  }
+  return 'allowlist';
+}
+
 export const config = {
   /** Discord bot token (required) */
   discordToken: env('DISCORD_BOT_TOKEN'),
@@ -110,6 +120,9 @@ export const config = {
   /** Base directory for per-channel session folders */
   sessionsDir: env('SESSIONS_DIR', resolve(DEFAULT_DATA_DIR, 'sessions')),
 
+  /** Days to retain archived sessions (0 = never clean) */
+  archiveRetentionDays: envInt('ARCHIVE_RETENTION_DAYS', 30, { min: 0 }),
+
   /** SQLite database path */
   dbPath: env('DB_PATH', resolve(DEFAULT_DATA_DIR, 'gateway.db')),
 
@@ -118,6 +131,9 @@ export const config = {
 
   /** Max concurrent agent invocations */
   maxConcurrency: envInt('MAX_CONCURRENCY', 3, { min: 1 }),
+
+  /** Max scheduled tasks enqueued per scheduler tick */
+  maxScheduledConcurrency: envInt('MAX_SCHEDULED_CONCURRENCY', 1, { min: 1 }),
 
   /** Poll interval for message queue (ms) */
   pollInterval: envInt('POLL_INTERVAL_MS', 1000, { min: 1 }),
@@ -136,6 +152,14 @@ export const config = {
 
   /** Auto-register DM channels */
   autoRegisterDMs: envBool('AUTO_REGISTER_DMS', true),
+
+  /** Channel access policy: open, open-trigger, or allowlist */
+  channelPolicy: parseChannelPolicy(env('CHANNEL_POLICY', 'allowlist')),
+
+  /** Comma-separated channel IDs to exclude from auto-registration */
+  excludedChannels: new Set(
+    env('EXCLUDED_CHANNELS').split(',').map((s) => s.trim()).filter(Boolean),
+  ),
 
   /** Max size for a single Discord attachment in bytes (0 disables the limit) */
   maxAttachmentBytes: envInt('MAX_ATTACHMENT_BYTES', 25 * 1024 * 1024, { min: 0 }),

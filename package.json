@@ -18,7 +18,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "piscord": "dist/cli.js"
+    "piscord": "dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -36,8 +36,8 @@
     "build": "rm -rf dist && tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/cli.js start",
-    "dev": "tsx src/cli.ts start"
+    "start": "node dist/cli/index.js start",
+    "dev": "tsx src/cli/index.ts start"
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
+    "croner": "^10.0.1",
     "discord.js": "^14.18.0",
     "dotenv": "^16.5.0",
     "pino": "^9.6.0",
