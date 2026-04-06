@@ -121,6 +121,22 @@ describe('config loading', () => {
     expect(config.dbPath).toBe('/default/gateway.db');
     expect(config.sessionsDir).toBe('/default/sessions');
   });
+
+  it('uses the piscord XDG data directory defaults when storage paths are unset', async () => {
+    const homeDir = createTempDir();
+    const workDir = createTempDir();
+
+    process.chdir(workDir);
+    process.env.HOME = homeDir;
+    delete process.env.PIDG_CONFIG;
+    delete process.env.DB_PATH;
+    delete process.env.SESSIONS_DIR;
+
+    const { config } = await loadConfigModule();
+
+    expect(config.dbPath).toBe(resolve(homeDir, '.local/share/piscord-gateway/gateway.db'));
+    expect(config.sessionsDir).toBe(resolve(homeDir, '.local/share/piscord-gateway/sessions'));
+  });
 });
 
 function createTempDir(): string {

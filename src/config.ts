@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 
 const DEFAULT_CONFIG_PATH = resolve(homedir(), '.config/pi-discord-gateway/config.env');
-const DEFAULT_DATA_DIR = resolve(homedir(), '.local/share/pi-discord-gateway');
+const DEFAULT_DATA_DIR = resolve(homedir(), '.local/share/piscord-gateway');
 const LEGACY_ENV_PATH = resolve(process.cwd(), '.env');
 const CONFIG_SOURCE = buildConfigSource();
 
