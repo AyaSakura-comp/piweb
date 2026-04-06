@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.2] - 2026-04-06
+
+### Fixed
+- Align default runtime XDG data directory with setup and docs to use `~/.local/share/piscord-gateway`
+- Add regression coverage for default `DB_PATH` and `SESSIONS_DIR` resolution
+
 ## [1.4.1] - 2026-04-06
 
 ### Fixed

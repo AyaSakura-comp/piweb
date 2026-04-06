@@ -2,7 +2,7 @@
 
 A lightweight Discord gateway for [pi coding agent](https://github.com/badlogic/pi-mono). It receives Discord messages, queues them in SQLite, invokes `pi` as a subprocess, and sends responses back -- keeping a persistent session per channel.
 
-**Current version: 1.4.1** (see [Changelog](./CHANGELOG.md) for details)
+**Current version: 1.4.2** (see [Changelog](./CHANGELOG.md) for details)
 
 ```bash
 npm install -g piscord
@@ -321,6 +321,7 @@ MIT
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.2 | 2026-04-06 | Fixed default XDG data directory mismatch |
 | 1.4.1 | 2026-04-06 | Fixed text-only sends via piscord send |
 | 1.4.0 | 2026-04-06 | Added per-channel working directories |
 | 1.3.0 | 2026-04-04 | Improved setup UX, faster install |
