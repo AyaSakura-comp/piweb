@@ -19,6 +19,8 @@ export interface EffectiveChannelSettings {
   thinkingSource: 'override' | 'default' | 'pi runtime default';
   thinkingAdjusted: boolean;
   thinkingAdjustmentMessage?: string;
+  effectiveCwd: string;
+  cwdSource: 'override' | 'default';
 }
 
 export function getDesiredThinkingLevel(channel: RegisteredChannel): ThinkingLevel {
@@ -42,6 +44,8 @@ export function computeEffectiveChannelSettings(
   const hasManagedThinking = Boolean(channel.thinkingOverride) || Boolean(config.piThinking && isThinkingLevel(config.piThinking));
   const desiredThinking = getDesiredThinkingLevel(channel);
   const thinkingResolution = resolveThinkingForModel(modelInfo, desiredThinking);
+  const effectiveCwd = channel.cwdOverride || config.piCwd;
+  const cwdSource: EffectiveChannelSettings['cwdSource'] = channel.cwdOverride ? 'override' : 'default';
 
   let modelSource: EffectiveChannelSettings['modelSource'];
   if (channel.modelOverride) {
@@ -74,6 +78,8 @@ export function computeEffectiveChannelSettings(
     thinkingAdjustmentMessage: thinkingResolution.adjusted
       ? buildThinkingAdjustmentMessage(thinkingResolution.requested, thinkingResolution.effective, modelInfo)
       : undefined,
+    effectiveCwd,
+    cwdSource,
   };
 }
 

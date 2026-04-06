@@ -21,6 +21,7 @@ That's it. The setup wizard checks prerequisites, asks for your Discord bot toke
 
 - **Bridges to your existing `pi`** — shells out to the `pi` binary and reuses your login + model access
 - **Per-channel sessions** — each Discord channel gets its own persistent conversation history
+- **Per-channel working directories** — optionally override `PI_CWD` for specific channels without changing the global default
 - **Channel access policy** — `open` (all channels), `open-trigger` (all channels, @mention required), or `allowlist` (manual registration only)
 - **SQLite message queue** — survives crashes, auto-recovers stuck messages
 - **Concurrency control** — per-channel serial processing + configurable global limit
@@ -69,7 +70,10 @@ If you chose `allowlist`, register channels manually:
 
 ```bash
 piscord register 123456789012345678 "my-server #general" --no-trigger
+piscord register 123456789012345678 "my-server #general" --cwd /srv/repos/app
 ```
+
+Re-running `piscord register` with `--cwd` updates that channel's working directory override. If no override is set, the gateway uses the global `PI_CWD`.
 
 ## Slash Commands
 
@@ -77,7 +81,7 @@ The gateway registers a global `/pi` command on Discord:
 
 | Subcommand | Description |
 |------------|-------------|
-| `/pi status` | Show model, thinking, session info, token usage |
+| `/pi status` | Show model, thinking, working directory, session info, token usage |
 | `/pi model` | Set the channel's model (autocomplete from pi's available models) |
 | `/pi reset-model` | Clear the channel's model override |
 | `/pi thinking` | Set thinking level: off / minimal / low / medium / high / xhigh |
@@ -98,7 +102,7 @@ pi will run the appropriate `piscord task` or `piscord send` command behind the 
 
 ### Scheduled tasks
 
-pi can schedule cron-based or one-time prompts through the gateway's scheduler. Tasks are injected into the normal message queue, so they use the channel's configured model and thinking level.
+pi can schedule cron-based or one-time prompts through the gateway's scheduler. Tasks are injected into the normal message queue, so they use the channel's configured model, thinking level, and working directory.
 
 Under the hood, pi runs commands like:
 
@@ -173,7 +177,7 @@ Most users won't need to edit this file directly — `piscord setup` generates i
 | `PI_BIN` | `pi` | Path to pi binary |
 | `PI_MODEL` | *(none)* | Default model override |
 | `PI_THINKING` | *(none)* | Default thinking level |
-| `PI_CWD` | `$HOME` | Working directory for pi |
+| `PI_CWD` | `$HOME` | Default working directory for pi; can be overridden per registered channel |
 | `PI_EXTRA_FLAGS` | *(none)* | Extra flags passed to pi |
 | `TRIGGER_NAME` | `pi` | Bot trigger name for @mentions |
 | `CHANNEL_POLICY` | `open` | Channel access: `open`, `open-trigger`, or `allowlist` |
@@ -223,6 +227,7 @@ piscord help                                  Show help
 | `--no-trigger` | Respond to all messages (not just @mentions) |
 | `--main` | Mark as main channel (implies `--no-trigger`) |
 | `--folder <name>` | Custom session folder name |
+| `--cwd <path>` | Override `PI_CWD` for this channel only |
 
 ## Data Locations
 

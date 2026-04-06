@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RegisteredChannel } from '../types.js';
-import { resolveConfigPath } from '../config.js';
+import { config, resolveConfigPath } from '../config.js';
 
 type DbModule = typeof import('../db.js');
 
@@ -110,6 +110,7 @@ export function formatHelpText(): string {
     '',
     'REGISTER OPTIONS:',
     '  --folder <name>    Relative session folder name (default: ch_<id>)',
+    '  --cwd <path>       Override PI_CWD for this channel only',
     '  --no-trigger       Respond to all messages (not just @mentions)',
     '  --main             Mark as main channel (implies --no-trigger)',
     '',
@@ -124,24 +125,33 @@ function printHelp(): void {
 
 async function cliRegister(args: string[]): Promise<void> {
   if (args.length < 2) {
-    throw new Error('Usage: piscord register <channel-id> <name> [--folder <name>] [--no-trigger] [--main]');
+    throw new Error('Usage: piscord register <channel-id> <name> [--folder <name>] [--cwd <path>] [--no-trigger] [--main]');
   }
 
   const { validateSessionFolder } = await import('../session/path.js');
   const [channelId, name, ...optionArgs] = args;
   const options = parseRegisterOptions(channelId, optionArgs, validateSessionFolder);
-  const channel: RegisteredChannel = {
-    jid: toDiscordChannelJid(channelId),
-    name,
-    modelOverride: '',
-    thinkingOverride: '',
-    ...options,
-  };
 
-  await withDb(({ registerChannel }) => {
+  await withDb(({ getChannel, registerChannel }) => {
+    const jid = toDiscordChannelJid(channelId);
+    const existing = getChannel(jid);
+    const channel: RegisteredChannel = {
+      jid,
+      name,
+      folder: options.folder,
+      requiresTrigger: options.requiresTrigger,
+      isMain: options.isMain,
+      modelOverride: existing?.modelOverride ?? '',
+      thinkingOverride: existing?.thinkingOverride ?? '',
+      cwdOverride: options.cwdOverride ?? existing?.cwdOverride ?? '',
+    };
+
     registerChannel(channel);
     console.log(`Registered channel: ${name} (${channel.jid})`);
     console.log(`  Folder: ${channel.folder}`);
+    console.log(
+      `  Working directory: ${channel.cwdOverride || config.piCwd}${channel.cwdOverride ? ' (channel override)' : ' (gateway default)'}`,
+    );
     console.log(`  Trigger required: ${channel.requiresTrigger}`);
     console.log(`  Main channel: ${channel.isMain}`);
   });
@@ -470,8 +480,8 @@ function parseRegisterOptions(
   channelId: string,
   args: string[],
   validateSessionFolder: (folder: string) => string,
-): Pick<RegisteredChannel, 'folder' | 'requiresTrigger' | 'isMain'> {
-  const options = {
+): { folder: string; requiresTrigger: boolean; isMain: boolean; cwdOverride?: string } {
+  const options: { folder: string; requiresTrigger: boolean; isMain: boolean; cwdOverride?: string } = {
     folder: validateSessionFolder(`ch_${channelId}`),
     requiresTrigger: true,
     isMain: false,
@@ -482,6 +492,14 @@ function parseRegisterOptions(
       case '--folder':
         if (args[i + 1]) {
           options.folder = validateSessionFolder(args[++i]);
+        }
+        break;
+      case '--cwd':
+        if (args[i + 1]) {
+          const cwdOverride = args[++i].trim();
+          if (cwdOverride) {
+            options.cwdOverride = cwdOverride;
+          }
         }
         break;
       case '--no-trigger':
@@ -572,6 +590,7 @@ function formatChannelSummary(channel: RegisteredChannel): string {
     channel.requiresTrigger ? 'trigger' : 'all-messages',
   ].filter(Boolean).join(', ');
   const overrides = [
+    `cwd=${channel.cwdOverride || config.piCwd}${channel.cwdOverride ? ' (channel)' : ''}`,
     channel.modelOverride ? `model=${channel.modelOverride}` : '',
     channel.thinkingOverride ? `thinking=${channel.thinkingOverride}` : '',
   ].filter(Boolean).join(' ');

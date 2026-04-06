@@ -212,7 +212,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.deferReply(interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : undefined);
 
   const effective = computeEffectiveChannelSettings(channel);
-  const sessionStatus = await getChannelSessionStatus(channel.folder);
+  const sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
   await interaction.editReply({ content: buildStatusMessage(effective, sessionStatus) });
 }
 
@@ -325,6 +325,7 @@ function buildStatusMessage(effective: EffectiveChannelSettings, sessionStatus: 
   const rows: Array<[string, string]> = [
     ['Model', formatModelValue(effective)],
     ['Thinking', formatThinkingValue(effective)],
+    ['Working dir', formatWorkingDirValue(effective)],
   ];
 
   if (effective.thinkingAdjusted) {
@@ -367,6 +368,10 @@ function formatThinkingFallback(effective: EffectiveChannelSettings): string {
   }
 
   return `${effective.requestedThinking} -> ${effective.effectiveThinking}`;
+}
+
+function formatWorkingDirValue(effective: EffectiveChannelSettings): string {
+  return `${effective.effectiveCwd} (${effective.cwdSource === 'override' ? 'channel' : 'gateway'})`;
 }
 
 function formatSettingSource(source: EffectiveChannelSettings['modelSource']): string {

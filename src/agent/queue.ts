@@ -215,6 +215,7 @@ async function processMessage(
     const result = await invokeAgent(channel.folder, prompt, {
       model: effective.rawModelRef || undefined,
       thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+      cwd: effective.effectiveCwd,
       signal,
       attachments,
     });

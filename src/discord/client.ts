@@ -204,6 +204,7 @@ async function handleMessage(message: Message): Promise<void> {
       isMain: false,
       modelOverride: '',
       thinkingOverride: '',
+      cwdOverride: '',
     };
     dbRegisterChannel(reg);
     channel = reg;

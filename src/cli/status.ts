@@ -24,6 +24,7 @@ export function runStatus(): void {
     `Pi binary: ${piPath || 'not found'}`,
     `Pi version: ${piVersion || 'unknown'}`,
     `Pi auth: ${authStatus ? `found (${AUTH_PATH})` : `missing (${AUTH_PATH})`}`,
+    `Pi working dir: ${config.piCwd}`,
     `Config path: ${configPath}`,
     `Gateway service: ${serviceStatus}`,
     `Database: ${config.dbPath}`,

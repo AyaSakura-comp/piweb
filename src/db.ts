@@ -42,6 +42,7 @@ export function initDb(): void {
       is_main          integer not null default 0,
       model_override   text not null default '',
       thinking_override text not null default '',
+      cwd_override     text not null default '',
       created_at       text not null default (datetime('now'))
     );
 
@@ -86,6 +87,7 @@ export function initDb(): void {
 
   ensureTableColumn('channels', 'model_override', "text not null default ''");
   ensureTableColumn('channels', 'thinking_override', "text not null default ''");
+  ensureTableColumn('channels', 'cwd_override', "text not null default ''");
   ensureTableColumn('message_queue', 'attachments', 'text');
 
   logger.info({ path: config.dbPath }, 'Database initialized');
@@ -115,13 +117,17 @@ function normalizeTimestamp(timestamp: string | null): string | null {
 
 export function registerChannel(ch: RegisteredChannel): void {
   db.prepare(`
-    insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override)
-    values (?, ?, ?, ?, ?, ?, ?)
+    insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override)
+    values (?, ?, ?, ?, ?, ?, ?, ?)
     on conflict(jid) do update set
       name = excluded.name,
       folder = excluded.folder,
       requires_trigger = excluded.requires_trigger,
-      is_main = excluded.is_main
+      is_main = excluded.is_main,
+      cwd_override = case
+        when excluded.cwd_override != '' then excluded.cwd_override
+        else channels.cwd_override
+      end
   `).run(
     ch.jid,
     ch.name,
@@ -130,6 +136,7 @@ export function registerChannel(ch: RegisteredChannel): void {
     ch.isMain ? 1 : 0,
     ch.modelOverride || '',
     ch.thinkingOverride || '',
+    ch.cwdOverride.trim(),
   );
   logger.info({ jid: ch.jid, name: ch.name }, 'Channel registered');
 }
@@ -158,6 +165,7 @@ export function createDmChannel(jid: string, userId: string, displayName: string
     isMain: false,
     modelOverride: '',
     thinkingOverride: '',
+    cwdOverride: '',
   };
 }
 
@@ -190,6 +198,7 @@ function rowToChannel(row: any): RegisteredChannel {
     isMain: row.is_main === 1,
     modelOverride: row.model_override || '',
     thinkingOverride: (row.thinking_override || '') as ThinkingLevel | '',
+    cwdOverride: row.cwd_override || '',
   };
 }
 

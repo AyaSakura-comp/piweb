@@ -42,10 +42,11 @@ export interface ChannelSessionStatus {
 export async function invokeAgent(
   channelFolder: string,
   userText: string,
-  opts?: { model?: string; thinking?: string; signal?: AbortSignal; attachments?: string | null },
+  opts?: { model?: string; thinking?: string; cwd?: string; signal?: AbortSignal; attachments?: string | null },
 ): Promise<AgentResult> {
   const sessionDir = resolveChannelSessionDir(channelFolder);
   mkdirSync(sessionDir, { recursive: true });
+  const effectiveCwd = opts?.cwd || config.piCwd;
 
   // `--session` expects a session *file* path. We want a dedicated directory per
   // Discord channel and to keep reusing the most recent session inside it.
@@ -92,11 +93,11 @@ export async function invokeAgent(
   // Prompt (must be last)
   args.push('-p', userText);
 
-  logger.debug({ bin: config.piBin, args: args.slice(0, -1), channelFolder }, 'Spawning pi');
+  logger.debug({ bin: config.piBin, args: args.slice(0, -1), channelFolder, cwd: effectiveCwd }, 'Spawning pi');
 
   return new Promise<AgentResult>((resolve, reject) => {
     const proc = spawn(config.piBin, args, {
-      cwd: config.piCwd,
+      cwd: effectiveCwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -141,7 +142,7 @@ export async function invokeAgent(
   });
 }
 
-export async function getChannelSessionStatus(channelFolder: string): Promise<ChannelSessionStatus> {
+export async function getChannelSessionStatus(channelFolder: string, cwd = config.piCwd): Promise<ChannelSessionStatus> {
   const sessionFile = resolveLatestChannelSessionFile(channelFolder);
   if (!sessionFile) {
     return { statsSource: 'none' };
@@ -150,7 +151,7 @@ export async function getChannelSessionStatus(channelFolder: string): Promise<Ch
   const createdAt = readSessionCreatedAt(sessionFile);
 
   try {
-    const stats = await getSessionStatsViaRpc(sessionFile);
+    const stats = await getSessionStatsViaRpc(sessionFile, cwd);
     return {
       sessionFile,
       createdAt,
@@ -196,12 +197,13 @@ interface RpcSessionStatsResponse {
 
 async function getSessionStatsViaRpc(
   sessionFile: string,
+  cwd: string,
 ): Promise<{ tokens: SessionTokenUsage; contextUsage?: SessionContextUsage }> {
   const args = ['--mode', 'rpc', '--session', sessionFile];
 
   return new Promise((resolve, reject) => {
     const proc = spawn(config.piBin, args, {
-      cwd: config.piCwd,
+      cwd,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
