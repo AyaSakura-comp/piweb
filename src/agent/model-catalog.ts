@@ -1,5 +1,5 @@
-import { AuthStorage, ModelRegistry } from '@mariozechner/pi-coding-agent';
-import type { Model } from '@mariozechner/pi-ai';
+import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
 import { supportsModelXhigh } from './pi-ai-compat.js';
 

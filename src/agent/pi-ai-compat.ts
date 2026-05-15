@@ -1,5 +1,5 @@
-import * as PiAI from '@mariozechner/pi-ai';
-import type { Model } from '@mariozechner/pi-ai';
+import * as PiAI from '@earendil-works/pi-ai';
+import type { Model } from '@earendil-works/pi-ai';
 
 type PiAiThinkingExports = {
   getSupportedThinkingLevels?: (model: Model<any>) => readonly string[];
