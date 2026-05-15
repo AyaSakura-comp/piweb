@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveConfigPath } from '../config.js';
+import { defaultDataDir, resolveConfigPath } from '../config.js';
 
 const SERVICE_NAME = 'pi-discord-gateway';
-const DATA_DIR = resolve(homedir(), '.local/share/piscord-gateway');
+const DATA_DIR = defaultDataDir();
 
 const isLinux = () => process.platform === 'linux';
 const isMac = () => process.platform === 'darwin';

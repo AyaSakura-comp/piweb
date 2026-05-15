@@ -34,6 +34,9 @@ export async function startGateway(): Promise<void> {
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
+  if (process.platform === 'win32') {
+    process.once('SIGBREAK', onSignal);
+  }
 
   const shutdown = (reason: string) => {
     if (shutdownPromise) return shutdownPromise;
@@ -41,6 +44,9 @@ export async function startGateway(): Promise<void> {
     shutdownPromise = (async () => {
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
+      if (process.platform === 'win32') {
+        process.off('SIGBREAK', onSignal);
+      }
 
       logger.info({ reason }, 'Shutting down gateway');
 

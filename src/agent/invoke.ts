@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { execSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve as pathResolve } from 'node:path';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -93,10 +94,12 @@ export async function invokeAgent(
   // Prompt (must be last)
   args.push('-p', userText);
 
-  logger.debug({ bin: config.piBin, args: args.slice(0, -1), channelFolder, cwd: effectiveCwd }, 'Spawning pi');
+  const { bin: effectiveBin, args: effectiveArgs } = resolvePiSpawn(config.piBin, args);
+
+  logger.debug({ bin: effectiveBin, args: effectiveArgs.slice(0, -1), channelFolder, cwd: effectiveCwd }, 'Spawning pi');
 
   return new Promise<AgentResult>((resolve, reject) => {
-    const proc = spawn(config.piBin, args, {
+    const proc = spawn(effectiveBin, effectiveArgs, {
       cwd: effectiveCwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -111,8 +114,12 @@ export async function invokeAgent(
     // Abort support
     if (opts?.signal) {
       const onAbort = () => {
-        proc.kill('SIGTERM');
-        setTimeout(() => proc.kill('SIGKILL'), 5000);
+        if (process.platform === 'win32') {
+          proc.kill();
+        } else {
+          proc.kill('SIGTERM');
+          setTimeout(() => proc.kill('SIGKILL'), 5000);
+        }
       };
       opts.signal.addEventListener('abort', onAbort, { once: true });
       proc.on('close', () => opts.signal!.removeEventListener('abort', onAbort));
@@ -200,9 +207,10 @@ async function getSessionStatsViaRpc(
   cwd: string,
 ): Promise<{ tokens: SessionTokenUsage; contextUsage?: SessionContextUsage }> {
   const args = ['--mode', 'rpc', '--session', sessionFile];
+  const { bin: rpcBin, args: rpcArgs } = resolvePiSpawn(config.piBin, args);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(config.piBin, args, {
+    const proc = spawn(rpcBin, rpcArgs, {
       cwd,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -246,8 +254,12 @@ async function getSessionStatsViaRpc(
     };
 
     const timeout = setTimeout(() => {
-      proc.kill('SIGTERM');
-      setTimeout(() => proc.kill('SIGKILL'), 1000);
+      if (process.platform === 'win32') {
+        proc.kill();
+      } else {
+        proc.kill('SIGTERM');
+        setTimeout(() => proc.kill('SIGKILL'), 1000);
+      }
       finish(new Error('Timed out waiting for pi session stats'));
     }, 2500);
 
@@ -345,6 +357,33 @@ function readSessionTokensFromJsonl(sessionFile: string): SessionTokenUsage {
   }
 
   return totals;
+}
+
+function resolvePiSpawn(piBin: string, args: string[]): { bin: string; args: string[] } {
+  if (process.platform !== 'win32') {
+    return { bin: piBin, args };
+  }
+
+  try {
+    const shimPath = execSync(`where ${piBin}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      .split(/\r?\n/)
+      .find((line) => line.trim().endsWith('.cmd'));
+
+    if (shimPath) {
+      const content = readFileSync(shimPath.trim(), 'utf8');
+      const jsMatch = content.match(/"([^"]+\.js)"/);
+      if (jsMatch) {
+        const jsPath = pathResolve(dirname(shimPath.trim()), jsMatch[1]);
+        if (existsSync(jsPath)) {
+          return { bin: process.execPath, args: [jsPath, ...args] };
+        }
+      }
+    }
+  } catch {
+    // Fall through to original.
+  }
+
+  return { bin: piBin, args };
 }
 
 function toNumber(value: number | undefined): number {

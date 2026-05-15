@@ -4,12 +4,12 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import * as clack from '@clack/prompts';
 import { listAvailableModels } from '../agent/model-catalog.js';
-import { resolveConfigPath } from '../config.js';
+import { defaultDataDir, resolveConfigPath } from '../config.js';
 
 const SERVICE_NAME = 'pi-discord-gateway';
 const DEFAULT_TRIGGER_NAME = 'pi';
 const DEFAULT_WORKING_DIR = homedir();
-const DEFAULT_DATA_DIR = resolve(homedir(), '.local/share/piscord-gateway');
+const DEFAULT_DATA_DIR = defaultDataDir();
 const DEFAULT_SESSIONS_DIR = resolve(DEFAULT_DATA_DIR, 'sessions');
 const DEFAULT_DB_PATH = resolve(DEFAULT_DATA_DIR, 'gateway.db');
 const AUTH_PATH = resolve(homedir(), '.pi/agent/auth.json');
@@ -178,7 +178,7 @@ function checkPrerequisites(): {
   authFound: boolean;
   modelCount: number | undefined;
 } {
-  const piPath = readCommandOutput('which pi');
+  const piPath = findExecutable('pi');
   const piVersion = piPath ? readCommandOutput('pi --version') : undefined;
   const authFound = existsSync(AUTH_PATH);
   let modelCount: number | undefined;
@@ -190,6 +190,11 @@ function checkPrerequisites(): {
   }
 
   return { piPath, piVersion, authFound, modelCount };
+}
+
+function findExecutable(name: string): string | undefined {
+  const cmd = process.platform === 'win32' ? 'where' : 'which';
+  return readCommandOutput(`${cmd} ${name}`);
 }
 
 function isUnix(): boolean {

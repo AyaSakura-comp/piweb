@@ -3,10 +3,32 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 
-const DEFAULT_CONFIG_PATH = resolve(homedir(), '.config/pi-discord-gateway/config.env');
-const DEFAULT_DATA_DIR = resolve(homedir(), '.local/share/piscord-gateway');
+const DEFAULT_CONFIG_PATH = defaultConfigPath();
+const DEFAULT_DATA_DIR = defaultDataDir();
 const LEGACY_ENV_PATH = resolve(process.cwd(), '.env');
 const CONFIG_SOURCE = buildConfigSource();
+
+function defaultConfigPath(): string {
+  switch (process.platform) {
+    case 'win32':
+      return resolve(process.env.APPDATA || resolve(homedir(), 'AppData/Roaming'), 'piscord-gateway/config.env');
+    case 'darwin':
+      return resolve(homedir(), 'Library/Application Support/piscord-gateway/config.env');
+    default:
+      return resolve(homedir(), '.config', 'pi-discord-gateway', 'config.env');
+  }
+}
+
+export function defaultDataDir(): string {
+  switch (process.platform) {
+    case 'win32':
+      return resolve(process.env.LOCALAPPDATA || resolve(homedir(), 'AppData/Local'), 'piscord-gateway');
+    case 'darwin':
+      return resolve(homedir(), 'Library/Application Support/piscord-gateway');
+    default:
+      return resolve(homedir(), '.local/share', 'piscord-gateway');
+  }
+}
 
 export function resolveConfigPath(): string {
   const configuredPath = process.env.PIDG_CONFIG?.trim() ?? '';

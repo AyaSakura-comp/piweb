@@ -10,7 +10,7 @@ const SERVICE_NAME = 'pi-discord-gateway';
 
 export function runStatus(): void {
   const configPath = resolveConfigPath();
-  const piPath = readCommandOutput('which pi');
+  const piPath = findExecutable('pi');
   const piVersion = piPath ? readCommandOutput('pi --version') : undefined;
   const authStatus = existsSync(AUTH_PATH);
   const serviceStatus = getServiceStatus();
@@ -109,6 +109,11 @@ function countSessionFolders(baseDir: string): number {
   }
 
   return count;
+}
+
+function findExecutable(name: string): string | undefined {
+  const cmd = process.platform === 'win32' ? 'where' : 'which';
+  return readCommandOutput(`${cmd} ${name}`);
 }
 
 function readCommandOutput(command: string): string | undefined {
