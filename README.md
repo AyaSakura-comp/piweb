@@ -1,6 +1,15 @@
-# piscord
+<p align="center">
+  <img src="https://img.coly.cc/obs-img/2025/10/a3a76006fd9279cc3559b6854f9335fc.png" width="600" alt="piscord">
+</p>
 
-A lightweight Discord gateway for [pi coding agent](https://github.com/badlogic/pi-mono). It receives Discord messages, queues them in SQLite, invokes `pi` as a subprocess, and sends responses back -- keeping a persistent session per channel.
+<p align="center">
+  <a href="https://www.npmjs.com/package/piscord"><img src="https://img.shields.io/npm/v/piscord" alt="npm version"></a>
+  <img src="https://img.shields.io/npm/l/piscord" alt="license">
+  <img src="https://img.shields.io/node/v/piscord" alt="node version">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue" alt="platform">
+</p>
+
+A lightweight Discord gateway for [pi coding agent](https://github.com/badlogic/pi-mono). SQLite-backed queue, per-channel session isolation, crash recovery, abort support. One command to set up, runs as a daemon, never drops a message.
 
 **Current version: 1.5.1** (see [Changelog](./CHANGELOG.md) for details)
 
