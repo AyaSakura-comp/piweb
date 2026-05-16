@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.2] - 2026-05-16
+
+### Changed
+
+- Refresh README presentation for npm/GitHub with banner, badges, and updated project summary
+
 ## [1.5.1] - 2026-05-15
 
 ### Added

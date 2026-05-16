@@ -13,7 +13,7 @@
 
 A lightweight Discord gateway for [pi coding agent](https://github.com/badlogic/pi-mono). SQLite-backed queue, per-channel session isolation, crash recovery, abort support. One command to set up, runs as a daemon, never drops a message.
 
-**Current version: 1.5.1** (see [Changelog](./CHANGELOG.md) for details)
+**Current version: 1.5.2** (see [Changelog](./CHANGELOG.md) for details)
 
 ```bash
 npm install -g piscord
