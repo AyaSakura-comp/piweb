@@ -12,6 +12,14 @@ import {
 } from '../session/path.js';
 import type { AgentResult } from '../types.js';
 
+/**
+ * Sentinel that the `/until goal …` slash command prepends to a queued
+ * message's content. invokeAgent detects it and launches pi's pi-until-done
+ * autonomous loop via the `--until-done` flag instead of sending the text as a
+ * plain prompt. Uses SOH control chars so it can never collide with real input.
+ */
+export const UNTIL_DONE_MARKER = 'UNTIL_DONE_GOAL';
+
 export interface SessionTokenUsage {
   input: number;
   output: number;
@@ -49,6 +57,13 @@ export async function invokeAgent(
     cwd?: string;
     signal?: AbortSignal;
     attachments?: string | null;
+    /**
+     * Called for each JSON event emitted by `pi --mode json` as it streams.
+     * Use this to forward intermediate events (thinking blocks, tool calls,
+     * tool results, etc.) somewhere live. The final assistant text is still
+     * returned in `AgentResult.text` for the caller's normal delivery path.
+     */
+    onEvent?: (event: any) => void | Promise<void>;
   },
 ): Promise<AgentResult> {
   const sessionDir = resolveChannelSessionDir(channelFolder);
@@ -97,8 +112,32 @@ export async function invokeAgent(
     };
   }
 
-  // Prompt (must be last)
-  args.push('-p', userText);
+  // JSON mode: pi will dump every session event to stdout as one JSON object
+  // per line (text/thinking deltas, tool calls/results, turn boundaries, …).
+  // We parse them live and feed each event to opts.onEvent, while still
+  // returning the final assistant text in AgentResult so the caller's outbox
+  // marker / attachment path keeps working unchanged.
+  args.push('--mode', 'json');
+
+  // pi-until-done launcher: a message enqueued by the `/until goal` slash
+  // command carries UNTIL_DONE_MARKER followed by the goal text. When present,
+  // start pi's autonomous goal loop with `--until-done <goal>` and a kickoff
+  // prompt that nudges autopilot so the loop doesn't stall on the (UI-less)
+  // contract-approval dialog. Otherwise send the message text as a normal prompt.
+  const markerIdx = userText.indexOf(UNTIL_DONE_MARKER);
+  const untilDoneGoal =
+    markerIdx !== -1 ? userText.slice(markerIdx + UNTIL_DONE_MARKER.length).trim() : '';
+  if (untilDoneGoal) {
+    args.push('--until-done', untilDoneGoal);
+    args.push(
+      '-p',
+      'Begin now. Operate in autopilot mode — do not pause for contract approval. ' +
+        'Keep working until the goal is done and verified, then give a brief summary.',
+    );
+  } else {
+    // Prompt (must be last)
+    args.push('-p', userText);
+  }
 
   const { bin: effectiveBin, args: effectiveArgs } = resolvePiSpawn(config.piBin, args);
 
@@ -114,10 +153,90 @@ export async function invokeAgent(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
-    proc.stdout.on('data', (c: Buffer) => chunks.push(c));
+    // JSON-mode line buffer + accumulator for the final assistant message.
+    // pi emits one event per line; we forward each event to onEvent() and
+    // track the most recent assistant turn's text content for the return value.
+    let lineBuf = '';
+    let lastAssistantText = '';
+    let currentAssistantText = '';
+    let inAssistantMessage = false;
+
+    const handleEvent = (event: any) => {
+      try {
+        // Track assistant text by accumulating text_delta within the current
+        // assistant message; flip the "last" on message_end so multi-turn
+        // runs only surface the final turn's text to AgentResult (matches the
+        // prior text-mode behavior).
+        if (event?.type === 'message_start' && event.message?.role === 'assistant') {
+          inAssistantMessage = true;
+          currentAssistantText = '';
+        } else if (event?.type === 'message_end' && inAssistantMessage) {
+          // Prefer the authoritative final message.content[type=text] over our
+          // delta accumulator (the message has the canonical complete string).
+          const fromMessage = (event.message?.content ?? [])
+            .filter((c: any) => c?.type === 'text')
+            .map((c: any) => c.text || '')
+            .join('');
+          lastAssistantText = (fromMessage || currentAssistantText).trim();
+          inAssistantMessage = false;
+        } else if (event?.type === 'message_update' && inAssistantMessage) {
+          const ev = event.assistantMessageEvent;
+          if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
+            currentAssistantText += ev.delta;
+          }
+        }
+      } catch (err: any) {
+        logger.warn({ err: err.message }, 'invoke: assistant-text accumulator error');
+      }
+
+      if (opts?.onEvent) {
+        try {
+          const r = opts.onEvent(event);
+          // Fire-and-forget; we don't await here because back-pressuring pi
+          // on a slow Discord send would stall the whole inference.
+          if (r && typeof (r as any).then === 'function') {
+            (r as Promise<void>).catch((err) =>
+              logger.warn({ err: err?.message }, 'invoke: onEvent rejected'),
+            );
+          }
+        } catch (err: any) {
+          logger.warn({ err: err.message }, 'invoke: onEvent threw');
+        }
+      }
+    };
+
+    const flushLines = (final = false) => {
+      let nl = lineBuf.indexOf('\n');
+      while (nl !== -1) {
+        const raw = lineBuf.slice(0, nl).replace(/\r$/, '').trim();
+        lineBuf = lineBuf.slice(nl + 1);
+        if (raw) {
+          try {
+            handleEvent(JSON.parse(raw));
+          } catch {
+            // Non-JSON line on stdout (shouldn't happen in --mode json but be
+            // defensive — log to debug rather than crashing the whole turn).
+            logger.debug({ line: raw.slice(0, 200) }, 'invoke: non-JSON stdout line');
+          }
+        }
+        nl = lineBuf.indexOf('\n');
+      }
+      if (final && lineBuf.trim()) {
+        try {
+          handleEvent(JSON.parse(lineBuf.trim()));
+        } catch {
+          logger.debug({ line: lineBuf.slice(0, 200) }, 'invoke: non-JSON trailing line');
+        }
+        lineBuf = '';
+      }
+    };
+
+    proc.stdout.on('data', (c: Buffer) => {
+      lineBuf += c.toString('utf-8');
+      flushLines();
+    });
     proc.stderr.on('data', (c: Buffer) => errChunks.push(c));
 
     // Abort support
@@ -135,10 +254,21 @@ export async function invokeAgent(
     }
 
     proc.on('close', (code) => {
-      const stdout = Buffer.concat(chunks).toString('utf-8').trim();
+      flushLines(true);
       const stderr = Buffer.concat(errChunks).toString('utf-8').trim();
 
       if (code !== 0) {
+        // pi's `--until-done` autonomous loop in print mode can exit non-zero
+        // even after completing the work and emitting a final summary. If we
+        // captured assistant text in that mode, surface it instead of an error.
+        if (untilDoneGoal && lastAssistantText) {
+          logger.warn(
+            { code, channelFolder },
+            'pi exited non-zero in until-done mode but produced output; returning text',
+          );
+          resolve({ ok: true, text: lastAssistantText });
+          return;
+        }
         logger.warn({ code, stderr: stderr.slice(0, 500), channelFolder }, 'pi exited with error');
         resolve({
           ok: false,
@@ -148,7 +278,7 @@ export async function invokeAgent(
         return;
       }
 
-      resolve({ ok: true, text: stdout || '(empty response)' });
+      resolve({ ok: true, text: lastAssistantText || '(empty response)' });
     });
 
     proc.on('error', (err) => {

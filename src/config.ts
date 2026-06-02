@@ -178,6 +178,33 @@ export const config = {
   /** Extra pi flags (space-separated) */
   piExtraFlags: env('PI_EXTRA_FLAGS'),
 
+  /**
+   * When a triggering message lands in a top-level guild text channel, spin up
+   * a thread off that message and route the conversation into it. Follow-ups
+   * inside the thread don't need to re-trigger. DMs are unaffected (no threads).
+   */
+  autoThread: envBool('AUTO_THREAD', false),
+
+  /**
+   * Force every channel (including DMs and auto-threads) to require the
+   * trigger prefix / @bot mention before pi responds. Overrides each
+   * registered channel's per-channel `requiresTrigger` flag.
+   */
+  alwaysRequireTrigger: envBool('ALWAYS_REQUIRE_TRIGGER', false),
+
+  /**
+   * Live-stream pi's intermediate events (thinking, tool calls, tool results)
+   * into the channel as separate messages while pi is still running. The
+   * final assistant text still flows through the normal outbox/marker path,
+   * so attachments keep working. Disable to fall back to the old buffer-then-
+   * send-final-text behavior.
+   */
+  streamThinking: envBool('STREAM_THINKING', true),
+  streamTools: envBool('STREAM_TOOLS', true),
+
+  /** Truncate any single streamed event message to this many chars (Discord caps at 2000). */
+  maxEventChars: envInt('MAX_EVENT_CHARS', 1800, { min: 200 }),
+
   /** Auto-register DM channels */
   autoRegisterDMs: envBool('AUTO_REGISTER_DMS', true),
 

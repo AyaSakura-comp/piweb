@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import {
   getChannelSessionStatus,
+  UNTIL_DONE_MARKER,
   type ChannelSessionStatus,
   type SessionContextUsage,
   type SessionTokenUsage,
@@ -17,6 +18,7 @@ import {
   clearChannelModelOverride,
   clearPendingMessages,
   createDmChannel,
+  enqueueMessage,
   getChannel,
   registerChannel,
   setChannelModelOverride,
@@ -92,8 +94,29 @@ const PI_COMMAND = new SlashCommandBuilder()
       .setDescription('Abort the current task and clear the queue for this channel'),
   );
 
+const UNTIL_COMMAND = new SlashCommandBuilder()
+  .setName('until')
+  .setDescription('Run an autonomous "work until done" task (pi-until-done) in this channel')
+  .addSubcommand((sub) =>
+    sub
+      .setName('goal')
+      .setDescription('Start an autonomous goal — pi works until it is done and verified')
+      .addStringOption((option) =>
+        option
+          .setName('text')
+          .setDescription('What you want accomplished (the goal)')
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('status').setDescription('Ask pi to report progress on the current goal'),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('stop').setDescription('Abort the current task and clear the queue for this channel'),
+  );
+
 export async function registerGlobalCommands(client: Client<true>): Promise<void> {
-  await client.application.commands.set([PI_COMMAND.toJSON()]);
+  await client.application.commands.set([PI_COMMAND.toJSON(), UNTIL_COMMAND.toJSON()]);
   logger.info('Registered global slash commands');
 }
 
@@ -112,11 +135,28 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 }
 
 export async function handleChatCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-  if (interaction.commandName !== 'pi') return;
+  if (interaction.commandName !== 'pi' && interaction.commandName !== 'until') return;
 
   const subcommand = interaction.options.getSubcommand();
 
   try {
+    if (interaction.commandName === 'until') {
+      switch (subcommand) {
+        case 'goal':
+          await handleUntilGoal(interaction);
+          return;
+        case 'status':
+          await handleUntilStatus(interaction);
+          return;
+        case 'stop':
+          await handleStop(interaction);
+          return;
+        default:
+          await interaction.reply(reply(`Unknown subcommand: ${subcommand}`, interaction));
+          return;
+      }
+    }
+
     switch (subcommand) {
       case 'status':
         await handleStatus(interaction);
@@ -213,6 +253,57 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   await interaction.reply(reply(notes.join(' '), interaction));
+}
+
+async function handleUntilGoal(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = ensureManagedChannel(interaction);
+  if (!channel) {
+    await interaction.reply(reply(notRegisteredMessage(), interaction));
+    return;
+  }
+
+  const goal = interaction.options.getString('text', true).trim();
+  if (!goal) {
+    await interaction.reply(reply('Please provide a goal.', interaction));
+    return;
+  }
+
+  const senderName = interaction.user.displayName || interaction.user.username;
+  enqueueMessage({
+    channelJid: channel.jid,
+    sender: interaction.user.id,
+    senderName,
+    content: `${UNTIL_DONE_MARKER}${goal}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  await interaction.reply(
+    reply(
+      `🎯 Started an until-done goal:\n> ${goal}\n\npi will work autonomously and report back when it's done and verified. Use \`/until stop\` to abort.`,
+      interaction,
+    ),
+  );
+}
+
+async function handleUntilStatus(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = ensureManagedChannel(interaction);
+  if (!channel) {
+    await interaction.reply(reply(notRegisteredMessage(), interaction));
+    return;
+  }
+
+  const senderName = interaction.user.displayName || interaction.user.username;
+  enqueueMessage({
+    channelJid: channel.jid,
+    sender: interaction.user.id,
+    senderName,
+    content:
+      'Report the current pi-until-done goal status: the goal, which tasks are done vs. remaining, ' +
+      'and the latest verifyCommand result. If there is no active goal, say so briefly.',
+    timestamp: new Date().toISOString(),
+  });
+
+  await interaction.reply(reply('📊 Asked pi to report the current until-done status.', interaction));
 }
 
 async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {

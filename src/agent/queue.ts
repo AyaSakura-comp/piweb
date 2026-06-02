@@ -19,7 +19,9 @@ import {
   getChannel,
 } from '../db.js';
 import { invokeAgent } from './invoke.js';
-import { sendResponse, setTyping } from '../discord/client.js';
+import { parseOutboxMarkers } from './outbox.js';
+import { sendResponse, sendFilesResponse, setTyping } from '../discord/client.js';
+import { createEventStreamer } from '../discord/stream-events.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
 
 /** Channels currently being processed (per-channel serial lock) */
@@ -212,12 +214,19 @@ async function processMessage(
 
     const effective = computeEffectiveChannelSettings(channel);
 
+    // Stream pi's intermediate thinking/tool events into the channel live so
+    // the user can watch what the agent is doing instead of staring at a
+    // typing indicator. Final assistant text still falls through to the
+    // outbox/marker path below.
+    const onEvent = createEventStreamer(jid);
+
     const result = await invokeAgent(channel.folder, prompt, {
       model: effective.rawModelRef || undefined,
       thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
       cwd: effective.effectiveCwd,
       signal,
       attachments,
+      onEvent,
     });
 
     if (signal.aborted) {
@@ -227,7 +236,12 @@ async function processMessage(
     }
 
     if (result.ok) {
-      const sent = await sendResponse(jid, result.text);
+      // Method C: extract [[image:/file:]] markers; attach those files, send the rest as text.
+      const { text: outText, files: outFiles } = parseOutboxMarkers(result.text);
+      const sent =
+        outFiles.length > 0
+          ? await sendFilesResponse(jid, outText, outFiles)
+          : await sendResponse(jid, outText);
       if (!sent) {
         markMessageFailed(rowid);
         logger.warn({ jid }, 'Agent response generated but could not be delivered to Discord');
