@@ -7,15 +7,20 @@
  */
 
 import {
+  AttachmentBuilder,
   Client,
   Events,
   GatewayIntentBits,
   Partials,
+  ThreadAutoArchiveDuration,
   type Interaction,
   type Message,
   type TextChannel,
   type DMChannel,
 } from 'discord.js';
+import { readFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
+import { basename } from 'node:path';
 import { type RegisteredChannel } from '../types.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -56,8 +61,26 @@ export async function startDiscord(): Promise<void> {
     const onReady = async (ready: Client<true>) => {
       cleanup();
       botId = ready.user.id;
-      triggerPattern = new RegExp(`^@${escapeRegExp(config.triggerName)}\\b`, 'i');
-      logger.info({ tag: ready.user.tag, id: botId }, 'Discord bot connected');
+
+      // Build a trigger pattern that matches @pi, @pi-agent, or any guild nicknames
+      const names = [config.triggerName, ready.user.username];
+      for (const guild of ready.guilds.cache.values()) {
+        const me = guild.members.me;
+        if (me?.nickname) {
+          names.push(me.nickname);
+        }
+      }
+      const uniqueNames = [...new Set(names)].filter(Boolean);
+      const namePattern = uniqueNames
+        .map(escapeRegExp)
+        .sort((a, b) => b.length - a.length)
+        .join('|');
+      triggerPattern = new RegExp(`^@(?:${namePattern})\\b`, 'i');
+
+      logger.info(
+        { tag: ready.user.tag, id: botId, triggerPattern: triggerPattern.toString() },
+        'Discord bot connected',
+      );
 
       try {
         await registerGlobalCommands(ready);
@@ -100,8 +123,10 @@ async function handleInteraction(interaction: Interaction): Promise<void> {
 }
 
 async function handleMessage(message: Message): Promise<void> {
-  // Ignore bot messages
-  if (message.author.bot) return;
+  // Ignore our own messages only. Other bots are allowed to @-tag us so that
+  // bot-to-bot handoffs (e.g. notifiers, webhooks) can drive a response —
+  // the trigger check below stops random bot chatter from being processed.
+  if (message.author.id === botId) return;
 
   const isDM = !message.guild;
   const channelId = message.channelId;
@@ -114,15 +139,36 @@ async function handleMessage(message: Message): Promise<void> {
   const sender = message.author.id;
   const timestamp = message.createdAt.toISOString();
 
-  // Translate @bot mentions → trigger format
+  // Translate @bot mentions / role mentions → trigger format
   if (client?.user) {
-    const isMentioned =
+    const hasUserMention =
       message.mentions.users.has(botId) ||
       content.includes(`<@${botId}>`) ||
       content.includes(`<@!${botId}>`);
 
+    const hasRoleMention = message.guild
+      ? message.mentions.roles.some((role) => {
+          const me = message.guild?.members.me;
+          return me?.roles.cache.has(role.id) ?? false;
+        })
+      : false;
+
+    const isMentioned = hasUserMention || hasRoleMention;
+
     if (isMentioned) {
+      // Strip user mention
       content = content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
+
+      // Strip bot role mentions
+      if (message.guild) {
+        const me = message.guild.members.me;
+        if (me) {
+          for (const roleId of me.roles.cache.keys()) {
+            content = content.replace(new RegExp(`<@&${roleId}>`, 'g'), '').trim();
+          }
+        }
+      }
+
       if (!triggerPattern.test(content)) {
         content = `@${config.triggerName} ${content}`;
       }
@@ -218,7 +264,14 @@ async function handleMessage(message: Message): Promise<void> {
   }
 
   // ── Trigger check ──
-  if (channel.requiresTrigger && !triggerPattern.test(content)) {
+  // `alwaysRequireTrigger` forces the prefix for guild channels, but
+  // 1-on-1 contexts (DMs and dedicated threads) are exempt — there's no
+  // ambiguity about who's being addressed. The per-channel `requiresTrigger`
+  // flag still applies (e.g. an explicit override would still be honored).
+  const inThread = !isDM && message.channel.isThread();
+  const mustTrigger =
+    channel.requiresTrigger || (config.alwaysRequireTrigger && !inThread && !isDM);
+  if (mustTrigger && !triggerPattern.test(content)) {
     logger.debug({ jid }, 'Message does not match trigger, ignoring');
     return;
   }
@@ -230,16 +283,52 @@ async function handleMessage(message: Message): Promise<void> {
   }
   if (!content) return;
 
+  // ── Auto-thread ──
+  // When enabled, a triggering message in a top-level guild text channel spins
+  // up a thread off that message; the conversation is then routed into the
+  // thread (registered without a trigger requirement so follow-ups flow freely).
+  // Already-in-thread messages and DMs fall through unchanged.
+  let targetJid = jid;
+  if (config.autoThread && !isDM && !message.channel.isThread()) {
+    try {
+      const thread = await message.startThread({
+        name: buildThreadName(senderName, content),
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      });
+      targetJid = `dc:${thread.id}`;
+      if (!getChannel(targetJid)) {
+        const threadReg: RegisteredChannel = {
+          jid: targetJid,
+          name: `${channel.name} ▸ ${thread.name}`,
+          folder: `ch_${thread.id}`,
+          requiresTrigger: false,
+          isMain: false,
+          modelOverride: channel.modelOverride,
+          thinkingOverride: channel.thinkingOverride,
+          cwdOverride: channel.cwdOverride,
+        };
+        dbRegisterChannel(threadReg);
+        logger.info({ jid: targetJid, name: threadReg.name }, 'Opened and registered thread');
+      }
+    } catch (err: any) {
+      // Missing thread permissions, etc. — fall back to replying in-channel.
+      logger.warn({ jid, err: err.message }, 'Failed to open thread, replying in channel');
+    }
+  }
+
   // ── Enqueue ──
   enqueueMessage({
-    channelJid: jid,
+    channelJid: targetJid,
     sender,
     senderName,
     content,
     timestamp,
     attachments: attachmentsJson,
   });
-  logger.info({ jid, sender: senderName, len: content.length }, 'Message enqueued');
+  logger.info(
+    { jid: targetJid, sender: senderName, len: content.length },
+    'Message enqueued',
+  );
 }
 
 // ── Outbound ──
@@ -273,6 +362,74 @@ export async function sendResponse(jid: string, text: string): Promise<boolean> 
     return true;
   } catch (err: any) {
     logger.error({ jid, err: err.message }, 'Failed to send message');
+    return false;
+  }
+}
+
+/**
+ * Send a reply with file attachments (Method C outbox delivery). Reuses the
+ * gateway's already-connected client (unlike sendFilesToDiscord, which logs in a
+ * fresh client for the standalone CLI). Oversized/missing files are skipped.
+ */
+export async function sendFilesResponse(
+  jid: string,
+  text: string,
+  files: string[],
+): Promise<boolean> {
+  if (!client) return false;
+
+  const channelId = jid.replace(/^dc:/, '');
+
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !('send' in channel)) {
+      logger.warn({ jid }, 'Channel not found or not text-based');
+      return false;
+    }
+    const textChannel = channel as TextChannel | DMChannel;
+
+    const valid: string[] = [];
+    for (const f of files) {
+      try {
+        const size = statSync(f).size;
+        if (config.maxAttachmentBytes > 0 && size > config.maxAttachmentBytes) {
+          logger.warn({ jid, file: f, size }, 'Skipping attachment over size limit');
+        } else {
+          valid.push(f);
+        }
+      } catch {
+        logger.warn({ jid, file: f }, 'Attachment not readable, skipping');
+      }
+    }
+
+    const attachments = await Promise.all(
+      valid.map(async (f) => new AttachmentBuilder(await readFile(f), { name: basename(f) })),
+    );
+
+    // Fall back to a plain text reply if nothing attachable survived.
+    if (attachments.length === 0) {
+      return sendResponse(jid, text || '(empty response)');
+    }
+
+    let body: string | undefined = text && text.length > 0 ? text : undefined;
+    if (body && body.length > DISCORD_MAX_LENGTH) {
+      // Send the long text in chunks; attach files to the final chunk.
+      const chunks = splitMessage(body, DISCORD_MAX_LENGTH);
+      for (let i = 0; i < chunks.length - 1; i++) {
+        await textChannel.send(chunks[i]);
+      }
+      await textChannel.send({ content: chunks[chunks.length - 1], files: attachments });
+    } else {
+      await textChannel.send({ content: body, files: attachments });
+    }
+
+    logger.info(
+      { jid, files: attachments.length, length: text?.length ?? 0 },
+      'Response sent (with files)',
+    );
+    return true;
+  } catch (err: any) {
+    logger.error({ jid, err: err.message }, 'Failed to send files');
     return false;
   }
 }
@@ -321,4 +478,11 @@ function splitMessage(text: string, max: number): string[] {
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Build a Discord-safe thread title (max 100 chars) from sender + message. */
+function buildThreadName(senderName: string, content: string): string {
+  const snippet = content.replace(/\s+/g, ' ').trim();
+  const raw = snippet ? `${senderName}: ${snippet}` : senderName;
+  return raw.length > 100 ? `${raw.slice(0, 97)}...` : raw;
 }
