@@ -36,6 +36,7 @@ import {
   type AttachmentMeta,
 } from './attachments.js';
 import { handleAutocomplete, handleChatCommand, registerGlobalCommands } from './slash-commands.js';
+import { isChannelProcessing, interruptChannelTask } from '../agent/queue.js';
 
 let client: Client | null = null;
 let triggerPattern: RegExp;
@@ -313,6 +314,22 @@ async function handleMessage(message: Message): Promise<void> {
     } catch (err: any) {
       // Missing thread permissions, etc. — fall back to replying in-channel.
       logger.warn({ jid, err: err.message }, 'Failed to open thread, replying in channel');
+    }
+  }
+
+  // ── Interrupt ──
+  // If pi is still working on an earlier message in this channel, a fresh user
+  // message pre-empts it: stop the in-flight run ("pi stop") and let the new
+  // message be processed next. Acknowledge with `interrupt` only when an actual
+  // run was interrupted (the new message is enqueued below either way).
+  if (config.interruptOnNewMessage && isChannelProcessing(targetJid)) {
+    if (interruptChannelTask(targetJid)) {
+      logger.info({ jid: targetJid }, 'Interrupted in-flight run for new message');
+      try {
+        await message.reply('interrupt');
+      } catch (err: any) {
+        logger.warn({ jid: targetJid, err: err.message }, 'Failed to send interrupt acknowledgement');
+      }
     }
   }
 

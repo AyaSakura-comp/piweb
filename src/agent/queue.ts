@@ -48,6 +48,25 @@ export function abortChannelTask(jid: string): { aborted: boolean; cleared: numb
   return { aborted, cleared };
 }
 
+/**
+ * Interrupt the in-flight run for a channel WITHOUT clearing queued messages.
+ *
+ * Used when a new user message should pre-empt the current run ("pi stop" then
+ * process the new message). Aborts the active controller (SIGTERM → SIGKILL the
+ * pi subprocess); the aborted task marks its own message failed and frees the
+ * per-channel lock, so the next poll dispatches whatever is queued (including
+ * the new message the caller enqueues afterwards).
+ *
+ * Returns true only if a live, not-already-aborted run was interrupted — so a
+ * burst of messages during a single run reports the interrupt exactly once.
+ */
+export function interruptChannelTask(jid: string): boolean {
+  const controller = activeChannelControllers.get(jid);
+  if (!controller || controller.signal.aborted) return false;
+  controller.abort();
+  return true;
+}
+
 export function startProcessingLoop(): void {
   if (running) return;
 
