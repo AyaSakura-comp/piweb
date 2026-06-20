@@ -20,6 +20,40 @@ import type { AgentResult } from '../types.js';
  */
 export const UNTIL_DONE_MARKER = 'UNTIL_DONE_GOAL';
 
+/**
+ * Turn a pi in-stream error string into a concise, user-facing message.
+ * Special-cases the ChatGPT/Codex `usage_limit_reached` 429 (the common one) into
+ * a readable "額度用完，約 HH:MM 重置" line; otherwise returns the trimmed raw text.
+ */
+export function formatStreamError(raw: string): string {
+  // pi formats provider errors as: `Codex error: { ...json... }`
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart !== -1) {
+    try {
+      const obj = JSON.parse(raw.slice(jsonStart));
+      const err = obj?.error ?? obj;
+      if (err?.type === 'usage_limit_reached') {
+        const plan = err.plan_type ? ` (方案: ${err.plan_type})` : '';
+        let when = '';
+        if (typeof err.resets_at === 'number') {
+          const t = new Date(err.resets_at * 1000).toLocaleString('zh-TW', {
+            timeZone: 'Asia/Taipei',
+            hour12: false,
+          });
+          when = `，約 ${t} (台灣時間) 重置`;
+        } else if (typeof err.resets_in_seconds === 'number') {
+          when = `，約 ${Math.round(err.resets_in_seconds / 60)} 分鐘後重置`;
+        }
+        return `⏳ ChatGPT/Codex 用量已達上限${plan}${when}。可改用較省的模型 (gpt-5.4-mini) 或本機 qwen，或用 /gpt-usage 查額度。`;
+      }
+      if (err?.message) return `${err.type ? err.type + ': ' : ''}${err.message}`.slice(0, 400);
+    } catch {
+      // fall through to raw
+    }
+  }
+  return raw.slice(0, 400);
+}
+
 export interface SessionTokenUsage {
   input: number;
   output: number;
@@ -162,9 +196,20 @@ export async function invokeAgent(
     let lastAssistantText = '';
     let currentAssistantText = '';
     let inAssistantMessage = false;
+    // Capture provider/model errors that pi reports in-stream but otherwise
+    // swallows into an empty turn (e.g. ChatGPT/Codex 429 usage_limit_reached).
+    // Without this the gateway would send "(empty response)" instead of the error.
+    let lastErrorMessage = '';
 
     const handleEvent = (event: any) => {
       try {
+        // Record any in-stream error message (message_end/turn_end/agent_end carry
+        // message.stopReason==='error' + message.errorMessage; auto_retry_start carries
+        // errorMessage too). Keep the latest so a final empty turn can surface it.
+        const errMsg = event?.message?.errorMessage ?? event?.errorMessage;
+        if (typeof errMsg === 'string' && errMsg) {
+          lastErrorMessage = errMsg;
+        }
         // Track assistant text by accumulating text_delta within the current
         // assistant message; flip the "last" on message_end so multi-turn
         // runs only surface the final turn's text to AgentResult (matches the
@@ -275,6 +320,15 @@ export async function invokeAgent(
           text: '',
           error: stderr.slice(0, 600) || `pi exited with code ${code}`,
         });
+        return;
+      }
+
+      // No assistant text but pi reported an in-stream error → surface it as an
+      // error to Discord instead of a useless "(empty response)".
+      if (!lastAssistantText && lastErrorMessage) {
+        const friendly = formatStreamError(lastErrorMessage);
+        logger.warn({ channelFolder, error: lastErrorMessage.slice(0, 300) }, 'pi turn produced no text but reported an error');
+        resolve({ ok: false, text: '', error: friendly });
         return;
       }
 
