@@ -186,6 +186,15 @@ export const config = {
   autoThread: envBool('AUTO_THREAD', false),
 
   /**
+   * When a new message arrives while pi is still processing an earlier one in
+   * the same channel, interrupt the in-flight run (SIGTERM the pi subprocess —
+   * "pi stop") and process the new message instead, replying `interrupt` to
+   * acknowledge. When false, new messages queue and wait for the current run to
+   * finish (the original serial behaviour).
+   */
+  interruptOnNewMessage: envBool('INTERRUPT_ON_NEW_MESSAGE', true),
+
+  /**
    * Force every channel (including DMs and auto-threads) to require the
    * trigger prefix / @bot mention before pi responds. Overrides each
    * registered channel's per-channel `requiresTrigger` flag.
