@@ -195,6 +195,21 @@ export const config = {
   interruptOnNewMessage: envBool('INTERRUPT_ON_NEW_MESSAGE', true),
 
   /**
+   * Run pi as a persistent `--mode rpc` session per channel instead of a
+   * one-shot `pi -p` per message. Lets a new message that arrives mid-turn be
+   * *steered* into the running turn (redirect the agent in-flight) rather than
+   * killing the process. When false, the gateway uses the original one-shot
+   * print-mode path (and INTERRUPT_ON_NEW_MESSAGE's kill-based interrupt).
+   */
+  rpcSteer: envBool('RPC_STEER', false),
+
+  /**
+   * Idle timeout (ms) after which a persistent RPC session is shut down to free
+   * memory. The next message respawns it (pi --continue reloads the session).
+   */
+  rpcIdleTimeoutMs: envInt('RPC_IDLE_TIMEOUT_MS', 600000),
+
+  /**
    * Force every channel (including DMs and auto-threads) to require the
    * trigger prefix / @bot mention before pi responds. Overrides each
    * registered channel's per-channel `requiresTrigger` flag.
@@ -213,6 +228,13 @@ export const config = {
 
   /** Truncate any single streamed event message to this many chars (Discord caps at 2000). */
   maxEventChars: envInt('MAX_EVENT_CHARS', 1800, { min: 200 }),
+
+  /** Auto-transcribe Discord voice/audio attachments with a local Breeze ASR HTTP server. */
+  voiceAsrEnabled: envBool('VOICE_ASR_ENABLED', true),
+  voiceAsrUrl: env('VOICE_ASR_URL', 'http://127.0.0.1:8025'),
+  voiceAsrTimeoutMs: envInt('VOICE_ASR_TIMEOUT_MS', 30_000, { min: 1000 }),
+  voiceAsrRetries: envInt('VOICE_ASR_RETRIES', 1, { min: 0 }),
+  voiceAsrRetryDelayMs: envInt('VOICE_ASR_RETRY_DELAY_MS', 10_000, { min: 0 }),
 
   /** Auto-register DM channels */
   autoRegisterDMs: envBool('AUTO_REGISTER_DMS', true),

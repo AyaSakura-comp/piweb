@@ -5,6 +5,7 @@ import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { downloadAttachments } from '../session/media.js';
+import { appendVoiceTranscriptions, transcribeVoiceFiles } from '../discord/voice-asr.js';
 import {
   readSessionCreatedAt,
   resolveChannelSessionDir,
@@ -121,17 +122,48 @@ export async function invokeAgent(
     args.push(...config.piExtraFlags.split(/\s+/).filter(Boolean));
   }
 
-  // Download attachments and pass as @file args (pi handles all types natively)
+  let promptText = userText;
+
+  // Download attachments and pass as @file args (pi handles all types natively).
+  // Discord voice messages are also transcribed locally with Breeze ASR and
+  // injected as text so pi can respond naturally without needing to decode audio.
   if (opts?.attachments) {
     try {
       const metas: AttachmentMeta[] = JSON.parse(opts.attachments);
       const messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       const downloaded = await downloadAttachments(metas, channelFolder, messageId, opts.signal);
-      for (const file of downloaded) {
-        args.push(`@${file.filePath}`);
+      let transcriptions: Awaited<ReturnType<typeof transcribeVoiceFiles>> = [];
+
+      if (config.voiceAsrEnabled && downloaded.length > 0) {
+        try {
+          transcriptions = await transcribeVoiceFiles(downloaded, {
+            endpoint: config.voiceAsrUrl,
+            timeoutMs: config.voiceAsrTimeoutMs,
+            retries: config.voiceAsrRetries,
+            retryDelayMs: config.voiceAsrRetryDelayMs,
+            signal: opts.signal,
+          });
+          promptText = appendVoiceTranscriptions(promptText, transcriptions);
+          if (transcriptions.length > 0) {
+            logger.info(
+              { channelFolder, count: transcriptions.length },
+              'Transcribed Discord voice attachments with Breeze ASR',
+            );
+          }
+        } catch (err: any) {
+          logger.warn({ channelFolder, err: err.message }, 'Voice ASR transcription failed');
+        }
       }
-      if (downloaded.length > 0) {
-        logger.info({ channelFolder, count: downloaded.length }, 'Attached files for pi');
+
+      const transcribedAudioPaths = new Set(transcriptions.map((item) => item.filePath));
+      let forwardedCount = 0;
+      for (const file of downloaded) {
+        if (transcribedAudioPaths.has(file.filePath)) continue;
+        args.push(`@${file.filePath}`);
+        forwardedCount += 1;
+      }
+      if (forwardedCount > 0) {
+        logger.info({ channelFolder, count: forwardedCount }, 'Attached files for pi');
       }
     } catch (err: any) {
       logger.warn({ err: err.message }, 'Failed to process attachments');
@@ -158,9 +190,9 @@ export async function invokeAgent(
   // start pi's autonomous goal loop with `--until-done <goal>` and a kickoff
   // prompt that nudges autopilot so the loop doesn't stall on the (UI-less)
   // contract-approval dialog. Otherwise send the message text as a normal prompt.
-  const markerIdx = userText.indexOf(UNTIL_DONE_MARKER);
+  const markerIdx = promptText.indexOf(UNTIL_DONE_MARKER);
   const untilDoneGoal =
-    markerIdx !== -1 ? userText.slice(markerIdx + UNTIL_DONE_MARKER.length).trim() : '';
+    markerIdx !== -1 ? promptText.slice(markerIdx + UNTIL_DONE_MARKER.length).trim() : '';
   if (untilDoneGoal) {
     args.push('--until-done', untilDoneGoal);
     args.push(
@@ -170,7 +202,7 @@ export async function invokeAgent(
     );
   } else {
     // Prompt (must be last)
-    args.push('-p', userText);
+    args.push('-p', promptText);
   }
 
   const { bin: effectiveBin, args: effectiveArgs } = resolvePiSpawn(config.piBin, args);
@@ -562,7 +594,7 @@ function readSessionTokensFromJsonl(sessionFile: string): SessionTokenUsage {
   return totals;
 }
 
-function resolvePiSpawn(piBin: string, args: string[]): { bin: string; args: string[] } {
+export function resolvePiSpawn(piBin: string, args: string[]): { bin: string; args: string[] } {
   if (process.platform !== 'win32') {
     return { bin: piBin, args };
   }
