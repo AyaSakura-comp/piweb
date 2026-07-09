@@ -107,4 +107,41 @@ describe('channel cwd migration', () => {
       migratedDb.close();
     }
   });
+
+  it('can set and clear cwd override via exported database functions', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pidg-db-cwd-test-'));
+    tempDirs.push(tempDir);
+
+    const dbPath = resolve(tempDir, 'gateway.db');
+    process.env.DB_PATH = dbPath;
+    process.env.SESSIONS_DIR = resolve(tempDir, 'sessions');
+
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    db.initDb();
+
+    try {
+      db.registerChannel({
+        jid: 'dc:456',
+        name: 'test-cwd-channel',
+        folder: 'ch_456',
+        requiresTrigger: true,
+        isMain: false,
+        modelOverride: '',
+        thinkingOverride: '',
+        cwdOverride: '',
+      });
+
+      expect(db.getChannel('dc:456')?.cwdOverride).toBe('');
+
+      db.setChannelCwdOverride('dc:456', '/path/to/my/awesome/workspace');
+      expect(db.getChannel('dc:456')?.cwdOverride).toBe('/path/to/my/awesome/workspace');
+
+      db.clearChannelCwdOverride('dc:456');
+      expect(db.getChannel('dc:456')?.cwdOverride).toBe('');
+    } finally {
+      db.closeDb();
+    }
+  });
 });
+

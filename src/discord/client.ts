@@ -37,6 +37,7 @@ import {
 } from './attachments.js';
 import { handleAutocomplete, handleChatCommand, registerGlobalCommands } from './slash-commands.js';
 import { isChannelProcessing, interruptChannelTask } from '../agent/queue.js';
+import { rpcSessionIsStreaming, steerRpcSession } from '../agent/rpc-session.js';
 
 let client: Client | null = null;
 let triggerPattern: RegExp;
@@ -265,13 +266,10 @@ async function handleMessage(message: Message): Promise<void> {
   }
 
   // ── Trigger check ──
-  // `alwaysRequireTrigger` forces the prefix for guild channels, but
-  // 1-on-1 contexts (DMs and dedicated threads) are exempt — there's no
-  // ambiguity about who's being addressed. The per-channel `requiresTrigger`
-  // flag still applies (e.g. an explicit override would still be honored).
-  const inThread = !isDM && message.channel.isThread();
+  // `alwaysRequireTrigger` forces the prefix for guild channels and threads,
+  // but DMs (1-on-1 personal context) are exempt unless channel-specific policy requires it.
   const mustTrigger =
-    channel.requiresTrigger || (config.alwaysRequireTrigger && !inThread && !isDM);
+    channel.requiresTrigger || (config.alwaysRequireTrigger && !isDM);
   if (mustTrigger && !triggerPattern.test(content)) {
     logger.debug({ jid }, 'Message does not match trigger, ignoring');
     return;
@@ -317,7 +315,25 @@ async function handleMessage(message: Message): Promise<void> {
     }
   }
 
-  // ── Interrupt ──
+  // ── Steer (RPC mode) ──
+  // With a persistent RPC session, a message that arrives mid-turn is steered
+  // INTO the running turn (redirect the agent in-flight) rather than killing it.
+  // The steered message is not enqueued — it becomes part of the current turn.
+  const targetFolder = getChannel(targetJid)?.folder;
+  if (config.rpcSteer && targetFolder && rpcSessionIsStreaming(targetFolder)) {
+    const steerText = `[Discord user: ${senderName}]\n${content}`;
+    if (steerRpcSession(targetFolder, steerText)) {
+      logger.info({ jid: targetJid }, 'Steered new message into in-flight turn');
+      try {
+        await message.react('⏩');
+      } catch {
+        // reaction is best-effort; ignore permission errors
+      }
+      return;
+    }
+  }
+
+  // ── Interrupt (print mode) ──
   // If pi is still working on an earlier message in this channel, a fresh user
   // message pre-empts it: stop the in-flight run ("pi stop") and let the new
   // message be processed next. Acknowledge with `interrupt` only when an actual
@@ -428,7 +444,7 @@ export async function sendFilesResponse(
       return sendResponse(jid, text || '(empty response)');
     }
 
-    let body: string | undefined = text && text.length > 0 ? text : undefined;
+    const body: string | undefined = text && text.length > 0 ? text : undefined;
     if (body && body.length > DISCORD_MAX_LENGTH) {
       // Send the long text in chunks; attach files to the final chunk.
       const chunks = splitMessage(body, DISCORD_MAX_LENGTH);

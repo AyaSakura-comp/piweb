@@ -1,3 +1,8 @@
+import { exec } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve as pathResolve } from 'node:path';
+import { promisify } from 'node:util';
 import {
   MessageFlags,
   SlashCommandBuilder,
@@ -15,12 +20,14 @@ import {
 } from '../agent/invoke.js';
 import { config } from '../config.js';
 import {
+  clearChannelCwdOverride,
   clearChannelModelOverride,
   clearPendingMessages,
   createDmChannel,
   enqueueMessage,
   getChannel,
   registerChannel,
+  setChannelCwdOverride,
   setChannelModelOverride,
   setChannelThinkingOverride,
 } from '../db.js';
@@ -92,6 +99,23 @@ const PI_COMMAND = new SlashCommandBuilder()
     sub
       .setName('stop')
       .setDescription('Abort the current task and clear the queue for this channel'),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('cwd')
+      .setDescription('Set the working directory override for this channel')
+      .addStringOption((option) =>
+        option
+          .setName('path')
+          .setDescription('Absolute path to the workspace directory')
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('reset-cwd').setDescription("Reset this channel to the gateway's default working directory"),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('gpt-usage').setDescription('Show ChatGPT/Codex subscription rate-limit usage'),
   );
 
 const UNTIL_COMMAND = new SlashCommandBuilder()
@@ -115,8 +139,16 @@ const UNTIL_COMMAND = new SlashCommandBuilder()
     sub.setName('stop').setDescription('Abort the current task and clear the queue for this channel'),
   );
 
+const GPT_USAGE_COMMAND = new SlashCommandBuilder()
+  .setName('gpt-usage')
+  .setDescription('Show ChatGPT/Codex subscription rate-limit usage (Taiwan time)');
+
 export async function registerGlobalCommands(client: Client<true>): Promise<void> {
-  await client.application.commands.set([PI_COMMAND.toJSON(), UNTIL_COMMAND.toJSON()]);
+  await client.application.commands.set([
+    PI_COMMAND.toJSON(),
+    UNTIL_COMMAND.toJSON(),
+    GPT_USAGE_COMMAND.toJSON(),
+  ]);
   logger.info('Registered global slash commands');
 }
 
@@ -135,11 +167,22 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 }
 
 export async function handleChatCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-  if (interaction.commandName !== 'pi' && interaction.commandName !== 'until') return;
+  if (
+    interaction.commandName !== 'pi' &&
+    interaction.commandName !== 'until' &&
+    interaction.commandName !== 'gpt-usage'
+  )
+    return;
 
-  const subcommand = interaction.options.getSubcommand();
+  const subcommand =
+    interaction.commandName === 'gpt-usage' ? null : interaction.options.getSubcommand();
 
   try {
+    if (interaction.commandName === 'gpt-usage') {
+      await handleGptUsage(interaction);
+      return;
+    }
+
     if (interaction.commandName === 'until') {
       switch (subcommand) {
         case 'goal':
@@ -175,6 +218,15 @@ export async function handleChatCommand(interaction: ChatInputCommandInteraction
         return;
       case 'stop':
         await handleStop(interaction);
+        return;
+      case 'cwd':
+        await handleCwdSet(interaction);
+        return;
+      case 'reset-cwd':
+        await handleCwdReset(interaction);
+        return;
+      case 'gpt-usage':
+        await handleGptUsage(interaction);
         return;
       default:
         await interaction.reply(reply(`Unknown subcommand: ${subcommand}`, interaction));
@@ -580,3 +632,70 @@ function reply(content: string, interaction: ChatInputCommandInteraction): Inter
   }
   return { content };
 }
+
+const execAsync = promisify(exec);
+
+async function handleGptUsage(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply(
+    interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : undefined,
+  );
+
+  try {
+    const scriptPath = pathResolve(homedir(), '.gemini/antigravity/skills/gpt-usage/bin/gpt-usage.mjs');
+    const { stdout } = await execAsync(`node "${scriptPath}"`);
+    await interaction.editReply({ content: `\`\`\`text\n${stdout.trim()}\n\`\`\`` });
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Failed to check gpt-usage');
+    await interaction.editReply({
+      content: `⚠️ Failed to get GPT usage status: ${err.stderr || err.message}`,
+    });
+  }
+}
+
+async function handleCwdSet(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = ensureManagedChannel(interaction);
+  if (!channel) {
+    await interaction.reply(reply(notRegisteredMessage(), interaction));
+    return;
+  }
+
+  const selectedPath = interaction.options.getString('path', true).trim();
+  
+  let resolvedPath: string;
+  if (selectedPath.startsWith('~/')) {
+    resolvedPath = pathResolve(homedir(), selectedPath.slice(2));
+  } else if (selectedPath === '~') {
+    resolvedPath = homedir();
+  } else {
+    resolvedPath = pathResolve(selectedPath);
+  }
+
+  let pathExists = false;
+  try {
+    pathExists = existsSync(resolvedPath) && statSync(resolvedPath).isDirectory();
+  } catch {
+    // ignore
+  }
+
+  setChannelCwdOverride(channel.jid, resolvedPath);
+
+  const notes = [`Working directory override set to ${resolvedPath} for this channel.`];
+  if (!pathExists) {
+    notes.push(`⚠️ Note: The path does not exist or is not a directory on the host machine currently.`);
+  }
+
+  await interaction.reply(reply(notes.join('\n'), interaction));
+}
+
+async function handleCwdReset(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = ensureManagedChannel(interaction);
+  if (!channel) {
+    await interaction.reply(reply(notRegisteredMessage(), interaction));
+    return;
+  }
+
+  clearChannelCwdOverride(channel.jid);
+
+  await interaction.reply(reply('Working directory override reset to default for this channel.', interaction));
+}
+

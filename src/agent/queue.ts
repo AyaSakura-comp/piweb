@@ -18,7 +18,8 @@ import {
   logMessage,
   getChannel,
 } from '../db.js';
-import { invokeAgent } from './invoke.js';
+import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
+import { getRpcSession, closeAllRpcSessions } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { sendResponse, sendFilesResponse, setTyping } from '../discord/client.js';
 import { createEventStreamer } from '../discord/stream-events.js';
@@ -90,7 +91,9 @@ export function stopProcessingLoop(opts: { timeoutMs?: number } = {}): Promise<v
   running = false;
   clearPollTimer();
 
-  stopPromise = drainActiveTasks(opts.timeoutMs ?? config.shutdownTimeoutMs);
+  stopPromise = drainActiveTasks(opts.timeoutMs ?? config.shutdownTimeoutMs).finally(() => {
+    closeAllRpcSessions();
+  });
   return stopPromise;
 }
 
@@ -239,14 +242,26 @@ async function processMessage(
     // outbox/marker path below.
     const onEvent = createEventStreamer(jid);
 
-    const result = await invokeAgent(channel.folder, prompt, {
-      model: effective.rawModelRef || undefined,
-      thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
-      cwd: effective.effectiveCwd,
-      signal,
-      attachments,
-      onEvent,
-    });
+    // Persistent RPC session path (steer-able). Falls back to the one-shot
+    // print path for attachments and the until-done loop, which the RPC prompt
+    // path doesn't carry. The session stays warm for in-flight steering.
+    const useRpc =
+      config.rpcSteer && !attachments && content.indexOf(UNTIL_DONE_MARKER) === -1;
+
+    const result = useRpc
+      ? await getRpcSession(channel.folder, {
+          model: effective.rawModelRef || undefined,
+          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+          cwd: effective.effectiveCwd,
+        }).prompt(prompt, onEvent)
+      : await invokeAgent(channel.folder, prompt, {
+          model: effective.rawModelRef || undefined,
+          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+          cwd: effective.effectiveCwd,
+          signal,
+          attachments,
+          onEvent,
+        });
 
     if (signal.aborted) {
       markMessageFailed(rowid);

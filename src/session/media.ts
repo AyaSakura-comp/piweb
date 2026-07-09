@@ -6,11 +6,13 @@
  * Periodic cleanup removes stale media files.
  */
 
+import { execFile } from 'node:child_process';
 import { createWriteStream, mkdirSync, readdirSync, rmSync, statSync, type Dirent } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, rm, stat } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -28,6 +30,13 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
 
 /** Media TTL before cleanup (1 hour) */
 const MEDIA_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Persistent archive of every received attachment. Lives under /tmp and is
+ * NEVER touched by cleanupExpiredMedia (that only scans the session dirs), so
+ * files received via Discord are kept here until /tmp is cleared (e.g. reboot).
+ */
+const ARCHIVE_DIR = '/tmp/pi-discord-files';
 
 /**
  * Download all attachments to a per-message directory under the channel session.
@@ -53,11 +62,19 @@ export async function downloadAttachments(
 
     try {
       await streamAttachmentToFile(att, filePath, signal);
-      const fileStats = await stat(filePath);
 
-      results.push({ filePath, originalName: att.name || 'file', size: fileStats.size });
+      // llama.cpp's image decoder (stb_image) only handles JPG/PNG/BMP/GIF, so
+      // Discord-delivered WEBP/HEIC/AVIF images fail to decode on local vision
+      // models. Transcode those to PNG so any image format works downstream.
+      const finalPath = await maybeConvertImageToPng(filePath);
+      const fileStats = await stat(finalPath);
+
+      // Keep a permanent copy of every received file under /tmp (not cleaned up).
+      await archiveToTmp(finalPath, messageId);
+
+      results.push({ filePath: finalPath, originalName: att.name || 'file', size: fileStats.size });
       logger.debug(
-        { name: att.name, size: fileStats.size, path: filePath },
+        { name: att.name, size: fileStats.size, path: finalPath },
         'Attachment downloaded',
       );
     } catch (err: any) {
@@ -67,6 +84,52 @@ export async function downloadAttachments(
   }
 
   return results;
+}
+
+/**
+ * Copy a downloaded file into the persistent /tmp archive. Best-effort: any
+ * failure is logged and ignored so it never disrupts the message flow. Files
+ * are grouped per day, prefixed with the message id to avoid name collisions.
+ */
+async function archiveToTmp(srcPath: string, messageId: string): Promise<void> {
+  try {
+    const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const dir = join(ARCHIVE_DIR, day);
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, `${messageId}_${basename(srcPath)}`);
+    await copyFile(srcPath, dest);
+    logger.info({ dest }, 'Archived received attachment to /tmp');
+  } catch (err: any) {
+    logger.warn({ src: srcPath, err: err.message }, 'Failed to archive attachment to /tmp');
+  }
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Image formats stb_image (llama.cpp vision) cannot decode; transcode these to PNG. */
+const NEEDS_PNG_CONVERSION = new Set(['webp', 'heic', 'heif', 'avif', 'tiff', 'tif', 'jxl']);
+
+/**
+ * If `filePath` is an image in a format local vision models can't decode
+ * (WEBP/HEIC/AVIF/...), transcode it to PNG via ImageMagick and return the new
+ * path. On any failure (or unsupported/non-image type) the original path is
+ * returned unchanged so this is a no-op for already-supported formats.
+ */
+async function maybeConvertImageToPng(filePath: string): Promise<string> {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  if (!NEEDS_PNG_CONVERSION.has(ext)) return filePath;
+
+  const pngPath = `${filePath.slice(0, -(ext.length + 1))}.png`;
+  try {
+    // `[0]` flattens multi-frame/animated sources to the first frame.
+    await execFileAsync('magick', [`${filePath}[0]`, pngPath]);
+    await rm(filePath, { force: true }).catch(() => undefined);
+    logger.info({ from: filePath, to: pngPath }, 'Transcoded image to PNG for vision');
+    return pngPath;
+  } catch (err: any) {
+    logger.warn({ path: filePath, err: err.message }, 'Image PNG transcode failed; passing original');
+    return filePath;
+  }
 }
 
 /** Make filenames safe for the filesystem */
