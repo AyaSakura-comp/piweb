@@ -1,0 +1,9 @@
+# Tailscale state is root-owned and irrelevant to the image; including it also
+# breaks `docker build` with "can't stat ts-state/certs" under a non-root user.
+ts-state/
+.env
+node_modules/
+dist/
+.git/
+test/
+*.md

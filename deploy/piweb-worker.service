@@ -1,0 +1,28 @@
+# piweb pi worker — runs on the HOST, not in Docker.
+#
+# This is the half that actually spawns pi, which is why it is not containerised:
+# the agent needs systemctl --user, docker, the ROCm GPU and the project
+# checkouts under ~/src. The web tier in Docker never runs pi; the two share
+# only the SQLite database.
+#
+# Install:
+#   cp deploy/piweb-worker.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now piweb-worker
+
+[Unit]
+Description=piweb pi worker (host side)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=/usr/bin/node %h/src/piweb/dist/cli/piweb.js worker
+EnvironmentFile=%h/.config/piweb/config.env
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

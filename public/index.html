@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover + env(safe-area-*) in CSS keeps the composer clear of
+         the iPhone home indicator; user-scalable=no stops iOS zooming the page
+         when the input is focused. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#1e1f22" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>piweb</title>
+    <!-- An explicit icon stops the browser probing /favicon.ico, which would
+         hit the auth gate and log a 401 on every load. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <!-- Login gate -->
+    <div id="login" class="login" hidden>
+      <form class="login-card" id="login-form">
+        <div class="login-logo">π</div>
+        <h1>piweb</h1>
+        <p class="login-sub">Enter your access token to continue.</p>
+        <input
+          id="login-token"
+          type="password"
+          inputmode="text"
+          autocomplete="current-password"
+          placeholder="Access token"
+          aria-label="Access token"
+        />
+        <button type="submit" class="btn-primary">Unlock</button>
+        <p class="login-error" id="login-error" hidden></p>
+      </form>
+    </div>
+
+    <!-- App shell -->
+    <div id="app" class="app" hidden>
+      <div class="scrim" id="scrim" hidden></div>
+
+      <aside class="drawer" id="drawer" aria-label="Sessions">
+        <header class="drawer-head">
+          <span class="drawer-title">Sessions</span>
+          <button class="icon-btn" id="btn-new-session" title="New session" aria-label="New session">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </header>
+        <div class="session-list" id="session-list"></div>
+        <footer class="drawer-foot">
+          <button class="text-btn" id="btn-logout">Sign out</button>
+        </footer>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="icon-btn" id="btn-menu" aria-label="Open sessions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
+          <div class="topbar-title">
+            <span class="hash">#</span>
+            <span id="session-name">no session</span>
+          </div>
+          <button class="icon-btn" id="btn-clean" title="Clean session" aria-label="Clean session">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="messages" id="messages"></div>
+
+        <div class="typing" id="typing" hidden>
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="typing-label">pi is working…</span>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="autocomplete" id="autocomplete" hidden></div>
+          <div class="attachments" id="attachments" hidden></div>
+          <form class="composer" id="composer">
+            <button type="button" class="icon-btn" id="btn-attach" aria-label="Add attachment">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            <input id="file-input" type="file" multiple hidden />
+            <textarea
+              id="input"
+              rows="1"
+              placeholder="Message pi…"
+              aria-label="Message"
+            ></textarea>
+            <button type="submit" class="icon-btn send" id="btn-send" aria-label="Send">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 8 6 8z" /></svg>
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,155 @@
+/**
+ * Shared-token auth.
+ *
+ * This endpoint can make pi run arbitrary commands on the host, so it is not
+ * safe to rely on "it's only on the tailnet". A single shared token is enough
+ * for a personal deployment; it is exchanged for an HttpOnly cookie so the
+ * token itself isn't sitting in localStorage where any injected script could
+ * read it.
+ */
+
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { config } from '../config.js';
+
+/** Server-run secret: restarting invalidates existing cookies, which is fine. */
+const SIGNING_KEY = randomBytes(32);
+
+export const COOKIE_NAME = 'piweb_session';
+
+/** Constant-time compare so a wrong token can't be recovered by timing. */
+export function tokenMatches(candidate: string): boolean {
+  const expected = Buffer.from(config.webAuthToken, 'utf8');
+  const given = Buffer.from(candidate ?? '', 'utf8');
+  if (expected.length === 0 || expected.length !== given.length) return false;
+  return timingSafeEqual(expected, given);
+}
+
+export function issueCookie(): string {
+  const expiresAt = Date.now() + config.webSessionTtlSec * 1000;
+  const payload = String(expiresAt);
+  const sig = createHmac('sha256', SIGNING_KEY).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+export function cookieIsValid(value: string | undefined): boolean {
+  if (!value) return false;
+  const [payload, sig] = value.split('.');
+  if (!payload || !sig) return false;
+
+  const expected = createHmac('sha256', SIGNING_KEY).update(payload).digest('hex');
+  const a = Buffer.from(sig, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+
+  const expiresAt = Number(payload);
+  return Number.isFinite(expiresAt) && Date.now() < expiresAt;
+}
+
+export function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return out;
+}
+
+// ── Tailscale identity ──────────────────────────────────────────────────────
+
+/**
+ * `tailscale serve` injects these for tailnet (non-Funnel) traffic. They are
+ * plain HTTP headers, so they are only meaningful when the request cannot have
+ * come from anywhere but the sidecar — hence the loopback requirement below.
+ * Tagged devices have no user identity and send no login header.
+ */
+export const TS_LOGIN_HEADER = 'tailscale-user-login';
+export const TS_NAME_HEADER = 'tailscale-user-name';
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+export function isLoopbackConnection(remoteAddress: string | undefined): boolean {
+  return !!remoteAddress && LOOPBACK.has(remoteAddress);
+}
+
+export interface TailscaleIdentity {
+  login: string;
+  name: string;
+}
+
+/**
+ * Identity for a request, or undefined if it must not be trusted.
+ *
+ * Refusing anything non-loopback is the whole security property: a request that
+ * reached the port directly (another container on the docker network, or the
+ * port being published) could set these headers to anything it liked.
+ */
+export function tailscaleIdentity(
+  headers: NodeJS.Dict<string | string[]>,
+  remoteAddress: string | undefined,
+): TailscaleIdentity | undefined {
+  if (!config.webTrustTailscaleIdentity) return undefined;
+  if (!isLoopbackConnection(remoteAddress)) return undefined;
+
+  const login = String(headers[TS_LOGIN_HEADER] ?? '').trim();
+  if (!login) return undefined;
+
+  const allowed = config.webAllowedLogins
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowed.length > 0 && !allowed.includes(login)) return undefined;
+
+  return { login, name: String(headers[TS_NAME_HEADER] ?? '').trim() || login };
+}
+
+// ── CSRF ────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a state-changing request may proceed.
+ *
+ * This matters MORE with identity headers than with a token: serve attaches the
+ * device's identity to every request the browser makes, so a malicious page open
+ * in any tab would otherwise be able to drive the agent. Browsers always send
+ * Origin on POST/DELETE, so requiring it to match is a reliable check; we accept
+ * Sec-Fetch-Site: same-origin as an equivalent signal for clients that send it.
+ */
+export function isSameOriginRequest(
+  headers: NodeJS.Dict<string | string[]>,
+  host: string | undefined,
+): boolean {
+  const fetchSite = String(headers['sec-fetch-site'] ?? '').trim();
+  if (fetchSite === 'same-origin' || fetchSite === 'none') return true;
+  if (fetchSite && fetchSite !== 'same-site') return false;
+
+  const origin = String(headers.origin ?? '').trim();
+  if (!origin) {
+    // No Origin and no Sec-Fetch-Site: a non-browser client (curl, scripts).
+    // Those cannot be driven by a hostile web page, so they are not a CSRF
+    // vector; they still need a valid cookie or token to get anywhere.
+    return true;
+  }
+
+  const expected = config.webPublicOrigin.trim();
+  if (expected) return origin === expected;
+
+  // Fall back to comparing against the Host the request was addressed to.
+  try {
+    return !!host && new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+export function buildSetCookie(value: string, secure: boolean): string {
+  const attrs = [
+    `${COOKIE_NAME}=${value}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${config.webSessionTtlSec}`,
+  ];
+  if (secure) attrs.push('Secure');
+  return attrs.join('; ');
+}

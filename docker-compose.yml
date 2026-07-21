@@ -1,0 +1,60 @@
+# piweb — web tier in Docker + Tailscale sidecar; pi worker on the HOST.
+#
+#   cp .env.example .env    # WEB_AUTH_TOKEN, PIWEB_DATA, TS_AUTHKEY (first run only)
+#   docker compose up -d --build
+#
+# The sidecar registers a NEW tailnet node named "piweb", so the UI lands on its
+# own subdomain: https://piweb.<your-tailnet>.ts.net/
+#
+# CRITICAL: PIWEB_DATA is mounted at the SAME absolute path inside the container
+# as on the host. The web tier stages uploads and records their absolute paths in
+# SQLite; the host worker then opens those exact paths. Mount it anywhere else
+# (e.g. /data) and every upload breaks with ENOENT while text messages keep
+# working — a confusing half-failure. Keep the paths identical.
+
+services:
+  app:
+    build: .
+    image: piweb:latest
+    container_name: piweb-app
+    restart: unless-stopped
+    user: '1000:1000' # write PIWEB_DATA as the host user, so the worker can read it
+    environment:
+      WEB_PORT: 8099
+      # Loopback only. The tailscale sidecar shares this container's network
+      # namespace and proxies to 127.0.0.1, so nothing else on the docker
+      # network can reach the port — which is what makes serve's injected
+      # identity headers safe to trust.
+      WEB_HOST: 127.0.0.1
+      WEB_TRUST_TAILSCALE_IDENTITY: 'true'
+      WEB_PUBLIC_ORIGIN: ${WEB_PUBLIC_ORIGIN:-}
+      WEB_ALLOWED_LOGINS: ${WEB_ALLOWED_LOGINS:-}
+      # Required — the server refuses to start without it.
+      WEB_AUTH_TOKEN: ${WEB_AUTH_TOKEN:?WEB_AUTH_TOKEN must be set}
+      DB_PATH: ${PIWEB_DATA:?PIWEB_DATA must be set}/gateway.db
+      SESSIONS_DIR: ${PIWEB_DATA}/sessions
+      WEB_MEDIA_DIR: ${PIWEB_DATA}/web-media
+      WEB_UPLOAD_DIR: ${PIWEB_DATA}/web-uploads
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ${PIWEB_DATA}:${PIWEB_DATA}
+    expose:
+      - '8099'
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: piweb-ts
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      # Only needed for the FIRST registration. Once ./ts-state holds an authed
+      # node it comes up from state and no key is required (leave unset).
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_HOSTNAME=piweb
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./ts-serve.json:/config/serve.json:ro
+    network_mode: service:app # share app's netns → serve to 127.0.0.1:8099

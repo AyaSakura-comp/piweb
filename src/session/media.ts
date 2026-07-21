@@ -61,7 +61,15 @@ export async function downloadAttachments(
     const filePath = join(mediaDir, fileName);
 
     try {
-      await streamAttachmentToFile(att, filePath, signal);
+      // piweb uploads are already on local disk (the web server staged them),
+      // so there is nothing to fetch — copy them into the per-message media dir
+      // instead. Everything downstream (PNG transcode, voice ASR, @file args)
+      // then treats them exactly like a Discord attachment.
+      if (att.filePath) {
+        await copyFile(att.filePath, filePath);
+      } else {
+        await streamAttachmentToFile(att, filePath, signal);
+      }
 
       // llama.cpp's image decoder (stb_image) only handles JPG/PNG/BMP/GIF, so
       // Discord-delivered WEBP/HEIC/AVIF images fail to decode on local vision

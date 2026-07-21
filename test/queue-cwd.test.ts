@@ -13,10 +13,9 @@ vi.mock('../src/agent/invoke.js', () => ({
   invokeAgent: invokeAgentMock,
 }));
 
-vi.mock('../src/discord/client.js', () => ({
-  sendResponse: sendResponseMock,
-  setTyping: setTypingMock,
-}));
+// The queue now delivers through the installed transport rather than importing
+// the Discord client directly, so the stub is installed via setTransport()
+// below instead of being module-mocked.
 
 const originalEnv = { ...process.env };
 const tempDirs: string[] = [];
@@ -75,6 +74,15 @@ async function runQueuedMessage(cwdOverride: string): Promise<{ cwd?: string } |
   vi.resetModules();
   const db = await import('../src/db.js');
   const queue = await import('../src/agent/queue.js');
+  const transport = await import('../src/transport/index.js');
+
+  transport.setTransport({
+    sendResponse: sendResponseMock,
+    sendFilesResponse: vi.fn().mockResolvedValue(true),
+    setTyping: setTypingMock,
+    clearTyping: vi.fn().mockResolvedValue(undefined),
+    createEventStreamer: () => vi.fn().mockResolvedValue(undefined),
+  });
 
   db.initDb();
 

@@ -83,6 +83,63 @@ export function initDb(): void {
     );
 
     create index if not exists idx_scheduled_tasks_due on scheduled_tasks(enabled, next_run_at);
+
+    -- ── piweb: web transport tables ──
+    --
+    -- The web UI and the pi worker are SEPARATE PROCESSES sharing this database
+    -- (worker on the host for full host access, web server in Docker). Anything
+    -- that has to cross that boundary goes through a table with a monotonic
+    -- rowid the reader can use as a cursor.
+
+    -- Everything the user sees in a transcript: user turns, assistant replies,
+    -- streamed thinking/tool events, and command output. Replaces Discord as
+    -- the message store, so a phone that drops its connection can replay by
+    -- rowid instead of losing the run.
+    create table if not exists web_events (
+      rowid       integer primary key autoincrement,
+      channel_jid text not null,
+      kind        text not null,
+      role        text not null default '',
+      content     text not null default '',
+      files       text,
+      created_at  text not null default (datetime('now'))
+    );
+
+    create index if not exists idx_web_events_channel on web_events(channel_jid, rowid);
+
+    -- Commands the web server cannot run itself. /pi status spawns pi over RPC,
+    -- /pi stop needs the worker's in-memory AbortController, /pi new must not
+    -- race an in-flight run — all of that lives in the worker process, so the
+    -- web server enqueues an intent here and the worker executes it.
+    create table if not exists control_queue (
+      rowid       integer primary key autoincrement,
+      channel_jid text not null,
+      command     text not null,
+      args        text not null default '{}',
+      status      text not null default 'pending',
+      result      text,
+      created_at  text not null default (datetime('now')),
+      done_at     text
+    );
+
+    create index if not exists idx_control_pending on control_queue(status, rowid);
+
+    -- Small key/value side-channel. Used for things the web server needs but
+    -- cannot compute itself: the pi model list comes from spawning pi, which
+    -- only the worker can do, so the worker publishes it here for the UI's
+    -- model autocomplete to read.
+    create table if not exists meta (
+      key        text primary key,
+      value      text not null,
+      updated_at text not null default (datetime('now'))
+    );
+
+    -- Per-channel transient runtime state the UI polls (typing indicator).
+    create table if not exists channel_state (
+      channel_jid text primary key,
+      busy        integer not null default 0,
+      updated_at  text not null default (datetime('now'))
+    );
   `);
 
   ensureTableColumn('channels', 'model_override', "text not null default ''");
@@ -426,6 +483,159 @@ export function logMessage(channelJid: string, role: string, content: string): v
     role,
     content,
   );
+}
+
+// ── piweb: web events (transcript + live stream) ──
+
+export type WebEventKind = 'message' | 'thinking' | 'tool' | 'tool_result' | 'system' | 'error';
+
+export interface WebEventRow {
+  rowid: number;
+  channel_jid: string;
+  kind: WebEventKind;
+  role: string;
+  content: string;
+  /** JSON array of served file URLs, or null */
+  files: string | null;
+  created_at: string;
+}
+
+export function appendWebEvent(event: {
+  channelJid: string;
+  kind: WebEventKind;
+  role?: string;
+  content?: string;
+  files?: string[];
+}): number {
+  const result = db
+    .prepare(
+      'insert into web_events (channel_jid, kind, role, content, files) values (?, ?, ?, ?, ?)',
+    )
+    .run(
+      event.channelJid,
+      event.kind,
+      event.role ?? '',
+      event.content ?? '',
+      event.files && event.files.length > 0 ? JSON.stringify(event.files) : null,
+    );
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Events after `afterRowid`. The web server uses this both to render history on
+ * load (afterRowid=0) and to tail for SSE, so a reconnecting phone resumes from
+ * its last seen id with no gap and no duplicates.
+ */
+export function getWebEventsSince(
+  channelJid: string,
+  afterRowid: number,
+  limit = 500,
+): WebEventRow[] {
+  return db
+    .prepare(
+      'select * from web_events where channel_jid = ? and rowid > ? order by rowid limit ?',
+    )
+    .all(channelJid, afterRowid, limit) as WebEventRow[];
+}
+
+/** Newest events first, then reversed — the initial view wants the TAIL of a long transcript. */
+export function getRecentWebEvents(channelJid: string, limit = 200): WebEventRow[] {
+  const rows = db
+    .prepare('select * from web_events where channel_jid = ? order by rowid desc limit ?')
+    .all(channelJid, limit) as WebEventRow[];
+  return rows.reverse();
+}
+
+export function deleteWebEvents(channelJid: string): number {
+  return db.prepare('delete from web_events where channel_jid = ?').run(channelJid).changes;
+}
+
+export function getMaxWebEventRowid(): number {
+  const row = db.prepare('select coalesce(max(rowid), 0) as m from web_events').get() as {
+    m: number;
+  };
+  return row.m;
+}
+
+// ── piweb: control queue (web server → worker) ──
+
+export interface ControlRow {
+  rowid: number;
+  channel_jid: string;
+  command: string;
+  args: string;
+  status: 'pending' | 'done' | 'failed';
+  result: string | null;
+}
+
+export function enqueueControl(channelJid: string, command: string, args: unknown = {}): number {
+  const result = db
+    .prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)')
+    .run(channelJid, command, JSON.stringify(args ?? {}));
+  return Number(result.lastInsertRowid);
+}
+
+export function claimPendingControls(limit = 10): ControlRow[] {
+  const rows = db
+    .prepare("select * from control_queue where status = 'pending' order by rowid limit ?")
+    .all(limit) as ControlRow[];
+  const claim = db.prepare("update control_queue set status = 'processing' where rowid = ?");
+  for (const row of rows) claim.run(row.rowid);
+  return rows;
+}
+
+export function finishControl(rowid: number, ok: boolean, result: string): void {
+  db.prepare(
+    "update control_queue set status = ?, result = ?, done_at = datetime('now') where rowid = ?",
+  ).run(ok ? 'done' : 'failed', result, rowid);
+}
+
+export function getControl(rowid: number): ControlRow | undefined {
+  return db.prepare('select * from control_queue where rowid = ?').get(rowid) as
+    | ControlRow
+    | undefined;
+}
+
+// ── piweb: per-channel busy flag (typing indicator) ──
+
+export function setChannelBusy(channelJid: string, busy: boolean): void {
+  db.prepare(
+    `insert into channel_state (channel_jid, busy, updated_at)
+     values (?, ?, datetime('now'))
+     on conflict(channel_jid) do update set busy = excluded.busy, updated_at = excluded.updated_at`,
+  ).run(channelJid, busy ? 1 : 0);
+}
+
+export function isChannelBusy(channelJid: string): boolean {
+  const row = db.prepare('select busy from channel_state where channel_jid = ?').get(channelJid) as
+    | { busy: number }
+    | undefined;
+  return Boolean(row?.busy);
+}
+
+// ── piweb: meta key/value ──
+
+export function setMeta(key: string, value: string): void {
+  db.prepare(
+    `insert into meta (key, value, updated_at) values (?, ?, datetime('now'))
+     on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, value);
+}
+
+export function getMeta(key: string): string | undefined {
+  const row = db.prepare('select value from meta where key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value;
+}
+
+export function deleteChannel(jid: string): void {
+  db.prepare('delete from web_events where channel_jid = ?').run(jid);
+  db.prepare('delete from message_queue where channel_jid = ?').run(jid);
+  db.prepare('delete from message_log where channel_jid = ?').run(jid);
+  db.prepare('delete from control_queue where channel_jid = ?').run(jid);
+  db.prepare('delete from channel_state where channel_jid = ?').run(jid);
+  db.prepare('delete from channels where jid = ?').run(jid);
 }
 
 export function closeDb(): void {
