@@ -24,12 +24,14 @@ import {
   deleteWebEvents,
   enqueueControl,
   enqueueMessage,
-  getAllChannels,
   getChannel,
   getMeta,
   getRecentWebEvents,
+  getWebEventsBefore,
   getWebEventsSince,
+  hasWebEventsBefore,
   isChannelBusy,
+  listWebSessions,
   registerChannel,
   type WebEventRow,
 } from '../db.js';
@@ -142,6 +144,16 @@ function whoami(req: IncomingMessage): string | undefined {
 /** A web session is just a channel row with a `web:` jid. */
 function webJid(id: string): string {
   return id.startsWith('web:') ? id : `web:${id}`;
+}
+
+/** Page size guard: a client asking for 100k events would defeat the point. */
+const DEFAULT_PAGE = 50;
+const MAX_PAGE = 200;
+
+function clampLimit(raw: string | null): number {
+  const n = Number(raw ?? '');
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_PAGE;
+  return Math.min(Math.floor(n), MAX_PAGE);
 }
 
 function serializeEvent(row: WebEventRow) {
@@ -279,16 +291,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ── sessions ──
   if (path === '/api/sessions' && method === 'GET') {
-    const sessions = getAllChannels()
-      .filter((ch) => ch.jid.startsWith('web:'))
-      .map((ch) => ({
-        jid: ch.jid,
-        name: ch.name,
-        busy: isChannelBusy(ch.jid),
-        model: ch.modelOverride,
-        thinking: ch.thinkingOverride,
-        cwd: ch.cwdOverride,
-      }));
+    const sessions = listWebSessions().map((s) => ({
+      jid: s.jid,
+      name: s.name,
+      busy: s.busy,
+      model: s.modelOverride,
+      thinking: s.thinkingOverride,
+      cwd: s.cwdOverride,
+      lastActivity: s.lastActivity,
+    }));
     sendJson(res, 200, { sessions });
     return;
   }
@@ -310,6 +321,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       thinkingOverride: '',
       cwdOverride: '',
     });
+
+    // Guarantee a clean pi context for every new session. A freshly minted
+    // folder has nothing to rotate, so this is usually a no-op — it is here so
+    // "new session" can never inherit an agent context, including if a folder
+    // name is ever reused or left behind by a deleted session. Silent: the
+    // guarantee is implied by creating the session, so it needs no system line
+    // in an otherwise empty transcript.
+    enqueueControl(jid, 'pi new', { silent: 'true' });
 
     sendJson(res, 200, { jid, name });
     return;
@@ -341,14 +360,30 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    // Three read modes, all index-backed range scans:
+    //   ?after=<id>   catch-up after a reconnect (newer than id)
+    //   ?before=<id>  one page of OLDER history (infinite scroll upward)
+    //   (neither)     the newest page — what a fresh open shows
     if (sub === 'events' && method === 'GET') {
+      const limit = clampLimit(url.searchParams.get('limit'));
       const after = Number(url.searchParams.get('after') ?? '0');
-      const events = Number.isFinite(after) && after > 0
-        ? getWebEventsSince(jid, after)
-        : getRecentWebEvents(jid);
+      const before = Number(url.searchParams.get('before') ?? '0');
+
+      let events;
+      if (Number.isFinite(before) && before > 0) {
+        events = getWebEventsBefore(jid, before, limit);
+      } else if (Number.isFinite(after) && after > 0) {
+        events = getWebEventsSince(jid, after, limit);
+      } else {
+        events = getRecentWebEvents(jid, limit);
+      }
+
+      const oldest = events.length > 0 ? events[0].rowid : before > 0 ? before : 0;
       sendJson(res, 200, {
         events: events.map(serializeEvent),
         busy: isChannelBusy(jid),
+        // Lets the client stop asking once it has reached the beginning.
+        hasMore: oldest > 0 ? hasWebEventsBefore(jid, oldest) : false,
       });
       return;
     }

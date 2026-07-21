@@ -724,3 +724,19 @@ svg {
     padding-inline: 8px;
   }
 }
+
+/* ── infinite scroll sentinel ─────────────────────────────────────────── */
+
+.top-sentinel {
+  padding: 12px 14px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.top-sentinel.start {
+  cursor: default;
+  opacity: 0.6;
+  font-size: 12px;
+}

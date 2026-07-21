@@ -65,12 +65,18 @@ async function tick(): Promise<void> {
 
       const result = await runCommand(channel, row.command, args);
 
-      appendWebEvent({
-        channelJid: row.channel_jid,
-        kind: result.ok ? 'system' : 'error',
-        role: row.command,
-        content: result.text,
-      });
+      // Auto-issued controls (e.g. the `pi new` fired when a session is created)
+      // pass silent:true — the user did not type them, so echoing their output
+      // would just be noise. Failures are still surfaced.
+      const silent = args.silent === 'true' && result.ok;
+      if (!silent) {
+        appendWebEvent({
+          channelJid: row.channel_jid,
+          kind: result.ok ? 'system' : 'error',
+          role: row.command,
+          content: result.text,
+        });
+      }
       finishControl(row.rowid, result.ok, result.text);
 
       logger.info(
