@@ -117,6 +117,24 @@ Clearing one does **not** clear the other, which is why the header 🗑 button d
 both (`deleteWebEvents` + enqueue `pi new`). Query either with
 `scripts/history.py show|context`.
 
+### Querying history
+
+`scripts/history.py` — stdlib only (this host has no `sqlite3` binary) and opens
+the database **read-only**, so it is safe against a running worker.
+
+```bash
+./scripts/history.py sessions            # list sessions + last activity
+./scripts/history.py show <name> -n 30   # transcript (web_events)
+./scripts/history.py search <text>       # across all sessions
+./scripts/history.py search x --kind error system
+./scripts/history.py context <name>      # pi's own .jsonl (what it remembers)
+./scripts/history.py stats               # row counts + disk usage
+```
+
+Sessions resolve by fuzzy name, not just jid. Note the pi session format nests a
+turn under `event["message"]` and its `content` is a list of typed parts
+(text / thinking / toolCall / toolResult), **not** a string.
+
 ---
 
 ## 2. Invariants (break these and it fails confusingly)
@@ -169,6 +187,35 @@ both (`deleteWebEvents` + enqueue `pi new`). Query either with
 ---
 
 ## 3. Deployment
+
+### Configuration
+
+Config is read from `PIDG_CONFIG` (default `~/.config/pi-discord-gateway/config.env`),
+inherited from piscord. On this host the worker uses `~/.config/piweb/config.env`
+and the container gets the same values from `~/src/piweb/.env` via compose.
+
+**The two must agree** on every path variable — see invariant 1.
+
+| variable | side | notes |
+|---|---|---|
+| `DB_PATH`, `SESSIONS_DIR` | both | the shared state; identical paths |
+| `WEB_MEDIA_DIR`, `WEB_UPLOAD_DIR` | both | uploads staged by web, read by worker |
+| `WEB_AUTH_TOKEN` | both | token login; may be empty if identity auth is on |
+| `WEB_PORT`, `WEB_HOST` | web | `WEB_HOST` stays loopback (invariant 3) |
+| `WEB_TRUST_TAILSCALE_IDENTITY` | web | default true |
+| `WEB_ALLOWED_LOGINS` | web | comma-separated; empty = any tailnet identity |
+| `WEB_PUBLIC_ORIGIN` | web | CSRF origin check (invariant 4) |
+| `WEB_SESSION_TTL_SEC` | web | cookie lifetime |
+| `WEB_EMBEDDED_WORKER` | web | run the worker in-process (all-in-one) |
+| `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING` | worker | pi invocation |
+| `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed |
+| `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE` | worker | mid-run steering / pre-emption |
+| `MAX_CONCURRENCY`, `POLL_INTERVAL_MS` | worker | queue behaviour |
+| `ARCHIVE_RETENTION_DAYS` | worker | archived session cleanup (default 30) |
+| `MAX_ATTACHMENT_BYTES` | both | upload cap |
+
+`DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
+from piscord and unused by the web transport.
 
 ### Host worker
 
@@ -319,3 +366,36 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 
 When changing the UI, re-screenshot every affected state at 390px before claiming
 it works.
+
+---
+
+## 6. Known gaps
+
+Not bugs that block anything, but they will surprise someone eventually:
+
+1. **Deleting a session does not delete pi's session files.** `deleteChannel()`
+   clears the DB rows only; `sessions/<folder>/*.jsonl` stays on disk, so the
+   full conversation survives a deletion the user believes was complete.
+2. **Every attachment is permanently copied to `/tmp/pi-discord-files/<date>/`**
+   and never cleaned up — inherited from piscord (the name is now wrong too).
+   Each photo sent from the phone leaves a second copy there indefinitely.
+3. **Backups must include the WAL.** `gateway.db` can be a few KB while
+   `gateway.db-wal` holds most of the data. Copy `-wal`/`-shm` too, or use
+   `sqlite3 .backup` / `VACUUM INTO`.
+4. **`message_log`** is still written by the queue (piscord legacy) and
+   duplicates what `web_events` records.
+
+## 7. This deployment
+
+| | |
+|---|---|
+| URL | `https://piweb.crayfish-monitor.ts.net/` (tailnet only, no Funnel) |
+| repo | `AyaSakura-comp/piweb` (**private**), remote `ayasakura`; `upstream` = piscord |
+| worker | `systemctl --user status piweb-worker` |
+| containers | `piweb-app` (web) + `piweb-ts` (tailscale sidecar) |
+| data | `~/.local/share/piweb/` |
+| worker config | `~/.config/piweb/config.env` (chmod 600) |
+| compose env | `~/src/piweb/.env` (chmod 600, gitignored) |
+
+Auth is Tailscale identity, so the UI opens with nothing to type; the token in
+`WEB_AUTH_TOKEN` remains as the fallback path.
