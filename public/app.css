@@ -587,6 +587,9 @@ svg {
 .composer-wrap {
   position: relative;
   flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 0 10px calc(10px + env(safe-area-inset-bottom));
   background: var(--bg);
 }
@@ -650,13 +653,25 @@ svg {
 /* ── slash autocomplete ──────────────────────────────────────────────── */
 
 .autocomplete {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: calc(100% - 4px);
-  max-height: 46vh;
+  /*
+   * In normal flow, NOT absolutely positioned. Absolute + `max-height: 46vh`
+   * overflowed off-screen with the keyboard open: `vh` tracks the layout
+   * viewport, which iOS does not shrink for the keyboard, so the box became
+   * taller than the visible area above the composer and got clipped at both
+   * ends with nothing to scroll. As a flex item it is bounded by the column and
+   * always scrolls internally instead.
+   *
+   * --ac-max is kept in sync with visualViewport by app.js (the keyboard only
+   * changes the VISUAL viewport, which no CSS unit exposes).
+   */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: var(--ac-max, 40dvh);
+  margin-bottom: 6px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Don't chain the scroll to the page when the list hits its end. */
+  overscroll-behavior: contain;
   background: var(--bg-alt);
   border: 1px solid var(--bg-dark);
   border-radius: 8px;
@@ -665,6 +680,10 @@ svg {
 }
 
 .ac-head {
+  /* Sticky so you can still see what the list is while scrolling it. */
+  position: sticky;
+  top: 0;
+  background: var(--bg-alt);
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 700;

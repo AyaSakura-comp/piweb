@@ -296,6 +296,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Timestamps**: SQLite returns `YYYY-MM-DD HH:MM:SS` in UTC with no zone marker.
   Append `Z` before parsing or Safari reads it as local time and every stamp is
   hours off.
+- **The on-screen keyboard changes only the VISUAL viewport.** `vh`/`dvh` track
+  the *layout* viewport, which iOS does not shrink for the keyboard. A popover
+  sized in `vh` above the composer therefore runs off the top of the screen and
+  is clipped rather than scrolling. The autocomplete is a normal flex item
+  (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
+  sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
+  resizing the viewport short (390×420), not just at 390×844.
 - **Slash commands**: `/` opens command autocomplete; once a command with an
   argument is complete it switches to value suggestions (models come from the
   `meta` table, published by the worker). Selection uses `pointerdown`, since the

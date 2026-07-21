@@ -671,6 +671,7 @@ function renderAutocomplete() {
   const box = $('autocomplete');
   box.textContent = '';
   box.hidden = false;
+  syncAutocompleteHeight();
 
   box.append(el('div', 'ac-head', state.ac.mode === 'arg' ? 'Values' : 'Commands'));
 
@@ -692,6 +693,10 @@ function renderAutocomplete() {
     });
     box.append(row);
   });
+
+  // Arrow-key navigation must not walk the selection out of view.
+  const selected = box.querySelector('.ac-item.sel');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
 }
 
 function applyAutocomplete(item) {
@@ -716,6 +721,32 @@ function hideAutocomplete() {
   state.ac = { open: false, items: [], index: 0, mode: null };
   $('autocomplete').hidden = true;
 }
+
+// ── keyboard-aware sizing ────────────────────────────────────────────────
+
+/**
+ * Cap the autocomplete to the space actually visible.
+ *
+ * Opening the on-screen keyboard changes only the VISUAL viewport; the layout
+ * viewport (and therefore vh/dvh) stays at full screen height on iOS. Without
+ * this the list is sized against a viewport taller than what you can see and
+ * runs off the top of the screen instead of scrolling.
+ */
+function syncAutocompleteHeight() {
+  const vv = window.visualViewport;
+  const available = vv ? vv.height : window.innerHeight;
+  const composer = $('composer').getBoundingClientRect().height;
+  // Leave room for the composer, the attachment chips and a little breathing space.
+  const max = Math.max(140, Math.round(available - composer - 90));
+  document.documentElement.style.setProperty('--ac-max', `${max}px`);
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncAutocompleteHeight);
+  window.visualViewport.addEventListener('scroll', syncAutocompleteHeight);
+}
+window.addEventListener('resize', syncAutocompleteHeight);
+syncAutocompleteHeight();
 
 // ── drawer ───────────────────────────────────────────────────────────────
 
