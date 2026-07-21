@@ -672,6 +672,8 @@ svg {
   -webkit-overflow-scrolling: touch;
   /* Don't chain the scroll to the page when the list hits its end. */
   overscroll-behavior: contain;
+  /* Let the browser own vertical panning; taps are detected in JS. */
+  touch-action: pan-y;
   background: var(--bg-alt);
   border: 1px solid var(--bg-dark);
   border-radius: 8px;
