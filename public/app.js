@@ -21,6 +21,12 @@ const state = {
   commands: [],
   models: [],
   ac: { open: false, items: [], index: 0, mode: null },
+  // Infinite scroll upward: `oldest` is the lowest event id currently rendered,
+  // `hasMore` says whether anything precedes it, `loadingOlder` prevents the
+  // scroll handler from firing overlapping fetches.
+  oldest: 0,
+  hasMore: false,
+  loadingOlder: false,
 };
 
 // ── api ──────────────────────────────────────────────────────────────────
@@ -141,17 +147,100 @@ async function createSession() {
 async function selectSession(jid) {
   state.activeJid = jid;
   state.cursor = 0;
+  state.oldest = 0;
+  state.hasMore = false;
+  state.loadingOlder = false;
   const session = state.sessions.find((s) => s.jid === jid);
   $('session-name').textContent = session ? session.name : jid;
   $('messages').textContent = '';
   renderSessions();
 
-  const { events, busy } = await api(`/api/sessions/${encodeURIComponent(jid)}/events`);
+  // Only the newest page; older history is pulled in as the user scrolls up.
+  const { events, busy, hasMore } = await api(
+    `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
+  );
   for (const event of events) appendEvent(event, false);
+  state.oldest = events.length > 0 ? events[0].id : 0;
+  state.hasMore = Boolean(hasMore);
+  renderTopSentinel();
   setBusy(busy);
   scrollToBottom(true);
   openStream();
 }
+
+const PAGE_SIZE = 50;
+
+/**
+ * Prepend one page of older events, keeping the viewport visually still.
+ *
+ * Inserting above the scroll position would otherwise jump the content down by
+ * the height of whatever was added, so the scroll offset is re-anchored by the
+ * change in scrollHeight — the standard trick, and the reason this measures
+ * before and after the DOM insert.
+ */
+async function loadOlder() {
+  if (state.loadingOlder || !state.hasMore || !state.activeJid || !state.oldest) return;
+  state.loadingOlder = true;
+  setTopSentinel('loading');
+
+  try {
+    const { events, hasMore } = await api(
+      `/api/sessions/${encodeURIComponent(state.activeJid)}/events?before=${state.oldest}&limit=${PAGE_SIZE}`,
+    );
+
+    const messages = $('messages');
+    const heightBefore = messages.scrollHeight;
+    const topBefore = messages.scrollTop;
+
+    // Build detached, then insert in one go so layout is touched once.
+    const frag = document.createDocumentFragment();
+    for (const event of events) frag.append(buildEventNode(event));
+    const anchor = $('top-sentinel');
+    messages.insertBefore(frag, anchor ? anchor.nextSibling : messages.firstChild);
+
+    if (events.length > 0) state.oldest = events[0].id;
+    state.hasMore = Boolean(hasMore);
+
+    messages.scrollTop = topBefore + (messages.scrollHeight - heightBefore);
+  } finally {
+    state.loadingOlder = false;
+    renderTopSentinel();
+  }
+}
+
+/** A marker row at the top: "load more" affordance, spinner, or start-of-history. */
+function renderTopSentinel() {
+  const messages = $('messages');
+  let sentinel = $('top-sentinel');
+  if (!sentinel) {
+    sentinel = el('div', 'top-sentinel');
+    sentinel.id = 'top-sentinel';
+    sentinel.addEventListener('click', loadOlder);
+    messages.prepend(sentinel);
+  }
+  setTopSentinel(state.hasMore ? 'more' : 'start');
+}
+
+function setTopSentinel(mode) {
+  const sentinel = $('top-sentinel');
+  if (!sentinel) return;
+  sentinel.textContent =
+    mode === 'loading'
+      ? 'Loading older messages…'
+      : mode === 'more'
+        ? 'Load older messages'
+        : 'Beginning of this session';
+  sentinel.className = `top-sentinel${mode === 'start' ? ' start' : ''}`;
+}
+
+// Scrolling near the top pulls in the previous page, Discord-style.
+$('messages').addEventListener(
+  'scroll',
+  () => {
+    if ($('messages').scrollTop < 300) loadOlder();
+  },
+  { passive: true },
+);
 
 $('btn-new-session').addEventListener('click', createSession);
 
@@ -312,7 +401,12 @@ function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
   const stick = isNearBottom();
+  messages.append(buildEventNode(event));
+  if (live && stick) scrollToBottom();
+}
 
+/** Build the DOM for one event. Shared by live append and paged prepend. */
+function buildEventNode(event) {
   if (event.kind === 'message') {
     const isUser = event.role === 'user';
     const row = el('div', 'msg');
@@ -331,8 +425,9 @@ function appendEvent(event, live) {
     renderFiles(body, event.files);
 
     row.append(body);
-    messages.append(row);
-  } else {
+    return row;
+  }
+  {
     const [label, icon] = EVENT_LABELS[event.kind] ?? ['Event', '•'];
     const details = el('details', `event ${event.kind}`);
     // Command output and errors are short and matter; agent chatter stays folded.
@@ -355,10 +450,8 @@ function appendEvent(event, live) {
     const bodyNode = el('div', 'event-body');
     renderText(bodyNode, event.content);
     details.append(bodyNode);
-    messages.append(details);
+    return details;
   }
-
-  if (live && stick) scrollToBottom();
 }
 
 function isNearBottom() {

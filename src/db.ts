@@ -538,12 +538,42 @@ export function getWebEventsSince(
     .all(channelJid, afterRowid, limit) as WebEventRow[];
 }
 
-/** Newest events first, then reversed — the initial view wants the TAIL of a long transcript. */
+/**
+ * Newest events first, then reversed — the initial view wants the TAIL of a
+ * long transcript, not the head.
+ *
+ * All three read paths (recent / older / since) are served by the single
+ * (channel_jid, rowid) index: each is an index range scan with a LIMIT, so cost
+ * is proportional to the page size rather than the transcript length. Keep it
+ * that way — a filter on any other column would turn these into table scans.
+ */
 export function getRecentWebEvents(channelJid: string, limit = 200): WebEventRow[] {
   const rows = db
     .prepare('select * from web_events where channel_jid = ? order by rowid desc limit ?')
     .all(channelJid, limit) as WebEventRow[];
   return rows.reverse();
+}
+
+/** One page of history OLDER than `beforeRowid`, oldest-first for prepending. */
+export function getWebEventsBefore(
+  channelJid: string,
+  beforeRowid: number,
+  limit = 50,
+): WebEventRow[] {
+  const rows = db
+    .prepare(
+      'select * from web_events where channel_jid = ? and rowid < ? order by rowid desc limit ?',
+    )
+    .all(channelJid, beforeRowid, limit) as WebEventRow[];
+  return rows.reverse();
+}
+
+/** Whether anything older than `rowid` exists — drives the client's "load more". */
+export function hasWebEventsBefore(channelJid: string, rowid: number): boolean {
+  const row = db
+    .prepare('select 1 as x from web_events where channel_jid = ? and rowid < ? limit 1')
+    .get(channelJid, rowid) as { x: number } | undefined;
+  return Boolean(row);
 }
 
 export function deleteWebEvents(channelJid: string): number {
@@ -604,6 +634,44 @@ export function setChannelBusy(channelJid: string, busy: boolean): void {
      values (?, ?, datetime('now'))
      on conflict(channel_jid) do update set busy = excluded.busy, updated_at = excluded.updated_at`,
   ).run(channelJid, busy ? 1 : 0);
+}
+
+/**
+ * Sessions plus their busy flag and last-activity time in ONE query.
+ *
+ * The session list previously did a per-channel busy lookup (an N+1); this joins
+ * instead so the drawer costs one statement regardless of session count.
+ */
+export function listWebSessions(): Array<{
+  jid: string;
+  name: string;
+  busy: boolean;
+  modelOverride: string;
+  thinkingOverride: string;
+  cwdOverride: string;
+  lastActivity: string | null;
+}> {
+  const rows = db
+    .prepare(
+      `select c.jid, c.name, c.model_override, c.thinking_override, c.cwd_override,
+              coalesce(s.busy, 0) as busy,
+              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
+         from channels c
+         left join channel_state s on s.channel_jid = c.jid
+        where c.jid like 'web:%'
+        order by c.created_at`,
+    )
+    .all() as any[];
+
+  return rows.map((r) => ({
+    jid: r.jid,
+    name: r.name,
+    busy: Boolean(r.busy),
+    modelOverride: r.model_override,
+    thinkingOverride: r.thinking_override,
+    cwdOverride: r.cwd_override,
+    lastActivity: r.last_activity,
+  }));
 }
 
 export function isChannelBusy(channelJid: string): boolean {

@@ -77,6 +77,35 @@ it and appends the result as a `system`/`error` event. Command output therefore
 travels the same SSE path as chat and survives reconnects. Adding a command means
 touching `src/commands/catalog.ts` (data) **and** `runCommand()` (implementation).
 
+### Reading history: paged, newest-first
+
+The transcript is **not** loaded in full. A fresh open fetches the newest page
+(`PAGE_SIZE = 50`); scrolling within 300px of the top pulls the previous page and
+prepends it, Discord-style, until `hasMore` is false.
+
+`GET /api/sessions/:jid/events` has three modes, all served by the single
+`(channel_jid, rowid)` index as bounded range scans — cost tracks page size, not
+transcript length:
+
+| query | returns | used for |
+|---|---|---|
+| *(none)* | newest `limit` | first open |
+| `?before=<id>` | `limit` older than id | scroll-up paging |
+| `?after=<id>` | newer than id | SSE catch-up / reconnect |
+
+`limit` is clamped to 200. Adding a filter on any non-indexed column would turn
+these into table scans — don't.
+
+**Prepending must not move the viewport.** `loadOlder()` records `scrollHeight`
+and `scrollTop`, inserts the page as a single `DocumentFragment`, then sets
+`scrollTop += (scrollHeight - heightBefore)`. Verified by measuring a reference
+element's viewport offset across a load: it must shift by exactly the amount
+scrolled and not by the height of the inserted rows (measured drift: 0px).
+
+Careful when testing: assigning `element.scrollTop` fires a real scroll event, so
+it can trigger a load during your own measurement and make two post-load states
+look like a passing comparison.
+
 ### Storage: two histories, not one
 
 | store | what | cleared by |
@@ -115,20 +144,25 @@ both (`deleteWebEvents` + enqueue `pi new`). Query either with
    Every state-changing request is separately checked against `WEB_PUBLIC_ORIGIN`
    via `Origin`/`Sec-Fetch-Site`. Keep that check when adding routes.
 
-5. **`[hidden] { display: none !important }` must stay at the top of app.css.**
+5. **New sessions auto-issue `pi new`** (silently, via `control_queue`) so a
+   session can never inherit an agent context. It is a no-op for a fresh folder;
+   it exists as a guarantee, and because deleted sessions currently leave their
+   session directory on disk.
+
+6. **`[hidden] { display: none !important }` must stay at the top of app.css.**
    Author rules that set `display` (`.login{display:grid}`, `.app{display:flex}`,
    `.typing`, `.autocomplete`) beat the UA stylesheet's `[hidden]` rule regardless
    of specificity. Without it the login overlay renders permanently on top of a
    fully working app — and `el.hidden` still reads `true`, so no JS check catches it.
 
-6. **SSE is resumed by event id.** `EventSource` auto-reconnect would replay from
+7. **SSE is resumed by event id.** `EventSource` auto-reconnect would replay from
    the original `?after=` and duplicate everything, so the client closes and
    reopens with the current cursor. Keep `web_events.rowid` monotonic.
 
-7. **`ts-state/` must stay in `.dockerignore`.** It is root-owned; including it
+8. **`ts-state/` must stay in `.dockerignore`.** It is root-owned; including it
    breaks `docker build` with `can't stat ts-state/certs`.
 
-8. **Attachments use the local-file `AttachmentMeta` variant** (`filePath` set,
+9. **Attachments use the local-file `AttachmentMeta` variant** (`filePath` set,
    `url` empty). `session/media.ts` copies instead of fetching, so uploads still
    get PNG transcoding and Breeze ASR voice transcription.
 
