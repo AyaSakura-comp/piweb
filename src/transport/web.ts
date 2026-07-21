@@ -17,6 +17,7 @@ import { copyFile, mkdir } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
+import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { logger } from '../logger.js';
 import { appendWebEvent, setChannelBusy } from '../db.js';
 import type { Transport } from './index.js';
@@ -45,14 +46,14 @@ function summarizeToolArgs(args: unknown): string {
  */
 async function publishFile(jid: string, filePath: string): Promise<string | undefined> {
   try {
-    const channelDir = join(config.webMediaDir, encodeURIComponent(jid));
+    const channelDir = join(config.webMediaDir, mediaDirName(jid));
     await mkdir(channelDir, { recursive: true });
     // Keep the extension (the browser sniffs images by it) but prefix a UUID so
     // two runs writing "chart.png" don't clobber each other.
-    const safeName = `${randomUUID().slice(0, 8)}-${basename(filePath)}`.replace(/[^\w.\-]/g, '_');
-    const dest = join(channelDir, safeName || `file${extname(filePath)}`);
-    await copyFile(filePath, dest);
-    return `/media/${encodeURIComponent(jid)}/${encodeURIComponent(safeName)}`;
+    const safeName =
+      mediaFileName(randomUUID().slice(0, 8), basename(filePath)) || `file${extname(filePath)}`;
+    await copyFile(filePath, join(channelDir, safeName));
+    return mediaUrl(jid, safeName);
   } catch (err: any) {
     logger.warn({ err: err.message, filePath, jid }, 'web transport: failed to publish file');
     return undefined;

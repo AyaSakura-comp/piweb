@@ -117,6 +117,24 @@ Clearing one does **not** clear the other, which is why the header 🗑 button d
 both (`deleteWebEvents` + enqueue `pi new`). Query either with
 `scripts/history.py show|context`.
 
+### Search and jump
+
+`GET /api/sessions/:jid/search?q=` does a substring match within one session and
+returns snippets cut around the hit. Clicking a result calls
+`/events?around=<id>`, which returns a window centred on that event; the client
+replaces the transcript with it, scrolls the target into view and flashes it.
+
+Jumping **detaches the view from the live tail**, which is why `state.atLive`
+exists: while detached, incoming SSE events must not be appended (they belong
+after history the user cannot see yet). They set `hasMoreNewer` and reveal
+"Jump to present" instead, and scrolling down pages forward until the tail is
+reached, at which point live appends resume.
+
+`like '%x%'` cannot use an index, so search scans that session's rows — bounded
+by `(channel_jid, rowid)` to one session. Fine at personal scale; the upgrade
+path is FTS5 with sync triggers, not another b-tree index (no index can serve a
+leading wildcard).
+
 ### Querying history
 
 `scripts/history.py` — stdlib only (this host has no `sqlite3` binary) and opens
@@ -180,7 +198,15 @@ turn under `event["message"]` and its `content` is a list of typed parts
 8. **`ts-state/` must stay in `.dockerignore`.** It is root-owned; including it
    breaks `docker build` with `can't stat ts-state/certs`.
 
-9. **Attachments use the local-file `AttachmentMeta` variant** (`filePath` set,
+9. **Media paths have exactly ONE spelling** — `src/media-path.ts`. The first
+   cut built directories with `encodeURIComponent(jid)`, so `web:abc` became a
+   directory literally named `web%3Aabc`, while the server decoded the URL back
+   to `web:abc` and looked for a directory that never existed. Every generated
+   image and upload 404'd into a broken-image icon with the file sitting on
+   disk. Sanitising to `[A-Za-z0-9._-]` makes encoding a no-op both ways — never
+   reintroduce an encode on one side and a decode on the other.
+
+10. **Attachments use the local-file `AttachmentMeta` variant** (`filePath` set,
    `url` empty). `session/media.ts` copies instead of fetching, so uploads still
    get PNG transcoding and Breeze ASR voice transcription.
 

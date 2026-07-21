@@ -27,15 +27,19 @@ import {
   getChannel,
   getMeta,
   getRecentWebEvents,
+  getWebEventsAround,
   getWebEventsBefore,
   getWebEventsSince,
+  hasWebEventsAfter,
   hasWebEventsBefore,
+  searchWebEvents,
   isChannelBusy,
   listWebSessions,
   registerChannel,
   type WebEventRow,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
+import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import {
   buildSetCookie,
   COOKIE_NAME,
@@ -360,17 +364,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
-    // Three read modes, all index-backed range scans:
+    // Four read modes, all index-backed range scans:
     //   ?after=<id>   catch-up after a reconnect (newer than id)
     //   ?before=<id>  one page of OLDER history (infinite scroll upward)
-    //   (neither)     the newest page — what a fresh open shows
+    //   ?around=<id>  a window centred on an event (jump to a search hit)
+    //   (none)        the newest page — what a fresh open shows
     if (sub === 'events' && method === 'GET') {
       const limit = clampLimit(url.searchParams.get('limit'));
       const after = Number(url.searchParams.get('after') ?? '0');
       const before = Number(url.searchParams.get('before') ?? '0');
+      const around = Number(url.searchParams.get('around') ?? '0');
 
       let events;
-      if (Number.isFinite(before) && before > 0) {
+      if (Number.isFinite(around) && around > 0) {
+        events = getWebEventsAround(jid, around, limit);
+      } else if (Number.isFinite(before) && before > 0) {
         events = getWebEventsBefore(jid, before, limit);
       } else if (Number.isFinite(after) && after > 0) {
         events = getWebEventsSince(jid, after, limit);
@@ -379,12 +387,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
 
       const oldest = events.length > 0 ? events[0].rowid : before > 0 ? before : 0;
+      const newest = events.length > 0 ? events[events.length - 1].rowid : 0;
       sendJson(res, 200, {
         events: events.map(serializeEvent),
         busy: isChannelBusy(jid),
-        // Lets the client stop asking once it has reached the beginning.
+        // Lets the client stop asking once it has reached either end.
         hasMore: oldest > 0 ? hasWebEventsBefore(jid, oldest) : false,
+        hasMoreNewer: newest > 0 ? hasWebEventsAfter(jid, newest) : false,
       });
+      return;
+    }
+
+    if (sub === 'search' && method === 'GET') {
+      const q = (url.searchParams.get('q') ?? '').trim();
+      if (q.length < 2) {
+        sendJson(res, 200, { hits: [], note: 'Type at least 2 characters' });
+        return;
+      }
+      const hits = searchWebEvents(jid, q, clampLimit(url.searchParams.get('limit')));
+      sendJson(res, 200, { hits });
       return;
     }
 
@@ -475,8 +496,8 @@ async function saveUploads(
 ): Promise<{ files: string[]; urls: string[] }> {
   if (attachments.length === 0) return { files: [], urls: [] };
 
-  const uploadDir = join(config.webUploadDir, encodeURIComponent(jid));
-  const mediaDir = join(config.webMediaDir, encodeURIComponent(jid));
+  const uploadDir = join(config.webUploadDir, mediaDirName(jid));
+  const mediaDir = join(config.webMediaDir, mediaDirName(jid));
   await mkdir(uploadDir, { recursive: true });
   await mkdir(mediaDir, { recursive: true });
 
@@ -484,7 +505,7 @@ async function saveUploads(
   const urls: string[] = [];
 
   for (const attachment of attachments) {
-    const safeName = `${randomUUID().slice(0, 8)}-${attachment.name}`.replace(/[^\w.\-]/g, '_');
+    const safeName = mediaFileName(randomUUID().slice(0, 8), attachment.name);
     const buffer = Buffer.from(attachment.dataBase64, 'base64');
 
     if (config.maxAttachmentBytes > 0 && buffer.length > config.maxAttachmentBytes) {
@@ -498,7 +519,7 @@ async function saveUploads(
     // A second copy under the served media root — webUploadDir is deliberately
     // not exposed over HTTP.
     await writeFile(join(mediaDir, safeName), buffer);
-    urls.push(`/media/${encodeURIComponent(jid)}/${encodeURIComponent(safeName)}`);
+    urls.push(mediaUrl(jid, safeName));
   }
 
   return { files, urls };

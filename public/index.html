@@ -65,6 +65,11 @@
             <span class="hash">#</span>
             <span id="session-name">no session</span>
           </div>
+          <button class="icon-btn" id="btn-search" title="Search" aria-label="Search history">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+            </svg>
+          </button>
           <button class="icon-btn" id="btn-clean" title="Clean session" aria-label="Clean session">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
@@ -72,7 +77,25 @@
           </button>
         </header>
 
+        <div class="search-panel" id="search-panel" hidden>
+          <div class="search-bar">
+            <input
+              id="search-input"
+              type="search"
+              inputmode="search"
+              placeholder="Search this session…"
+              aria-label="Search this session"
+            />
+            <button type="button" class="icon-btn" id="btn-search-close" aria-label="Close search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+          <div class="search-results" id="search-results"></div>
+        </div>
+
         <div class="messages" id="messages"></div>
+
+        <button class="jump-live" id="jump-live" hidden>Jump to present ↓</button>
 
         <div class="typing" id="typing" hidden>
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
