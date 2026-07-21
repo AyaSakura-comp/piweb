@@ -166,6 +166,7 @@ svg {
 }
 
 .main {
+  position: relative; /* containing block for .jump-live */
   flex: 1;
   min-width: 0;
   display: flex;
@@ -760,4 +761,131 @@ svg {
   cursor: default;
   opacity: 0.6;
   font-size: 12px;
+}
+
+/* ── search ──────────────────────────────────────────────────────────── */
+
+.search-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Sits between the topbar and the transcript, taking at most half the
+     screen so the conversation behind it stays visible for context. */
+  max-height: 55dvh;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--bg-dark);
+  flex: none;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 8px 12px;
+  flex: none;
+}
+
+.search-bar input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-size: 16px; /* keep iOS from zooming */
+  outline: none;
+}
+
+.search-bar input:focus {
+  border-color: var(--accent);
+}
+
+.search-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding-bottom: 6px;
+}
+
+.search-hit {
+  padding: 9px 14px;
+  border-top: 1px solid var(--bg-dark);
+}
+
+.search-hit .hit-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.search-hit .hit-who {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.search-hit .hit-text {
+  font-size: 13.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.search-hit mark {
+  background: #b58900;
+  color: #1e1f22;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.search-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Flash the message you jumped to, so it is obvious where you landed. */
+.msg.jump-target,
+.event.jump-target {
+  animation: jump-flash 2s ease-out;
+}
+
+@keyframes jump-flash {
+  0%,
+  40% {
+    background: rgb(88 101 242 / 0.28);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg.jump-target,
+  .event.jump-target {
+    animation: none;
+    outline: 2px solid var(--accent);
+  }
+}
+
+.jump-live {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 96px;
+  z-index: 5;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
 }

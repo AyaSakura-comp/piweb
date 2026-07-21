@@ -27,6 +27,13 @@ const state = {
   oldest: 0,
   hasMore: false,
   loadingOlder: false,
+  // Jumping to a search hit detaches the view from the live tail: newer events
+  // must then be paged in downward, and incoming SSE events must NOT be
+  // appended (they belong after history the user cannot see yet).
+  newest: 0,
+  hasMoreNewer: false,
+  loadingNewer: false,
+  atLive: true,
 };
 
 // ── api ──────────────────────────────────────────────────────────────────
@@ -150,6 +157,10 @@ async function selectSession(jid) {
   state.oldest = 0;
   state.hasMore = false;
   state.loadingOlder = false;
+  state.newest = 0;
+  state.hasMoreNewer = false;
+  state.atLive = true;
+  closeSearch();
   const session = state.sessions.find((s) => s.jid === jid);
   $('session-name').textContent = session ? session.name : jid;
   $('messages').textContent = '';
@@ -161,7 +172,11 @@ async function selectSession(jid) {
   );
   for (const event of events) appendEvent(event, false);
   state.oldest = events.length > 0 ? events[0].id : 0;
+  state.newest = events.length > 0 ? events[events.length - 1].id : 0;
   state.hasMore = Boolean(hasMore);
+  state.hasMoreNewer = false;
+  state.atLive = true;
+  setJumpLive(false);
   renderTopSentinel();
   setBusy(busy);
   scrollToBottom(true);
@@ -233,14 +248,169 @@ function setTopSentinel(mode) {
   sentinel.className = `top-sentinel${mode === 'start' ? ' start' : ''}`;
 }
 
-// Scrolling near the top pulls in the previous page, Discord-style.
+/** Page forward — only needed after a jump has detached the view from the tail. */
+async function loadNewer() {
+  // Only relevant while detached: at the live tail, SSE already appends.
+  if (state.atLive || state.loadingNewer || !state.hasMoreNewer) return;
+  if (!state.activeJid || !state.newest) return;
+  state.loadingNewer = true;
+  try {
+    const { events, hasMoreNewer } = await api(
+      `/api/sessions/${encodeURIComponent(state.activeJid)}/events?after=${state.newest}&limit=${PAGE_SIZE}`,
+    );
+    const messages = $('messages');
+    const frag = document.createDocumentFragment();
+    for (const event of events) frag.append(buildEventNode(event));
+    messages.append(frag);
+    if (events.length > 0) state.newest = events[events.length - 1].id;
+    state.hasMoreNewer = Boolean(hasMoreNewer);
+    if (!state.hasMoreNewer) {
+      // Caught up with the tail: resume live appends.
+      state.atLive = true;
+      state.cursor = Math.max(state.cursor, state.newest);
+      setJumpLive(false);
+    }
+  } finally {
+    state.loadingNewer = false;
+  }
+}
+
+// Scrolling near either end pages history in, Discord-style.
 $('messages').addEventListener(
   'scroll',
   () => {
-    if ($('messages').scrollTop < 300) loadOlder();
+    const m = $('messages');
+    if (m.scrollTop < 300) loadOlder();
+    if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
   },
   { passive: true },
 );
+
+function setJumpLive(show) {
+  $('jump-live').hidden = !show;
+}
+
+$('jump-live').addEventListener('click', () => {
+  if (state.activeJid) selectSession(state.activeJid);
+});
+
+// ── search ───────────────────────────────────────────────────────────────
+
+let searchTimer;
+
+function openSearch() {
+  $('search-panel').hidden = false;
+  $('search-input').focus();
+}
+
+function closeSearch() {
+  $('search-panel').hidden = true;
+  $('search-input').value = '';
+  $('search-results').textContent = '';
+  clearTimeout(searchTimer);
+}
+
+$('btn-search').addEventListener('click', () => {
+  if ($('search-panel').hidden) openSearch();
+  else closeSearch();
+});
+$('btn-search-close').addEventListener('click', closeSearch);
+
+$('search-input').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  // Debounced: every keystroke would otherwise scan the session's rows.
+  searchTimer = setTimeout(runSearch, 250);
+});
+
+async function runSearch() {
+  const q = $('search-input').value.trim();
+  const results = $('search-results');
+  if (!state.activeJid || q.length < 2) {
+    results.textContent = '';
+    return;
+  }
+
+  const { hits } = await api(
+    `/api/sessions/${encodeURIComponent(state.activeJid)}/search?q=${encodeURIComponent(q)}`,
+  );
+
+  results.textContent = '';
+  if (hits.length === 0) {
+    results.append(el('div', 'search-empty', `No matches for "${q}"`));
+    return;
+  }
+
+  for (const hit of hits) {
+    const row = el('div', 'search-hit');
+    const meta = el('div', 'hit-meta');
+    meta.append(el('span', 'hit-who', hitLabel(hit)));
+    meta.append(el('span', null, timeLabel(hit.createdAt)));
+    row.append(meta);
+
+    const text = el('div', 'hit-text');
+    highlight(text, hit.snippet, q);
+    row.append(text);
+
+    row.addEventListener('click', () => jumpTo(hit.id));
+    results.append(row);
+  }
+}
+
+function hitLabel(hit) {
+  if (hit.kind === 'message') return hit.role === 'user' ? 'You' : 'pi';
+  return hit.role || hit.kind;
+}
+
+/** Mark occurrences of `q` without ever assigning HTML from stored content. */
+function highlight(container, text, q) {
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  let i = 0;
+  while (true) {
+    const at = lower.indexOf(needle, i);
+    if (at === -1) break;
+    if (at > i) container.append(document.createTextNode(text.slice(i, at)));
+    container.append(el('mark', null, text.slice(at, at + needle.length)));
+    i = at + needle.length;
+  }
+  container.append(document.createTextNode(text.slice(i)));
+}
+
+/** Load a window centred on an event, scroll to it and flash it. */
+async function jumpTo(id) {
+  if (!state.activeJid) return;
+
+  const { events, hasMore, hasMoreNewer, busy } = await api(
+    `/api/sessions/${encodeURIComponent(state.activeJid)}/events?around=${id}&limit=${PAGE_SIZE}`,
+  );
+
+  const messages = $('messages');
+  messages.textContent = '';
+  const nodes = new Map();
+  for (const event of events) {
+    const node = buildEventNode(event);
+    nodes.set(event.id, node);
+    messages.append(node);
+  }
+
+  state.oldest = events.length > 0 ? events[0].id : 0;
+  state.newest = events.length > 0 ? events[events.length - 1].id : 0;
+  state.hasMore = Boolean(hasMore);
+  state.hasMoreNewer = Boolean(hasMoreNewer);
+  // Detached from the tail unless the window happens to reach it.
+  state.atLive = !state.hasMoreNewer;
+  setJumpLive(!state.atLive);
+  setBusy(busy);
+  renderTopSentinel();
+
+  const target = nodes.get(id);
+  if (target) {
+    target.scrollIntoView({ block: 'center' });
+    target.classList.add('jump-target');
+    setTimeout(() => target.classList.remove('jump-target'), 2200);
+  }
+  closeSearch();
+}
 
 $('btn-new-session').addEventListener('click', createSession);
 
@@ -274,6 +444,14 @@ function openStream() {
     const event = JSON.parse(e.data);
     // Guard against a late frame from a previous session's stream.
     if (event.id <= state.cursor) return;
+    if (!state.atLive) {
+      // Viewing older history after a jump — appending here would splice new
+      // messages directly after unrelated ones. Offer to return instead.
+      state.cursor = Math.max(state.cursor, event.id);
+      state.hasMoreNewer = true;
+      setJumpLive(true);
+      return;
+    }
     appendEvent(event, true);
   });
 

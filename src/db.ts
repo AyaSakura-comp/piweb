@@ -568,6 +568,92 @@ export function getWebEventsBefore(
   return rows.reverse();
 }
 
+/**
+ * A window of history centred on `rowid` — what "jump to this search result"
+ * needs: the hit plus context on both sides, in one round trip.
+ */
+export function getWebEventsAround(
+  channelJid: string,
+  rowid: number,
+  limit = 50,
+): WebEventRow[] {
+  const half = Math.max(1, Math.floor(limit / 2));
+  const before = db
+    .prepare(
+      'select * from web_events where channel_jid = ? and rowid <= ? order by rowid desc limit ?',
+    )
+    .all(channelJid, rowid, half) as WebEventRow[];
+  const after = db
+    .prepare('select * from web_events where channel_jid = ? and rowid > ? order by rowid limit ?')
+    .all(channelJid, rowid, half) as WebEventRow[];
+  return [...before.reverse(), ...after];
+}
+
+/** Whether anything NEWER than `rowid` exists — the downward twin of hasWebEventsBefore. */
+export function hasWebEventsAfter(channelJid: string, rowid: number): boolean {
+  const row = db
+    .prepare('select 1 as x from web_events where channel_jid = ? and rowid > ? limit 1')
+    .get(channelJid, rowid) as { x: number } | undefined;
+  return Boolean(row);
+}
+
+export interface WebSearchHit {
+  id: number;
+  kind: string;
+  role: string;
+  snippet: string;
+  createdAt: string;
+}
+
+/**
+ * Substring search within a session.
+ *
+ * `like '%x%'` cannot use an index, so this scans the channel's rows — bounded
+ * by the (channel_jid, rowid) index to that one session rather than the whole
+ * table. That is fine at personal-transcript scale; if it ever isn't, the
+ * upgrade is an FTS5 virtual table kept in sync by triggers, not a new index
+ * (no b-tree index can serve a leading-wildcard match).
+ *
+ * Snippets are cut around the first match so the UI can show context without
+ * shipping whole tool outputs to the client.
+ */
+export function searchWebEvents(
+  channelJid: string,
+  query: string,
+  limit = 50,
+): WebSearchHit[] {
+  const rows = db
+    .prepare(
+      `select rowid, kind, role, content, created_at
+         from web_events
+        where channel_jid = ? and content like ? escape '\\'
+        order by rowid desc limit ?`,
+    )
+    .all(channelJid, `%${escapeLike(query)}%`, limit) as Array<{
+    rowid: number;
+    kind: string;
+    role: string;
+    content: string;
+    created_at: string;
+  }>;
+
+  const needle = query.toLowerCase();
+  return rows.map((r) => {
+    const at = r.content.toLowerCase().indexOf(needle);
+    const start = Math.max(0, at - 40);
+    const snippet =
+      (start > 0 ? '…' : '') +
+      r.content.slice(start, start + 160).replace(/\s+/g, ' ').trim() +
+      (start + 160 < r.content.length ? '…' : '');
+    return { id: r.rowid, kind: r.kind, role: r.role, snippet, createdAt: r.created_at };
+  });
+}
+
+/** `%`, `_` and the escape char itself are LIKE wildcards — a literal search must not match them. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 /** Whether anything older than `rowid` exists — drives the client's "load more". */
 export function hasWebEventsBefore(channelJid: string, rowid: number): boolean {
   const row = db
