@@ -1,9 +1,9 @@
 /**
  * Message processing loop.
  *
- * Polls SQLite for pending messages, dispatches to pi agent, sends response
- * back to Discord. Enforces per-channel serial processing and global
- * concurrency limit.
+ * Polls SQLite for pending messages, dispatches to pi agent, sends the response
+ * back through the installed transport. Enforces per-channel serial processing
+ * and a global concurrency limit.
  */
 
 import { config } from '../config.js';
@@ -21,8 +21,7 @@ import {
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
 import { getRpcSession, closeAllRpcSessions } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
-import { sendResponse, sendFilesResponse, setTyping } from '../discord/client.js';
-import { createEventStreamer } from '../discord/stream-events.js';
+import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
 
 /** Channels currently being processed (per-channel serial lock) */
@@ -230,7 +229,7 @@ async function processMessage(
   const typingLoop = createTypingLoop(jid);
 
   try {
-    const prompt = `[Discord user: ${senderName}]\n${content}`;
+    const prompt = `[Web user: ${senderName}]\n${content}`;
 
     logMessage(jid, 'user', content);
 
@@ -240,7 +239,7 @@ async function processMessage(
     // the user can watch what the agent is doing instead of staring at a
     // typing indicator. Final assistant text still falls through to the
     // outbox/marker path below.
-    const onEvent = createEventStreamer(jid);
+    const onEvent = getTransport().createEventStreamer(jid);
 
     // Persistent RPC session path (steer-able). Falls back to the one-shot
     // print path for attachments and the until-done loop, which the RPC prompt
@@ -274,11 +273,11 @@ async function processMessage(
       const { text: outText, files: outFiles } = parseOutboxMarkers(result.text);
       const sent =
         outFiles.length > 0
-          ? await sendFilesResponse(jid, outText, outFiles)
-          : await sendResponse(jid, outText);
+          ? await getTransport().sendFilesResponse(jid, outText, outFiles)
+          : await getTransport().sendResponse(jid, outText);
       if (!sent) {
         markMessageFailed(rowid);
-        logger.warn({ jid }, 'Agent response generated but could not be delivered to Discord');
+        logger.warn({ jid }, 'Agent response generated but could not be delivered');
         return;
       }
 
@@ -289,7 +288,7 @@ async function processMessage(
     }
 
     const errMsg = `⚠️ Agent error: ${result.error?.slice(0, 300) || 'unknown error'}`;
-    await sendResponse(jid, errMsg);
+    await getTransport().sendResponse(jid, errMsg);
     markMessageFailed(rowid);
     logger.warn({ jid, error: result.error }, 'Agent returned error');
   } catch (err: any) {
@@ -302,7 +301,7 @@ async function processMessage(
     logger.error({ jid, err: err.message }, 'processMessage failed');
     markMessageFailed(rowid);
     try {
-      await sendResponse(jid, `⚠️ Internal error: ${err.message?.slice(0, 200)}`);
+      await getTransport().sendResponse(jid, `⚠️ Internal error: ${err.message?.slice(0, 200)}`);
     } catch {
       // Nothing else to do here.
     }
@@ -317,7 +316,7 @@ function createTypingLoop(jid: string): { stop: () => Promise<void> } {
 
   const loop = (async () => {
     while (typingAlive) {
-      await setTyping(jid);
+      await getTransport().setTyping(jid);
       if (!typingAlive) break;
 
       const delay = cancellableSleep(8000);
@@ -332,6 +331,7 @@ function createTypingLoop(jid: string): { stop: () => Promise<void> } {
       typingAlive = false;
       cancelTypingDelay();
       await loop;
+      await getTransport().clearTyping(jid);
     },
   };
 }

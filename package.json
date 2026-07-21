@@ -1,27 +1,29 @@
 {
-  "name": "piscord",
-  "version": "1.5.3",
-  "description": "Lightweight Discord gateway for pi coding agent",
+  "name": "piweb",
+  "version": "0.1.0",
+  "description": "Mobile web gateway for the pi coding agent (fork of piscord)",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Crokily/pi-discord-gateway.git"
   },
   "keywords": [
-    "discord",
-    "bot",
+    "web",
     "pi",
     "coding-agent",
     "gateway",
+    "mobile",
     "pi-package"
   ],
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
+    "piweb": "dist/cli/piweb.js",
     "piscord": "dist/cli/index.js"
   },
   "files": [
     "dist",
+    "public",
     "README.md",
     ".env.example",
     "LICENSE"
@@ -40,8 +42,10 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "start": "node dist/cli/index.js start",
-    "dev": "tsx src/cli/index.ts start"
+    "start": "node dist/cli/piweb.js all",
+    "dev": "tsx src/cli/piweb.ts all",
+    "start:web": "node dist/cli/piweb.js web",
+    "start:worker": "node dist/cli/piweb.js worker"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

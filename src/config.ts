@@ -255,6 +255,66 @@ export const config = {
 
   /** Max combined attachment size per Discord message in bytes (0 disables the limit) */
   maxTotalAttachmentBytes: envInt('MAX_TOTAL_ATTACHMENT_BYTES', 50 * 1024 * 1024, { min: 0 }),
+
+  // ── piweb: web server ──
+
+  /** Port the web UI/API listens on */
+  webPort: envInt('WEB_PORT', 8099, { min: 1 }),
+
+  /**
+   * Bind address. Defaults to loopback: the Tailscale sidecar shares this
+   * container's network namespace and proxies to 127.0.0.1, so loopback is
+   * enough — and it is what makes the injected identity headers trustworthy
+   * (nothing else on the docker network can reach the port to forge them).
+   * Only widen this if you are NOT using WEB_TRUST_TAILSCALE_IDENTITY.
+   */
+  webHost: env('WEB_HOST', '127.0.0.1'),
+
+  /**
+   * Shared secret required to use the UI. pi can run arbitrary commands on the
+   * host, so an empty token is refused at startup rather than silently serving
+   * an unauthenticated remote-code-execution endpoint.
+   */
+  webAuthToken: env('WEB_AUTH_TOKEN'),
+
+  /**
+   * Accept `tailscale serve`'s injected identity headers instead of requiring
+   * the token. Trusted ONLY for connections arriving on loopback, because any
+   * client that can open the port directly can simply set the header itself.
+   */
+  webTrustTailscaleIdentity: envBool('WEB_TRUST_TAILSCALE_IDENTITY', true),
+
+  /**
+   * Comma-separated Tailscale logins allowed in (e.g. "you@github"). Empty =>
+   * any tailnet user with an identity. Tagged devices carry no user identity
+   * and are always rejected on this path.
+   */
+  webAllowedLogins: env('WEB_ALLOWED_LOGINS'),
+
+  /**
+   * Public origin, e.g. https://piweb.example.ts.net — used to reject
+   * cross-site state-changing requests. Identity headers do NOT stop CSRF:
+   * serve stamps the device's identity onto ANY request the browser makes,
+   * including one triggered by a malicious page, so the Origin check is what
+   * actually prevents that. Empty => same-origin is inferred from Host.
+   */
+  webPublicOrigin: env('WEB_PUBLIC_ORIGIN'),
+
+  /** How long a login cookie stays valid (seconds) */
+  webSessionTtlSec: envInt('WEB_SESSION_TTL_SEC', 30 * 24 * 3600, { min: 60 }),
+
+  /** Where agent-produced files are copied so the browser can fetch them */
+  webMediaDir: env('WEB_MEDIA_DIR', resolve(DEFAULT_DATA_DIR, 'web-media')),
+
+  /** Where browser uploads are staged before being handed to pi as @file args */
+  webUploadDir: env('WEB_UPLOAD_DIR', resolve(DEFAULT_DATA_DIR, 'web-uploads')),
+
+  /**
+   * Run the pi worker loop inside the web process. Off by default: the worker
+   * normally runs on the host (full host access) while the web server runs in
+   * Docker. Turn on for an all-in-one container.
+   */
+  webEmbeddedWorker: envBool('WEB_EMBEDDED_WORKER', false),
 } as const;
 
 export type Config = typeof config;

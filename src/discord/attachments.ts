@@ -1,8 +1,14 @@
 export interface AttachmentMeta {
+  /** Remote source (Discord CDN). Empty for locally staged uploads. */
   url: string;
   name: string;
   contentType: string;
   size: number;
+  /**
+   * Local file already on disk — set by the piweb web server, which stages
+   * browser uploads itself. When present it is used instead of fetching `url`.
+   */
+  filePath?: string;
 }
 
 export interface AttachmentLimits {
