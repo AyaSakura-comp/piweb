@@ -667,16 +667,69 @@ function updateAutocomplete() {
   renderAutocomplete();
 }
 
+/**
+ * Tap vs scroll.
+ *
+ * Selection used to fire on `pointerdown`, which meant dragging the list to
+ * scroll it immediately picked whatever item the finger landed on. Selection
+ * now happens on pointerUP, and only if the pointer barely moved — so a drag
+ * scrolls and a tap selects.
+ */
+const TAP_SLOP_PX = 10;
+// Movement is the real scroll-vs-tap discriminator; this only rejects a finger
+// left resting on the list. Kept generous so a slow, deliberate tap still works.
+const TAP_MAX_MS = 1500;
+let acPointer = null;
+
+function bindAutocompleteTaps(box) {
+  box.addEventListener(
+    'pointerdown',
+    (e) => {
+      const row = e.target.closest('.ac-item');
+      acPointer = row ? { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId } : null;
+    },
+    { passive: true },
+  );
+
+  const cancel = () => {
+    acPointer = null;
+  };
+  box.addEventListener('pointercancel', cancel, { passive: true });
+  box.addEventListener('pointerleave', cancel, { passive: true });
+
+  box.addEventListener('pointerup', (e) => {
+    const start = acPointer;
+    acPointer = null;
+    if (!start || e.pointerId !== start.id) return;
+
+    const row = e.target.closest('.ac-item');
+    if (!row) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP_PX) return; // a scroll
+    if (Date.now() - start.t > TAP_MAX_MS) return; // a long press
+
+    e.preventDefault();
+    const index = Number(row.dataset.index);
+    applyAutocomplete(state.ac.items[index]);
+  });
+}
+
 function renderAutocomplete() {
   const box = $('autocomplete');
   box.textContent = '';
   box.hidden = false;
   syncAutocompleteHeight();
 
+  // Listeners are delegated and bound once; rows are rebuilt on every keystroke.
+  if (!box.dataset.bound) {
+    bindAutocompleteTaps(box);
+    box.dataset.bound = '1';
+  }
+
   box.append(el('div', 'ac-head', state.ac.mode === 'arg' ? 'Values' : 'Commands'));
 
   state.ac.items.forEach((item, i) => {
     const row = el('div', `ac-item${i === state.ac.index ? ' sel' : ''}`);
+    row.dataset.index = String(i);
     const name = el('div', 'ac-name');
     name.append(document.createTextNode(state.ac.mode === 'arg' ? item.name : `/${item.name}`));
     if (state.ac.mode === 'command' && item.arg) {
@@ -684,13 +737,6 @@ function renderAutocomplete() {
     }
     row.append(name);
     if (item.description) row.append(el('div', 'ac-desc', item.description));
-
-    // pointerdown, not click: the textarea losing focus on click would close
-    // the box before the selection registers.
-    row.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      applyAutocomplete(item);
-    });
     box.append(row);
   });
 

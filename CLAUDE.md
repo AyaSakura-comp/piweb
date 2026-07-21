@@ -303,6 +303,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
   sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
   resizing the viewport short (390×420), not just at 390×844.
+- **Selection fires on pointerUP with a movement guard**, never on pointerdown.
+  pointerdown selects the moment a finger lands, so dragging the list to scroll
+  it picks whatever was underneath. `bindAutocompleteTaps()` treats <10px of
+  movement as a tap and anything more as a scroll, and bails on `pointercancel`
+  (the browser taking over the gesture). `touch-action: pan-y` leaves vertical
+  panning to the browser. Test both directions: a drag must select nothing.
 - **Slash commands**: `/` opens command autocomplete; once a command with an
   argument is complete it switches to value suggestions (models come from the
   `meta` table, published by the worker). Selection uses `pointerdown`, since the
