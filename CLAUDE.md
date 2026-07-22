@@ -391,6 +391,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
   sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
   resizing the viewport short (390×420), not just at 390×844.
+- **Image lightbox**: tapping an image opens an in-app viewer (`openLightbox`)
+  rather than a new tab, collecting every image in the transcript so swiping
+  pages through them. The overlay sets `touch-action: none` and handles its own
+  gestures: the axis is locked by whichever displacement is larger, horizontal
+  pages, downward dismisses. Small images are shown at native size rather than
+  upscaled — an icon blown up to fill the screen just looks blurry.
 - **Selection fires on pointerUP with a movement guard**, never on pointerdown.
   pointerdown selects the moment a finger lands, so dragging the list to scroll
   it picks whatever was underneath. `bindAutocompleteTaps()` treats <10px of

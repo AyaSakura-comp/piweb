@@ -143,6 +143,25 @@
     <!-- KaTeX is vendored locally: the container serves static files only and
          must not depend on a CDN. Loaded before the app so window.katex exists
          by the time the first transcript renders. -->
+    <div class="lightbox" id="lightbox" hidden>
+      <div class="lb-bar">
+        <span class="lb-count" id="lb-count"></span>
+        <a class="lb-open" id="lb-open" target="_blank" rel="noopener noreferrer">Open original</a>
+        <button class="icon-btn" id="lb-close" aria-label="Close image viewer">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <button class="lb-nav lb-prev" id="lb-prev" aria-label="Previous image">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+      </button>
+      <div class="lb-stage" id="lb-stage">
+        <img id="lb-img" alt="" />
+      </div>
+      <button class="lb-nav lb-next" id="lb-next" aria-label="Next image">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+      </button>
+    </div>
+
     <div class="sheet" id="trash-sheet" hidden>
       <div class="sheet-panel">
         <header class="sheet-head">
