@@ -7,7 +7,17 @@
  * web server in Docker talks to it purely through the shared SQLite database.
  */
 
-import { initDb, closeDb, setMeta } from '../db.js';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import {
+  initDb,
+  closeDb,
+  setMeta,
+  listExpiredDeletedSessions,
+  purgeChannel,
+} from '../db.js';
+import { mediaDirName } from '../media-path.js';
+import { resolveChannelSessionDir } from '../session/path.js';
 import { listAvailableModels } from '../agent/model-catalog.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -22,8 +32,35 @@ import { startArchiveCleanup } from '../session/archive-cleanup.js';
 let stopScheduler: () => void = () => {};
 let stopArchiveCleanup: () => void = () => {};
 let modelRefreshTimer: NodeJS.Timeout | undefined;
+let trashSweepTimer: NodeJS.Timeout | undefined;
 
 const MODEL_REFRESH_MS = 10 * 60 * 1000;
+const TRASH_SWEEP_MS = 60 * 60 * 1000;
+
+/**
+ * Purge sessions that have sat in the trash past the retention window.
+ *
+ * Runs in the worker rather than the web tier because it deletes pi's session
+ * directories, and the worker is the process that owns them.
+ */
+async function sweepTrash(): Promise<void> {
+  try {
+    const expired = listExpiredDeletedSessions(config.webTrashRetentionDays);
+    for (const session of expired) {
+      for (const target of [
+        resolveChannelSessionDir(session.folder),
+        join(config.webMediaDir, mediaDirName(session.jid)),
+        join(config.webUploadDir, mediaDirName(session.jid)),
+      ]) {
+        await rm(target, { recursive: true, force: true }).catch(() => undefined);
+      }
+      purgeChannel(session.jid);
+      logger.info({ jid: session.jid, name: session.name }, 'Purged expired trashed session');
+    }
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Trash sweep failed');
+  }
+}
 
 /**
  * Publish pi's model list for the web UI's autocomplete. Listing models means
@@ -50,6 +87,8 @@ export async function startWorker(): Promise<void> {
   stopArchiveCleanup = startArchiveCleanup();
   publishModelCatalog();
   modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
+  void sweepTrash();
+  trashSweepTimer = setInterval(() => void sweepTrash(), TRASH_SWEEP_MS);
 
   logger.info(
     { db: config.dbPath, sessions: config.sessionsDir, piBin: config.piBin },
@@ -59,6 +98,7 @@ export async function startWorker(): Promise<void> {
 
 export async function stopWorker(): Promise<void> {
   if (modelRefreshTimer) clearInterval(modelRefreshTimer);
+  if (trashSweepTimer) clearInterval(trashSweepTimer);
   stopControlLoop();
   stopScheduler();
   stopArchiveCleanup();

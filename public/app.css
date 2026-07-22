@@ -1003,3 +1003,148 @@ svg {
 .katex .mpunct {
   color: inherit;
 }
+
+/* ── recently deleted ────────────────────────────────────────────────── */
+
+.trash-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  margin-bottom: 6px;
+}
+
+.trash-entry svg {
+  width: 16px;
+  height: 16px;
+}
+
+.trash-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Bottom sheet: reachable one-handed on a phone, unlike a centred modal. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.sheet-panel {
+  width: 100%;
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-alt);
+  border-radius: 14px 14px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px 12px 16px;
+  border-bottom: 1px solid var(--bg-dark);
+  flex: none;
+}
+
+.sheet-title {
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.sheet-note {
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  flex: none;
+}
+
+.trash-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 8px 0 12px;
+}
+
+.trash-item {
+  padding: 10px 16px;
+  border-top: 1px solid var(--bg-dark);
+}
+
+.trash-item .t-name {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.trash-item .t-meta {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.trash-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.trash-actions button {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.trash-actions .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.trash-actions .danger {
+  color: #f87171;
+  border-color: #5c2b2b;
+}
+
+.deleted-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #4a3b12;
+  color: #f5e3b3;
+  font-size: 13px;
+  flex: none;
+}
+
+.deleted-banner button {
+  margin-left: auto;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}

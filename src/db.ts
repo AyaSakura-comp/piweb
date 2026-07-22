@@ -145,6 +145,10 @@ export function initDb(): void {
   ensureTableColumn('channels', 'model_override', "text not null default ''");
   ensureTableColumn('channels', 'thinking_override', "text not null default ''");
   ensureTableColumn('channels', 'cwd_override', "text not null default ''");
+  // Soft delete: deleting a session moves it to a trash it can be restored
+  // from. Nothing is destroyed until it is purged, which also means a deleted
+  // session no longer strands its pi session directory on disk.
+  ensureTableColumn('channels', 'deleted_at', 'text');
   ensureTableColumn('message_queue', 'attachments', 'text');
 
   logger.info({ path: config.dbPath }, 'Database initialized');
@@ -744,7 +748,7 @@ export function listWebSessions(): Array<{
               (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
          from channels c
          left join channel_state s on s.channel_jid = c.jid
-        where c.jid like 'web:%'
+        where c.jid like 'web:%' and c.deleted_at is null
         order by c.created_at`,
     )
     .all() as any[];
@@ -783,13 +787,77 @@ export function getMeta(key: string): string | undefined {
   return row?.value;
 }
 
-export function deleteChannel(jid: string): void {
+/**
+ * Move a session to the trash.
+ *
+ * Only the queue is cleared — anything in flight should stop — while the
+ * transcript, settings and pi session directory are left untouched so a
+ * restore brings the session back exactly as it was.
+ */
+export function softDeleteChannel(jid: string): void {
+  db.prepare("update channels set deleted_at = datetime('now') where jid = ?").run(jid);
+  db.prepare("delete from message_queue where channel_jid = ? and status = 'pending'").run(jid);
+  db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(jid);
+}
+
+export function restoreChannel(jid: string): boolean {
+  return db.prepare('update channels set deleted_at = null where jid = ?').run(jid).changes > 0;
+}
+
+/** Irreversible: drop every row for a session. The caller removes its files. */
+export function purgeChannel(jid: string): void {
   db.prepare('delete from web_events where channel_jid = ?').run(jid);
   db.prepare('delete from message_queue where channel_jid = ?').run(jid);
   db.prepare('delete from message_log where channel_jid = ?').run(jid);
   db.prepare('delete from control_queue where channel_jid = ?').run(jid);
   db.prepare('delete from channel_state where channel_jid = ?').run(jid);
   db.prepare('delete from channels where jid = ?').run(jid);
+}
+
+export interface DeletedSession {
+  jid: string;
+  name: string;
+  folder: string;
+  deletedAt: string;
+  events: number;
+  lastActivity: string | null;
+}
+
+export function listDeletedWebSessions(): DeletedSession[] {
+  const rows = db
+    .prepare(
+      `select c.jid, c.name, c.folder, c.deleted_at,
+              (select count(*) from web_events e where e.channel_jid = c.jid) as events,
+              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
+         from channels c
+        where c.jid like 'web:%' and c.deleted_at is not null
+        order by c.deleted_at desc`,
+    )
+    .all() as any[];
+  return rows.map((r) => ({
+    jid: r.jid,
+    name: r.name,
+    folder: r.folder,
+    deletedAt: r.deleted_at,
+    events: r.events,
+    lastActivity: r.last_activity,
+  }));
+}
+
+/** Sessions trashed longer ago than `days` — candidates for automatic purge. */
+export function listExpiredDeletedSessions(days: number): DeletedSession[] {
+  if (days <= 0) return [];
+  return listDeletedWebSessions().filter((s) => {
+    const at = new Date(s.deletedAt.replace(' ', 'T') + 'Z').getTime();
+    return Number.isFinite(at) && Date.now() - at > days * 86_400_000;
+  });
+}
+
+export function isChannelDeleted(jid: string): boolean {
+  const row = db.prepare('select deleted_at from channels where jid = ?').get(jid) as
+    | { deleted_at: string | null }
+    | undefined;
+  return Boolean(row?.deleted_at);
 }
 
 export function closeDb(): void {

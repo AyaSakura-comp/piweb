@@ -17,9 +17,9 @@
     <!-- An explicit icon stops the browser probing /favicon.ico, which would
          hit the auth gate and log a 401 on every load. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <!-- iOS PWA icon — Thinking Cloud (A1) -->
-    <link rel="apple-touch-icon" href="/icons/thinking-cloud/icon-180x180.png" />
-    <link rel="icon" type="image/png" sizes="1024x1024" href="/icons/thinking-cloud/icon-1024x1024.png" />
+    <!-- iOS PWA icon — Showa retro flat design (A1 萌黄 回路) -->
+    <link rel="apple-touch-icon" href="/icons/showa/showa-kanro-green/icon-180x180.png" />
+    <link rel="icon" type="image/png" sizes="1024x1024" href="/icons/showa/showa-kanro-green/icon-1024x1024.png" />
     <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="/app.css" />
   </head>
@@ -56,6 +56,13 @@
         </header>
         <div class="session-list" id="session-list"></div>
         <footer class="drawer-foot">
+          <button class="text-btn trash-entry" id="btn-trash">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </svg>
+            <span>Recently deleted</span>
+            <span class="trash-count" id="trash-count" hidden>0</span>
+          </button>
           <button class="text-btn" id="btn-logout">Sign out</button>
         </footer>
       </aside>
@@ -97,6 +104,11 @@
           <div class="search-results" id="search-results"></div>
         </div>
 
+        <div class="deleted-banner" id="deleted-banner" hidden>
+          <span>This session is in the trash — read only.</span>
+          <button type="button" id="btn-restore-inline">Restore</button>
+        </div>
+
         <div class="messages" id="messages"></div>
 
         <button class="jump-live" id="jump-live" hidden>Jump to present ↓</button>
@@ -106,7 +118,7 @@
           <span class="typing-label">pi is working…</span>
         </div>
 
-        <div class="composer-wrap">
+        <div class="composer-wrap" id="composer-wrap">
           <div class="autocomplete" id="autocomplete" hidden></div>
           <div class="attachments" id="attachments" hidden></div>
           <form class="composer" id="composer">
@@ -131,6 +143,19 @@
     <!-- KaTeX is vendored locally: the container serves static files only and
          must not depend on a CDN. Loaded before the app so window.katex exists
          by the time the first transcript renders. -->
+    <div class="sheet" id="trash-sheet" hidden>
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <span class="sheet-title">Recently deleted</span>
+          <button class="icon-btn" id="btn-trash-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <p class="sheet-note" id="trash-note"></p>
+        <div class="trash-list" id="trash-list"></div>
+      </div>
+    </div>
+
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
