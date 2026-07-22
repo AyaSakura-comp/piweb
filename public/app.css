@@ -332,12 +332,37 @@ svg {
   font-size: 18px;
 }
 
-.session-item .busy-dot {
-  width: 8px;
-  height: 8px;
+.session-item .unread-dot {
+  width: 9px;
+  height: 9px;
   flex: none;
   border-radius: 50%;
   background: var(--tool);
+  box-shadow: 0 0 0 2px rgb(59 165 93 / 0.25);
+}
+
+/* Spinner = working now. Distinct shape from the unread dot on purpose: the
+   two states must be tellable apart at a glance, not only by motion. */
+.session-item .work-spinner {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 0.18);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-item .work-spinner {
+    animation-duration: 2.4s;
+  }
 }
 
 .session-item .del {

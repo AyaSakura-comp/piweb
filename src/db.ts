@@ -741,12 +741,20 @@ export function listWebSessions(): Array<{
   thinkingOverride: string;
   cwdOverride: string;
   lastActivity: string | null;
+  lastReplyId: number;
 }> {
   const rows = db
     .prepare(
       `select c.jid, c.name, c.folder, c.model_override, c.thinking_override, c.cwd_override,
               coalesce(s.busy, 0) as busy,
-              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
+              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity,
+              -- Newest event that is something to READ: an assistant reply or
+              -- command output. The user's own turns and the streamed
+              -- thinking/tool chatter must not mark a session unread.
+              (select coalesce(max(rowid), 0) from web_events e
+                where e.channel_jid = c.jid
+                  and e.kind in ('message', 'system', 'error')
+                  and e.role <> 'user') as last_reply_id
          from channels c
          left join channel_state s on s.channel_jid = c.jid
         where c.jid like 'web:%' and c.deleted_at is null
@@ -763,6 +771,7 @@ export function listWebSessions(): Array<{
     thinkingOverride: r.thinking_override,
     cwdOverride: r.cwd_override,
     lastActivity: r.last_activity,
+    lastReplyId: Number(r.last_reply_id ?? 0),
   }));
 }
 
@@ -836,7 +845,14 @@ export function listDeletedWebSessions(): DeletedSession[] {
     .prepare(
       `select c.jid, c.name, c.folder, c.deleted_at,
               (select count(*) from web_events e where e.channel_jid = c.jid) as events,
-              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
+              (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity,
+              -- Newest event that is something to READ: an assistant reply or
+              -- command output. The user's own turns and the streamed
+              -- thinking/tool chatter must not mark a session unread.
+              (select coalesce(max(rowid), 0) from web_events e
+                where e.channel_jid = c.jid
+                  and e.kind in ('message', 'system', 'error')
+                  and e.role <> 'user') as last_reply_id
          from channels c
         where c.jid like 'web:%' and c.deleted_at is not null
         order by c.deleted_at desc`,

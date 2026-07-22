@@ -391,6 +391,15 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
   sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
   resizing the viewport short (390×420), not just at 390×844.
+- **Session indicators mean two different things.** A spinner = pi is working
+  in that session right now; a green dot = it finished and you have not opened
+  it since. Different shapes on purpose, so they are tellable apart without
+  relying on motion or colour. Unread is tracked client-side in localStorage
+  (`piweb.seen`, jid → last read reply id), because "not yet read" is per
+  device. `lastReplyId` deliberately counts only assistant/system/error events,
+  never the user's own turns or streamed thinking/tool chatter.
+  The SSE stream carries only the OPEN session, so the drawer polls
+  `/api/sessions` every 5s or every other session's state freezes at page load.
 - **Edge swipe opens the drawer**: a drag starting within 28px of the left edge
   pulls the session drawer out, tracking the finger so it is reversible; a
   leftward drag anywhere puts it back. The axis is locked after 8px and a
