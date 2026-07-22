@@ -735,6 +735,7 @@ export function setChannelBusy(channelJid: string, busy: boolean): void {
 export function listWebSessions(): Array<{
   jid: string;
   name: string;
+  folder: string;
   busy: boolean;
   modelOverride: string;
   thinkingOverride: string;
@@ -743,7 +744,7 @@ export function listWebSessions(): Array<{
 }> {
   const rows = db
     .prepare(
-      `select c.jid, c.name, c.model_override, c.thinking_override, c.cwd_override,
+      `select c.jid, c.name, c.folder, c.model_override, c.thinking_override, c.cwd_override,
               coalesce(s.busy, 0) as busy,
               (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity
          from channels c
@@ -756,6 +757,7 @@ export function listWebSessions(): Array<{
   return rows.map((r) => ({
     jid: r.jid,
     name: r.name,
+    folder: r.folder,
     busy: Boolean(r.busy),
     modelOverride: r.model_override,
     thinkingOverride: r.thinking_override,
