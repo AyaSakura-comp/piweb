@@ -427,6 +427,15 @@ it works.
 
 ## 6. Known gaps
 
+0. **`/pi reset-model` does not take effect until `/pi new`.** Setting a model
+   passes `--model` on every spawn, so it applies at once; resetting merely
+   stops passing it, and `--continue` then reuses whatever model the session
+   file already recorded. Symptom: a session stays on a model you thought you
+   reverted (and if that model is broken, every turn fails — seen as
+   "Context overflow recovery failed: Summarization failed: 400"). Rotate the
+   session to actually clear it.
+
+
 Not bugs that block anything, but they will surprise someone eventually:
 
 1. **Every attachment is permanently copied to `/tmp/pi-discord-files/<date>/`**

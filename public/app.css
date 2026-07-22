@@ -1347,3 +1347,78 @@ svg {
 .msg-files img {
   cursor: zoom-in;
 }
+
+/* ── header command shortcuts ────────────────────────────────────────── */
+
+.icon-btn.danger {
+  color: #f87171;
+}
+
+/* Five controls plus the session name is tight on a 390px phone; shaving the
+   hit target to 34px keeps the name readable while staying above the ~32px
+   comfortable-touch floor. */
+@media (max-width: 420px) {
+  .topbar .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .topbar {
+    gap: 2px;
+  }
+}
+
+.model-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 6px 0 12px;
+}
+
+.model-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 16px;
+  border: 0;
+  border-top: 1px solid var(--bg-dark);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 14px;
+}
+
+.model-item .m-ref {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-item .m-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.model-item.current {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.model-item.current::before {
+  content: '✓';
+  color: var(--accent);
+}
+
+.model-item:not(.current)::before {
+  content: '';
+  width: 1ch;
+}
