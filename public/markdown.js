@@ -1,0 +1,364 @@
+/**
+ * Markdown + LaTeX rendering for message bodies.
+ *
+ * Everything is built as DOM nodes; model output is never assigned to innerHTML.
+ * The single exception is KaTeX's own output, which KaTeX generates from the
+ * math source with `trust: false`, so no author HTML can pass through.
+ *
+ * Order matters. Fenced code is lifted out first (nothing inside it should be
+ * interpreted), then math (so `$a_1$` is not eaten by the italic rule and
+ * `\[...\]` survives), and only then markdown. Both are re-inserted at the end
+ * via placeholders.
+ */
+
+// U+0000 cannot appear in the text we render, so it is a safe sentinel.
+const PLACEHOLDER = '\u0000';
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const SAFE_LINK = /^(https?:|mailto:)/i;
+
+function makePlaceholder(kind, index) {
+  return `${PLACEHOLDER}${kind}${index}${PLACEHOLDER}`;
+}
+
+/** Pull fenced code blocks out so no other rule touches their contents. */
+function extractCode(text, store) {
+  return text.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_m, lang, code) => {
+    store.push({ lang: lang || '', code: code.replace(/\n$/, '') });
+    return makePlaceholder('C', store.length - 1);
+  });
+}
+
+/**
+ * Pull math out. Display forms first so `$$…$$` is not consumed by the inline
+ * `$…$` rule. Inline `$…$` requires a non-space right after the opening `$` so
+ * ordinary prose about money ("$5 and $10") is left alone.
+ */
+function extractMath(text, store) {
+  const push = (tex, display) => {
+    store.push({ tex, display });
+    return makePlaceholder('M', store.length - 1);
+  };
+
+  return text
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => push(tex.trim(), true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_m, tex) => push(tex.trim(), true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_m, tex) => push(tex.trim(), false))
+    .replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, (_m, tex) => push(tex.trim(), false));
+}
+
+function renderMath(item) {
+  const node = document.createElement(item.display ? 'div' : 'span');
+  if (item.display) node.className = 'math-display';
+  if (window.katex) {
+    try {
+      // KaTeX builds this markup itself from the TeX source; trust:false keeps
+      // \htmlClass and friends from injecting anything.
+      window.katex.render(item.tex, node, {
+        displayMode: item.display,
+        throwOnError: false,
+        trust: false,
+        strict: false,
+      });
+      return node;
+    } catch {
+      // fall through to plain text
+    }
+  }
+  node.textContent = item.display ? `$$${item.tex}$$` : `$${item.tex}$`;
+  return node;
+}
+
+function renderCode(item) {
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  if (item.lang) code.className = `lang-${item.lang}`;
+  code.textContent = item.code;
+  pre.append(code);
+  return pre;
+}
+
+/** Split a string on placeholders, yielding text and resolved nodes. */
+function splitPlaceholders(text, code, math) {
+  const parts = [];
+  const re = new RegExp(`${reEscape(PLACEHOLDER)}([CM])(\\d+)${reEscape(PLACEHOLDER)}`, 'g');
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) });
+    const index = Number(m[2]);
+    parts.push({ node: m[1] === 'C' ? renderCode(code[index]) : renderMath(math[index]) });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+/** Inline markdown: code, bold, italic, strikethrough, links. */
+function renderInline(container, text, code, math) {
+  for (const part of splitPlaceholders(text, code, math)) {
+    if (part.node) {
+      container.append(part.node);
+      continue;
+    }
+    renderInlineText(container, part.text);
+  }
+}
+
+const INLINE_RE = new RegExp(
+  [
+    '(`+)([\\s\\S]+?)\\1', // `code`
+    '\\*\\*([\\s\\S]+?)\\*\\*', // **bold**
+    '__([\\s\\S]+?)__', // __bold__
+    '~~([\\s\\S]+?)~~', // ~~strike~~
+    '\\*([^*\\n]+?)\\*', // *italic*
+    '(?<![\\w\\\\])_([^_\\n]+?)_(?!\\w)', // _italic_ (not inside identifiers)
+    '\\[([^\\]]+)\\]\\(([^)\\s]+)\\)', // [text](url)
+    '(https?://[^\\s<>()]+)', // bare url
+  ].join('|'),
+  'g',
+);
+
+function renderInlineText(container, text) {
+  let last = 0;
+  let m;
+  INLINE_RE.lastIndex = 0;
+
+  while ((m = INLINE_RE.exec(text)) !== null) {
+    if (m.index > last) container.append(document.createTextNode(text.slice(last, m.index)));
+    const [, , codeText, bold1, bold2, strike, ital1, ital2, linkText, linkUrl, bareUrl] = m;
+
+    if (codeText !== undefined) container.append(tag('code', codeText));
+    else if (bold1 !== undefined) container.append(tag('strong', bold1));
+    else if (bold2 !== undefined) container.append(tag('strong', bold2));
+    else if (strike !== undefined) container.append(tag('del', strike));
+    else if (ital1 !== undefined) container.append(tag('em', ital1));
+    else if (ital2 !== undefined) container.append(tag('em', ital2));
+    else if (linkText !== undefined) container.append(link(linkText, linkUrl));
+    else if (bareUrl !== undefined) container.append(link(bareUrl, bareUrl));
+
+    last = m.index + m[0].length;
+  }
+
+  if (last < text.length) container.append(document.createTextNode(text.slice(last)));
+}
+
+function tag(name, text) {
+  const node = document.createElement(name);
+  node.textContent = text;
+  return node;
+}
+
+/** Only http(s)/mailto become anchors; anything else stays inert text. */
+function link(text, url) {
+  if (!SAFE_LINK.test(url)) return document.createTextNode(text);
+  const a = document.createElement('a');
+  a.href = url;
+  a.textContent = text;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  return a;
+}
+
+const BULLET_RE = /^(\s*)[-*+]\s+(.*)$/;
+const ORDERED_RE = /^(\s*)(\d+)[.)]\s+(.*)$/;
+const HR_RE = /^\s*([-*_])\1{2,}\s*$/;
+const TABLE_SEP_RE = /^\s*\|?[\s:|-]+\|[\s:|-]*$/;
+
+/** A table = a row containing `|` immediately followed by a |---|---| separator. */
+function isTableStart(lines, i) {
+  return (
+    lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])
+  );
+}
+
+/**
+ * Block-level parse. Deliberately small: headings, rules, quotes, lists,
+ * tables and paragraphs — the shapes agent output actually uses.
+ */
+export function renderRich(container, raw) {
+  const code = [];
+  const math = [];
+  const text = extractMath(extractCode(String(raw ?? ''), code), math);
+  renderBlocks(container, text, code, math);
+}
+
+/**
+ * Block parser over text whose code/math have already been lifted out.
+ *
+ * Nested contexts (blockquotes) recurse HERE, not through renderRich: the text
+ * they carry already holds placeholders, and re-running extraction on it would
+ * find nothing and leave the placeholders as literal garbage on screen.
+ */
+function renderBlocks(container, text, code, math) {
+  const lines = text.split('\n');
+
+  let i = 0;
+  const inline = (el, s) => renderInline(el, s, code, math);
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // blank
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+
+    // a lone placeholder line (fenced code / display math) is its own block
+    const solo = line.trim().match(new RegExp(`^${reEscape(PLACEHOLDER)}([CM])(\\d+)${reEscape(PLACEHOLDER)}$`));
+    if (solo) {
+      const index = Number(solo[2]);
+      container.append(solo[1] === 'C' ? renderCode(code[index]) : renderMath(math[index]));
+      i += 1;
+      continue;
+    }
+
+    // horizontal rule
+    if (HR_RE.test(line)) {
+      container.append(document.createElement('hr'));
+      i += 1;
+      continue;
+    }
+
+    // heading
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const h = document.createElement(`h${heading[1].length}`);
+      inline(h, heading[2].trim());
+      container.append(h);
+      i += 1;
+      continue;
+    }
+
+    // blockquote — collect consecutive `>` lines and recurse
+    if (/^\s*>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ''));
+        i += 1;
+      }
+      const quote = document.createElement('blockquote');
+      renderBlocks(quote, buf.join('\n'), code, math);
+      container.append(quote);
+      continue;
+    }
+
+    // table: a header row followed by a |---|---| separator
+    if (isTableStart(lines, i)) {
+      const rows = [];
+      while (i < lines.length && lines[i].includes('|')) {
+        rows.push(lines[i]);
+        i += 1;
+      }
+      container.append(buildTable(rows, inline));
+      continue;
+    }
+
+    // lists
+    if (BULLET_RE.test(line) || ORDERED_RE.test(line)) {
+      const consumed = buildList(lines, i, container, inline);
+      i = consumed;
+      continue;
+    }
+
+    // paragraph — consecutive non-blank, non-block lines
+    const buf = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^\s*>/.test(lines[i]) &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !BULLET_RE.test(lines[i]) &&
+      !ORDERED_RE.test(lines[i]) &&
+      !HR_RE.test(lines[i]) &&
+      // A table often follows a label line with no blank line between them
+      // ("**材料：**" then "| a | b |"). Without this the paragraph swallows the
+      // whole table and it renders as raw pipes.
+      !isTableStart(lines, i)
+    ) {
+      buf.push(lines[i]);
+      i += 1;
+    }
+    const p = document.createElement('p');
+    // A single newline inside a paragraph is a visible line break here: agent
+    // output uses them meaningfully, unlike strict markdown.
+    buf.forEach((l, n) => {
+      if (n > 0) p.append(document.createElement('br'));
+      inline(p, l);
+    });
+    container.append(p);
+  }
+}
+
+function buildTable(rows, inline) {
+  const cells = (row) =>
+    row
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split('|')
+      .map((c) => c.trim());
+
+  const table = document.createElement('table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const c of cells(rows[0])) {
+    const th = document.createElement('th');
+    inline(th, c);
+    headRow.append(th);
+  }
+  head.append(headRow);
+  table.append(head);
+
+  const body = document.createElement('tbody');
+  for (const row of rows.slice(2)) {
+    const tr = document.createElement('tr');
+    for (const c of cells(row)) {
+      const td = document.createElement('td');
+      inline(td, c);
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  table.append(body);
+
+  // Wide tables scroll inside their own box; the page never scrolls sideways.
+  const wrap = document.createElement('div');
+  wrap.className = 'table-wrap';
+  wrap.append(table);
+  return wrap;
+}
+
+/** Build (possibly nested) lists by indentation. Returns the next line index. */
+function buildList(lines, start, container, inline) {
+  const first = lines[start].match(BULLET_RE) || lines[start].match(ORDERED_RE);
+  const baseIndent = first[1].length;
+  const ordered = ORDERED_RE.test(lines[start]);
+  const list = document.createElement(ordered ? 'ol' : 'ul');
+
+  let i = start;
+  while (i < lines.length) {
+    const bullet = lines[i].match(BULLET_RE);
+    const numbered = lines[i].match(ORDERED_RE);
+    const match = bullet || numbered;
+    if (!match) break;
+
+    const indent = match[1].length;
+    if (indent < baseIndent) break;
+
+    if (indent > baseIndent) {
+      // deeper level: recurse into the last item
+      const host = list.lastElementChild ?? list.appendChild(document.createElement('li'));
+      i = buildList(lines, i, host, inline);
+      continue;
+    }
+
+    const li = document.createElement('li');
+    inline(li, bullet ? match[2] : match[3]);
+    list.append(li);
+    i += 1;
+  }
+
+  container.append(list);
+  return i;
+}

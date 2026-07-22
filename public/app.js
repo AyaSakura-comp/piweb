@@ -10,6 +10,8 @@
  * events it missed instead of losing them or double-rendering.
  */
 
+import { renderRich } from './markdown.js';
+
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -494,37 +496,9 @@ function timeLabel(iso) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/**
- * Minimal markdown: fenced code, inline code, bold. Everything is inserted as
- * text nodes — no innerHTML on model output, which can contain anything.
- */
+/** Message bodies get full markdown + LaTeX; see markdown.js. */
 function renderText(container, raw) {
-  const parts = String(raw).split(/```(\w*)\n?([\s\S]*?)```/g);
-
-  for (let i = 0; i < parts.length; i += 1) {
-    // split() with two capture groups yields [text, lang, code, text, ...]
-    if (i % 3 === 0) {
-      if (parts[i]) renderInline(container, parts[i]);
-    } else if (i % 3 === 2) {
-      const pre = el('pre');
-      pre.append(el('code', null, parts[i]));
-      container.append(pre);
-    }
-  }
-}
-
-function renderInline(container, text) {
-  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
-  for (const token of tokens) {
-    if (!token) continue;
-    if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
-      container.append(el('code', null, token.slice(1, -1)));
-    } else if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
-      container.append(el('strong', null, token.slice(2, -2)));
-    } else {
-      container.append(document.createTextNode(token));
-    }
-  }
+  renderRich(container, raw);
 }
 
 function renderFiles(container, files) {

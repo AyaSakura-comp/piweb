@@ -889,3 +889,117 @@ svg {
   font-weight: 600;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
 }
+
+/* ── rendered markdown ───────────────────────────────────────────────── */
+
+.msg-text h1,
+.msg-text h2,
+.msg-text h3,
+.msg-text h4,
+.msg-text h5,
+.msg-text h6 {
+  margin: 12px 0 6px;
+  line-height: 1.3;
+  color: var(--text-bright);
+  font-weight: 700;
+}
+
+.msg-text h1 { font-size: 1.35em; }
+.msg-text h2 { font-size: 1.22em; }
+.msg-text h3 { font-size: 1.1em; }
+.msg-text h4,
+.msg-text h5,
+.msg-text h6 { font-size: 1em; }
+
+.msg-text > *:first-child { margin-top: 0; }
+.msg-text > *:last-child { margin-bottom: 0; }
+
+.msg-text p {
+  margin: 0 0 8px;
+}
+
+.msg-text ul,
+.msg-text ol {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+
+.msg-text li {
+  margin: 2px 0;
+}
+
+.msg-text blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
+.msg-text hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.msg-text a {
+  color: #00a8fc;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.msg-text a:hover {
+  text-decoration: underline;
+}
+
+.msg-text strong { color: var(--text-bright); }
+
+/* Tables scroll inside their own box — the page must never scroll sideways. */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 8px 0;
+}
+
+.msg-text table {
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.msg-text th,
+.msg-text td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.msg-text th {
+  background: var(--bg-alt);
+  color: var(--text-bright);
+}
+
+/* ── math ────────────────────────────────────────────────────────────── */
+
+.math-display {
+  margin: 10px 0;
+  /* A long equation scrolls in place rather than widening the page. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.katex {
+  font-size: 1.05em;
+}
+
+/* KaTeX ships light-theme colours; inherit the app's instead. */
+.katex,
+.katex .mord,
+.katex .mbin,
+.katex .mrel,
+.katex .mopen,
+.katex .mclose,
+.katex .mpunct {
+  color: inherit;
+}

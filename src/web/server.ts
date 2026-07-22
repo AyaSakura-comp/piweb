@@ -74,6 +74,10 @@ const MIME: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
   '.pdf': 'application/pdf',
+  // KaTeX fonts: the wrong type makes some browsers refuse the font.
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
 };
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -332,7 +336,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     // name is ever reused or left behind by a deleted session. Silent: the
     // guarantee is implied by creating the session, so it needs no system line
     // in an otherwise empty transcript.
-    enqueueControl(jid, 'pi new', { silent: 'true' });
+    enqueueControl(jid, 'pi new', { silent: 'true', keepQueue: 'true' });
 
     sendJson(res, 200, { jid, name });
     return;
