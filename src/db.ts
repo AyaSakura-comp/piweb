@@ -134,6 +134,16 @@ export function initDb(): void {
       updated_at text not null default (datetime('now'))
     );
 
+    -- Web Push subscriptions, one row per device that opted in. Keyed by
+    -- endpoint because that is what the push service treats as the identity,
+    -- and what it returns as 404/410 when the subscription dies.
+    create table if not exists push_subscriptions (
+      endpoint   text primary key,
+      p256dh     text not null,
+      auth       text not null,
+      created_at text not null default (datetime('now'))
+    );
+
     -- Per-channel transient runtime state the UI polls (typing indicator).
     create table if not exists channel_state (
       channel_jid text primary key,
@@ -780,6 +790,63 @@ export function isChannelBusy(channelJid: string): boolean {
     | { busy: number }
     | undefined;
   return Boolean(row?.busy);
+}
+
+// ── piweb: push subscriptions ──
+
+export interface PushSubscriptionRow {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
+export function savePushSubscription(sub: PushSubscriptionRow): void {
+  db.prepare(
+    `insert into push_subscriptions (endpoint, p256dh, auth) values (?, ?, ?)
+     on conflict(endpoint) do update set p256dh = excluded.p256dh, auth = excluded.auth`,
+  ).run(sub.endpoint, sub.p256dh, sub.auth);
+}
+
+export function deletePushSubscription(endpoint: string): void {
+  db.prepare('delete from push_subscriptions where endpoint = ?').run(endpoint);
+}
+
+export function listPushSubscriptions(): PushSubscriptionRow[] {
+  return db.prepare('select endpoint, p256dh, auth from push_subscriptions').all() as
+    PushSubscriptionRow[];
+}
+
+export function countPushSubscriptions(): number {
+  return (db.prepare('select count(*) as c from push_subscriptions').get() as { c: number }).c;
+}
+
+/**
+ * Events worth a notification: a finished assistant reply, or an agent error.
+ *
+ * Thinking and tool events are excluded because a single run emits dozens and
+ * would turn one answer into a burst of buzzes. `system` is excluded too: that
+ * is command output ("Model set to X"), which echoes something the user just
+ * did on this device and does not need announcing back to them.
+ */
+export function getNotifiableEventsSince(afterRowid: number, limit = 20): Array<{
+  rowid: number;
+  channel_jid: string;
+  kind: string;
+  content: string;
+  name: string;
+}> {
+  return db
+    .prepare(
+      `select e.rowid, e.channel_jid, e.kind, e.content, c.name
+         from web_events e
+         join channels c on c.jid = e.channel_jid
+        where e.rowid > ?
+          and c.deleted_at is null
+          and e.role <> 'user'
+          and e.kind in ('message', 'error')
+        order by e.rowid limit ?`,
+    )
+    .all(afterRowid, limit) as any[];
 }
 
 // ── piweb: meta key/value ──

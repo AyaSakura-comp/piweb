@@ -92,6 +92,110 @@ $('btn-logout').addEventListener('click', async () => {
   showLogin();
 });
 
+// ── push notifications ───────────────────────────────────────────────────
+//
+// iOS only delivers Web Push to a site launched from the Home Screen, and only
+// lets permission be requested from a user gesture — hence a button rather
+// than asking on load.
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function urlBase64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function refreshNotifyState() {
+  const label = $('notify-label');
+  const badge = $('notify-state');
+
+  if (!pushSupported()) {
+    // Safari in a normal tab has no PushManager at all; say why rather than
+    // showing a button that cannot work.
+    badge.textContent = isStandalone() ? 'unsupported' : 'add to Home Screen';
+    badge.className = 'notif-state';
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    badge.textContent = 'blocked';
+    badge.className = 'notif-state blocked';
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  badge.textContent = sub ? 'on' : 'off';
+  badge.className = `notif-state${sub ? ' on' : ''}`;
+  label.textContent = 'Notifications';
+}
+
+async function toggleNotifications() {
+  if (!pushSupported()) {
+    alert(
+      isStandalone()
+        ? 'This browser does not support web push notifications.'
+        : 'iOS only allows notifications for apps added to the Home Screen.\n\nShare → Add to Home Screen, then open piweb from there.',
+    );
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+
+  if (existing) {
+    await api('/api/push/unsubscribe', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: existing.endpoint }),
+    }).catch(() => {});
+    await existing.unsubscribe();
+    await refreshNotifyState();
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    await refreshNotifyState();
+    return;
+  }
+
+  const { key } = await api('/api/push/key');
+  if (!key) {
+    alert('Server has no push key configured.');
+    return;
+  }
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key),
+  });
+
+  await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify(sub.toJSON()) });
+  await refreshNotifyState();
+}
+
+$('btn-notify').addEventListener('click', () => {
+  toggleNotifications().catch((err) => alert(err.message));
+});
+
+// Tapping a notification asks the open window to switch sessions.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'open-session' && e.data.jid) {
+      selectSession(e.data.jid);
+      closeDrawer();
+    }
+  });
+}
+
 // ── unread tracking ──────────────────────────────────────────────────────
 //
 // "Replied but not yet read" is a per-device notion, so the high-water mark
@@ -1723,7 +1827,12 @@ async function boot() {
 
   await loadSessions();
   await refreshTrashCount();
-  if (state.sessions.length > 0) selectSession(state.sessions[0].jid);
+  refreshNotifyState().catch(() => {});
+
+  // A notification tap can hand us a session to open.
+  const wanted = new URLSearchParams(location.search).get('session');
+  const target = wanted && state.sessions.some((s) => s.jid === wanted) ? wanted : state.sessions[0]?.jid;
+  if (target) selectSession(target);
 }
 
 // The SSE stream only carries the OPEN session, so every other session's busy
