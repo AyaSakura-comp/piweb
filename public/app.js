@@ -457,7 +457,13 @@ function hitLabel(hit) {
 /** Mark occurrences of `q` without ever assigning HTML from stored content. */
 function highlight(container, text, q) {
   const lower = text.toLowerCase();
-  const needle = q.toLowerCase();
+  const needle = (q ?? '').toLowerCase();
+  // An empty needle makes indexOf return the search position forever, so the
+  // loop below would never advance — an infinite loop that freezes the tab.
+  if (!needle) {
+    container.append(document.createTextNode(text));
+    return;
+  }
   let i = 0;
   while (true) {
     const at = lower.indexOf(needle, i);
@@ -535,6 +541,8 @@ function currentModelRef() {
 async function openModelSheet() {
   if (!state.activeJid || state.previewingDeleted) return;
   $('model-sheet').hidden = false;
+  syncSheetHeight();
+  $('model-search').value = '';
   const list = $('model-list');
   list.textContent = '';
   $('model-note').textContent = 'Loading…';
@@ -548,42 +556,127 @@ async function openModelSheet() {
     return;
   }
 
+  renderModelList('');
+
+  // Only auto-focus with a real keyboard: on touch this would throw up the
+  // on-screen keyboard and cover the list the user came here to read.
+  if (!isTouch()) $('model-search').focus();
+}
+
+/** Filter across ref, display name and provider so any of them can be typed. */
+function modelMatches(model, query) {
+  if (!query) return true;
+  const haystack = `${model.ref} ${model.name ?? ''} ${model.provider ?? ''}`.toLowerCase();
+  return query.split(/\s+/).every((term) => haystack.includes(term));
+}
+
+function renderModelList(query) {
+  const list = $('model-list');
+  list.textContent = '';
+
   const current = currentModelRef();
-  $('model-note').textContent = current
-    ? `This session uses ${current}.`
-    : 'This session follows the gateway default.';
+  const q = query.trim().toLowerCase();
+  const matches = state.models.filter((m) => modelMatches(m, q));
 
-  // "Use the gateway default" first, so resetting is one tap.
-  const reset = el('button', `model-item${current ? '' : ' current'}`);
-  reset.type = 'button';
-  reset.append(el('span', 'm-ref', 'Gateway default'));
-  reset.append(el('span', 'm-tag', 'reset'));
-  reset.addEventListener('click', async () => {
-    closeModelSheet();
-    await runQuickCommand('pi reset-model');
-    setTimeout(loadSessions, 900);
-  });
-  list.append(reset);
+  $('model-note').textContent = q
+    ? `${matches.length} of ${state.models.length} models`
+    : current
+      ? `This session uses ${current}.`
+      : 'This session follows the gateway default.';
 
-  for (const model of models) {
+  // "Gateway default" is an action, not a model, so it is hidden once the user
+  // is filtering for something specific.
+  if (!q) {
+    const reset = el('button', `model-item${current ? '' : ' current'}`);
+    reset.type = 'button';
+    reset.append(el('span', 'm-ref', 'Gateway default'));
+    reset.append(el('span', 'm-tag', 'reset'));
+    reset.addEventListener('click', async () => {
+      closeModelSheet();
+      await runQuickCommand('pi reset-model');
+      setTimeout(loadSessions, 900);
+    });
+    list.append(reset);
+  }
+
+  if (matches.length === 0) {
+    list.append(el('div', 'search-empty', `No model matches "${query.trim()}"`));
+    return;
+  }
+
+  // A long unfiltered list would build 345 rows every keystroke; cap it and say
+  // so, rather than silently truncating.
+  const shown = matches.slice(0, 120);
+  for (const model of shown) {
     const item = el('button', `model-item${model.ref === current ? ' current' : ''}`);
     item.type = 'button';
-    item.append(el('span', 'm-ref', model.ref));
+
+    const ref = el('span', 'm-ref');
+    highlight(ref, model.ref, q);
+    item.append(ref);
+
+    if (model.provider) {
+      const badge = providerBadgeFor(model.provider);
+      item.append(badge);
+    }
     if (model.reasoning) item.append(el('span', 'm-tag', 'reasoning'));
+
     item.addEventListener('click', async () => {
       closeModelSheet();
       await runQuickCommand('pi model', { model: model.ref });
-      // The worker applies it asynchronously; re-read so the sheet and the
-      // drawer agree next time it is opened.
       setTimeout(loadSessions, 900);
     });
     list.append(item);
   }
+
+  if (matches.length > shown.length) {
+    list.append(
+      el('div', 'search-empty', `+${matches.length - shown.length} more — keep typing to narrow`),
+    );
+  }
+}
+
+/** Same labels the session badges use, so the two views agree. */
+function providerBadgeFor(provider) {
+  const map = {
+    nvim: ['NV', 'nv'],
+    'openai-codex': ['GPT', 'gpt'],
+    'local-llama': ['LOCAL', 'local'],
+    'ollama-gemma': ['LOCAL', 'local'],
+    'ollama-lfm2': ['LOCAL', 'local'],
+    ds4: ['LOCAL', 'local'],
+    gemini: ['GEM', 'gem'],
+    xai: ['XAI', 'xai'],
+    openrouter: ['OR', 'or'],
+    sakana: ['SAK', 'sak'],
+  };
+  const [label, kind] = map[provider] ?? [provider.slice(0, 5).toUpperCase(), 'other'];
+  return el('span', `provider-badge ${kind}`, label);
 }
 
 function closeModelSheet() {
   $('model-sheet').hidden = true;
 }
+
+let modelFilterTimer;
+$('model-search').addEventListener('input', () => {
+  clearTimeout(modelFilterTimer);
+  // Debounced: rebuilding the list on every keystroke over 345 models is
+  // needless work on a phone.
+  modelFilterTimer = setTimeout(() => renderModelList($('model-search').value), 120);
+});
+
+$('model-search').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if ($('model-search').value) {
+      $('model-search').value = '';
+      renderModelList('');
+    } else {
+      closeModelSheet();
+    }
+  }
+});
 
 $('btn-model').addEventListener('click', openModelSheet);
 $('btn-model-close').addEventListener('click', closeModelSheet);
@@ -1469,6 +1562,13 @@ $('btn-restore-inline').addEventListener('click', async () => {
  * this the list is sized against a viewport taller than what you can see and
  * runs off the top of the screen instead of scrolling.
  */
+/** Sheets are capped to the visible viewport, which the keyboard shrinks. */
+function syncSheetHeight() {
+  const vv = window.visualViewport;
+  const available = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--sheet-max', `${Math.round(available * 0.86)}px`);
+}
+
 function syncAutocompleteHeight() {
   const vv = window.visualViewport;
   const available = vv ? vv.height : window.innerHeight;
@@ -1478,12 +1578,17 @@ function syncAutocompleteHeight() {
   document.documentElement.style.setProperty('--ac-max', `${max}px`);
 }
 
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncAutocompleteHeight);
-  window.visualViewport.addEventListener('scroll', syncAutocompleteHeight);
+function syncViewportSizes() {
+  syncAutocompleteHeight();
+  syncSheetHeight();
 }
-window.addEventListener('resize', syncAutocompleteHeight);
-syncAutocompleteHeight();
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewportSizes);
+  window.visualViewport.addEventListener('scroll', syncViewportSizes);
+}
+window.addEventListener('resize', syncViewportSizes);
+syncViewportSizes();
 
 // ── drawer ───────────────────────────────────────────────────────────────
 
