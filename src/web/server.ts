@@ -323,6 +323,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         thinking: s.thinkingOverride,
         cwd: s.cwdOverride,
         lastActivity: s.lastActivity,
+        lastReplyId: s.lastReplyId,
         provider,
         runningModel: running?.modelId ?? s.modelOverride,
         // `pending` marks a badge that describes intent rather than a live run.

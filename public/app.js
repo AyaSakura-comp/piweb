@@ -92,6 +92,43 @@ $('btn-logout').addEventListener('click', async () => {
   showLogin();
 });
 
+// ── unread tracking ──────────────────────────────────────────────────────
+//
+// "Replied but not yet read" is a per-device notion, so the high-water mark
+// lives in localStorage rather than the database: reading a session on the
+// phone should not clear the marker on a laptop.
+
+const SEEN_KEY = 'piweb.seen';
+
+function loadSeen() {
+  try {
+    return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveSeen(seen) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+  } catch {
+    // Private mode / quota — unread marks simply do not persist.
+  }
+}
+
+function markSeen(jid, replyId) {
+  if (!jid || !replyId) return;
+  const seen = loadSeen();
+  if ((seen[jid] ?? 0) >= replyId) return;
+  seen[jid] = replyId;
+  saveSeen(seen);
+}
+
+function isUnread(session) {
+  const seen = loadSeen();
+  return session.lastReplyId > (seen[session.jid] ?? 0);
+}
+
 // ── sessions ─────────────────────────────────────────────────────────────
 
 async function loadSessions() {
@@ -136,7 +173,17 @@ function renderSessions() {
       badge.title = session.runningModel || session.provider;
       item.append(badge);
     }
-    if (session.busy) item.append(el('span', 'busy-dot'));
+    // Busy and unread are different states: a spinner means pi is working
+    // right now, the dot means it finished and you have not looked yet.
+    if (session.busy) {
+      const spinner = el('span', 'work-spinner');
+      spinner.title = 'pi is working';
+      item.append(spinner);
+    } else if (isUnread(session)) {
+      const dot = el('span', 'unread-dot');
+      dot.title = 'New reply';
+      item.append(dot);
+    }
 
     const del = el('button', 'icon-btn del');
     del.setAttribute('aria-label', `Delete ${session.name}`);
@@ -210,6 +257,13 @@ async function selectSession(jid, opts = {}) {
     `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
   );
   for (const event of events) appendEvent(event, false);
+  const openedSession = state.sessions.find((s) => s.jid === jid);
+  if (openedSession) {
+    markSeen(jid, openedSession.lastReplyId);
+    // renderSessions() already ran above, before the events were fetched, so
+    // re-render or the dot lingers until the next poll.
+    renderSessions();
+  }
   state.oldest = events.length > 0 ? events[0].id : 0;
   state.newest = events.length > 0 ? events[events.length - 1].id : 0;
   state.hasMore = Boolean(hasMore);
@@ -636,6 +690,13 @@ function openStream() {
       return;
     }
     appendEvent(event, true);
+    if (event.kind !== 'thinking' && event.kind !== 'tool' && event.kind !== 'tool_result' && event.role !== 'user') {
+      markSeen(state.activeJid, event.id);
+      // Keep the cached row in step so the next render does not resurrect the
+      // dot for the session currently on screen.
+      const open = state.sessions.find((s) => s.jid === state.activeJid);
+      if (open) open.lastReplyId = Math.max(open.lastReplyId ?? 0, event.id);
+    }
   });
 
   source.addEventListener('busy', (e) => setBusy(JSON.parse(e.data).busy));
@@ -1559,6 +1620,14 @@ async function boot() {
   await refreshTrashCount();
   if (state.sessions.length > 0) selectSession(state.sessions[0].jid);
 }
+
+// The SSE stream only carries the OPEN session, so every other session's busy
+// and unread state would otherwise be frozen at page load.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !$('app').hidden) {
+    loadSessions().catch(() => {});
+  }
+}, 5000);
 
 // Safari suspends timers and drops the SSE socket in a backgrounded tab;
 // re-open on return so a run that finished meanwhile is picked up.
