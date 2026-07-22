@@ -101,9 +101,13 @@ echo "WEB_AUTH_TOKEN=<the same token>"     >> .env
 docker compose up -d --build
 ```
 
-Then expose it on the tailnet, either with the bundled sidecar
-(`docker compose --profile tailscale up -d`) or the host's own
-`tailscale serve https / http://127.0.0.1:8099`.
+Then expose it with the bundled Tailscale sidecar. `ts-serve.json` sets
+`AllowFunnel`, which publishes it to the **public internet**; drop that key to
+keep it tailnet-only.
+
+With Funnel on, the shared token is the only thing protecting an endpoint that
+runs commands on your host: use a long random one, and note that Tailscale
+identity auth is deliberately refused for public requests.
 
 > **Path gotcha:** `PIWEB_DATA` is mounted at the *same absolute path* inside the
 > container as on the host. The web tier records absolute upload paths in SQLite

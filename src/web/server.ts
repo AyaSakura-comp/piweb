@@ -55,6 +55,7 @@ import {
   buildSetCookie,
   COOKIE_NAME,
   cookieIsValid,
+  isFunnelRequest,
   isSameOriginRequest,
   issueCookie,
   parseCookies,
@@ -137,6 +138,41 @@ function serveStatic(res: ServerResponse, root: string, relPath: string): boolea
   });
   createReadStream(target).pipe(res);
   return true;
+}
+
+// ── login throttling ──
+//
+// Keyed by forwarded client address where available. Deliberately simple and
+// in-memory: a restart clearing the counters is fine, since the point is to
+// make online guessing impractical, not to be an audit trail.
+const MAX_FAILURES = 8;
+const LOCKOUT_MS = 60_000;
+const failures = new Map<string, { count: number; until: number }>();
+
+function clientKey(req: IncomingMessage): string {
+  const fwd = (req.headers['x-forwarded-for'] as string | undefined) ?? '';
+  return fwd.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+}
+
+function isRateLimited(key: string): boolean {
+  const entry = failures.get(key);
+  if (!entry) return false;
+  if (Date.now() > entry.until) {
+    failures.delete(key);
+    return false;
+  }
+  return entry.count >= MAX_FAILURES;
+}
+
+function recordFailure(key: string): void {
+  const entry = failures.get(key) ?? { count: 0, until: 0 };
+  entry.count += 1;
+  entry.until = Date.now() + LOCKOUT_MS;
+  failures.set(key, entry);
+}
+
+function clearFailures(key: string): void {
+  failures.delete(key);
 }
 
 function isSecureRequest(req: IncomingMessage): boolean {
@@ -231,13 +267,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ── unauthenticated routes ──
   if (path === '/api/login' && method === 'POST') {
+    // With Funnel on, this endpoint faces the internet and the token is the
+    // only thing standing in front of host command execution, so throttle
+    // guessing rather than letting it run at line rate.
+    const who = clientKey(req);
+    if (isRateLimited(who)) {
+      logger.warn({ who }, 'login: rate limited');
+      sendJson(res, 429, { error: 'Too many attempts — wait a minute' });
+      return;
+    }
+
     const body = await readJson<{ token?: string }>(req);
     if (!tokenMatches(body.token ?? '')) {
+      recordFailure(who);
       // Same delay regardless of outcome would be better, but the token is
       // compared in constant time and there is no user enumeration here.
       sendJson(res, 401, { error: 'Invalid token' });
       return;
     }
+    clearFailures(who);
     res.setHeader('set-cookie', buildSetCookie(issueCookie(), isSecureRequest(req)));
     sendJson(res, 200, { ok: true });
     return;
@@ -253,6 +301,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const identity = tailscaleIdentity(req.headers, req.socket.remoteAddress);
     sendJson(res, 200, {
       authed: isAuthed(req),
+      // Lets the UI show that this visit came in over the public internet.
+      funnel: isFunnelRequest(req.headers),
       // Lets the UI skip the login screen entirely and show who serve says you
       // are; also the check used to verify header injection is really working.
       via: identity ? 'tailscale' : isAuthed(req) ? 'token' : null,

@@ -66,6 +66,11 @@ export function parseCookies(header: string | undefined): Record<string, string>
  */
 export const TS_LOGIN_HEADER = 'tailscale-user-login';
 export const TS_NAME_HEADER = 'tailscale-user-name';
+/**
+ * Set by `tailscale serve` on requests that arrived over Funnel, i.e. from the
+ * public internet with no tailnet identity behind them.
+ */
+export const TS_FUNNEL_HEADER = 'tailscale-funnel-request';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
@@ -85,12 +90,23 @@ export interface TailscaleIdentity {
  * reached the port directly (another container on the docker network, or the
  * port being published) could set these headers to anything it liked.
  */
+export function isFunnelRequest(headers: NodeJS.Dict<string | string[]>): boolean {
+  return Boolean(headers[TS_FUNNEL_HEADER]);
+}
+
 export function tailscaleIdentity(
   headers: NodeJS.Dict<string | string[]>,
   remoteAddress: string | undefined,
 ): TailscaleIdentity | undefined {
   if (!config.webTrustTailscaleIdentity) return undefined;
   if (!isLoopbackConnection(remoteAddress)) return undefined;
+
+  // A Funnel request comes from the public internet and carries no tailnet
+  // identity. serve overwrites the identity headers for tailnet traffic, but
+  // relying on it to also strip them when there is nothing to overwrite would
+  // stake host command execution on undocumented behaviour. Refuse outright:
+  // public visitors must use the token.
+  if (isFunnelRequest(headers)) return undefined;
 
   const login = String(headers[TS_LOGIN_HEADER] ?? '').trim();
   if (!login) return undefined;
