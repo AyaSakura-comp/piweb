@@ -254,6 +254,8 @@ svg {
   inset: 0;
   z-index: 15;
   background: rgb(0 0 0 / 0.5);
+  /* Fades with the drawer; during an edge swipe JS drives opacity directly. */
+  transition: opacity 0.18s ease;
 }
 
 .drawer-head {

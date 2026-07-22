@@ -1266,6 +1266,112 @@ function closeDrawer() {
 $('btn-menu').addEventListener('click', openDrawer);
 $('scrim').addEventListener('click', closeDrawer);
 
+// ── edge swipe ───────────────────────────────────────────────────────────
+//
+// Dragging in from the left edge pulls the session drawer out, and dragging
+// left puts it back. The drawer tracks the finger rather than just toggling on
+// release, so the gesture is reversible mid-way.
+//
+// Deliberately narrow (28px) and touch-only: anywhere else on screen a
+// horizontal drag belongs to a table, a code block or the image viewer.
+
+const EDGE_ZONE_PX = 28;
+const DRAWER_AXIS_LOCK_PX = 8;
+let drawerDrag = null;
+
+function drawerWidth() {
+  return $('drawer').offsetWidth || 280;
+}
+
+function isDrawerGestureAllowed() {
+  // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
+  if (window.matchMedia('(min-width: 768px)').matches) return false;
+  if (!$('login').hidden) return false;
+  return $('lightbox').hidden && $('trash-sheet').hidden;
+}
+
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    if (!isDrawerGestureAllowed() || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const open = $('drawer').classList.contains('open');
+    // Closed: only the left edge starts it. Open: anywhere, so it can be
+    // pushed back from wherever the thumb happens to be.
+    if (!open && touch.clientX > EDGE_ZONE_PX) return;
+    drawerDrag = { x: touch.clientX, y: touch.clientY, open, axis: null };
+  },
+  { passive: true },
+);
+
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (!drawerDrag || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - drawerDrag.x;
+    const dy = touch.clientY - drawerDrag.y;
+
+    if (!drawerDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
+      drawerDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      // Vertical wins: it is a scroll, so bow out entirely.
+      if (drawerDrag.axis === 'y') drawerDrag = null;
+    }
+    if (!drawerDrag || drawerDrag.axis !== 'x') return;
+
+    // Only now claim the gesture, so a vertical scroll was never blocked.
+    if (e.cancelable) e.preventDefault();
+
+    const width = drawerWidth();
+    const base = drawerDrag.open ? 0 : -width;
+    const offset = Math.max(-width, Math.min(0, base + dx));
+    // Remembered rather than re-read from getComputedStyle on release: the
+    // computed value depends on a style flush having happened, so a fast burst
+    // of events can report the stale CSS position and drop the gesture.
+    drawerDrag.offset = offset;
+    const drawer = $('drawer');
+    drawer.style.transition = 'none';
+    drawer.style.transform = `translateX(${offset}px)`;
+
+    const scrim = $('scrim');
+    scrim.hidden = false;
+    scrim.style.transition = 'none';
+    scrim.style.opacity = String((offset + width) / width);
+  },
+  { passive: false },
+);
+
+function endDrawerDrag() {
+  if (!drawerDrag) return;
+  const wasOpen = drawerDrag.open;
+  const axis = drawerDrag.axis;
+  const offset = drawerDrag.offset;
+  drawerDrag = null;
+
+  const drawer = $('drawer');
+  const scrim = $('scrim');
+  drawer.style.transition = '';
+  scrim.style.transition = '';
+
+  if (axis !== 'x') {
+    drawer.style.transform = '';
+    scrim.style.opacity = '';
+    return;
+  }
+
+  const width = drawerWidth();
+  // Past a third of the way decides it; otherwise it returns where it came from.
+  const shouldOpen = wasOpen ? offset > -width / 3 : offset > -width * (2 / 3);
+
+  drawer.style.transform = '';
+  scrim.style.opacity = '';
+  if (shouldOpen) openDrawer();
+  else closeDrawer();
+}
+
+document.addEventListener('touchend', endDrawerDrag, { passive: true });
+document.addEventListener('touchcancel', endDrawerDrag, { passive: true });
+
 // ── boot ─────────────────────────────────────────────────────────────────
 
 async function boot() {
