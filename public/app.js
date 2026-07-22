@@ -1099,8 +1099,19 @@ function endLightboxDrag(e) {
   const img = $('lb-img');
   img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
 
-  if (axis === 'y' && dy > SWIPE_DISMISS_PX) {
-    closeLightbox();
+  // Either direction dismisses — reaching for "up" to close is as natural as
+  // "down", and having only one work feels broken rather than deliberate.
+  if (axis === 'y' && Math.abs(dy) > SWIPE_DISMISS_PX) {
+    // Carry on in the direction of the flick instead of blinking out.
+    img.style.transform = `translateY(${dy > 0 ? 120 : -120}%)`;
+    img.style.opacity = '0';
+    $('lightbox').style.transition = 'opacity 0.18s ease';
+    $('lightbox').style.opacity = '0';
+    setTimeout(() => {
+      $('lightbox').style.transition = '';
+      $('lightbox').style.opacity = '';
+      closeLightbox();
+    }, 170);
     return;
   }
   if (axis === 'x' && Math.abs(dx) > SWIPE_PAGE_PX) {
