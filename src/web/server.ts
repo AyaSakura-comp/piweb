@@ -37,6 +37,7 @@ import {
   listDeletedWebSessions,
   listWebSessions,
   purgeChannel,
+  renameChannel,
   restoreChannel,
   softDeleteChannel,
   registerChannel,
@@ -445,11 +446,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
 
     // A trashed session is readable (so it can be previewed) but frozen.
-    if (method === 'POST' && (sub === 'messages' || sub === 'commands' || sub === 'clear')) {
+    if (
+      (method === 'POST' && (sub === 'messages' || sub === 'commands' || sub === 'clear')) ||
+      (method === 'PATCH' && !sub)
+    ) {
       if (isChannelDeleted(jid)) {
         sendJson(res, 409, { error: 'This session is in the trash — restore it first' });
         return;
       }
+    }
+
+    if (!sub && method === 'PATCH') {
+      const body = await readJson<{ name?: string }>(req);
+      const name = (body.name ?? '').trim();
+      if (!name) {
+        sendJson(res, 400, { error: 'Name cannot be empty' });
+        return;
+      }
+      renameChannel(jid, name);
+      sendJson(res, 200, { ok: true, name: name.slice(0, 80) });
+      return;
     }
 
     if (sub === 'messages' && method === 'POST') {

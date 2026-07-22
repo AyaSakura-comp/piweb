@@ -199,6 +199,31 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border-radius: 6px;
+  cursor: text;
+}
+
+#session-name:hover,
+#session-name:focus-visible {
+  background: var(--bg-input);
+  outline: none;
+}
+
+/* Inline rename: an in-place field rather than a native prompt(), which on iOS
+   is a jarring system sheet that hides the thing being renamed. */
+.name-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 16px; /* keep iOS from zooming */
+  outline: none;
 }
 
 .hash {

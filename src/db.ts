@@ -800,6 +800,12 @@ export function softDeleteChannel(jid: string): void {
   db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(jid);
 }
 
+export function renameChannel(jid: string, name: string): boolean {
+  const trimmed = name.trim().slice(0, 80);
+  if (!trimmed) return false;
+  return db.prepare('update channels set name = ? where jid = ?').run(trimmed, jid).changes > 0;
+}
+
 export function restoreChannel(jid: string): boolean {
   return db.prepare('update channels set deleted_at = null where jid = ?').run(jid).changes > 0;
 }
