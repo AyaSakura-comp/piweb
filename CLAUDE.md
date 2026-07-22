@@ -391,6 +391,15 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
   sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
   resizing the viewport short (390×420), not just at 390×844.
+- **Edge swipe opens the drawer**: a drag starting within 28px of the left edge
+  pulls the session drawer out, tracking the finger so it is reversible; a
+  leftward drag anywhere puts it back. The axis is locked after 8px and a
+  vertical lock abandons the gesture entirely, so scrolling is never stolen —
+  `preventDefault` is only called once horizontal has won. Disabled above 768px
+  (permanent sidebar) and while the lightbox or a sheet is open.
+  **Never recover a drag position with `getComputedStyle`** — it depends on a
+  style flush, so a fast burst of events reads the stale CSS value and silently
+  drops the gesture. Keep the offset in the drag state.
 - **Image lightbox**: tapping an image opens an in-app viewer (`openLightbox`)
   rather than a new tab, collecting every image in the transcript so swiping
   pages through them. The overlay sets `touch-action: none` and handles its own
