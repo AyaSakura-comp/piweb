@@ -106,6 +106,21 @@ Careful when testing: assigning `element.scrollTop` fires a real scroll event, s
 it can trigger a load during your own measurement and make two post-load states
 look like a passing comparison.
 
+### Deleting is soft
+
+`DELETE /api/sessions/:jid` sets `channels.deleted_at` and clears only the
+pending queue. The transcript, settings and pi session directory are untouched,
+so `POST /:jid/restore` brings the session back exactly as it was. The trash is
+listed by `GET /api/sessions/deleted` and previewed read-only (writes to a
+trashed session are refused with 409).
+
+`?permanent=1` is the only destructive path: it drops every row **and** removes
+pi's session directory plus the session's media/uploads. The worker sweeps the
+trash hourly and purges anything older than `WEB_TRASH_RETENTION_DAYS` (30).
+
+This also closed the old gap where deleting a session stranded its `.jsonl` on
+disk forever — now it is either restorable or genuinely purged.
+
 ### Storage: two histories, not one
 
 | store | what | cleared by |
@@ -399,16 +414,13 @@ it works.
 
 Not bugs that block anything, but they will surprise someone eventually:
 
-1. **Deleting a session does not delete pi's session files.** `deleteChannel()`
-   clears the DB rows only; `sessions/<folder>/*.jsonl` stays on disk, so the
-   full conversation survives a deletion the user believes was complete.
-2. **Every attachment is permanently copied to `/tmp/pi-discord-files/<date>/`**
+1. **Every attachment is permanently copied to `/tmp/pi-discord-files/<date>/`**
    and never cleaned up — inherited from piscord (the name is now wrong too).
    Each photo sent from the phone leaves a second copy there indefinitely.
-3. **Backups must include the WAL.** `gateway.db` can be a few KB while
+2. **Backups must include the WAL.** `gateway.db` can be a few KB while
    `gateway.db-wal` holds most of the data. Copy `-wal`/`-shm` too, or use
    `sqlite3 .backup` / `VACUUM INTO`.
-4. **`message_log`** is still written by the queue (piscord legacy) and
+3. **`message_log`** is still written by the queue (piscord legacy) and
    duplicates what `web_events` records.
 
 ## 7. This deployment

@@ -20,7 +20,6 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
   appendWebEvent,
-  deleteChannel,
   deleteWebEvents,
   enqueueControl,
   enqueueMessage,
@@ -34,12 +33,19 @@ import {
   hasWebEventsBefore,
   searchWebEvents,
   isChannelBusy,
+  isChannelDeleted,
+  listDeletedWebSessions,
   listWebSessions,
+  purgeChannel,
+  restoreChannel,
+  softDeleteChannel,
   registerChannel,
   type WebEventRow,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
+import { rm } from 'node:fs/promises';
+import { resolveChannelSessionDir } from '../session/path.js';
 import {
   buildSetCookie,
   COOKIE_NAME,
@@ -342,6 +348,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
+  // Before the /:jid matcher, or "deleted" would be treated as a session id.
+  if (path === '/api/sessions/deleted' && method === 'GET') {
+    sendJson(res, 200, { sessions: listDeletedWebSessions() });
+    return;
+  }
+
   const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)(?:\/(.+))?$/);
   if (sessionMatch) {
     const jid = webJid(decodeURIComponent(sessionMatch[1]));
@@ -353,9 +365,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    // Default DELETE is a soft delete into the trash. ?permanent=1 destroys
+    // the transcript AND pi's session directory, and cannot be undone.
     if (!sub && method === 'DELETE') {
-      deleteChannel(jid);
-      sendJson(res, 200, { ok: true });
+      if (url.searchParams.get('permanent') === '1') {
+        await purgeSessionFiles(channel.folder, jid);
+        purgeChannel(jid);
+        sendJson(res, 200, { ok: true, permanent: true });
+        return;
+      }
+      softDeleteChannel(jid);
+      sendJson(res, 200, { ok: true, permanent: false });
+      return;
+    }
+
+    if (sub === 'restore' && method === 'POST') {
+      const restored = restoreChannel(jid);
+      sendJson(res, restored ? 200 : 404, restored ? { ok: true } : { error: 'Not in trash' });
       return;
     }
 
@@ -416,6 +442,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (sub === 'stream' && method === 'GET') {
       streamEvents(req, res, jid, Number(url.searchParams.get('after') ?? '0'));
       return;
+    }
+
+    // A trashed session is readable (so it can be previewed) but frozen.
+    if (method === 'POST' && (sub === 'messages' || sub === 'commands' || sub === 'clear')) {
+      if (isChannelDeleted(jid)) {
+        sendJson(res, 409, { error: 'This session is in the trash — restore it first' });
+        return;
+      }
     }
 
     if (sub === 'messages' && method === 'POST') {
@@ -488,6 +522,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   sendJson(res, 404, { error: 'Not found' });
+}
+
+/**
+ * Remove everything a purged session owns on disk: pi's session directory
+ * (the real conversation) plus its served media and staged uploads.
+ */
+async function purgeSessionFiles(folder: string, jid: string): Promise<void> {
+  const targets = [
+    resolveChannelSessionDir(folder),
+    join(config.webMediaDir, mediaDirName(jid)),
+    join(config.webUploadDir, mediaDirName(jid)),
+  ];
+  for (const target of targets) {
+    await rm(target, { recursive: true, force: true }).catch((err) =>
+      logger.warn({ err: err.message, target }, 'purge: failed to remove'),
+    );
+  }
 }
 
 /**

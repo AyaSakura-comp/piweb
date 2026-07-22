@@ -310,6 +310,13 @@ export const config = {
   webUploadDir: env('WEB_UPLOAD_DIR', resolve(DEFAULT_DATA_DIR, 'web-uploads')),
 
   /**
+   * Days a deleted session stays in the trash before it is purged for good
+   * (0 disables automatic purging). Purging destroys the transcript AND pi's
+   * session directory, which is why deletion is soft by default.
+   */
+  webTrashRetentionDays: envInt('WEB_TRASH_RETENTION_DAYS', 30, { min: 0 }),
+
+  /**
    * Run the pi worker loop inside the web process. Off by default: the worker
    * normally runs on the host (full host access) while the web server runs in
    * Docker. Turn on for an all-in-one container.

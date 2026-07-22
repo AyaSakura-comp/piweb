@@ -22,6 +22,7 @@ const state = {
   attachments: [],
   commands: [],
   models: [],
+  previewingDeleted: false,
   ac: { open: false, items: [], index: 0, mode: null },
   // Infinite scroll upward: `oldest` is the lowest event id currently rendered,
   // `hasMore` says whether anything precedes it, `loadingOlder` prevents the
@@ -120,8 +121,10 @@ function renderSessions() {
     del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!confirm(`Delete "${session.name}"? This removes its transcript.`)) return;
+      // Soft delete: it goes to "Recently deleted" and can be restored.
+      if (!confirm(`Move "${session.name}" to Recently deleted?`)) return;
       await api(`/api/sessions/${encodeURIComponent(session.jid)}`, { method: 'DELETE' });
+      refreshTrashCount();
       if (state.activeJid === session.jid) {
         state.activeJid = null;
         $('messages').textContent = '';
@@ -153,8 +156,9 @@ async function createSession() {
   closeDrawer();
 }
 
-async function selectSession(jid) {
+async function selectSession(jid, opts = {}) {
   state.activeJid = jid;
+  state.previewingDeleted = Boolean(opts.deleted);
   state.cursor = 0;
   state.oldest = 0;
   state.hasMore = false;
@@ -163,10 +167,17 @@ async function selectSession(jid) {
   state.hasMoreNewer = false;
   state.atLive = true;
   closeSearch();
+  // A trashed session is not in state.sessions, so its name has to be passed in
+  // by the trash sheet — otherwise the header falls back to the raw jid.
   const session = state.sessions.find((s) => s.jid === jid);
-  $('session-name').textContent = session ? session.name : jid;
+  $('session-name').textContent = opts.name || (session ? session.name : jid);
   $('messages').textContent = '';
   renderSessions();
+
+  // A trashed session is previewable but frozen: hide the composer so there is
+  // no way to type into something that would be rejected by the server anyway.
+  $('deleted-banner').hidden = !state.previewingDeleted;
+  $('composer-wrap').hidden = state.previewingDeleted;
 
   // Only the newest page; older history is pulled in as the user scrolls up.
   const { events, busy, hasMore } = await api(
@@ -920,6 +931,99 @@ function hideAutocomplete() {
   $('autocomplete').hidden = true;
 }
 
+// ── recently deleted ─────────────────────────────────────────────────────
+
+async function refreshTrashCount() {
+  try {
+    const { sessions } = await api('/api/sessions/deleted');
+    const badge = $('trash-count');
+    badge.textContent = String(sessions.length);
+    badge.hidden = sessions.length === 0;
+    return sessions;
+  } catch {
+    return [];
+  }
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  // SQLite timestamps are UTC without a marker; see timeLabel().
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+async function openTrash() {
+  $('trash-sheet').hidden = false;
+  const list = $('trash-list');
+  list.textContent = '';
+  $('trash-note').textContent = 'Loading…';
+
+  const sessions = await refreshTrashCount();
+  if (sessions.length === 0) {
+    $('trash-note').textContent = 'Nothing here. Deleted sessions appear for 30 days.';
+    return;
+  }
+  $('trash-note').textContent = 'Deleted sessions are kept for 30 days, then purged automatically.';
+
+  for (const s of sessions) {
+    const item = el('div', 'trash-item');
+    item.append(el('div', 't-name', s.name));
+    item.append(
+      el('div', 't-meta', `deleted ${fmtDate(s.deletedAt)} · ${s.events} messages`),
+    );
+
+    const actions = el('div', 'trash-actions');
+
+    const preview = el('button', null, 'Preview');
+    preview.addEventListener('click', () => {
+      closeTrash();
+      closeDrawer();
+      selectSession(s.jid, { deleted: true, name: s.name });
+    });
+
+    const restore = el('button', 'primary', 'Restore');
+    restore.addEventListener('click', async () => {
+      await api(`/api/sessions/${encodeURIComponent(s.jid)}/restore`, { method: 'POST' });
+      await loadSessions();
+      await refreshTrashCount();
+      closeTrash();
+      selectSession(s.jid);
+      closeDrawer();
+    });
+
+    const forever = el('button', 'danger', 'Delete forever');
+    forever.addEventListener('click', async () => {
+      if (!confirm(`Permanently delete "${s.name}"? This also removes pi's session files and cannot be undone.`)) return;
+      await api(`/api/sessions/${encodeURIComponent(s.jid)}?permanent=1`, { method: 'DELETE' });
+      openTrash();
+    });
+
+    actions.append(preview, restore, forever);
+    item.append(actions);
+    list.append(item);
+  }
+}
+
+function closeTrash() {
+  $('trash-sheet').hidden = true;
+}
+
+$('btn-trash').addEventListener('click', openTrash);
+$('btn-trash-close').addEventListener('click', closeTrash);
+$('trash-sheet').addEventListener('click', (e) => {
+  if (e.target === $('trash-sheet')) closeTrash();
+});
+
+$('btn-restore-inline').addEventListener('click', async () => {
+  if (!state.activeJid) return;
+  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/restore`, { method: 'POST' });
+  await loadSessions();
+  await refreshTrashCount();
+  selectSession(state.activeJid);
+});
+
 // ── keyboard-aware sizing ────────────────────────────────────────────────
 
 /**
@@ -972,6 +1076,7 @@ async function boot() {
   state.models = models;
 
   await loadSessions();
+  await refreshTrashCount();
   if (state.sessions.length > 0) selectSession(state.sessions[0].jid);
 }
 
