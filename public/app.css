@@ -1095,7 +1095,9 @@ svg {
 
 .sheet-panel {
   width: 100%;
-  max-height: 82dvh;
+  /* --sheet-max is synced to visualViewport by app.js: with the keyboard open
+     dvh still reports the full screen, so a dvh-only cap runs off-screen. */
+  max-height: var(--sheet-max, 82dvh);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1510,4 +1512,36 @@ svg {
 
 #header-badge {
   margin-left: 2px;
+}
+
+/* ── sheet search ────────────────────────────────────────────────────── */
+
+.sheet-search {
+  flex: none;
+  padding: 10px 16px 4px;
+}
+
+.sheet-search input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-size: 16px; /* keep iOS from zooming on focus */
+  outline: none;
+}
+
+.sheet-search input:focus {
+  border-color: var(--accent);
+}
+
+.model-item .provider-badge {
+  margin-left: 2px;
+}
+
+.model-item mark {
+  background: rgb(88 101 242 / 0.35);
+  color: inherit;
+  border-radius: 2px;
 }

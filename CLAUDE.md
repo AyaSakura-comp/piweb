@@ -391,6 +391,10 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
   sync with `window.visualViewport` by `syncAutocompleteHeight()`. Test this by
   resizing the viewport short (390×420), not just at 390×844.
+- **`highlight()` must never be called with an empty needle.** `indexOf('')`
+  returns the search position rather than -1, so its loop never advances — an
+  infinite loop that freezes the tab. It is guarded now; the model filter hit
+  this because it renders the list before anything has been typed.
 - **Session indicators mean two different things.** A spinner = pi is working
   in that session right now; a green dot = it finished and you have not opened
   it since. Different shapes on purpose, so they are tellable apart without
