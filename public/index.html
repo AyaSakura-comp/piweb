@@ -171,6 +171,11 @@
     <!-- KaTeX is vendored locally: the container serves static files only and
          must not depend on a CDN. Loaded before the app so window.katex exists
          by the time the first transcript renders. -->
+    <div class="toast" id="toast" hidden>
+      <span id="toast-text"></span>
+      <button type="button" id="toast-action" hidden></button>
+    </div>
+
     <div class="lightbox" id="lightbox" hidden>
       <div class="lb-bar">
         <span class="lb-count" id="lb-count"></span>

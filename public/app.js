@@ -92,6 +92,84 @@ $('btn-logout').addEventListener('click', async () => {
   showLogin();
 });
 
+// ── toast ────────────────────────────────────────────────────────────────
+
+let toastTimer;
+
+function showToast(text, action) {
+  const toast = $('toast');
+  const btn = $('toast-action');
+  $('toast-text').textContent = text;
+
+  btn.hidden = !action;
+  btn.onclick = null;
+  if (action) {
+    btn.textContent = action.label;
+    btn.onclick = () => {
+      hideToast();
+      action.run();
+    };
+  }
+
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, action ? 4500 : 2200);
+}
+
+function hideToast() {
+  $('toast').hidden = true;
+  clearTimeout(toastTimer);
+}
+
+// ── copy links on tap ────────────────────────────────────────────────────
+//
+// Tapping a URL copies it instead of navigating: on a phone the usual way to
+// grab a link is a long-press and a fiddly menu. Opening is still one tap away
+// via the toast, so nothing is actually lost.
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+
+  // Older iOS Safari has no async clipboard outside a few contexts.
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.append(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  const link = e.target.closest('#messages .msg-text a, #messages .event-body a');
+  if (!link) return;
+
+  const url = link.href;
+  e.preventDefault();
+
+  const copied = await copyText(url);
+  const shown = url.length > 48 ? `${url.slice(0, 47)}…` : url;
+  showToast(copied ? `Copied ${shown}` : `Could not copy — ${shown}`, {
+    label: 'Open',
+    run: () => window.open(url, '_blank', 'noopener'),
+  });
+});
+
 // ── push notifications ───────────────────────────────────────────────────
 //
 // iOS only delivers Web Push to a site launched from the Home Screen, and only

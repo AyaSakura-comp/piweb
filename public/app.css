@@ -1582,3 +1582,61 @@ svg {
   background: rgb(218 55 60 / 0.18);
   color: #f4a3a5;
 }
+
+/* ── toast ───────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #101114;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+  color: var(--text-bright);
+  font-size: 13.5px;
+  animation: toast-in 0.14s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.toast span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast button {
+  flex: none;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* A tapped link copies rather than navigating, so it should not look like a
+   plain hyperlink invitation to leave the page. */
+.msg-text a {
+  text-decoration-style: dotted;
+  text-decoration-line: underline;
+  text-underline-offset: 2px;
+}
