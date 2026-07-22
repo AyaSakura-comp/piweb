@@ -1155,38 +1155,45 @@ svg {
   position: fixed;
   inset: 0;
   z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-  /* The whole surface handles its own gestures: swipe sideways to page,
-     down to dismiss. Leaving the browser any panning would fight both. */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: #0b0b0d;
+  /* The surface owns its gestures: sideways pages, down dismisses. */
   touch-action: none;
   user-select: none;
+  animation: lb-in 0.16s ease-out;
+}
+
+@keyframes lb-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .lb-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  grid-row: 1;
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: calc(8px + env(safe-area-inset-top)) 10px 8px 16px;
-  background: linear-gradient(rgb(0 0 0 / 0.65), transparent);
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top)) 10px 10px 12px;
   color: #fff;
 }
 
 .lb-count {
-  font-size: 14px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+  font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .lb-open {
   margin-left: auto;
-  color: #cfd3ff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
   font-size: 13px;
   text-decoration: none;
 }
@@ -1195,22 +1202,41 @@ svg {
   color: #fff;
 }
 
+.lb-bar .icon-btn:active {
+  background: rgb(255 255 255 / 0.16);
+}
+
 .lb-stage {
-  width: 100%;
-  height: 100%;
+  grid-row: 2;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 8px 12px;
   overflow: hidden;
 }
 
+/*
+ * Small images are scaled UP to a comfortable size rather than left as a stamp
+ * in a black void — an icon shown at its native 180px on a phone reads as a
+ * mistake. `contain` keeps the aspect ratio, and the frame gives a transparent
+ * or light-backgrounded image something to sit on.
+ */
 #lb-img {
   max-width: 100%;
-  max-height: 100dvh;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
-  /* No transition by default: it is set only when snapping back or paging, so
-     finger-tracking during a drag stays 1:1. */
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.6);
+  background: rgb(255 255 255 / 0.03);
   will-change: transform, opacity;
+}
+
+/* Square-ish small images (icons) get a sensible target size. */
+#lb-img.fit-up {
+  width: min(88vw, 62vh, 560px);
 }
 
 .lb-nav {
@@ -1226,17 +1252,65 @@ svg {
   border-radius: 50%;
   background: rgb(255 255 255 / 0.12);
   color: #fff;
+  backdrop-filter: blur(6px);
 }
 
 .lb-nav[disabled] {
-  opacity: 0.25;
+  opacity: 0.2;
 }
 
-.lb-prev { left: 8px; }
-.lb-next { right: 8px; }
+.lb-prev { left: 10px; }
+.lb-next { right: 10px; }
 
-/* On a phone, swiping is the primary gesture and the arrows just cover the
-   image. */
+/* ── filmstrip ── */
+
+.lb-strip {
+  grid-row: 3;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+
+.lb-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.lb-thumb {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.06);
+  overflow: hidden;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.lb-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lb-thumb.active {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+/* One image: the strip and the arrows are just clutter. */
+.lightbox.single .lb-strip,
+.lightbox.single .lb-nav {
+  display: none;
+}
+
 @media (max-width: 767px) {
   .lb-nav {
     display: none;

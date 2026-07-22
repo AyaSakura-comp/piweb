@@ -946,9 +946,44 @@ function openLightbox(url) {
   lb.urls = collectTranscriptImages();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
+  $('lightbox').classList.toggle('single', lb.urls.length < 2);
   // Stop the transcript scrolling underneath the overlay.
   document.body.style.overflow = 'hidden';
+  buildFilmstrip();
   showLightboxImage();
+}
+
+/** Thumbnail strip: jumping to image 12 of 16 should not need 11 swipes. */
+function buildFilmstrip() {
+  const strip = $('lb-strip');
+  strip.textContent = '';
+  if (lb.urls.length < 2) return;
+
+  lb.urls.forEach((url, i) => {
+    const btn = el('button', 'lb-thumb');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', `Image ${i + 1}`);
+    const img = el('img');
+    img.src = url;
+    img.loading = 'lazy';
+    img.alt = '';
+    btn.append(img);
+    btn.addEventListener('click', () => {
+      const dir = i > lb.index ? 1 : -1;
+      lb.index = i;
+      showLightboxImage(dir);
+    });
+    strip.append(btn);
+  });
+}
+
+function syncFilmstrip() {
+  const strip = $('lb-strip');
+  [...strip.children].forEach((btn, i) => {
+    const active = i === lb.index;
+    btn.classList.toggle('active', active);
+    if (active) btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  });
 }
 
 function closeLightbox() {
@@ -957,17 +992,39 @@ function closeLightbox() {
   lb.drag = null;
 }
 
-function showLightboxImage() {
+/**
+ * Show the current image. `direction` (+1/-1) slides the new one in from that
+ * side, so paging reads as movement through a sequence instead of a hard cut.
+ */
+function showLightboxImage(direction = 0) {
   const img = $('lb-img');
   const url = lb.urls[lb.index];
+
   img.style.transition = 'none';
-  img.style.transform = 'translateX(0)';
-  img.style.opacity = '1';
+  img.style.transform = direction ? `translateX(${direction * 36}px)` : 'translateX(0)';
+  img.style.opacity = direction ? '0' : '1';
+  img.classList.remove('fit-up');
   img.src = url;
+
+  // Decide upscaling once the real dimensions are known: only pad out images
+  // genuinely smaller than the stage, and never stretch a wide photo.
+  img.onload = () => {
+    const stage = $('lb-stage').getBoundingClientRect();
+    const small = img.naturalWidth < stage.width * 0.6 && img.naturalHeight < stage.height * 0.6;
+    img.classList.toggle('fit-up', small);
+  };
+
+  requestAnimationFrame(() => {
+    img.style.transition = 'transform 0.2s cubic-bezier(0.2, 0, 0.2, 1), opacity 0.2s ease';
+    img.style.transform = 'translateX(0)';
+    img.style.opacity = '1';
+  });
+
   $('lb-count').textContent = `${lb.index + 1} / ${lb.urls.length}`;
   $('lb-open').href = url;
   $('lb-prev').disabled = lb.index === 0;
   $('lb-next').disabled = lb.index === lb.urls.length - 1;
+  syncFilmstrip();
 
   // Warm the neighbours so paging does not flash an empty frame.
   for (const i of [lb.index - 1, lb.index + 1]) {
@@ -979,7 +1036,7 @@ function stepLightbox(delta) {
   const next = lb.index + delta;
   if (next < 0 || next >= lb.urls.length) return false;
   lb.index = next;
-  showLightboxImage();
+  showLightboxImage(delta);
   return true;
 }
 
@@ -1007,7 +1064,7 @@ const SWIPE_PAGE_PX = 60;
 const SWIPE_DISMISS_PX = 110;
 
 $('lightbox').addEventListener('pointerdown', (e) => {
-  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav')) return;
+  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip')) return;
   lb.drag = { x: e.clientX, y: e.clientY, id: e.pointerId, axis: null };
   $('lb-img').style.transition = 'none';
 });
