@@ -280,9 +280,34 @@ The sidecar registers its own tailnet node (`TS_HOSTNAME=piweb`) so the UI gets
 its own subdomain, e.g. `https://piweb.<tailnet>.ts.net/`. State lives in
 `./ts-state`; once authenticated no key is needed again.
 
-**Funnel is deliberately OFF.** This endpoint can run arbitrary commands on the
-host — unlike fuji-camera (photos), the blast radius is the whole machine. Do not
-enable it without an explicit decision.
+**Funnel is ON** (`AllowFunnel` in ts-serve.json), so the UI is reachable from
+the public internet. That was an explicit decision, and it changes the threat
+model: the shared token is now the ONLY thing in front of host command
+execution.
+
+What that required:
+
+- **Identity auth is refused on Funnel requests.** serve overwrites the
+  `Tailscale-User-*` headers for tailnet traffic (verified: a forged header
+  from a tailnet client still reports the real login), but a Funnel request has
+  no identity to overwrite with. Rather than stake host RCE on serve stripping
+  them, `tailscaleIdentity()` returns undefined whenever
+  `Tailscale-Funnel-Request` is present. Public visitors must use the token.
+- **`/api/login` is rate limited** (8 failures → 60s lockout) because it now
+  faces the internet. Buckets are keyed on the forwarded client address, and
+  that was verified to be per-client: locking out the public path leaves the
+  tailnet path answering 401, so an attacker cannot lock the owner out.
+- `WEB_ALLOWED_LOGINS` does **not** apply to Funnel traffic — there is no
+  identity to match. It only restricts tailnet users.
+
+**Enabling Funnel needs a tailscaled restart.** `tailscale funnel status` reports
+"Funnel on" as soon as the serve config is applied, but the node does not
+actually accept public traffic until it re-establishes its ingress connection.
+Symptom: the public path fails TLS ("unexpected eof") while the tailnet path is
+fine. `docker restart piweb-ts` fixes it. Test the public path with
+`curl --resolve <host>:443:<public-A-record>` — MagicDNS otherwise routes you
+over the tailnet and you never exercise Funnel at all. Use a known-working
+Funnel host on the same tailnet as a control.
 
 #### Registration gotcha
 
