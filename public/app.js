@@ -179,6 +179,8 @@ async function selectSession(jid, opts = {}) {
   // no way to type into something that would be rejected by the server anyway.
   $('deleted-banner').hidden = !state.previewingDeleted;
   $('composer-wrap').hidden = state.previewingDeleted;
+  for (const id of ['btn-model', 'btn-new-chat']) $(id).hidden = state.previewingDeleted;
+  closeModelSheet();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
   const { events, busy, hasMore } = await api(
@@ -426,6 +428,92 @@ async function jumpTo(id) {
   closeSearch();
 }
 
+// ── header shortcuts: model / new / stop ─────────────────────────────────
+
+/** Enqueue one of the piscord commands and let its result land in the transcript. */
+async function runQuickCommand(command, args = {}) {
+  if (!state.activeJid || state.previewingDeleted) return;
+  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
+    method: 'POST',
+    body: JSON.stringify({ command, args }),
+  }).catch((err) => alert(err.message));
+}
+
+$('btn-new-chat').addEventListener('click', () => {
+  // No confirm: /pi new archives the old session rather than destroying it, and
+  // the worker posts "Started a fresh pi session." straight into the transcript,
+  // which is the feedback a dialog would have been asking for.
+  runQuickCommand('pi new');
+});
+
+$('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
+
+// ── model sheet ──
+
+function currentModelRef() {
+  const session = state.sessions.find((s) => s.jid === state.activeJid);
+  return session ? session.model : '';
+}
+
+async function openModelSheet() {
+  if (!state.activeJid || state.previewingDeleted) return;
+  $('model-sheet').hidden = false;
+  const list = $('model-list');
+  list.textContent = '';
+  $('model-note').textContent = 'Loading…';
+
+  const { models } = await api('/api/models').catch(() => ({ models: [] }));
+  state.models = models;
+
+  if (models.length === 0) {
+    $('model-note').textContent =
+      'No models published yet — the worker refreshes this list every 10 minutes.';
+    return;
+  }
+
+  const current = currentModelRef();
+  $('model-note').textContent = current
+    ? `This session uses ${current}.`
+    : 'This session follows the gateway default.';
+
+  // "Use the gateway default" first, so resetting is one tap.
+  const reset = el('button', `model-item${current ? '' : ' current'}`);
+  reset.type = 'button';
+  reset.append(el('span', 'm-ref', 'Gateway default'));
+  reset.append(el('span', 'm-tag', 'reset'));
+  reset.addEventListener('click', async () => {
+    closeModelSheet();
+    await runQuickCommand('pi reset-model');
+    setTimeout(loadSessions, 900);
+  });
+  list.append(reset);
+
+  for (const model of models) {
+    const item = el('button', `model-item${model.ref === current ? ' current' : ''}`);
+    item.type = 'button';
+    item.append(el('span', 'm-ref', model.ref));
+    if (model.reasoning) item.append(el('span', 'm-tag', 'reasoning'));
+    item.addEventListener('click', async () => {
+      closeModelSheet();
+      await runQuickCommand('pi model', { model: model.ref });
+      // The worker applies it asynchronously; re-read so the sheet and the
+      // drawer agree next time it is opened.
+      setTimeout(loadSessions, 900);
+    });
+    list.append(item);
+  }
+}
+
+function closeModelSheet() {
+  $('model-sheet').hidden = true;
+}
+
+$('btn-model').addEventListener('click', openModelSheet);
+$('btn-model-close').addEventListener('click', closeModelSheet);
+$('model-sheet').addEventListener('click', (e) => {
+  if (e.target === $('model-sheet')) closeModelSheet();
+});
+
 // ── rename ───────────────────────────────────────────────────────────────
 
 function startRename() {
@@ -542,6 +630,9 @@ function openStream() {
 
 function setBusy(busy) {
   $('typing').hidden = !busy;
+  // Stop only exists while there is something to stop — it would be dead
+  // weight in an already crowded header otherwise.
+  $('btn-stop').hidden = !busy;
   const session = state.sessions.find((s) => s.jid === state.activeJid);
   if (session && session.busy !== busy) {
     session.busy = busy;
@@ -1346,7 +1437,7 @@ function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
   if (window.matchMedia('(min-width: 768px)').matches) return false;
   if (!$('login').hidden) return false;
-  return $('lightbox').hidden && $('trash-sheet').hidden;
+  return $('lightbox').hidden && $('trash-sheet').hidden && $('model-sheet').hidden;
 }
 
 document.addEventListener(
