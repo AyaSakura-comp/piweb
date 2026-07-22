@@ -20,6 +20,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
   appendWebEvent,
+  deletePushSubscription,
   deleteWebEvents,
   enqueueControl,
   enqueueMessage,
@@ -41,6 +42,7 @@ import {
   restoreChannel,
   softDeleteChannel,
   registerChannel,
+  savePushSubscription,
   type WebEventRow,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
@@ -48,6 +50,7 @@ import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { rm } from 'node:fs/promises';
 import { resolveChannelSessionDir } from '../session/path.js';
 import { getSessionModel, providerBadge, providerFromRef } from '../session/model-info.js';
+import { getPushPublicKey, startPush } from './push.js';
 import {
   buildSetCookie,
   COOKIE_NAME,
@@ -216,6 +219,8 @@ export function startWebServer(): ReturnType<typeof createServer> {
     logger.info({ host: config.webHost, port: config.webPort }, 'piweb web server listening');
   });
 
+  startPush();
+
   return server;
 }
 
@@ -292,6 +297,38 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     sendJson(res, 404, { error: 'Not found' });
+    return;
+  }
+
+  // ── push ──
+  if (path === '/api/push/key' && method === 'GET') {
+    sendJson(res, 200, { key: getPushPublicKey() });
+    return;
+  }
+
+  if (path === '/api/push/subscribe' && method === 'POST') {
+    const body = await readJson<{
+      endpoint?: string;
+      keys?: { p256dh?: string; auth?: string };
+    }>(req);
+    if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
+      sendJson(res, 400, { error: 'Invalid subscription' });
+      return;
+    }
+    savePushSubscription({
+      endpoint: body.endpoint,
+      p256dh: body.keys.p256dh,
+      auth: body.keys.auth,
+    });
+    logger.info('push: subscription saved');
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (path === '/api/push/unsubscribe' && method === 'POST') {
+    const body = await readJson<{ endpoint?: string }>(req);
+    if (body.endpoint) deletePushSubscription(body.endpoint);
+    sendJson(res, 200, { ok: true });
     return;
   }
 

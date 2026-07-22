@@ -1545,3 +1545,40 @@ svg {
   color: inherit;
   border-radius: 2px;
 }
+
+/* ── notification toggle ─────────────────────────────────────────────── */
+
+.notif-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.notif-toggle svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.notif-state {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.notif-state.on {
+  background: rgb(59 165 93 / 0.2);
+  color: #7ee2a8;
+}
+
+.notif-state.blocked {
+  background: rgb(218 55 60 / 0.18);
+  color: #f4a3a5;
+}

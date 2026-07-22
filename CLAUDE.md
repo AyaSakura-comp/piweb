@@ -438,6 +438,26 @@ it works.
 
 ---
 
+### Push notifications
+
+`src/web/push.ts` tails `web_events` from a cursor in `meta` and sends Web Push
+for **assistant replies and errors only** — thinking/tool events would turn one
+answer into dozens of buzzes, and `system` events echo a command the user just
+issued on that device.
+
+- **iOS only delivers Web Push to a Home Screen app.** Permission cannot even be
+  requested from a normal Safari tab, which is why the manifest, the
+  apple-touch-icons and `sw.js` all matter.
+- VAPID keys live in `meta`, not an env var: regenerating them silently
+  invalidates every existing subscription.
+- The cursor starts at the current end of the log, so enabling notifications
+  never replays history as a burst, and it advances **before** sending so a
+  failing endpoint cannot re-notify the same reply every tick.
+- 404/410 from a push service means the browser discarded the subscription —
+  delete it rather than retrying forever.
+- It runs in the web tier because that is where the subscriptions are and the
+  half that has a reason to reach the public internet.
+
 ## 6. Known gaps
 
 0. **`/pi reset-model` does not take effect until `/pi new`.** Setting a model
