@@ -170,6 +170,7 @@ async function selectSession(jid, opts = {}) {
   // A trashed session is not in state.sessions, so its name has to be passed in
   // by the trash sheet — otherwise the header falls back to the raw jid.
   const session = state.sessions.find((s) => s.jid === jid);
+  commitRename(false);
   $('session-name').textContent = opts.name || (session ? session.name : jid);
   $('messages').textContent = '';
   renderSessions();
@@ -424,6 +425,64 @@ async function jumpTo(id) {
   }
   closeSearch();
 }
+
+// ── rename ───────────────────────────────────────────────────────────────
+
+function startRename() {
+  if (!state.activeJid || state.previewingDeleted) return;
+  const label = $('session-name');
+  const input = $('session-name-input');
+  input.value = label.textContent;
+  label.hidden = true;
+  input.hidden = false;
+  input.focus();
+  input.select();
+}
+
+async function commitRename(save) {
+  const label = $('session-name');
+  const input = $('session-name-input');
+  if (input.hidden) return;
+
+  const name = input.value.trim();
+  input.hidden = true;
+  label.hidden = false;
+
+  // Empty or unchanged: silently keep what was there rather than erroring.
+  if (!save || !name || name === label.textContent) return;
+
+  label.textContent = name;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.activeJid)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    await loadSessions();
+  } catch (err) {
+    alert(err.message);
+    await loadSessions();
+    const session = state.sessions.find((s) => s.jid === state.activeJid);
+    if (session) label.textContent = session.name;
+  }
+}
+
+$('session-name').addEventListener('click', startRename);
+$('session-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    startRename();
+  }
+});
+$('session-name-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    commitRename(true);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    commitRename(false);
+  }
+});
+$('session-name-input').addEventListener('blur', () => commitRename(true));
 
 $('btn-new-session').addEventListener('click', createSession);
 

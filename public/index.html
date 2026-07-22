@@ -74,7 +74,8 @@
           </button>
           <div class="topbar-title">
             <span class="hash">#</span>
-            <span id="session-name">no session</span>
+            <span id="session-name" role="button" tabindex="0" title="Tap to rename">no session</span>
+            <input id="session-name-input" class="name-edit" maxlength="80" hidden aria-label="Session name" />
           </div>
           <button class="icon-btn" id="btn-search" title="Search" aria-label="Search history">
             <svg viewBox="0 0 24 24" aria-hidden="true">
