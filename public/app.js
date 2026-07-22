@@ -523,12 +523,10 @@ function renderFiles(container, files) {
       img.src = url;
       img.loading = 'lazy';
       img.alt = 'attachment';
-      const link = el('a');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.append(img);
-      wrap.append(link);
+      // Opens the in-app viewer rather than a new tab, so paging between the
+      // images in a transcript is a swipe instead of a back-and-forth.
+      img.addEventListener('click', () => openLightbox(url));
+      wrap.append(img);
     } else if (/\.(mp4|webm|mov)$/.test(lower)) {
       const video = el('video');
       video.src = url;
@@ -930,6 +928,141 @@ function hideAutocomplete() {
   state.ac = { open: false, items: [], index: 0, mode: null };
   $('autocomplete').hidden = true;
 }
+
+// ── image lightbox ───────────────────────────────────────────────────────
+
+const lb = {
+  urls: [],
+  index: 0,
+  drag: null,
+};
+
+/** Every image currently in the transcript, in reading order. */
+function collectTranscriptImages() {
+  return [...document.querySelectorAll('#messages .msg-files img')].map((n) => n.getAttribute('src'));
+}
+
+function openLightbox(url) {
+  lb.urls = collectTranscriptImages();
+  lb.index = Math.max(0, lb.urls.indexOf(url));
+  $('lightbox').hidden = false;
+  // Stop the transcript scrolling underneath the overlay.
+  document.body.style.overflow = 'hidden';
+  showLightboxImage();
+}
+
+function closeLightbox() {
+  $('lightbox').hidden = true;
+  document.body.style.overflow = '';
+  lb.drag = null;
+}
+
+function showLightboxImage() {
+  const img = $('lb-img');
+  const url = lb.urls[lb.index];
+  img.style.transition = 'none';
+  img.style.transform = 'translateX(0)';
+  img.style.opacity = '1';
+  img.src = url;
+  $('lb-count').textContent = `${lb.index + 1} / ${lb.urls.length}`;
+  $('lb-open').href = url;
+  $('lb-prev').disabled = lb.index === 0;
+  $('lb-next').disabled = lb.index === lb.urls.length - 1;
+
+  // Warm the neighbours so paging does not flash an empty frame.
+  for (const i of [lb.index - 1, lb.index + 1]) {
+    if (i >= 0 && i < lb.urls.length) new Image().src = lb.urls[i];
+  }
+}
+
+function stepLightbox(delta) {
+  const next = lb.index + delta;
+  if (next < 0 || next >= lb.urls.length) return false;
+  lb.index = next;
+  showLightboxImage();
+  return true;
+}
+
+$('lb-close').addEventListener('click', closeLightbox);
+$('lb-prev').addEventListener('click', () => stepLightbox(-1));
+$('lb-next').addEventListener('click', () => stepLightbox(1));
+
+// Tapping the backdrop closes; tapping the image itself must not.
+$('lightbox').addEventListener('click', (e) => {
+  if (e.target === $('lightbox') || e.target === $('lb-stage')) closeLightbox();
+});
+
+document.addEventListener('keydown', (e) => {
+  if ($('lightbox').hidden) return;
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === 'ArrowLeft') stepLightbox(-1);
+  else if (e.key === 'ArrowRight') stepLightbox(1);
+});
+
+// ── swipe ──
+// Horizontal drag pages between images, a downward drag dismisses. The axis is
+// decided by whichever displacement is larger, so a slightly diagonal swipe
+// still does what was meant.
+const SWIPE_PAGE_PX = 60;
+const SWIPE_DISMISS_PX = 110;
+
+$('lightbox').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav')) return;
+  lb.drag = { x: e.clientX, y: e.clientY, id: e.pointerId, axis: null };
+  $('lb-img').style.transition = 'none';
+});
+
+$('lightbox').addEventListener('pointermove', (e) => {
+  if (!lb.drag || e.pointerId !== lb.drag.id) return;
+  const dx = e.clientX - lb.drag.x;
+  const dy = e.clientY - lb.drag.y;
+
+  if (!lb.drag.axis && Math.hypot(dx, dy) > 10) {
+    lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+  }
+
+  const img = $('lb-img');
+  if (lb.drag.axis === 'x') {
+    // Resist at the ends so it is obvious there is nothing further that way.
+    const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
+    img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
+  } else if (lb.drag.axis === 'y') {
+    img.style.transform = `translateY(${dy}px)`;
+    img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
+  }
+});
+
+function endLightboxDrag(e) {
+  if (!lb.drag || e.pointerId !== lb.drag.id) return;
+  const dx = e.clientX - lb.drag.x;
+  const dy = e.clientY - lb.drag.y;
+  const axis = lb.drag.axis;
+  lb.drag = null;
+
+  const img = $('lb-img');
+  img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+
+  if (axis === 'y' && dy > SWIPE_DISMISS_PX) {
+    closeLightbox();
+    return;
+  }
+  if (axis === 'x' && Math.abs(dx) > SWIPE_PAGE_PX) {
+    if (stepLightbox(dx < 0 ? 1 : -1)) return;
+  }
+
+  img.style.transform = 'translateX(0)';
+  img.style.opacity = '1';
+}
+
+$('lightbox').addEventListener('pointerup', endLightboxDrag);
+$('lightbox').addEventListener('pointercancel', () => {
+  if (!lb.drag) return;
+  lb.drag = null;
+  const img = $('lb-img');
+  img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+  img.style.transform = 'translateX(0)';
+  img.style.opacity = '1';
+});
 
 // ── recently deleted ─────────────────────────────────────────────────────
 
