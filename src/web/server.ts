@@ -47,6 +47,7 @@ import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { rm } from 'node:fs/promises';
 import { resolveChannelSessionDir } from '../session/path.js';
+import { getSessionModel, providerBadge, providerFromRef } from '../session/model-info.js';
 import {
   buildSetCookie,
   COOKIE_NAME,
@@ -307,15 +308,28 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ── sessions ──
   if (path === '/api/sessions' && method === 'GET') {
-    const sessions = listWebSessions().map((s) => ({
-      jid: s.jid,
-      name: s.name,
-      busy: s.busy,
-      model: s.modelOverride,
-      thinking: s.thinkingOverride,
-      cwd: s.cwdOverride,
-      lastActivity: s.lastActivity,
-    }));
+    const sessions = listWebSessions().map((s) => {
+      // What pi is really running, read from its own session file — not the
+      // override, which can be empty or stale (see session/model-info.ts).
+      const running = getSessionModel(s.folder);
+      // No session file yet (new, or rotated by /pi new): fall back to the
+      // override so the badge reflects what the next run will use.
+      const provider = running?.provider || providerFromRef(s.modelOverride);
+      return {
+        jid: s.jid,
+        name: s.name,
+        busy: s.busy,
+        model: s.modelOverride,
+        thinking: s.thinkingOverride,
+        cwd: s.cwdOverride,
+        lastActivity: s.lastActivity,
+        provider,
+        runningModel: running?.modelId ?? s.modelOverride,
+        // `pending` marks a badge that describes intent rather than a live run.
+        pending: !running && Boolean(provider),
+        badge: provider ? providerBadge(provider) : null,
+      };
+    });
     sendJson(res, 200, { sessions });
     return;
   }

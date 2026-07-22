@@ -98,6 +98,22 @@ async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   state.sessions = sessions;
   renderSessions();
+  renderHeaderBadge();
+}
+
+/** Mirror the provider badge next to the title, so it is visible without opening the drawer. */
+function renderHeaderBadge() {
+  const host = $('header-badge');
+  host.textContent = '';
+  const session = state.sessions.find((s) => s.jid === state.activeJid);
+  if (!session || !session.badge || state.previewingDeleted) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.className = `provider-badge ${session.badge.kind}`;
+  host.textContent = session.badge.label;
+  host.title = session.runningModel || session.provider;
 }
 
 function renderSessions() {
@@ -114,6 +130,12 @@ function renderSessions() {
     const item = el('div', `session-item${session.jid === state.activeJid ? ' active' : ''}`);
     item.append(el('span', 'hash', '#'));
     item.append(el('span', 'name', session.name));
+    if (session.badge) {
+      const badge = el('span', `provider-badge ${session.badge.kind}`, session.badge.label);
+      // The full model id is long; keep it to the tooltip/long-press.
+      badge.title = session.runningModel || session.provider;
+      item.append(badge);
+    }
     if (session.busy) item.append(el('span', 'busy-dot'));
 
     const del = el('button', 'icon-btn del');
@@ -177,6 +199,7 @@ async function selectSession(jid, opts = {}) {
 
   // A trashed session is previewable but frozen: hide the composer so there is
   // no way to type into something that would be rejected by the server anyway.
+  renderHeaderBadge();
   $('deleted-banner').hidden = !state.previewingDeleted;
   $('composer-wrap').hidden = state.previewingDeleted;
   for (const id of ['btn-model', 'btn-new-chat']) $(id).hidden = state.previewingDeleted;

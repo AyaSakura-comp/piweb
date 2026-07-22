@@ -1422,3 +1422,67 @@ svg {
   content: '';
   width: 1ch;
 }
+
+/* ── provider badge ──────────────────────────────────────────────────── */
+
+.provider-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* Colour-coded by where the compute happens: green = this machine,
+   NVIDIA green = NIM, and so on. Text label carries the meaning; colour is
+   only a shortcut, so it still reads without colour vision. */
+.provider-badge.local {
+  background: rgb(59 165 93 / 0.18);
+  border-color: rgb(59 165 93 / 0.5);
+  color: #7ee2a8;
+}
+
+.provider-badge.nv {
+  background: rgb(118 185 0 / 0.18);
+  border-color: rgb(118 185 0 / 0.5);
+  color: #a6e34d;
+}
+
+.provider-badge.gpt {
+  background: rgb(16 163 127 / 0.18);
+  border-color: rgb(16 163 127 / 0.5);
+  color: #5fd3b8;
+}
+
+.provider-badge.gem {
+  background: rgb(66 133 244 / 0.18);
+  border-color: rgb(66 133 244 / 0.5);
+  color: #8ab4f8;
+}
+
+.provider-badge.xai {
+  background: rgb(255 255 255 / 0.1);
+  border-color: rgb(255 255 255 / 0.28);
+  color: #e6e6e6;
+}
+
+.provider-badge.or {
+  background: rgb(139 92 246 / 0.18);
+  border-color: rgb(139 92 246 / 0.5);
+  color: #c4b5fd;
+}
+
+.provider-badge.sak,
+.provider-badge.other {
+  background: var(--bg-input);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+#header-badge {
+  margin-left: 2px;
+}
