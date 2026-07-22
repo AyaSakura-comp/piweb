@@ -82,6 +82,7 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.pdf': 'application/pdf',
   // KaTeX fonts: the wrong type makes some browsers refuse the font.
+  '.webmanifest': 'application/manifest+json',
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.ttf': 'font/ttf',
