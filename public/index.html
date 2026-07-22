@@ -17,6 +17,10 @@
     <!-- An explicit icon stops the browser probing /favicon.ico, which would
          hit the auth gate and log a 401 on every load. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- iOS PWA icon — Thinking Cloud (A1) -->
+    <link rel="apple-touch-icon" href="/icons/thinking-cloud/icon-180x180.png" />
+    <link rel="icon" type="image/png" sizes="1024x1024" href="/icons/thinking-cloud/icon-1024x1024.png" />
+    <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
@@ -124,6 +128,10 @@
       </main>
     </div>
 
+    <!-- KaTeX is vendored locally: the container serves static files only and
+         must not depend on a CDN. Loaded before the app so window.katex exists
+         by the time the first transcript renders. -->
+    <script src="/vendor/katex/katex.min.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
