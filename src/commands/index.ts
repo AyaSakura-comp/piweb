@@ -84,7 +84,7 @@ export async function runCommand(
       case 'pi thinking':
         return cmdThinkingSet(channel, args.level ?? '');
       case 'pi new':
-        return cmdNew(channel);
+        return cmdNew(channel, args);
       case 'pi stop':
       case 'until stop':
         return cmdStop(channel);
@@ -110,7 +110,7 @@ export async function runCommand(
 
 // ── session lifecycle ──
 
-function cmdNew(channel: RegisteredChannel): CommandResult {
+function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): CommandResult {
   // Rotating the session directory under a live run would strand the pi
   // subprocess writing into an archived path, so refuse rather than corrupt it.
   if (isChannelProcessing(channel.jid)) {
@@ -120,7 +120,12 @@ function cmdNew(channel: RegisteredChannel): CommandResult {
     };
   }
 
-  const cleared = clearPendingMessages(channel.jid);
+  // The `pi new` auto-issued when a session is created must NOT clear the
+  // queue. A brand-new session has nothing legitimate to discard, and a message
+  // sent in the moments before the control loop picks it up would be silently
+  // deleted — the user sees their message vanish with no reply and no error.
+  // An explicit /pi new still clears, which is the point of it.
+  const cleared = args.keepQueue === 'true' ? 0 : clearPendingMessages(channel.jid);
   const archivedSession = rotateChannelSessionDir(channel.folder);
 
   logger.info(
