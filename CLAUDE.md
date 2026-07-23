@@ -41,27 +41,69 @@ Both halves ship from one codebase (`dist/cli/piweb.js`):
 
 ### Layout
 
+Inherited from piscord (avoid editing unless the change is transport-agnostic):
+
 ```
-src/agent/       pi core, inherited from piscord — avoid editing
-src/session/     session dirs, media, archive cleanup — inherited
-src/db.ts        schema + queries (piweb tables added at the bottom)
-src/transport/   index.ts = interface; web.ts = persist to web_events
-src/commands/    catalog.ts = pure data; index.ts = implementations (worker-only)
-src/web/         server.ts (node:http, no framework), auth.ts
-src/worker/      index.ts (startup), control.ts (control queue loop)
-src/cli/piweb.ts entrypoint: worker | web | all
-public/          index.html, app.css, app.js — no build step, no framework
-scripts/history.py  read-only history query CLI
+src/agent/       pi core: invoke.ts (spawns pi), queue.ts (message loop),
+                 rpc-session.ts, model-catalog.ts, channel-settings.ts, scheduler.ts
+src/session/     path.ts (session dirs + rotation), media.ts (attachment staging),
+                 archive-cleanup.ts, model-info.ts (reads pi's model_change)
+src/discord/     the ORIGINAL transport — unused by piweb but still compiled;
+                 attachments.ts's AttachmentMeta is reused (local-file variant)
+src/db.ts        schema + queries; piweb tables + helpers at the bottom
+```
+
+piweb's own code:
+
+```
+src/transport/   index.ts  = Transport interface + setTransport/getTransport
+                 web.ts    = the web transport: agent output → web_events (+ media)
+src/commands/    catalog.ts = COMMANDS, pure data, safe for the web tier to import
+                 index.ts   = runCommand() implementations (WORKER-only; pulls in pi deps)
+src/web/         server.ts = node:http router (no framework): API + SSE + static
+                 auth.ts   = token cookie, Tailscale identity, CSRF, login throttle
+                 push.ts   = Web Push sender (tails web_events → APNs/FCM)
+src/worker/      index.ts  = worker startup (loops + model-catalog + trash sweep)
+                 control.ts = control_queue drain loop
+src/media-path.ts  ONE spelling of a media dir/URL (invariant 9)
+src/cli/piweb.ts   entrypoint: worker | web | all
+public/          index.html, app.css, app.js — no framework, no build step
+                 markdown.js = markdown + KaTeX renderer (DOM nodes only)
+                 sw.js       = service worker (Web Push receive only)
+                 vendor/katex/ = KaTeX vendored locally (no CDN)
+                 icons/piweb/  = home-screen icon set; manifest.webmanifest
+scripts/history.py  read-only history query CLI (stdlib only)
 deploy/          piweb-worker.service
 ```
 
 ### How a turn flows
 
-1. `POST /api/sessions/:jid/messages` → web appends a `user` row to `web_events`
-   (so the phone echoes instantly) and enqueues into `message_queue`.
-2. Worker's queue loop claims it, runs pi, and streams events through the
-   installed transport → more `web_events` rows.
-3. Web tails `web_events` by rowid and pushes them over SSE.
+The two processes never call each other; every interaction is a row in SQLite
+that the other side polls. `web_events.rowid` is the one monotonic clock the
+whole UI is built on — SSE cursor, unread marks, push cursor, and paging all key
+off it.
+
+```
+ phone ──POST /messages──▶ web server
+                              │  append web_events(user)      ← instant echo
+                              │  insert message_queue(pending)
+                              ▼
+                    (SQLite, WAL, shared)
+                              ▲
+   worker queue loop ─claimNextMessage─┘  (per-channel serial, global cap 3)
+        │ spawn pi --session-dir <dir> --continue --mode json
+        │ stream stdout events ─▶ getTransport().createEventStreamer(jid)
+        │                          └─▶ append web_events(thinking/tool/tool_result)
+        │ setChannelBusy(jid,true) … clearTyping on finish
+        ▼ final reply → parseOutboxMarkers → append web_events(assistant [+files])
+                              │
+ phone ◀──SSE /stream?after=N─┘  web tails web_events by rowid, pushes each
+```
+
+Reply text flows through the transport's `sendResponse`/`sendFilesResponse`; the
+streamed thinking/tool events flow through `createEventStreamer`. Both end up as
+`web_events` rows, so the transcript is complete and replayable — the phone can
+disconnect at any point and resume from its last rowid.
 
 ### Why commands go through `control_queue`
 
@@ -76,6 +118,66 @@ So web validates against `COMMANDS` and writes an intent row; the worker execute
 it and appends the result as a `system`/`error` event. Command output therefore
 travels the same SSE path as chat and survives reconnects. Adding a command means
 touching `src/commands/catalog.ts` (data) **and** `runCommand()` (implementation).
+
+### The data model
+
+Every piweb table is at the bottom of `src/db.ts`. The ones that carry state
+between the two processes use an autoincrement `rowid` as a cursor.
+
+| table | role | who writes | who reads |
+|---|---|---|---|
+| `channels` | one row per session (`web:<uuid8>` jid, folder, per-session model/thinking/cwd overrides, `deleted_at`) | both | both |
+| `web_events` | the transcript AND the live stream: user turns, assistant replies, thinking, tool, tool_result, system, error | worker (agent output), web (user turn, command echo) | web (SSE/paging), push |
+| `message_queue` | pending user messages for the worker | web | worker |
+| `control_queue` | command intents the web tier can't run itself | web | worker |
+| `channel_state` | transient `busy` flag per session (typing/spinner) | worker | web |
+| `meta` | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor` | worker (models), web (auth/push) | web |
+| `push_subscriptions` | one row per opted-in device | web | push |
+| `message_log`, `scheduled_tasks` | inherited from piscord; `message_log` duplicates web_events (gap) | worker | — |
+
+`web_events.kind` is the discriminator the UI switches on: `message` (with
+`role` user/assistant) renders a bubble; `thinking`/`tool`/`tool_result` render
+collapsed event blocks; `system`/`error` render open. Only
+`message(assistant)`/`system`/`error` count as "a reply" for unread and push —
+never the user's own turns or the streamed chatter.
+
+### The HTTP API
+
+All under `src/web/server.ts`, one flat router. Everything except login/logout/
+me and the static shell requires auth; state-changing methods also pass the CSRF
+origin check.
+
+| route | method | purpose |
+|---|---|---|
+| `/api/login` `/logout` `/me` | POST/POST/GET | token→cookie; `/me` also reports `via` (token/tailscale) and `funnel` |
+| `/api/push/key` `/subscribe` `/unsubscribe` | GET/POST/POST | VAPID public key; save/drop a subscription |
+| `/api/commands` | GET | the `COMMANDS` catalog for autocomplete |
+| `/api/models` | GET | pi's model list (from `meta`, published by the worker) |
+| `/api/sessions` | GET/POST | list live sessions (with badge, busy, `lastReplyId`); create |
+| `/api/sessions/deleted` | GET | the trash (must precede the `:jid` matcher) |
+| `/api/sessions/:jid` | PATCH/DELETE | rename; soft-delete (or `?permanent=1`) |
+| `/api/sessions/:jid/restore` | POST | un-trash |
+| `/api/sessions/:jid/events` | GET | `?after` (SSE catch-up) `?before` (page up) `?around` (jump) or newest page |
+| `/api/sessions/:jid/stream` | GET | SSE tail (polls web_events every 400ms) |
+| `/api/sessions/:jid/search` | GET | `?q=` substring search within the session |
+| `/api/sessions/:jid/messages` | POST | text + base64 attachments → queue |
+| `/api/sessions/:jid/commands` | POST | a `COMMANDS` name → control_queue |
+| `/api/sessions/:jid/clear` | POST | wipe web_events + enqueue `pi new` |
+| `/media/...` | GET | served attachment/output files |
+
+### Feature → code map
+
+| feature | where |
+|---|---|
+| markdown + LaTeX | `public/markdown.js` (`renderRich`), KaTeX in `vendor/` |
+| search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
+| image lightbox (swipe) | `public/app.js` `openLightbox`, filmstrip, pointer gestures |
+| Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
+| push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
+| provider badges | `src/session/model-info.ts` reads pi's `model_change`; NV/GPT/LOCAL/… |
+| unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
+| rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
+| stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
 ### Reading history: paged, newest-first
 
@@ -520,7 +622,46 @@ Not bugs that block anything, but they will surprise someone eventually:
 3. **`message_log`** is still written by the queue (piscord legacy) and
    duplicates what `web_events` records.
 
-## 7. This deployment
+## 7. The local model backend (port 8001)
+
+piweb doesn't run models; pi does, and pi's `local-llama` provider points every
+local model at `http://localhost:8001`. Two llama.cpp MTP services are mutually
+exclusive on that port (`Conflicts=`), toggled by the `llama-mtp-service-switcher`
+skill:
+
+- `qwen-mtp.service` — Qwen 3.6 35B, loads `--mmproj mmproj.gguf`, so it **can see
+  images**.
+- `gemma-mtp.service` — Gemma 4, MTP, **no mmproj**, text-only.
+
+Consequences worth knowing:
+
+- **The LOCAL badge can lie about vision.** The badge (and pi's `model_change`)
+  records the *alias pi requested* (`qwen3.6-35b-q4`), but llama-server serves
+  whatever it actually loaded on 8001. If gemma is up while pi asks for qwen, an
+  image gets `500 image input is not supported … mmproj` even though the badge
+  says qwen. The queue appends a plain-language hint for that specific error.
+- pi's default is already `local-llama/qwen3.6-35b-q4` (`~/.pi/agent/settings.json`),
+  and piweb leaves `PI_MODEL` unset so it follows that default.
+- To send images to a local model, `qwen-mtp` must be the one running. It is
+  `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
+  standalone `llama-server` on 8001.
+- Cloud vision models (Gemini, GPT/openai-codex) work regardless of what is on
+  8001.
+
+## 8. Session lifecycle (what `/pi new` and delete actually do)
+
+- **`/pi new`** rotates the pi session directory to `<folder>__archived_<ts>` and
+  the next message starts a fresh pi session (new UUID). Past context is NOT
+  re-injected — verified: a codeword remembered before `/pi new` returns "NONE"
+  after. It does **not** clear `web_events`, so the on-screen transcript stays
+  while pi's memory resets. The 🗑 header button does both (clear + `pi new`).
+- **New session** auto-issues a silent `pi new` with `keepQueue` (invariant 5).
+- **Delete** is soft (`deleted_at`); the pi session dir survives until the trash
+  is purged. See "Deleting is soft".
+- pi holds the context itself via `--session-dir <dir> --continue`; piweb never
+  replays history into the prompt, it only points pi at the right directory.
+
+## 9. This deployment
 
 | | |
 |---|---|
