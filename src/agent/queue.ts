@@ -287,7 +287,15 @@ async function processMessage(
       return;
     }
 
-    const errMsg = `⚠️ Agent error: ${result.error?.slice(0, 300) || 'unknown error'}`;
+    const rawError = result.error ?? '';
+    let errMsg = `⚠️ Agent error: ${rawError.slice(0, 300) || 'unknown error'}`;
+    // "image input is not supported / mmproj" means the current model is
+    // text-only. The raw message is opaque to a user, so add a plain hint.
+    if (/image input is not supported|mmproj/i.test(rawError)) {
+      errMsg +=
+        '\n\nℹ️ This model cannot see images. Tap the model icon and switch to a ' +
+        'vision-capable one (e.g. Gemini or a GPT model) to send pictures.';
+    }
     await getTransport().sendResponse(jid, errMsg);
     markMessageFailed(rowid);
     logger.warn({ jid, error: result.error }, 'Agent returned error');
