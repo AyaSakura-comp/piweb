@@ -72,12 +72,40 @@ function showApp() {
   $('app').hidden = false;
 }
 
+// Remembering the entered token so it never has to be retyped. The durable
+// session cookie already keeps you logged in across restarts; this additionally
+// re-logs-in automatically if that cookie ever expires. Tradeoff: the token
+// sits in localStorage, readable by any script on this origin — acceptable for
+// a personal PIN, but it is why logout wipes it.
+const TOKEN_KEY = 'piweb.token';
+
+function rememberToken(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // private mode / quota — auto-login just won't persist
+  }
+}
+
+function forgetToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function submitToken(token, { remember }) {
+  await api('/api/login', { method: 'POST', body: JSON.stringify({ token }) });
+  if (remember) rememberToken(token);
+}
+
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = $('login-error');
   err.hidden = true;
   try {
-    await api('/api/login', { method: 'POST', body: JSON.stringify({ token: $('login-token').value }) });
+    await submitToken($('login-token').value, { remember: $('login-remember').checked });
     $('login-token').value = '';
     showApp();
     await boot();
@@ -88,9 +116,30 @@ $('login-form').addEventListener('submit', async (e) => {
 });
 
 $('btn-logout').addEventListener('click', async () => {
+  forgetToken();
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   showLogin();
 });
+
+/** Try a stored token when there is no valid session cookie. Returns true on success. */
+async function tryStoredToken() {
+  let token;
+  try {
+    token = localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return false;
+  }
+  if (!token) return false;
+  try {
+    await submitToken(token, { remember: true });
+    return true;
+  } catch {
+    // Token no longer valid (changed on the server) — drop it and fall back to
+    // the login screen rather than silently retrying a dead credential.
+    forgetToken();
+    return false;
+  }
+}
 
 // ── toast ────────────────────────────────────────────────────────────────
 

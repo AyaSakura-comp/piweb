@@ -1681,3 +1681,22 @@ svg {
   text-decoration-line: underline;
   text-underline-offset: 2px;
 }
+
+/* ── login: remember me ──────────────────────────────────────────────── */
+
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.login-remember input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
