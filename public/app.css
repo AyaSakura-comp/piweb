@@ -687,6 +687,47 @@ svg {
   max-width: 100%;
 }
 
+/* Image attachments show as a small square thumbnail with the remove button
+   floated on the corner, so several fit across the composer. */
+.chip.chip-image {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.chip-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chip.chip-image .chip-remove {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.chip-remove {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-dim);
+  line-height: 1;
+  font-size: 16px;
+}
+
 .chip .chip-name {
   overflow: hidden;
   text-overflow: ellipsis;

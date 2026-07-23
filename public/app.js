@@ -1183,13 +1183,52 @@ function isTouch() {
 
 $('btn-attach').addEventListener('click', () => $('file-input').click());
 
-$('file-input').addEventListener('change', async (e) => {
-  for (const file of e.target.files) {
-    state.attachments.push({ name: file.name, file });
-  }
-  e.target.value = '';
-  renderAttachments();
+// Pasting an image (screenshot, copied photo) drops it in with a preview.
+$('input').addEventListener('paste', (e) => {
+  const items = [...(e.clipboardData?.items ?? [])];
+  const files = items.filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
+  const images = files.filter((f) => f.type.startsWith('image/'));
+  if (images.length === 0) return;
+  // Don't paste the image's binary as text into the textarea as well.
+  e.preventDefault();
+  addFiles(images);
 });
+
+$('file-input').addEventListener('change', (e) => {
+  addFiles(e.target.files);
+  e.target.value = '';
+});
+
+/**
+ * Add files (from the picker or a paste) to the pending list.
+ *
+ * A pasted image arrives as a Blob with no filename, so one is synthesised;
+ * without it the server has nothing to name the upload and pi cannot @-attach
+ * it. Object URLs back the thumbnails and are revoked when the chip is removed
+ * or the message sends, so previewing images does not leak memory.
+ */
+function addFiles(fileList) {
+  let added = 0;
+  for (const file of fileList) {
+    if (!file) continue;
+    const isImage = file.type.startsWith('image/');
+    const name = file.name || `pasted-${Date.now()}-${added}.${(file.type.split('/')[1] || 'png')}`;
+    state.attachments.push({
+      name,
+      file,
+      isImage,
+      url: isImage ? URL.createObjectURL(file) : null,
+    });
+    added += 1;
+  }
+  if (added > 0) renderAttachments();
+}
+
+function removeAttachment(i) {
+  const [gone] = state.attachments.splice(i, 1);
+  if (gone?.url) URL.revokeObjectURL(gone.url);
+  renderAttachments();
+}
 
 function renderAttachments() {
   const wrap = $('attachments');
@@ -1197,15 +1236,22 @@ function renderAttachments() {
   wrap.hidden = state.attachments.length === 0;
 
   state.attachments.forEach((attachment, i) => {
-    const chip = el('div', 'chip');
-    chip.append(el('span', 'chip-name', attachment.name));
-    const remove = el('button', null, '×');
+    const chip = el('div', `chip${attachment.isImage ? ' chip-image' : ''}`);
+
+    if (attachment.isImage) {
+      // Small square preview, matching what was asked for.
+      const thumb = el('img', 'chip-thumb');
+      thumb.src = attachment.url;
+      thumb.alt = attachment.name;
+      chip.append(thumb);
+    } else {
+      chip.append(el('span', 'chip-name', attachment.name));
+    }
+
+    const remove = el('button', 'chip-remove', '×');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove ${attachment.name}`);
-    remove.addEventListener('click', () => {
-      state.attachments.splice(i, 1);
-      renderAttachments();
-    });
+    remove.addEventListener('click', () => removeAttachment(i));
     chip.append(remove);
     wrap.append(chip);
   });
@@ -1247,6 +1293,7 @@ $('composer').addEventListener('submit', async (e) => {
   }
 
   input.value = '';
+  for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
   state.attachments = [];
   renderAttachments();
   autoGrow();
