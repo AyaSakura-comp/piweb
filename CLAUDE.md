@@ -483,6 +483,21 @@ issued on that device.
 - It runs in the web tier because that is where the subscriptions are and the
   half that has a reason to reach the public internet.
 
+### Staying logged in
+
+The cookie-signing key lives in `meta` (`auth.signingKey`), resolved lazily on
+first use. It used to be `randomBytes(32)` at module load, so every restart or
+redeploy regenerated it and silently invalidated every session cookie —
+the reason logins didn't stick across deploys. Persisting it is what makes the
+30-day session cookie actually last.
+
+Separately, a successful login stores the token in localStorage
+(`piweb.token`) when "Stay signed in" is checked, and boot auto-submits it if
+there is no valid session cookie. Logout clears it; a token the server no
+longer accepts is dropped rather than retried. This does put the token in
+JS-readable storage — a deliberate tradeoff for a personal PIN, not something
+to copy for a secret that matters.
+
 ## 6. Known gaps
 
 0. **`/pi reset-model` does not take effect until `/pi new`.** Setting a model

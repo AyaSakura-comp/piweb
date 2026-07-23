@@ -10,9 +10,32 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
+import { getMeta, setMeta } from '../db.js';
 
-/** Server-run secret: restarting invalidates existing cookies, which is fine. */
-const SIGNING_KEY = randomBytes(32);
+/**
+ * Cookie-signing secret, persisted in the database.
+ *
+ * It used to be `randomBytes(32)` at module load, which regenerated on every
+ * process start — so every restart or redeploy silently invalidated all login
+ * cookies and forced a re-login. Persisting it means a session survives
+ * restarts, which is what makes "log in once and stay logged in" actually hold.
+ *
+ * Resolved lazily on first use, not at import: the module is imported before
+ * initDb() runs, so touching the database at import time would crash.
+ */
+let signingKey: Buffer | undefined;
+
+function getSigningKey(): Buffer {
+  if (signingKey) return signingKey;
+  const stored = getMeta('auth.signingKey');
+  if (stored) {
+    signingKey = Buffer.from(stored, 'base64');
+  } else {
+    signingKey = randomBytes(32);
+    setMeta('auth.signingKey', signingKey.toString('base64'));
+  }
+  return signingKey;
+}
 
 export const COOKIE_NAME = 'piweb_session';
 
@@ -27,7 +50,7 @@ export function tokenMatches(candidate: string): boolean {
 export function issueCookie(): string {
   const expiresAt = Date.now() + config.webSessionTtlSec * 1000;
   const payload = String(expiresAt);
-  const sig = createHmac('sha256', SIGNING_KEY).update(payload).digest('hex');
+  const sig = createHmac('sha256', getSigningKey()).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
 
@@ -36,7 +59,7 @@ export function cookieIsValid(value: string | undefined): boolean {
   const [payload, sig] = value.split('.');
   if (!payload || !sig) return false;
 
-  const expected = createHmac('sha256', SIGNING_KEY).update(payload).digest('hex');
+  const expected = createHmac('sha256', getSigningKey()).update(payload).digest('hex');
   const a = Buffer.from(sig, 'utf8');
   const b = Buffer.from(expected, 'utf8');
   if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
