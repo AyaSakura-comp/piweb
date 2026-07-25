@@ -111,10 +111,33 @@ function clearPollTimer(): void {
   pollTimer = undefined;
 }
 
+/**
+ * Pre-empt an in-flight run when a newer message arrives for the same channel.
+ *
+ * In piscord this lived in the Discord message handler, which fired before
+ * enqueuing. piweb's web tier only enqueues (it is a separate process and can't
+ * reach the worker's AbortController), so the trigger has to run here: a channel
+ * that is *both* actively processing and has a *pending* message means the user
+ * sent something mid-run and wants it to interrupt. Abort the current run; the
+ * aborted task frees the per-channel lock and the next poll dispatches the new
+ * message. The old message's partial work is discarded (that is the point of an
+ * interrupt); the session it may leave mid-tool-loop is healed by
+ * repairSessionForContinue on the next spawn.
+ */
+function interruptSupersededRuns(): void {
+  if (!config.interruptOnNewMessage) return;
+  for (const jid of channelsWithPending()) {
+    if (activeChannels.has(jid) && interruptChannelTask(jid)) {
+      logger.info({ jid }, 'Interrupting in-flight run for a newer message');
+    }
+  }
+}
+
 function poll(): void {
   if (!running) return;
 
   try {
+    interruptSupersededRuns();
     dispatch();
   } catch (err: any) {
     logger.error({ err: err.message }, 'Poll error');
