@@ -384,6 +384,25 @@ function renderHeaderBadge() {
   host.title = session.runningModel || session.provider;
 }
 
+// Ranking for the drawer order: sessions that finished and are unread (green
+// dot) float to the top so a done reply is the first thing you see, then the
+// ones still running (spinner), then everything else. Within a rank the
+// server's order is preserved (stable sort via the original index), so idle
+// sessions don't shuffle. The session you're currently viewing clears its own
+// unread mark, so it stays put rather than jumping to the top under your eyes.
+function sessionRank(session) {
+  if (isUnread(session) && !session.busy) return 0; // done, not yet read
+  if (session.busy) return 1; // running
+  return 2;
+}
+
+function sessionsForDisplay() {
+  return state.sessions
+    .map((session, index) => ({ session, index }))
+    .sort((a, b) => sessionRank(a.session) - sessionRank(b.session) || a.index - b.index)
+    .map((e) => e.session);
+}
+
 function renderSessions() {
   const list = $('session-list');
   list.textContent = '';
@@ -394,7 +413,7 @@ function renderSessions() {
     return;
   }
 
-  for (const session of state.sessions) {
+  for (const session of sessionsForDisplay()) {
     const item = el('div', `session-item${session.jid === state.activeJid ? ' active' : ''}`);
     item.append(el('span', 'hash', '#'));
     item.append(el('span', 'name', session.name));
