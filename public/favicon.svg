@@ -1,5 +1,48 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#5865f2"/>
-  <text x="32" y="45" font-family="system-ui, sans-serif" font-size="38" font-weight="700"
-        text-anchor="middle" fill="#fff">π</text>
+  <!-- Showa-era retro flat design — 萌黄（回路） -->
+  <rect width="64" height="64" rx="14" fill="#A0B088"/>
+  <!-- Screen tone dots -->
+  <g fill="#90A080" opacity="0.15">
+    <circle cx="12" cy="12" r="1"/><circle cx="20" cy="12" r="1"/><circle cx="28" cy="12" r="1"/>
+    <circle cx="36" cy="12" r="1"/><circle cx="44" cy="12" r="1"/><circle cx="52" cy="12" r="1"/>
+    <circle cx="12" cy="20" r="1"/><circle cx="20" cy="20" r="1"/><circle cx="28" cy="20" r="1"/>
+    <circle cx="36" cy="20" r="1"/><circle cx="44" cy="20" r="1"/><circle cx="52" cy="20" r="1"/>
+    <circle cx="12" cy="28" r="1"/><circle cx="20" cy="28" r="1"/><circle cx="28" cy="28" r="1"/>
+    <circle cx="36" cy="28" r="1"/><circle cx="44" cy="28" r="1"/><circle cx="52" cy="28" r="1"/>
+    <circle cx="12" cy="36" r="1"/><circle cx="20" cy="36" r="1"/><circle cx="28" cy="36" r="1"/>
+    <circle cx="36" cy="36" r="1"/><circle cx="44" cy="36" r="1"/><circle cx="52" cy="36" r="1"/>
+    <circle cx="12" cy="44" r="1"/><circle cx="20" cy="44" r="1"/><circle cx="28" cy="44" r="1"/>
+    <circle cx="36" cy="44" r="1"/><circle cx="44" cy="44" r="1"/><circle cx="52" cy="44" r="1"/>
+    <circle cx="12" cy="52" r="1"/><circle cx="20" cy="52" r="1"/><circle cx="28" cy="52" r="1"/>
+    <circle cx="36" cy="52" r="1"/><circle cx="44" cy="52" r="1"/><circle cx="52" cy="52" r="1"/>
+  </g>
+  <!-- Circuit traces -->
+  <g stroke="#F5F0E8" stroke-width="1.5" opacity="0.5" fill="none">
+    <line x1="26" y1="26" x2="32" y2="28"/>
+    <line x1="38" y1="26" x2="32" y2="28"/>
+    <line x1="22" y1="40" x2="32" y2="36"/>
+    <line x1="42" y1="40" x2="32" y2="36"/>
+    <line x1="28" y1="50" x2="32" y2="44"/>
+    <line x1="36" y1="50" x2="32" y2="44"/>
+  </g>
+  <!-- Agent nodes -->
+  <g fill="#F5F0E8" opacity="0.6">
+    <circle cx="26" cy="26" r="3.5"/>
+    <circle cx="38" cy="26" r="3.5"/>
+    <circle cx="22" cy="40" r="3"/>
+    <circle cx="42" cy="40" r="3"/>
+    <circle cx="28" cy="50" r="3.5"/>
+    <circle cx="36" cy="50" r="3.5"/>
+  </g>
+  <!-- Hub nodes -->
+  <g fill="#F5F0E8" opacity="0.7">
+    <circle cx="32" cy="28" r="2.5"/>
+    <circle cx="32" cy="36" r="2.5"/>
+    <circle cx="32" cy="44" r="2.5"/>
+  </g>
+  <!-- π -->
+  <text x="32" y="42" text-anchor="middle" font-family="system-ui, sans-serif"
+        font-size="18" font-weight="800" fill="#F5F0E8">π</text>
+  <!-- Outer border -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="none" stroke="#F5F0E8" stroke-width="1" opacity="0.15"/>
 </svg>
