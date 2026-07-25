@@ -365,6 +365,7 @@ function isUnread(session) {
 async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   state.sessions = sessions;
+  resortSessions();
   renderSessions();
   renderHeaderBadge();
 }
@@ -387,20 +388,32 @@ function renderHeaderBadge() {
 // Ranking for the drawer order: sessions that finished and are unread (green
 // dot) float to the top so a done reply is the first thing you see, then the
 // ones still running (spinner), then everything else. Within a rank the
-// server's order is preserved (stable sort via the original index), so idle
-// sessions don't shuffle. The session you're currently viewing clears its own
-// unread mark, so it stays put rather than jumping to the top under your eyes.
+// server's order is preserved (stable sort via the original index).
 function sessionRank(session) {
   if (isUnread(session) && !session.busy) return 0; // done, not yet read
   if (session.busy) return 1; // running
   return 2;
 }
 
-function sessionsForDisplay() {
-  return state.sessions
+// The order is *settled* at natural moments — opening the drawer, a full
+// reload — not recomputed on every render. So a session that updates while the
+// drawer is open floats to the top the NEXT time you open it, rather than
+// re-shuffling under your eyes: an updated session simply sits where it is
+// until the next settle. state.orderedJids holds that settled order.
+function resortSessions() {
+  state.orderedJids = state.sessions
     .map((session, index) => ({ session, index }))
     .sort((a, b) => sessionRank(a.session) - sessionRank(b.session) || a.index - b.index)
-    .map((e) => e.session);
+    .map((e) => e.session.jid);
+}
+
+function sessionsForDisplay() {
+  const rank = new Map((state.orderedJids || []).map((jid, i) => [jid, i]));
+  // Sessions absent from the settled order (just created) fall to the end; the
+  // next resort folds them into place. Array.sort is stable, so ties hold.
+  return [...state.sessions].sort(
+    (a, b) => (rank.get(a.jid) ?? Infinity) - (rank.get(b.jid) ?? Infinity),
+  );
 }
 
 function renderSessions() {
@@ -866,7 +879,7 @@ function renderModelList(query) {
     item.append(ref);
 
     if (model.provider) {
-      const badge = providerBadgeFor(model.provider);
+      const badge = providerBadgeFor(model.provider, model.ref);
       item.append(badge);
     }
     if (model.reasoning) item.append(el('span', 'm-tag', 'reasoning'));
@@ -887,7 +900,15 @@ function renderModelList(query) {
 }
 
 /** Same labels the session badges use, so the two views agree. */
-function providerBadgeFor(provider) {
+function providerBadgeFor(provider, modelRef = '') {
+  // The Codex GPT-5.6 line has three variants (Terra/Sol/Luna); show which one
+  // rather than a flat "GPT", mirroring providerBadge() on the server.
+  if (provider === 'openai-codex') {
+    const id = modelRef.toLowerCase();
+    if (id.includes('terra')) return el('span', 'provider-badge terra', 'TERRA');
+    if (id.includes('sol')) return el('span', 'provider-badge sol', 'SOL');
+    if (id.includes('luna')) return el('span', 'provider-badge luna', 'LUNA');
+  }
   const map = {
     nvim: ['NV', 'nv'],
     'openai-codex': ['GPT', 'gpt'],
@@ -1890,6 +1911,10 @@ syncViewportSizes();
 // ── drawer ───────────────────────────────────────────────────────────────
 
 function openDrawer() {
+  // Settle the order on open: updated sessions float to the top now, then stay
+  // put while the drawer is open instead of re-shuffling as state changes.
+  resortSessions();
+  renderSessions();
   $('drawer').classList.add('open');
   $('scrim').hidden = false;
 }
