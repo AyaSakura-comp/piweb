@@ -1526,6 +1526,26 @@ svg {
   color: #5fd3b8;
 }
 
+/* Codex GPT-5.6 variants — earth / sun / moon, each its own colour so they
+   read apart at a glance (label still carries the meaning without colour). */
+.provider-badge.terra {
+  background: rgb(52 211 153 / 0.18);
+  border-color: rgb(52 211 153 / 0.5);
+  color: #6ee7b7;
+}
+
+.provider-badge.sol {
+  background: rgb(251 191 36 / 0.18);
+  border-color: rgb(251 191 36 / 0.5);
+  color: #fcd34d;
+}
+
+.provider-badge.luna {
+  background: rgb(148 163 184 / 0.2);
+  border-color: rgb(148 163 184 / 0.55);
+  color: #cbd5e1;
+}
+
 .provider-badge.gem {
   background: rgb(66 133 244 / 0.18);
   border-color: rgb(66 133 244 / 0.5);

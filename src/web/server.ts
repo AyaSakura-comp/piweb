@@ -402,6 +402,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // No session file yet (new, or rotated by /pi new): fall back to the
       // override so the badge reflects what the next run will use.
       const provider = running?.provider || providerFromRef(s.modelOverride);
+      // For the Codex GPT-5.6 variants the badge is the codename (Terra/Sol/Luna),
+      // which needs the model id, not just the provider.
+      const badgeModelId = running?.modelId || s.modelOverride;
       return {
         jid: s.jid,
         name: s.name,
@@ -415,7 +418,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         runningModel: running?.modelId ?? s.modelOverride,
         // `pending` marks a badge that describes intent rather than a live run.
         pending: !running && Boolean(provider),
-        badge: provider ? providerBadge(provider) : null,
+        badge: provider ? providerBadge(provider, badgeModelId) : null,
       };
     });
     sendJson(res, 200, { sessions });

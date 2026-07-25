@@ -92,12 +92,21 @@ export function providerFromRef(ref: string): string {
  * provider gets a truncated form rather than being hidden, so a new backend
  * shows up as something rather than silently vanishing.
  */
-export function providerBadge(provider: string): { label: string; kind: string } {
+export function providerBadge(provider: string, modelId = ''): { label: string; kind: string } {
   switch (provider) {
     case 'nvim':
       return { label: 'NV', kind: 'nv' };
-    case 'openai-codex':
+    case 'openai-codex': {
+      // The Codex GPT-5.6 line ships as three variants (Terra/Sol/Luna); show
+      // which one rather than a flat "GPT" so they're distinguishable at a
+      // glance. modelId is the running id (e.g. "gpt-5.6-terra") or a ref like
+      // "openai-codex/gpt-5.6-sol" — match on the codename either way.
+      const id = modelId.toLowerCase();
+      if (id.includes('terra')) return { label: 'TERRA', kind: 'terra' };
+      if (id.includes('sol')) return { label: 'SOL', kind: 'sol' };
+      if (id.includes('luna')) return { label: 'LUNA', kind: 'luna' };
       return { label: 'GPT', kind: 'gpt' };
+    }
     case 'local-llama':
     case 'ollama-gemma':
     case 'ollama-lfm2':
