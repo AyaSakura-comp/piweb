@@ -1528,10 +1528,12 @@ svg {
 
 /* Codex GPT-5.6 variants — earth / sun / moon, each its own colour so they
    read apart at a glance (label still carries the meaning without colour). */
+/* Terracotta (clay/earth) — deliberately NOT green, so it reads apart from the
+   LOCAL and GPT greens sitting right next to it in the drawer. */
 .provider-badge.terra {
-  background: rgb(52 211 153 / 0.18);
-  border-color: rgb(52 211 153 / 0.5);
-  color: #6ee7b7;
+  background: rgb(224 122 95 / 0.2);
+  border-color: rgb(224 122 95 / 0.55);
+  color: #eeab97;
 }
 
 .provider-badge.sol {
