@@ -14,6 +14,7 @@ import {
   clearPendingMessages,
   markMessageDone,
   markMessageFailed,
+  requeueMessage,
   recoverStuckMessages,
   logMessage,
   getChannel,
@@ -33,6 +34,13 @@ const activeChannelControllers = new Map<string, AbortController>();
 let running = false;
 let pollTimer: NodeJS.Timeout | undefined;
 let stopPromise: Promise<void> | null = null;
+
+// How many times a message killed by SIGTERM has been auto-resumed. In-memory:
+// the loop we guard against is a message that reliably OOMs pi while the worker
+// stays up; a worker restart legitimately resets this (and is a one-off, not a
+// loop). Keyed by message rowid, which survives a requeue (same row).
+const sigtermRetries = new Map<number, number>();
+const MAX_SIGTERM_RETRIES = 2;
 
 export function isChannelProcessing(jid: string): boolean {
   return activeChannels.has(jid);
@@ -308,6 +316,7 @@ async function processMessage(
       }
 
       logMessage(jid, 'assistant', result.text);
+      sigtermRetries.delete(rowid);
       markMessageDone(rowid);
       logger.info({ jid, responseLen: result.text.length }, 'Message processed');
       return;
@@ -315,17 +324,26 @@ async function processMessage(
 
     const rawError = result.error ?? '';
 
-    // Exit code 143 = SIGTERM: pi was KILLED, not crashed — by our own
-    // interrupt, a worker restart/shutdown, or an OOM kill. Surfacing the raw
-    // "pi exited with code 143" reads as a scary failure. Treat it as an
-    // interruption: a gentle notice, and re-queue so a restart-killed message
-    // is retried rather than silently lost.
+    // Exit code 143 = SIGTERM: pi was KILLED, not crashed — by a worker
+    // restart/shutdown or an OOM kill (a user-initiated interrupt takes the
+    // signal.aborted path above). The request never got an answer, so re-queue
+    // it: the same session continues (repairSessionForContinue drops only the
+    // aborted turn's partial work) and pi re-runs the original message. Capped
+    // so a message that reliably kills pi can't loop forever.
     if (/exited with code 143|SIGTERM/i.test(rawError)) {
-      logger.info({ jid, rowid }, 'Run terminated (SIGTERM) — treating as interruption');
+      const attempts = (sigtermRetries.get(rowid) ?? 0) + 1;
+      if (attempts <= MAX_SIGTERM_RETRIES) {
+        sigtermRetries.set(rowid, attempts);
+        logger.info({ jid, rowid, attempts }, 'Run terminated (SIGTERM) — resuming original message');
+        requeueMessage(rowid);
+        return;
+      }
+      sigtermRetries.delete(rowid);
+      logger.warn({ jid, rowid }, 'Run terminated (SIGTERM) repeatedly — giving up');
       if (getTransport().sendNotice) {
         await getTransport().sendNotice!(
           jid,
-          '⏸ The agent was stopped before finishing. Send your message again to continue.',
+          '⚠️ The agent kept being stopped before it could finish. Try sending your message again.',
         );
       }
       markMessageFailed(rowid);

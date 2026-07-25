@@ -356,6 +356,18 @@ export function markMessageFailed(rowid: number): void {
   ).run(rowid);
 }
 
+/**
+ * Put a claimed message back on the queue so it runs again.
+ *
+ * Used when pi was killed (SIGTERM/143) rather than finishing — a worker
+ * restart or OOM. Setting it back to 'pending' means the next poll re-runs it
+ * (or, if the worker is restarting, it is picked up after startup), so the
+ * original request resumes instead of being lost.
+ */
+export function requeueMessage(rowid: number): void {
+  db.prepare("update message_queue set status = 'pending' where rowid = ?").run(rowid);
+}
+
 export function clearPendingMessages(channelJid: string): number {
   const result = db
     .prepare("delete from message_queue where channel_jid = ? and status = 'pending'")
