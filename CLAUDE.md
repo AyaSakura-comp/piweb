@@ -660,6 +660,15 @@ Consequences worth knowing:
   is purged. See "Deleting is soft".
 - pi holds the context itself via `--session-dir <dir> --continue`; piweb never
   replays history into the prompt, it only points pi at the right directory.
+- **Interrupted runs self-heal.** A run killed mid-tool-loop (INTERRUPT_ON_NEW_MESSAGE,
+  OOM, crash) leaves the session ending on an assistant `toolCall`/`toolResult`
+  with no closing reply; pi then refuses the *next* `--continue` with
+  "Cannot continue from message role: assistant" and the session is stuck.
+  `repairSessionForContinue()` (session/path.ts) runs before every spawn and
+  truncates the file back to the last complete assistant reply (text, no pending
+  toolCall), keeping a `.prerepair.bak`. Safe because the per-channel serial lock
+  means no pi is writing the file at spawn time. This keeps INTERRUPT_ON_NEW_MESSAGE
+  usable: interrupt the old run, the new message heals and continues.
 
 ## 9. This deployment
 

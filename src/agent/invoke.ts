@@ -8,6 +8,7 @@ import { downloadAttachments } from '../session/media.js';
 import { appendVoiceTranscriptions, transcribeVoiceFiles } from '../discord/voice-asr.js';
 import {
   readSessionCreatedAt,
+  repairSessionForContinue,
   resolveChannelSessionDir,
   resolveLatestChannelSessionFile,
 } from '../session/path.js';
@@ -104,6 +105,12 @@ export async function invokeAgent(
   const sessionDir = resolveChannelSessionDir(channelFolder);
   mkdirSync(sessionDir, { recursive: true });
   const effectiveCwd = opts?.cwd || config.piCwd;
+
+  // A previous run interrupted mid-tool-loop leaves the session non-continuable
+  // ("Cannot continue from message role: assistant"). Heal it before pi reads
+  // it. Safe here: the per-channel serial lock means no pi is writing this
+  // session's file right now.
+  repairSessionForContinue(channelFolder);
 
   // `--session` expects a session *file* path. We want a dedicated directory per
   // Discord channel and to keep reusing the most recent session inside it.
