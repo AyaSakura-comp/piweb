@@ -174,10 +174,33 @@ origin check.
 | image lightbox (swipe) | `public/app.js` `openLightbox`, filmstrip, pointer gestures |
 | Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
-| provider badges | `src/session/model-info.ts` reads pi's `model_change`; NV/GPT/LOCAL/… |
+| provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
+| session ordering | `sessionRank()` + `resortSessions()` in `public/app.js` |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
+
+### Which model a badge shows
+
+The badge must track the model the session **is set to**, so picking one in the
+sheet is reflected immediately. Two sources disagree, and the precedence matters:
+
+- **`channels.model_override`** — passed to pi as `--model` on *every* run
+  (`channel-settings.ts` → `queue.ts`), so when set it **is** the session's
+  model. It **wins**.
+- **pi's session file** (`model_change` lines, read by `getSessionModel()`) —
+  only records what the *last run happened to use*. It goes stale the moment the
+  model changes and no message has been sent yet. It is the fallback, used for
+  sessions following the gateway default, where it is the only honest source.
+
+Getting this backwards was a real bug: a session set to `gpt-5.6-sol` kept
+showing TERRA until a message was sent. `pending` on the API means "chosen but
+not yet exercised by a run" — compare `modelIdFromRef(override)` against the
+session file's bare `modelId`.
+
+`pi model` round-trips through `control_queue`, so the override lands some
+unpredictable moment after the tap. The client polls (`awaitOverride()`) until
+it matches instead of guessing a single delay.
 
 ### Reading history: paged, newest-first
 
@@ -427,8 +450,22 @@ Two working options:
   verify `ts-state/tailscaled.state` grew (~2.5 KB, not ~119 B), then start the
   compose sidecar, which comes up from state.
 
-Recreating the `app` container also breaks the sidecar's shared netns — restart
-(`docker compose up -d tailscale`) afterwards.
+**Always redeploy with plain `docker compose up -d`, never `up -d app`.** The
+sidecar is `network_mode: service:app`, so recreating `app` alone orphans its
+netns and the Funnel goes dead — and the sidecar cannot even be restarted back
+into it (`docker restart piweb-ts` → *"joining network namespace of container:
+No such container"*). Only recreating the sidecar too fixes it. `up -d` does
+that for you; targeting `app` does not. Verify after every deploy:
+
+```bash
+docker compose build app && docker compose up -d
+curl -s -o /dev/null -w '%{http_code}\n' https://piweb.<tailnet>.ts.net/   # expect 200
+```
+
+Note `public/` is **COPY**ed into the image, not bind-mounted, so a frontend-only
+change still needs `docker compose build app`. Static files are served
+`cache-control: no-cache`, so phones pick up new JS/CSS on reload with no
+cache-busting.
 
 ### Auth
 
@@ -457,6 +494,16 @@ So: **screenshot at a phone viewport (390×844) and actually look**, for every
 state — login, empty, populated, drawer open, autocomplete open, long code block.
 Also assert `document.documentElement.scrollWidth === clientWidth` (the page must
 never scroll sideways; wide content scrolls inside its own box).
+
+A second class of bug survives *both* DOM assertions and a glance at the code:
+the TERRA badge rendered exactly the label it was asked to and was still
+unusable, because it sat one row away from a near-identical green. Colour,
+contrast and adjacency only fail in the picture — compare elements **against
+their real neighbours**, in the real list, at the real size.
+
+Screenshots land in `~/` (not the repo) when driving the deployed URL through
+Playwright; `find /home/chihmin -maxdepth 2 -name '<file>.png'` if a relative
+path appears to vanish.
 
 ### Control both directions
 
@@ -508,6 +555,19 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a
   one-line peek; `system`/`error` open by default and omit the peek so the text
   is not shown twice.
+- **Session order settles, it does not track.** The drawer ranks finished-and-unread
+  (green dot) first, then running (spinner), then the rest, preserving server
+  order within a rank. That order is recomputed only at natural moments —
+  opening the drawer, a full reload (`resortSessions()`) — never on every
+  render. A session that updates while you are looking at the list therefore
+  stays where it is and floats up the *next* time you open the drawer; the
+  alternative reshuffles rows under the user's finger. `sessionsForDisplay()`
+  just applies the settled `state.orderedJids`.
+- **Badge colours must survive being next to each other.** TERRA was first shipped
+  mint green and was indistinguishable from the LOCAL/GPT greens one row away —
+  the label was "correct" and the UI still failed. It is terracotta now (Sol
+  amber, Luna slate). Check a new badge colour against its *neighbours in situ*,
+  not on its own.
 - **Timestamps**: SQLite returns `YYYY-MM-DD HH:MM:SS` in UTC with no zone marker.
   Append `Z` before parsing or Safari reads it as local time and every stamp is
   hours off.
@@ -681,12 +741,35 @@ Consequences worth knowing:
   toolCall), keeping a `.prerepair.bak`. Safe because the per-channel serial lock
   means no pi is writing the file at spawn time. This keeps INTERRUPT_ON_NEW_MESSAGE
   usable: interrupt the old run, the new message heals and continues.
+- **A killed run resumes; it is not lost.** Exit code **143 = SIGTERM**, i.e. pi
+  was *killed*, not crashed — a worker restart (deploys!), a shutdown, or an OOM
+  kill. Surfacing the raw "pi exited with code 143" reads as a scary failure, and
+  marking the message failed threw away a request the user never got an answer
+  to. The 143 branch in `queue.ts` instead calls `requeueMessage(rowid)`: the row
+  goes back to `pending`, the next poll re-dispatches it, and because
+  `repairSessionForContinue()` drops only the aborted turn's partial work, pi
+  `--continue`s the **same session** and re-runs the original message with its
+  context intact.
+  - Capped at `MAX_SIGTERM_RETRIES` (2) via an in-memory `Map` keyed by message
+    rowid, so a message that *reliably* kills pi (deterministic OOM) cannot loop
+    forever; past the cap it falls back to `markMessageFailed` + a notice. A
+    worker restart resets that counter, which is correct — a restart is a
+    one-off, not a loop.
+  - The user-interrupt path (`signal.aborted`) is handled *earlier* and must
+    never re-queue: there the old message is deliberately abandoned.
+  - Two layers: this covers a killed pi child; `recoverStuckMessages()` at
+    startup covers a killed *worker* (rows stranded in `processing`).
+- **Do not restart the worker while a run is in flight** — it SIGTERMs the user's
+  pi and (before the above) silently dropped their message. Check first:
+  `select rowid, channel_jid, status from message_queue where status in
+  ('processing','pending')`. There is no `sqlite3` CLI on this box; use the
+  bundled `better-sqlite3` from `node`.
 
 ## 9. This deployment
 
 | | |
 |---|---|
-| URL | `https://piweb.crayfish-monitor.ts.net/` (tailnet only, no Funnel) |
+| URL | `https://piweb.crayfish-monitor.ts.net/` (**Funnel ON** — public internet) |
 | repo | `AyaSakura-comp/piweb` (**private**), remote `ayasakura`; `upstream` = piscord |
 | worker | `systemctl --user status piweb-worker` |
 | containers | `piweb-app` (web) + `piweb-ts` (tailscale sidecar) |
@@ -694,5 +777,19 @@ Consequences worth knowing:
 | worker config | `~/.config/piweb/config.env` (chmod 600) |
 | compose env | `~/src/piweb/.env` (chmod 600, gitignored) |
 
-Auth is Tailscale identity, so the UI opens with nothing to type; the token in
-`WEB_AUTH_TOKEN` remains as the fallback path.
+On the **tailnet** the UI opens with nothing to type (Tailscale identity). Over
+**Funnel** there is no identity, so `WEB_AUTH_TOKEN` is the only thing in front
+of host command execution — keep it long. A short numeric token is brute-forceable
+in about a day against the rate limiter; that trade-off was accepted knowingly,
+so do not "fix" it unasked, but do not weaken it further either.
+
+Redeploy quick reference:
+
+```bash
+# frontend / web tier (public/ is COPYed into the image)
+docker compose build app && docker compose up -d     # NOT `up -d app` — see §3
+curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
+
+# worker (src/agent, src/db, …) — check nothing is in flight first
+npm run build && systemctl --user restart piweb-worker
+```
