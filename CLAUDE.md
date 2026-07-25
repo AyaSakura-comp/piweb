@@ -660,6 +660,14 @@ Consequences worth knowing:
   is purged. See "Deleting is soft".
 - pi holds the context itself via `--session-dir <dir> --continue`; piweb never
   replays history into the prompt, it only points pi at the right directory.
+- **A message sent mid-run interrupts it.** piscord did this in its Discord
+  message handler (fires before enqueue); piweb's web tier only enqueues and is
+  a different process from the worker, so the trigger moved into the worker's
+  poll loop: `interruptSupersededRuns()` aborts any channel that is both actively
+  processing and has a `pending` message (a `pending` row while active = a
+  message sent after the current run started). Gated by `INTERRUPT_ON_NEW_MESSAGE`.
+  Without this the new message just queued behind the running one — the spinner
+  kept going and nothing interrupted.
 - **Interrupted runs self-heal.** A run killed mid-tool-loop (INTERRUPT_ON_NEW_MESSAGE,
   OOM, crash) leaves the session ending on an assistant `toolCall`/`toolResult`
   with no closing reply; pi then refuses the *next* `--continue` with
