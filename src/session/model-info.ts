@@ -87,6 +87,12 @@ export function providerFromRef(ref: string): string {
   return slash > 0 ? ref.slice(0, slash) : '';
 }
 
+/** The bare model id from a `provider/id` ref, for comparing against a session file's modelId. */
+export function modelIdFromRef(ref: string): string {
+  const slash = ref.indexOf('/');
+  return slash > 0 ? ref.slice(slash + 1) : ref;
+}
+
 /**
  * Short badge for a provider. Deliberately a small fixed set: an unknown
  * provider gets a truncated form rather than being hidden, so a new backend
