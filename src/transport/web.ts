@@ -85,6 +85,10 @@ export const webTransport: Transport = {
     return true;
   },
 
+  async sendNotice(jid: string, text: string): Promise<void> {
+    appendWebEvent({ channelJid: jid, kind: 'system', role: 'interrupt', content: text });
+  },
+
   async setTyping(jid: string): Promise<void> {
     setChannelBusy(jid, true);
   },

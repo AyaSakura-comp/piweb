@@ -14,6 +14,8 @@ export interface Transport {
   sendResponse(jid: string, text: string): Promise<boolean>;
   /** Deliver assistant text plus generated files (outbox markers). */
   sendFilesResponse(jid: string, text: string, files: string[]): Promise<boolean>;
+  /** A short system notice in the transcript (e.g. "interrupted"). Optional. */
+  sendNotice?(jid: string, text: string): Promise<void>;
   /** Show/refresh a "working" indicator for the channel. */
   setTyping(jid: string): Promise<void>;
   /** Clear the working indicator. */
