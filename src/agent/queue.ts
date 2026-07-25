@@ -314,6 +314,24 @@ async function processMessage(
     }
 
     const rawError = result.error ?? '';
+
+    // Exit code 143 = SIGTERM: pi was KILLED, not crashed — by our own
+    // interrupt, a worker restart/shutdown, or an OOM kill. Surfacing the raw
+    // "pi exited with code 143" reads as a scary failure. Treat it as an
+    // interruption: a gentle notice, and re-queue so a restart-killed message
+    // is retried rather than silently lost.
+    if (/exited with code 143|SIGTERM/i.test(rawError)) {
+      logger.info({ jid, rowid }, 'Run terminated (SIGTERM) — treating as interruption');
+      if (getTransport().sendNotice) {
+        await getTransport().sendNotice!(
+          jid,
+          '⏸ The agent was stopped before finishing. Send your message again to continue.',
+        );
+      }
+      markMessageFailed(rowid);
+      return;
+    }
+
     let errMsg = `⚠️ Agent error: ${rawError.slice(0, 300) || 'unknown error'}`;
     // "image input is not supported / mmproj" means the current model is
     // text-only. The raw message is opaque to a user, so add a plain hint.
