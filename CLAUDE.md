@@ -667,7 +667,11 @@ Consequences worth knowing:
   processing and has a `pending` message (a `pending` row while active = a
   message sent after the current run started). Gated by `INTERRUPT_ON_NEW_MESSAGE`.
   Without this the new message just queued behind the running one — the spinner
-  kept going and nothing interrupted.
+  kept going and nothing interrupted. The interrupt is a Ctrl+C, not a reset:
+  the aborted run is SIGTERMed and the new message continues the *same* session
+  (`--continue`, context preserved — verified a codeword survives an interrupt),
+  with a visible `system`/`interrupt` marker appended via the transport's
+  optional `sendNotice`.
 - **Interrupted runs self-heal.** A run killed mid-tool-loop (INTERRUPT_ON_NEW_MESSAGE,
   OOM, crash) leaves the session ending on an assistant `toolCall`/`toolResult`
   with no closing reply; pi then refuses the *next* `--continue` with

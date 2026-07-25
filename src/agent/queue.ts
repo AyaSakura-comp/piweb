@@ -129,6 +129,9 @@ function interruptSupersededRuns(): void {
   for (const jid of channelsWithPending()) {
     if (activeChannels.has(jid) && interruptChannelTask(jid)) {
       logger.info({ jid }, 'Interrupting in-flight run for a newer message');
+      // Visible marker in the transcript so the interruption is obvious — the
+      // aborted run's partial thinking/tool events are already streamed above it.
+      void getTransport().sendNotice?.(jid, '⏸ Interrupted — running your new message.');
     }
   }
 }
