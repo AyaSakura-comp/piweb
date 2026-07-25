@@ -1,6 +1,17 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, renameSync } from 'node:fs';
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { config } from '../config.js';
+import { logger } from '../logger.js';
 
 /**
  * Validate a channel session folder name.
@@ -99,6 +110,109 @@ export function resolveLatestChannelSessionFile(folder: string): string | undefi
   }
 
   return resolve(sessionDir, sessionFile);
+}
+
+/**
+ * Make the newest session file safe for `pi --continue`.
+ *
+ * A run interrupted mid-tool-loop — INTERRUPT_ON_NEW_MESSAGE aborting an
+ * in-flight run, an OOM SIGKILL, a crash — leaves the session ending inside an
+ * unfinished turn: an assistant `toolCall` (and maybe its `toolResult`) with no
+ * closing text reply. pi then refuses the *next* `--continue` with
+ *   "Cannot continue from message role: assistant"
+ * and the session is stuck there until it happens to complete a clean turn.
+ *
+ * This truncates the file back to the last COMPLETE turn — the last assistant
+ * message that produced text and has no pending toolCall — discarding only the
+ * aborted turn's partial work. A single rolling backup (`<file>.prerepair.bak`)
+ * is kept. Returns true if it changed anything.
+ *
+ * Safe to call right before spawning pi: the queue's per-channel serial lock
+ * guarantees no pi process is writing this session's file at the same time.
+ */
+export function repairSessionForContinue(folder: string): boolean {
+  const file = resolveLatestChannelSessionFile(folder);
+  if (!file) return false;
+
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return false;
+  }
+
+  const rawLines = text.split('\n');
+  interface Row {
+    raw: string;
+    isMessage: boolean;
+    complete: boolean; // assistant final reply: has text, no pending toolCall
+  }
+  const rows: Row[] = [];
+  for (const raw of rawLines) {
+    if (!raw.trim()) continue;
+    let ev: any;
+    try {
+      ev = JSON.parse(raw);
+    } catch {
+      rows.push({ raw, isMessage: false, complete: false });
+      continue;
+    }
+    if (ev?.type === 'message') {
+      const content = ev.message?.content;
+      const parts = Array.isArray(content)
+        ? content.map((p: any) => p?.type)
+        : [];
+      const complete =
+        ev.message?.role === 'assistant' &&
+        parts.includes('text') &&
+        !parts.includes('toolCall');
+      rows.push({ raw, isMessage: true, complete });
+    } else {
+      rows.push({ raw, isMessage: false, complete: false });
+    }
+  }
+
+  const lastMessageIdx = (() => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i].isMessage) return i;
+    return -1;
+  })();
+  if (lastMessageIdx === -1) return false; // no conversation yet — nothing to fix
+
+  // Already ends on a completed assistant reply → continuable, leave it alone.
+  if (rows[lastMessageIdx].complete) return false;
+
+  const lastComplete = (() => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i].complete) return i;
+    return -1;
+  })();
+
+  // Keep everything up to and including the last complete reply. If there is no
+  // complete reply at all, keep only the leading non-message preamble (session
+  // header, model_change) so the session is valid but empty.
+  let keepUpto: number;
+  if (lastComplete >= 0) {
+    keepUpto = lastComplete;
+  } else {
+    keepUpto = -1;
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i].isMessage) break;
+      keepUpto = i;
+    }
+  }
+
+  try {
+    copyFileSync(file, `${file}.prerepair.bak`);
+    const kept = rows.slice(0, keepUpto + 1).map((r) => r.raw);
+    writeFileSync(file, kept.length ? kept.join('\n') + '\n' : '');
+    logger.warn(
+      { folder, file: basename(file), droppedMessages: lastMessageIdx - keepUpto },
+      'Repaired interrupted session so pi can continue',
+    );
+    return true;
+  } catch (err: any) {
+    logger.error({ folder, err: err.message }, 'Session repair failed');
+    return false;
+  }
 }
 
 /** Read the session creation timestamp from the metadata record at the start of a session file. */

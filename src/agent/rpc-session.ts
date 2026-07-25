@@ -20,7 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { resolveChannelSessionDir } from '../session/path.js';
+import { repairSessionForContinue, resolveChannelSessionDir } from '../session/path.js';
 import { formatStreamError, resolvePiSpawn } from './invoke.js';
 import type { AgentResult } from '../types.js';
 
@@ -64,6 +64,9 @@ class RpcSession {
     if (this.isAlive) return;
     const dir = resolveChannelSessionDir(this.folder);
     mkdirSync(dir, { recursive: true });
+    // Heal a session left non-continuable by an interrupted run (see
+    // repairSessionForContinue). No pi is writing this folder at spawn time.
+    repairSessionForContinue(this.folder);
     const args = ['--mode', 'rpc', '--session-dir', dir, '--continue'];
     if (this.opts.model) args.push('--model', this.opts.model);
     if (this.opts.thinking) args.push('--thinking', this.opts.thinking);
