@@ -887,7 +887,10 @@ function renderModelList(query) {
     item.addEventListener('click', async () => {
       closeModelSheet();
       await runQuickCommand('pi model', { model: model.ref });
-      setTimeout(loadSessions, 900);
+      // `pi model` round-trips through the worker's control queue, so the new
+      // override lands some unpredictable moment later. Poll briefly until the
+      // badge actually reflects the pick rather than guessing a single delay.
+      awaitOverride(state.activeJid, model.ref);
     });
     list.append(item);
   }
@@ -896,6 +899,20 @@ function renderModelList(query) {
     list.append(
       el('div', 'search-empty', `+${matches.length - shown.length} more — keep typing to narrow`),
     );
+  }
+}
+
+/**
+ * Reload sessions until the chosen model shows up as the session's override,
+ * so the badge tracks the pick. Bounded, and stops early once it matches; if
+ * the command failed the badge simply stays as it was.
+ */
+async function awaitOverride(jid, ref, attempts = 6) {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, 400));
+    await loadSessions();
+    const session = state.sessions.find((s) => s.jid === jid);
+    if (session && session.model === ref) return;
   }
 }
 

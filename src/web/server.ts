@@ -49,7 +49,12 @@ import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { rm } from 'node:fs/promises';
 import { resolveChannelSessionDir } from '../session/path.js';
-import { getSessionModel, providerBadge, providerFromRef } from '../session/model-info.js';
+import {
+  getSessionModel,
+  modelIdFromRef,
+  providerBadge,
+  providerFromRef,
+} from '../session/model-info.js';
 import { getPushPublicKey, startPush } from './push.js';
 import {
   buildSetCookie,
@@ -396,15 +401,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // ── sessions ──
   if (path === '/api/sessions' && method === 'GET') {
     const sessions = listWebSessions().map((s) => {
-      // What pi is really running, read from its own session file — not the
-      // override, which can be empty or stale (see session/model-info.ts).
+      // The badge must track the model the session is *set to*, so picking a
+      // model in the sheet is reflected immediately.
+      //
+      // An override, when set, is passed to pi as `--model` on every run
+      // (channel-settings.ts), so it is what the session uses — it wins. The
+      // session file only records what the last run happened to use, which goes
+      // stale the moment the model is changed and no message has been sent yet.
+      // With no override (following the gateway default) the session file is the
+      // only honest source, so fall back to it.
       const running = getSessionModel(s.folder);
-      // No session file yet (new, or rotated by /pi new): fall back to the
-      // override so the badge reflects what the next run will use.
-      const provider = running?.provider || providerFromRef(s.modelOverride);
+      const overrideProvider = providerFromRef(s.modelOverride);
+      const provider = overrideProvider || running?.provider || '';
       // For the Codex GPT-5.6 variants the badge is the codename (Terra/Sol/Luna),
       // which needs the model id, not just the provider.
-      const badgeModelId = running?.modelId || s.modelOverride;
+      const badgeModelId = s.modelOverride || running?.modelId || '';
       return {
         jid: s.jid,
         name: s.name,
@@ -415,9 +426,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         lastActivity: s.lastActivity,
         lastReplyId: s.lastReplyId,
         provider,
-        runningModel: running?.modelId ?? s.modelOverride,
-        // `pending` marks a badge that describes intent rather than a live run.
-        pending: !running && Boolean(provider),
+        runningModel: badgeModelId,
+        // `pending` marks a badge that describes intent rather than a live run:
+        // an override chosen but not yet exercised by an actual run. The
+        // override is a ref ("openai-codex/gpt-5.6-sol"); modelId is the bare id.
+        pending: overrideProvider
+          ? modelIdFromRef(s.modelOverride) !== (running?.modelId ?? '')
+          : !running,
         badge: provider ? providerBadge(provider, badgeModelId) : null,
       };
     });

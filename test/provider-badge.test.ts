@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { providerBadge } from '../src/session/model-info.js';
+import { modelIdFromRef, providerBadge } from '../src/session/model-info.js';
 
 describe('providerBadge', () => {
   it('splits the Codex GPT-5.6 line into Terra/Sol/Luna by model id', () => {
@@ -21,5 +21,13 @@ describe('providerBadge', () => {
     expect(providerBadge('local-llama').label).toBe('LOCAL');
     expect(providerBadge('nvim').label).toBe('NV');
     expect(providerBadge('gemini').label).toBe('GEM');
+  });
+});
+
+describe('modelIdFromRef', () => {
+  it('strips the provider from a ref, and passes a bare id through', () => {
+    expect(modelIdFromRef('openai-codex/gpt-5.6-sol')).toBe('gpt-5.6-sol');
+    expect(modelIdFromRef('gpt-5.6-sol')).toBe('gpt-5.6-sol');
+    expect(modelIdFromRef('')).toBe('');
   });
 });
