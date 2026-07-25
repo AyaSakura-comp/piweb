@@ -176,7 +176,7 @@ origin check.
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
-| session ordering | `sessionRank()` + `resortSessions()` in `public/app.js` |
+| session ordering | `sessionRank()` + `sessionsForDisplay()` in `public/app.js` |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
@@ -555,14 +555,18 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a
   one-line peek; `system`/`error` open by default and omit the peek so the text
   is not shown twice.
-- **Session order settles, it does not track.** The drawer ranks finished-and-unread
-  (green dot) first, then running (spinner), then the rest, preserving server
-  order within a rank. That order is recomputed only at natural moments —
-  opening the drawer, a full reload (`resortSessions()`) — never on every
-  render. A session that updates while you are looking at the list therefore
-  stays where it is and floats up the *next* time you open the drawer; the
-  alternative reshuffles rows under the user's finger. `sessionsForDisplay()`
-  just applies the settled `state.orderedJids`.
+- **A session with a new reply is always at the top, live.** The drawer ranks
+  unread-and-finished (green dot) first, then running (spinner), then the rest,
+  preserving server order within a rank so same-state sessions never shuffle
+  against each other (`sessionRank()` / `sessionsForDisplay()`). The rank is
+  recomputed on **every** render, so a reply landing while the drawer is open
+  moves that session up as it arrives — the 5s background poll (`loadSessions()`;
+  SSE only carries the *open* session) is what drives it for background
+  sessions. The session you are reading clears its own unread mark, so it never
+  yanks itself upward under your eyes.
+  An earlier version settled the order only on drawer-open to avoid rows moving
+  while being read; that was explicitly reverted — "new message always on top"
+  wins over order stability here.
 - **Badge colours must survive being next to each other.** TERRA was first shipped
   mint green and was indistinguishable from the LOCAL/GPT greens one row away —
   the label was "correct" and the UI still failed. It is terracotta now (Sol

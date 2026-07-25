@@ -365,7 +365,6 @@ function isUnread(session) {
 async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   state.sessions = sessions;
-  resortSessions();
   renderSessions();
   renderHeaderBadge();
 }
@@ -385,35 +384,27 @@ function renderHeaderBadge() {
   host.title = session.runningModel || session.provider;
 }
 
-// Ranking for the drawer order: sessions that finished and are unread (green
-// dot) float to the top so a done reply is the first thing you see, then the
-// ones still running (spinner), then everything else. Within a rank the
-// server's order is preserved (stable sort via the original index).
+// Ranking for the drawer order: a session with a new reply you have not read
+// (green dot) goes to the top, always and immediately — that is the whole point
+// of the marker. Then the ones still running (spinner), then everything else.
+// Within a rank the server's order is preserved (stable sort via the original
+// index), so sessions in the same state never shuffle against each other.
+//
+// Live, not settled: the rank is recomputed on every render, so a reply landing
+// while the drawer is open moves that session up as it arrives rather than
+// waiting for the next open. The session you are *reading* clears its own unread
+// mark, so it never yanks itself to the top under your eyes.
 function sessionRank(session) {
-  if (isUnread(session) && !session.busy) return 0; // done, not yet read
+  if (isUnread(session) && !session.busy) return 0; // new reply, unread
   if (session.busy) return 1; // running
   return 2;
 }
 
-// The order is *settled* at natural moments — opening the drawer, a full
-// reload — not recomputed on every render. So a session that updates while the
-// drawer is open floats to the top the NEXT time you open it, rather than
-// re-shuffling under your eyes: an updated session simply sits where it is
-// until the next settle. state.orderedJids holds that settled order.
-function resortSessions() {
-  state.orderedJids = state.sessions
+function sessionsForDisplay() {
+  return state.sessions
     .map((session, index) => ({ session, index }))
     .sort((a, b) => sessionRank(a.session) - sessionRank(b.session) || a.index - b.index)
-    .map((e) => e.session.jid);
-}
-
-function sessionsForDisplay() {
-  const rank = new Map((state.orderedJids || []).map((jid, i) => [jid, i]));
-  // Sessions absent from the settled order (just created) fall to the end; the
-  // next resort folds them into place. Array.sort is stable, so ties hold.
-  return [...state.sessions].sort(
-    (a, b) => (rank.get(a.jid) ?? Infinity) - (rank.get(b.jid) ?? Infinity),
-  );
+    .map((e) => e.session);
 }
 
 function renderSessions() {
@@ -1928,9 +1919,6 @@ syncViewportSizes();
 // ── drawer ───────────────────────────────────────────────────────────────
 
 function openDrawer() {
-  // Settle the order on open: updated sessions float to the top now, then stay
-  // put while the drawer is open instead of re-shuffling as state changes.
-  resortSessions();
   renderSessions();
   $('drawer').classList.add('open');
   $('scrim').hidden = false;
