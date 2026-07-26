@@ -1722,3 +1722,110 @@ svg {
   flex: none;
   accent-color: var(--accent);
 }
+
+/* ── overflow menu (⋯ in the topbar) ─────────────────────────────────────
+   Anchored below the topbar on the right rather than being a bottom sheet:
+   these are quick, low-commitment actions, and a sheet would be as heavy as
+   the model picker. Sits above the topbar (z 45) but below the lightbox (60)
+   and toasts (70). */
+.menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 44;
+  /* Invisible: its only job is to catch the tap that dismisses the menu. */
+  background: transparent;
+}
+
+.menu-pop {
+  position: fixed;
+  top: calc(var(--topbar-h) + env(safe-area-inset-top) + 4px);
+  right: 8px;
+  z-index: 45;
+  min-width: 232px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.5);
+  transform-origin: top right;
+  animation: menu-in 110ms ease-out;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop {
+    animation: none;
+  }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mi-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The slash command the item runs, so the menu also teaches the typed form. */
+.mi-cmd {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--bg-input);
+}
+
+.menu-item.danger {
+  color: #f28b8d;
+}
+
+.menu-item.danger:hover,
+.menu-item.danger:focus-visible {
+  background: rgb(218 55 60 / 0.16);
+}
+
+.menu-item[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}

@@ -103,22 +103,64 @@
               <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-new-chat" title="New pi session" aria-label="Start a fresh pi session">
+          <button
+            class="icon-btn"
+            id="btn-more"
+            title="More"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded="false"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 20h9M4 20l1-4 9.5-9.5a2.1 2.1 0 013 3L8 19z" />
-            </svg>
-          </button>
-          <button class="icon-btn" id="btn-search" title="Search" aria-label="Search history">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
-            </svg>
-          </button>
-          <button class="icon-btn" id="btn-clean" title="Clean session" aria-label="Clean session">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+              <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" />
+              <circle cx="12" cy="19" r="1.6" />
             </svg>
           </button>
         </header>
+
+        <!-- Overflow menu. Anchored under the ⋯ button; `menu-scrim` catches the
+             tap that dismisses it without swallowing the button's own click. -->
+        <div class="menu-scrim" id="menu-scrim" hidden></div>
+        <div class="menu-pop" id="more-menu" role="menu" aria-labelledby="btn-more" hidden>
+          <button type="button" class="menu-item" id="mi-status" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.6v.9" />
+            </svg>
+            <span class="mi-label">Status</span>
+            <span class="mi-cmd">/pi status</span>
+          </button>
+          <button type="button" class="menu-item" id="mi-gpt-usage" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 18a8 8 0 1116 0" />
+              <path d="M12 18l4-5.5" />
+              <circle cx="12" cy="18" r="1.1" />
+            </svg>
+            <span class="mi-label">GPT usage</span>
+            <span class="mi-cmd">/gpt-usage</span>
+          </button>
+
+          <div class="menu-sep" role="separator"></div>
+
+          <button type="button" class="menu-item" id="mi-search" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+            </svg>
+            <span class="mi-label">Search</span>
+          </button>
+          <button type="button" class="menu-item" id="mi-new-chat" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 20h9M4 20l1-4 9.5-9.5a2.1 2.1 0 013 3L8 19z" />
+            </svg>
+            <span class="mi-label">New pi session</span>
+            <span class="mi-cmd">/pi new</span>
+          </button>
+          <button type="button" class="menu-item danger" id="mi-clean" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </svg>
+            <span class="mi-label">Clean session</span>
+          </button>
+        </div>
 
         <div class="search-panel" id="search-panel" hidden>
           <div class="search-bar">

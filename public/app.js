@@ -507,8 +507,11 @@ async function selectSession(jid, opts = {}) {
   renderHeaderBadge();
   $('deleted-banner').hidden = !state.previewingDeleted;
   $('composer-wrap').hidden = state.previewingDeleted;
-  for (const id of ['btn-model', 'btn-new-chat']) $(id).hidden = state.previewingDeleted;
+  // btn-more stays: Search still works on a trashed session (the other rows are
+  // disabled in openMoreMenu). The model picker has nothing to offer, so it goes.
+  $('btn-model').hidden = state.previewingDeleted;
   closeModelSheet();
+  closeMoreMenu();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
   const { events, busy, hasMore } = await api(
@@ -661,10 +664,6 @@ function closeSearch() {
   clearTimeout(searchTimer);
 }
 
-$('btn-search').addEventListener('click', () => {
-  if ($('search-panel').hidden) openSearch();
-  else closeSearch();
-});
 $('btn-search-close').addEventListener('click', closeSearch);
 
 $('search-input').addEventListener('input', () => {
@@ -780,14 +779,64 @@ async function runQuickCommand(command, args = {}) {
   }).catch((err) => alert(err.message));
 }
 
-$('btn-new-chat').addEventListener('click', () => {
+function newPiSession() {
   // No confirm: /pi new archives the old session rather than destroying it, and
   // the worker posts "Started a fresh pi session." straight into the transcript,
   // which is the feedback a dialog would have been asking for.
   runQuickCommand('pi new');
-});
+}
 
 $('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
+
+// ── overflow menu ────────────────────────────────────────────────────────
+//
+// Search / new session / clean moved off the topbar into a ⋯ menu, which also
+// carries the two command shortcuts (/pi status, /gpt-usage) that have no
+// natural icon. Keeping four-plus icons in a phone header crowded the title;
+// the menu also lets each row name the slash command it runs.
+
+function isMenuOpen() {
+  return !$('more-menu').hidden;
+}
+
+function openMoreMenu() {
+  $('more-menu').hidden = false;
+  $('menu-scrim').hidden = false;
+  $('btn-more').setAttribute('aria-expanded', 'true');
+  // A trashed session is frozen: only Search still makes sense there.
+  for (const id of ['mi-status', 'mi-gpt-usage', 'mi-new-chat', 'mi-clean']) {
+    $(id).disabled = state.previewingDeleted;
+  }
+}
+
+function closeMoreMenu() {
+  $('more-menu').hidden = true;
+  $('menu-scrim').hidden = true;
+  $('btn-more').setAttribute('aria-expanded', 'false');
+}
+
+$('btn-more').addEventListener('click', () => {
+  if (isMenuOpen()) closeMoreMenu();
+  else openMoreMenu();
+});
+$('menu-scrim').addEventListener('click', closeMoreMenu);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isMenuOpen()) closeMoreMenu();
+});
+
+/** Wire a menu row: always dismiss first, so the action never runs under an open menu. */
+function onMenuItem(id, action) {
+  $(id).addEventListener('click', () => {
+    closeMoreMenu();
+    action();
+  });
+}
+
+onMenuItem('mi-status', () => runQuickCommand('pi status'));
+onMenuItem('mi-gpt-usage', () => runQuickCommand('gpt-usage'));
+onMenuItem('mi-search', () => openSearch());
+onMenuItem('mi-new-chat', newPiSession);
+onMenuItem('mi-clean', cleanSession);
 
 // ── model sheet ──
 
@@ -1027,14 +1076,14 @@ $('session-name-input').addEventListener('blur', () => commitRename(true));
 
 $('btn-new-session').addEventListener('click', createSession);
 
-$('btn-clean').addEventListener('click', async () => {
-  if (!state.activeJid) return;
+async function cleanSession() {
+  if (!state.activeJid || state.previewingDeleted) return;
   if (!confirm('Clean this session? Clears the transcript and starts a fresh pi session.')) return;
   await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/clear`, { method: 'POST' });
   $('messages').textContent = '';
   state.cursor = 0;
   openStream();
-});
+}
 
 // ── streaming ────────────────────────────────────────────────────────────
 
