@@ -178,6 +178,7 @@ origin check.
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
 | session ordering | `activityKey()` + `sessionsForDisplay()` in `public/app.js` (recency) |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
+| topbar ⋯ overflow menu | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js` |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
 ### Which model a badge shows
@@ -570,6 +571,16 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   - History: this replaced a state ranking (unread → busy → rest), which itself
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
+- **The topbar keeps two buttons; everything else is in the ⋯ menu.** Model
+  (cube) and ⋯ only — search, `/pi new` and clean session moved into the menu,
+  which also carries `/pi status` and `/gpt-usage` (commands with no natural
+  icon). More icons than that squeezes the session title on a phone. The menu is
+  a popover anchored under the button, not a bottom sheet: these are quick
+  actions and a sheet would feel as heavy as the model picker. Each row names the
+  slash command it runs, so the menu also teaches the typed form. Dismissal is a
+  transparent full-screen `#menu-scrim` (plus Escape) — a `document` click
+  listener would fire on the opening tap itself. Rows that need a live session
+  are disabled while previewing a trashed one; Search still works there.
 - **Badge colours must survive being next to each other.** TERRA was first shipped
   mint green and was indistinguishable from the LOCAL/GPT greens one row away —
   the label was "correct" and the UI still failed. It is terracotta now (Sol
