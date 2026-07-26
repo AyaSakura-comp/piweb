@@ -508,8 +508,10 @@ async function selectSession(jid, opts = {}) {
   $('deleted-banner').hidden = !state.previewingDeleted;
   $('composer-wrap').hidden = state.previewingDeleted;
   // btn-more stays: Search still works on a trashed session (the other rows are
-  // disabled in openMoreMenu). The model picker has nothing to offer, so it goes.
-  $('btn-model').hidden = state.previewingDeleted;
+  // disabled in openMoreMenu). The rest act on a live session, so they go.
+  for (const id of ['btn-model', 'btn-status', 'btn-gpt-usage']) {
+    $(id).hidden = state.previewingDeleted;
+  }
   closeModelSheet();
   closeMoreMenu();
 
@@ -788,12 +790,14 @@ function newPiSession() {
 
 $('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
 
+$('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
+$('btn-gpt-usage').addEventListener('click', () => runQuickCommand('gpt-usage'));
+
 // ── overflow menu ────────────────────────────────────────────────────────
 //
-// Search / new session / clean moved off the topbar into a ⋯ menu, which also
-// carries the two command shortcuts (/pi status, /gpt-usage) that have no
-// natural icon. Keeping four-plus icons in a phone header crowded the title;
-// the menu also lets each row name the slash command it runs.
+// Search / new session / clean live behind a ⋯ button instead of sitting in the
+// topbar, which was crowding the session title. Each row names the slash
+// command it runs, so the menu also teaches the typed form.
 
 function isMenuOpen() {
   return !$('more-menu').hidden;
@@ -804,7 +808,7 @@ function openMoreMenu() {
   $('menu-scrim').hidden = false;
   $('btn-more').setAttribute('aria-expanded', 'true');
   // A trashed session is frozen: only Search still makes sense there.
-  for (const id of ['mi-status', 'mi-gpt-usage', 'mi-new-chat', 'mi-clean']) {
+  for (const id of ['mi-new-chat', 'mi-clean']) {
     $(id).disabled = state.previewingDeleted;
   }
 }
@@ -832,8 +836,6 @@ function onMenuItem(id, action) {
   });
 }
 
-onMenuItem('mi-status', () => runQuickCommand('pi status'));
-onMenuItem('mi-gpt-usage', () => runQuickCommand('gpt-usage'));
 onMenuItem('mi-search', () => openSearch());
 onMenuItem('mi-new-chat', newPiSession);
 onMenuItem('mi-clean', cleanSession);

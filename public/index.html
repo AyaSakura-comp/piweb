@@ -98,6 +98,18 @@
           <button class="icon-btn danger" id="btn-stop" title="Stop" aria-label="Stop the current task" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
           </button>
+          <button class="icon-btn" id="btn-status" title="/pi status" aria-label="Show pi status">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.6v.9" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btn-gpt-usage" title="/gpt-usage" aria-label="Show GPT usage">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 18a8 8 0 1116 0" />
+              <path d="M12 18l4-5.5" />
+              <circle cx="12" cy="18" r="1.1" />
+            </svg>
+          </button>
           <button class="icon-btn" id="btn-model" title="Model" aria-label="Choose model">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
@@ -122,25 +134,6 @@
              tap that dismisses it without swallowing the button's own click. -->
         <div class="menu-scrim" id="menu-scrim" hidden></div>
         <div class="menu-pop" id="more-menu" role="menu" aria-labelledby="btn-more" hidden>
-          <button type="button" class="menu-item" id="mi-status" role="menuitem">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.6v.9" />
-            </svg>
-            <span class="mi-label">Status</span>
-            <span class="mi-cmd">/pi status</span>
-          </button>
-          <button type="button" class="menu-item" id="mi-gpt-usage" role="menuitem">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 18a8 8 0 1116 0" />
-              <path d="M12 18l4-5.5" />
-              <circle cx="12" cy="18" r="1.1" />
-            </svg>
-            <span class="mi-label">GPT usage</span>
-            <span class="mi-cmd">/gpt-usage</span>
-          </button>
-
-          <div class="menu-sep" role="separator"></div>
-
           <button type="button" class="menu-item" id="mi-search" role="menuitem">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
