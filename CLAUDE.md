@@ -176,7 +176,7 @@ origin check.
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
-| session ordering | `sessionRank()` + `sessionsForDisplay()` in `public/app.js` |
+| session ordering | `activityKey()` + `sessionsForDisplay()` in `public/app.js` (recency) |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
@@ -555,18 +555,21 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a
   one-line peek; `system`/`error` open by default and omit the peek so the text
   is not shown twice.
-- **A session with a new reply is always at the top, live.** The drawer ranks
-  unread-and-finished (green dot) first, then running (spinner), then the rest,
-  preserving server order within a rank so same-state sessions never shuffle
-  against each other (`sessionRank()` / `sessionsForDisplay()`). The rank is
-  recomputed on **every** render, so a reply landing while the drawer is open
-  moves that session up as it arrives — the 5s background poll (`loadSessions()`;
-  SSE only carries the *open* session) is what drives it for background
-  sessions. The session you are reading clears its own unread mark, so it never
-  yanks itself upward under your eyes.
-  An earlier version settled the order only on drawer-open to avoid rows moving
-  while being read; that was explicitly reverted — "new message always on top"
-  wins over order stability here.
+- **The drawer is ordered by recency: newest activity first.** The key is
+  `lastActivity` (`max(web_events.created_at)` for the channel), so anything that
+  touches a session — your message, pi's reply, command output — moves it up,
+  and a session with a new message lands on top for free
+  (`activityKey()` / `sessionsForDisplay()`). Recomputed on **every** render, and
+  `lastActivity` arrives fresh from the 5s `loadSessions()` poll (SSE only
+  carries the *open* session), so a reply in a background session moves it up
+  while the drawer is open.
+  - Those timestamps are SQLite `'YYYY-MM-DD HH:MM:SS'` UTC — fixed-width and
+    zero-padded, so a **string** compare is already chronological. Do not reach
+    for `Date` here; that would also need the `Z` fix (see Timestamps below).
+  - A session with no events yet was only just created, so it sorts newest.
+  - History: this replaced a state ranking (unread → busy → rest), which itself
+    replaced a settle-on-open order. Recency subsumes the "new message on top"
+    goal without the ranking's downside of rows jumping between state buckets.
 - **Badge colours must survive being next to each other.** TERRA was first shipped
   mint green and was indistinguishable from the LOCAL/GPT greens one row away —
   the label was "correct" and the UI still failed. It is terracotta now (Sol

@@ -384,26 +384,30 @@ function renderHeaderBadge() {
   host.title = session.runningModel || session.provider;
 }
 
-// Ranking for the drawer order: a session with a new reply you have not read
-// (green dot) goes to the top, always and immediately — that is the whole point
-// of the marker. Then the ones still running (spinner), then everything else.
-// Within a rank the server's order is preserved (stable sort via the original
-// index), so sessions in the same state never shuffle against each other.
+// Drawer order: most recently active session first, by the timestamp of its
+// newest event (`lastActivity` = max(web_events.created_at) for the channel).
+// Anything that touches a session — your message, pi's reply, a command's
+// output — moves it up, so a session with a new message is at the top for free.
 //
-// Live, not settled: the rank is recomputed on every render, so a reply landing
-// while the drawer is open moves that session up as it arrives rather than
-// waiting for the next open. The session you are *reading* clears its own unread
-// mark, so it never yanks itself to the top under your eyes.
-function sessionRank(session) {
-  if (isUnread(session) && !session.busy) return 0; // new reply, unread
-  if (session.busy) return 1; // running
-  return 2;
+// Recomputed on every render, and `lastActivity` comes fresh from the 5s
+// loadSessions poll (SSE only carries the open session), so a reply landing in
+// a background session moves it up while the drawer is open.
+//
+// Timestamps are SQLite's 'YYYY-MM-DD HH:MM:SS' in UTC: fixed-width and
+// zero-padded, so a plain string compare is a correct chronological compare and
+// needs no Date parsing (which would also need the 'Z' fix — see CLAUDE.md).
+// A session with no events yet was only just created, so it sorts newest.
+function activityKey(session) {
+  return session.lastActivity || '9999-12-31 23:59:59';
 }
 
 function sessionsForDisplay() {
   return state.sessions
     .map((session, index) => ({ session, index }))
-    .sort((a, b) => sessionRank(a.session) - sessionRank(b.session) || a.index - b.index)
+    .sort(
+      (a, b) =>
+        activityKey(b.session).localeCompare(activityKey(a.session)) || a.index - b.index,
+    )
     .map((e) => e.session);
 }
 
