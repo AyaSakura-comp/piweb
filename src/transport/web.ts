@@ -135,6 +135,29 @@ export const webTransport: Transport = {
         return;
       }
 
+      // Context compaction. pi compacts on its own once the context approaches
+      // the model's window (settings.compaction in ~/.pi/agent/settings.json),
+      // replacing older turns with a summary. Without this the only visible
+      // trace is the context number in /pi status suddenly dropping — or, if you
+      // look at the wrong moment, a reading above 100%. `tokensBefore` is the
+      // size it compacted away from; pi reports no "after", so don't invent one.
+      if (event.type === 'compaction_end' && event.result && !event.aborted) {
+        const before = Number(event.result.tokensBefore ?? 0);
+        const reason = event.reason === 'overflow' ? 'context overflowed' : 'context threshold';
+        appendWebEvent({
+          channelJid: jid,
+          kind: 'system',
+          role: 'compacted',
+          // No leading emoji: the row already renders as "ⓘ compacted", and the
+          // obvious pick (🗜) has no glyph in the UI font and shows as tofu.
+          content:
+            `Compacted the context (${reason}) — ${before.toLocaleString('en-US')} tokens ` +
+            `summarised. Older turns are now a summary; recent ones were kept, and pi ` +
+            `continues in the same session.`,
+        });
+        return;
+      }
+
       // Tool results arrive as their own role=tool message after the call.
       if (config.streamTools && event.type === 'message_end' && event.message?.role === 'tool') {
         const parts = event.message.content ?? [];

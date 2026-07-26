@@ -181,6 +181,32 @@ origin check.
 | topbar ⋯ overflow menu | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js` |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
+### Context compaction is pi's, not piweb's
+
+pi compacts on its own — `compaction` in `~/.pi/agent/settings.json`
+(`enabled`, `reserveTokens`, `keepRecentTokens`). It is **not** TUI-only: piweb
+runs `--mode json`, whose `print-mode.js` goes through `session.prompt()`, which
+runs `_checkCompaction()` before sending and after each assistant message. Proof
+it works here: a live session had 11 `{"type":"compaction"}` entries in its
+JSONL. So do not "add compaction" to piweb — it already happens.
+
+What piweb owns is *showing* it. `--mode json` dumps **every** session event to
+stdout (`session.subscribe(...)` → `JSON.stringify`), so `compaction_start` /
+`compaction_end` arrive in `createEventStreamer` like any other event. Only
+`compaction_end` with a `result` and `aborted === false` is surfaced, as a
+`system`/`compacted` row; a start marker would just be noise, and pi emits
+`compaction_end` with no `result` when it bails (no model, no auth).
+
+`result.tokensBefore` is the size it compacted away *from*; there is no
+"after" in the payload, so do not compute or imply one.
+
+This also explains a confusing symptom: `/pi status` can read **over 100%**
+(seen: `304,028 / 272,000 = 111.8%`). That is the pre-compaction peak — the
+threshold is `window − reserveTokens` against the model's real window, not the
+number status prints, so the figure is allowed to climb past it before pi
+compacts. In that very case pi compacted two minutes later with
+`tokensBefore: 304028`. It is not a bug and not a stuck session.
+
 ### Which model a badge shows
 
 The badge must track the model the session **is set to**, so picking one in the
