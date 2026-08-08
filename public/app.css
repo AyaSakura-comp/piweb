@@ -487,6 +487,17 @@ svg {
   font-size: 13px;
 }
 
+.msg-text code,
+.event-body code {
+  cursor: copy;
+  touch-action: manipulation;
+}
+
+.msg-text code:active,
+.event-body code:active {
+  opacity: 0.72;
+}
+
 .msg-text pre {
   margin: 6px 0;
   padding: 10px 12px;
