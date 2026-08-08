@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { bindCodeCopy } from './message-copy.js';
 import { bindLongPress, setDrawerCollapsed } from './session-ui.js';
 
 const $ = (id) => document.getElementById(id);
@@ -206,6 +207,11 @@ async function copyText(text) {
     return false;
   }
 }
+
+bindCodeCopy(document, {
+  copyText,
+  onResult: (copied) => showToast(copied ? 'Copied code' : 'Could not copy code'),
+});
 
 document.addEventListener('click', async (e) => {
   const link = e.target.closest('#messages .msg-text a, #messages .event-body a');
