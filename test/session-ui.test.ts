@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { bindLongPress, setDrawerCollapsed } from '../public/session-ui.js';
 
@@ -104,6 +106,16 @@ describe('bindLongPress', () => {
     expect(onLongPress).not.toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+});
+
+describe('session name touch styles', () => {
+  it('uses Safari-prefixed selection blocking so native text selection cannot beat the long press', () => {
+    const css = readFileSync(resolve(import.meta.dirname, '../public/app.css'), 'utf8');
+    const nameRule = css.match(/\.session-item \.name \{([^}]+)\}/)?.[1] ?? '';
+
+    expect(nameRule).toContain('-webkit-user-select: none');
+    expect(nameRule).toContain('-webkit-touch-callout: none');
   });
 });
 

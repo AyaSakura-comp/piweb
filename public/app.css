@@ -332,6 +332,7 @@ svg {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: text;
+  -webkit-user-select: none; /* iOS Safari still requires the prefix */
   user-select: none;
   -webkit-touch-callout: none;
 }
