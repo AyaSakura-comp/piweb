@@ -298,6 +298,11 @@ svg {
   color: var(--text-bright);
 }
 
+.drawer-actions {
+  display: flex;
+  align-items: center;
+}
+
 .session-list {
   flex: 1;
   overflow-y: auto;
@@ -326,6 +331,23 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.session-name-edit {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 3px 6px;
+  background: var(--bg-dark);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 16px; /* keep iOS from zooming */
+  outline: none;
 }
 
 .session-item .hash {
@@ -833,6 +855,14 @@ svg {
   #btn-menu,
   .scrim {
     display: none;
+  }
+
+  .app.drawer-collapsed .drawer {
+    display: none;
+  }
+
+  .app.drawer-collapsed #btn-menu {
+    display: grid;
   }
 
   .messages {

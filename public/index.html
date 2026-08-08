@@ -60,9 +60,16 @@
       <aside class="drawer" id="drawer" aria-label="Sessions">
         <header class="drawer-head">
           <span class="drawer-title">Sessions</span>
-          <button class="icon-btn" id="btn-new-session" title="New session" aria-label="New session">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
+          <div class="drawer-actions">
+            <button class="icon-btn" id="btn-new-session" title="New session" aria-label="New session">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            <button class="icon-btn" id="btn-hide-drawer" title="Hide sessions" aria-label="Hide sessions">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M7 9l-3 3 3 3" />
+              </svg>
+            </button>
+          </div>
         </header>
         <div class="session-list" id="session-list"></div>
         <footer class="drawer-foot">
@@ -86,7 +93,13 @@
 
       <main class="main">
         <header class="topbar">
-          <button class="icon-btn" id="btn-menu" aria-label="Open sessions">
+          <button
+            class="icon-btn"
+            id="btn-menu"
+            aria-label="Open sessions"
+            aria-controls="drawer"
+            aria-expanded="false"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
           <div class="topbar-title">

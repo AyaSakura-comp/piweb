@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { bindLongPress, setDrawerCollapsed } from './session-ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,6 +24,8 @@ const state = {
   commands: [],
   models: [],
   previewingDeleted: false,
+  renamingJid: null,
+  renameDraft: '',
   ac: { open: false, items: [], index: 0, mode: null },
   // Infinite scroll upward: `oldest` is the lowest event id currently rendered,
   // `hasMore` says whether anything precedes it, `loadingOlder` prevents the
@@ -411,8 +414,11 @@ function sessionsForDisplay() {
     .map((e) => e.session);
 }
 
-function renderSessions() {
+function renderSessions(force = false) {
   const list = $('session-list');
+  // The 5s session poll and busy-state updates must not replace an input while
+  // someone is typing into it. The next render happens when the edit finishes.
+  if (!force && state.renamingJid && list.querySelector('.session-name-edit')) return;
   list.textContent = '';
 
   if (state.sessions.length === 0) {
@@ -424,7 +430,35 @@ function renderSessions() {
   for (const session of sessionsForDisplay()) {
     const item = el('div', `session-item${session.jid === state.activeJid ? ' active' : ''}`);
     item.append(el('span', 'hash', '#'));
-    item.append(el('span', 'name', session.name));
+
+    if (state.renamingJid === session.jid) {
+      const input = el('input', 'session-name-edit');
+      input.value = state.renameDraft;
+      input.maxLength = 80;
+      input.setAttribute('aria-label', `Rename ${session.name}`);
+      input.addEventListener('input', () => {
+        if (state.renamingJid === session.jid) state.renameDraft = input.value;
+      });
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('keydown', (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitListRename(session.jid, true);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          commitListRename(session.jid, false);
+        }
+      });
+      input.addEventListener('blur', () => commitListRename(session.jid, true));
+      item.append(input);
+    } else {
+      const name = el('span', 'name', session.name);
+      name.title = 'Press and hold to rename';
+      bindLongPress(name, () => startListRename(session));
+      item.append(name);
+    }
+
     if (session.badge) {
       const badge = el('span', `provider-badge ${session.badge.kind}`, session.badge.label);
       // The full model id is long; keep it to the tooltip/long-press.
@@ -463,7 +497,8 @@ function renderSessions() {
     });
     item.append(del);
 
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (e) => {
+      if (e.defaultPrevented || state.renamingJid === session.jid) return;
       selectSession(session.jid);
       closeDrawer();
     });
@@ -1020,6 +1055,53 @@ $('model-sheet').addEventListener('click', (e) => {
 
 // ── rename ───────────────────────────────────────────────────────────────
 
+function startListRename(session) {
+  state.renamingJid = session.jid;
+  state.renameDraft = session.name;
+  renderSessions(true);
+  const input = $('session-list').querySelector('.session-name-edit');
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}
+
+async function commitListRename(jid, save) {
+  if (state.renamingJid !== jid) return;
+
+  const session = state.sessions.find((s) => s.jid === jid);
+  const name = state.renameDraft.trim();
+  state.renamingJid = null;
+  state.renameDraft = '';
+
+  if (!save || !name || name === session?.name) {
+    renderSessions();
+    return;
+  }
+
+  // Optimistic so Enter feels instant; loadSessions below replaces it with the
+  // server's canonical (length-limited) value or rolls it back after an error.
+  if (session) session.name = name;
+  if (state.activeJid === jid && !state.previewingDeleted) $('session-name').textContent = name;
+  renderSessions();
+
+  try {
+    await api(`/api/sessions/${encodeURIComponent(jid)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    await loadSessions();
+  } catch (err) {
+    alert(err.message);
+    await loadSessions().catch(() => {});
+  }
+
+  const saved = state.sessions.find((s) => s.jid === jid);
+  if (saved && state.activeJid === jid && !state.previewingDeleted) {
+    $('session-name').textContent = saved.name;
+  }
+}
+
 function startRename() {
   if (!state.activeJid || state.previewingDeleted) return;
   const label = $('session-name');
@@ -1036,6 +1118,7 @@ async function commitRename(save) {
   const input = $('session-name-input');
   if (input.hidden) return;
 
+  const jid = state.activeJid;
   const name = input.value.trim();
   input.hidden = true;
   label.hidden = false;
@@ -1045,7 +1128,7 @@ async function commitRename(save) {
 
   label.textContent = name;
   try {
-    await api(`/api/sessions/${encodeURIComponent(state.activeJid)}`, {
+    await api(`/api/sessions/${encodeURIComponent(jid)}`, {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     });
@@ -1053,8 +1136,8 @@ async function commitRename(save) {
   } catch (err) {
     alert(err.message);
     await loadSessions();
-    const session = state.sessions.find((s) => s.jid === state.activeJid);
-    if (session) label.textContent = session.name;
+    const session = state.sessions.find((s) => s.jid === jid);
+    if (session && state.activeJid === jid) label.textContent = session.name;
   }
 }
 
@@ -1973,18 +2056,36 @@ syncViewportSizes();
 
 // ── drawer ───────────────────────────────────────────────────────────────
 
+const wideDrawer = window.matchMedia('(min-width: 768px)');
+
 function openDrawer() {
   renderSessions();
+  if (wideDrawer.matches) {
+    setDrawerCollapsed($('app'), $('btn-menu'), false);
+    return;
+  }
   $('drawer').classList.add('open');
   $('scrim').hidden = false;
+  $('btn-menu').setAttribute('aria-expanded', 'true');
 }
 
 function closeDrawer() {
   $('drawer').classList.remove('open');
   $('scrim').hidden = true;
+  if (!wideDrawer.matches) $('btn-menu').setAttribute('aria-expanded', 'false');
 }
 
+function hideDrawer() {
+  if (wideDrawer.matches) {
+    setDrawerCollapsed($('app'), $('btn-menu'), true);
+    return;
+  }
+  closeDrawer();
+}
+
+$('btn-menu').setAttribute('aria-expanded', String(wideDrawer.matches));
 $('btn-menu').addEventListener('click', openDrawer);
+$('btn-hide-drawer').addEventListener('click', hideDrawer);
 $('scrim').addEventListener('click', closeDrawer);
 
 // ── edge swipe ───────────────────────────────────────────────────────────
