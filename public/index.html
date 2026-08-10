@@ -200,6 +200,24 @@
 
         <div class="composer-wrap" id="composer-wrap">
           <div class="autocomplete" id="autocomplete" hidden></div>
+          <div
+            id="upload-progress"
+            class="upload-progress"
+            role="progressbar"
+            aria-label="Uploading attachments"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            hidden
+          >
+            <div class="upload-progress-head">
+              <span>Uploading attachments…</span>
+              <span id="upload-progress-percent">0%</span>
+            </div>
+            <div class="upload-progress-track">
+              <div class="upload-progress-bar" id="upload-progress-bar"></div>
+            </div>
+          </div>
           <div class="attachments" id="attachments" hidden></div>
           <form class="composer" id="composer">
             <button type="button" class="icon-btn" id="btn-attach" aria-label="Add attachment">

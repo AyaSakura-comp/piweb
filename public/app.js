@@ -13,6 +13,11 @@
 import { renderRich } from './markdown.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindLongPress, setDrawerCollapsed } from './session-ui.js';
+import {
+  hideUploadProgress,
+  sendJsonWithUploadProgress,
+  showUploadProgress,
+} from './upload-progress.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,6 +27,7 @@ const state = {
   cursor: 0,
   source: null,
   attachments: [],
+  uploading: false,
   commands: [],
   models: [],
   previewingDeleted: false,
@@ -1378,6 +1384,18 @@ function scrollToBottom(instant) {
 // ── composer ─────────────────────────────────────────────────────────────
 
 const input = $('input');
+const uploadProgress = {
+  container: $('upload-progress'),
+  bar: $('upload-progress-bar'),
+  percent: $('upload-progress-percent'),
+};
+
+function setUploading(uploading) {
+  state.uploading = uploading;
+  $('btn-send').disabled = uploading;
+  $('btn-attach').disabled = uploading;
+  if (!uploading) hideUploadProgress(uploadProgress);
+}
 
 function autoGrow() {
   input.style.height = 'auto';
@@ -1509,6 +1527,7 @@ function fileToBase64(file) {
 
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (state.uploading) return;
   if (!state.activeJid) {
     alert('Create or pick a session first.');
     return;
@@ -1528,22 +1547,40 @@ $('composer').addEventListener('submit', async (e) => {
     }
   }
 
-  const attachments = [];
-  for (const attachment of state.attachments) {
-    attachments.push({ name: attachment.name, dataBase64: await fileToBase64(attachment.file) });
+  const hasAttachments = state.attachments.length > 0;
+  if (hasAttachments) {
+    setUploading(true);
+    showUploadProgress(uploadProgress, 0);
   }
 
-  input.value = '';
-  for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
-  state.attachments = [];
-  renderAttachments();
-  autoGrow();
-  hideAutocomplete();
+  try {
+    const attachments = [];
+    for (const attachment of state.attachments) {
+      attachments.push({ name: attachment.name, dataBase64: await fileToBase64(attachment.file) });
+    }
 
-  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ text, attachments }),
-  }).catch((err) => alert(err.message));
+    input.value = '';
+    for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
+    state.attachments = [];
+    renderAttachments();
+    autoGrow();
+    hideAutocomplete();
+
+    const path = `/api/sessions/${encodeURIComponent(state.activeJid)}/messages`;
+    const payload = { text, attachments };
+    if (hasAttachments) {
+      await sendJsonWithUploadProgress(path, payload, {
+        onProgress: (percent) => showUploadProgress(uploadProgress, percent),
+      });
+    } else {
+      await api(path, { method: 'POST', body: JSON.stringify(payload) });
+    }
+  } catch (err) {
+    if (err.status === 401) showLogin();
+    alert(err.message);
+  } finally {
+    if (hasAttachments) setUploading(false);
+  }
 });
 
 /** Parse "/pi model gpt-5" into a command + its single argument. */

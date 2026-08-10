@@ -708,6 +708,40 @@ svg {
   padding: 8px 4px;
 }
 
+.upload-progress {
+  padding: 8px 4px 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.upload-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+
+.upload-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-alt);
+}
+
+.upload-progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-progress-bar {
+    transition: none;
+  }
+}
+
 .chip {
   display: flex;
   align-items: center;
