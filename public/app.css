@@ -524,12 +524,47 @@ svg {
   margin-top: 6px;
 }
 
-.msg-files img,
-.msg-files video {
+.msg-files img {
   max-width: min(100%, 320px);
   max-height: 320px;
   border-radius: 8px;
   display: block;
+}
+
+.video-file {
+  width: min(100%, 320px);
+  max-width: min(100%, 320px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.video-file video {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  background: #000;
+}
+
+.video-download {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: #00a8fc;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.video-download:active,
+.video-download:focus-visible {
+  background: var(--bg-input);
+  color: var(--text-bright);
+  outline: none;
 }
 
 .file-link {
