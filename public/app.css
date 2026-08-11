@@ -547,12 +547,15 @@ svg {
 }
 
 .video-download {
+  width: 100%;
   min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 8px 12px;
+  border: 0;
   border-top: 1px solid var(--border);
+  background: transparent;
   color: #00a8fc;
   font-size: 14px;
   font-weight: 600;
