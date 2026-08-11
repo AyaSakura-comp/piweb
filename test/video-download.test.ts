@@ -3,14 +3,20 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createVideoAttachment, downloadNameFromMediaUrl } from '../public/media-files.js';
 
+type FakeEvent = { preventDefault: () => void };
+type FakeListener = (event: FakeEvent) => void | Promise<void>;
+
 class FakeElement {
   readonly children: FakeElement[] = [];
   readonly attributes = new Map<string, string>();
+  readonly listeners = new Map<string, FakeListener>();
   className = '';
   textContent = '';
   src = '';
   href = '';
   download = '';
+  type = '';
+  disabled = false;
   controls = false;
   playsInline = false;
 
@@ -23,6 +29,22 @@ class FakeElement {
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
   }
+
+  addEventListener(name: string, listener: FakeListener): void {
+    this.listeners.set(name, listener);
+  }
+
+  async emit(name: string): Promise<void> {
+    await this.listeners.get(name)?.({ preventDefault: () => undefined });
+  }
+}
+
+class FakeFile {
+  constructor(
+    readonly parts: BlobPart[],
+    readonly name: string,
+    readonly options: FilePropertyBag,
+  ) {}
 }
 
 const fakeDocument = {
@@ -62,6 +84,81 @@ describe('createVideoAttachment', () => {
     expect(download.textContent).toContain('Download video');
     expect(download.attributes.get('aria-label')).toBe('Download video clip.mp4');
   });
+
+  it('uses a two-tap native file share in an iOS home-screen app without opening the MP4 URL', async () => {
+    const shared: Array<{ files: FakeFile[]; title: string }> = [];
+    let fetches = 0;
+    const runtime = {
+      navigator: {
+        standalone: true,
+        canShare: ({ files }: { files: FakeFile[] }) => files.length === 1,
+        share: async (data: { files: FakeFile[]; title: string }) => {
+          shared.push(data);
+        },
+      },
+      fetch: async () => {
+        fetches += 1;
+        return {
+          ok: true,
+          blob: async () => new Blob(['video'], { type: 'video/mp4' }),
+        };
+      },
+      File: FakeFile,
+      alert: () => undefined,
+    };
+    const card = createVideoAttachment(
+      '/media/web_demo/a1b2c3d4-clip.mp4',
+      fakeDocument,
+      runtime,
+    ) as unknown as FakeElement;
+    const save = card.children[1];
+
+    expect(save.tagName).toBe('button');
+    expect(save.href).toBe('');
+    expect(save.type).toBe('button');
+    expect(save.attributes.get('aria-label')).toBe('Save video clip.mp4');
+
+    await save.emit('click');
+    expect(fetches).toBe(1);
+    expect(shared).toHaveLength(0);
+    expect(save.textContent).toContain('Tap again');
+    expect(save.attributes.get('aria-label')).toBe('Tap again to save clip.mp4');
+
+    await save.emit('click');
+    expect(fetches).toBe(1);
+    expect(shared).toHaveLength(1);
+    expect(shared[0].files[0].name).toBe('clip.mp4');
+    expect(shared[0].files[0].options.type).toBe('video/mp4');
+  });
+
+  it('keeps iOS home-screen users in piweb when native file sharing is unavailable', async () => {
+    const alerts: string[] = [];
+    const runtime = {
+      navigator: {
+        standalone: true,
+        canShare: () => false,
+        share: async () => undefined,
+      },
+      fetch: async () => ({
+        ok: true,
+        blob: async () => new Blob(['video'], { type: 'video/mp4' }),
+      }),
+      File: FakeFile,
+      alert: (message: string) => alerts.push(message),
+    };
+    const card = createVideoAttachment(
+      '/media/web_demo/a1b2c3d4-clip.mp4',
+      fakeDocument,
+      runtime,
+    ) as unknown as FakeElement;
+    const save = card.children[1];
+
+    await save.emit('click');
+
+    expect(save.tagName).toBe('button');
+    expect(save.href).toBe('');
+    expect(alerts[0]).toContain('Safari');
+  });
 });
 
 describe('video download styles', () => {
@@ -70,5 +167,7 @@ describe('video download styles', () => {
 
     expect(css).toMatch(/\.video-file \{[^}]*max-width: min\(100%, 320px\)/);
     expect(css).toMatch(/\.video-download \{[^}]*min-height: 44px/);
+    expect(css).toMatch(/\.video-download \{[^}]*width: 100%/);
+    expect(css).toMatch(/\.video-download \{[^}]*border: 0/);
   });
 });
