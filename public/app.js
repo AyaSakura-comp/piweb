@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { createVideoAttachment } from './media-files.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindLongPress, setDrawerCollapsed } from './session-ui.js';
 import {
@@ -1284,11 +1285,7 @@ function renderFiles(container, files) {
       img.addEventListener('click', () => openLightbox(url));
       wrap.append(img);
     } else if (/\.(mp4|webm|mov)$/.test(lower)) {
-      const video = el('video');
-      video.src = url;
-      video.controls = true;
-      video.playsInline = true;
-      wrap.append(video);
+      wrap.append(createVideoAttachment(url));
     } else if (/\.(wav|mp3|ogg|m4a)$/.test(lower)) {
       const audio = el('audio');
       audio.src = url;
