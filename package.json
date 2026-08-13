@@ -19,7 +19,8 @@
   "main": "./dist/index.js",
   "bin": {
     "piweb": "dist/cli/piweb.js",
-    "piscord": "dist/cli/index.js"
+    "piscord": "dist/cli/index.js",
+    "gpt-usage": "dist/cli/gpt-usage.js"
   },
   "files": [
     "dist",

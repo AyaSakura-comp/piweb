@@ -112,7 +112,7 @@ The web tier *cannot* execute them:
 - `/pi status` spawns pi over RPC for token stats
 - `/pi stop` needs the worker's in-memory `AbortController`
 - `/pi new` must not race an in-flight run (`isChannelProcessing`)
-- `/gpt-usage` shells out on the host
+- `/gpt-usage` reads the host's pi OAuth credentials through `src/gpt-usage.ts`
 
 So web validates against `COMMANDS` and writes an intent row; the worker executes
 it and appends the result as a `system`/`error` event. Command output therefore

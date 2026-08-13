@@ -43,6 +43,18 @@ names, then values for the argument — models come from pi's live list).
 `/pi new` · `/pi stop` · `/pi cwd <path>` · `/pi reset-cwd` · `/pi gpt-usage` ·
 `/until goal <text>` · `/until status` · `/until stop` · `/gpt-usage`
 
+GPT usage is self-contained in this repository (`src/gpt-usage.ts`): it reads
+pi's `~/.pi/agent/auth.json`, refreshes the `openai-codex` OAuth token when
+needed, and aborts its minimal Codex request after receiving the rate-limit
+headers. The same implementation powers the web command, inherited Discord
+slash command, and bundled CLI:
+
+```bash
+npm run build
+node dist/cli/gpt-usage.js          # Traditional Chinese report
+node dist/cli/gpt-usage.js --json   # machine-readable output
+```
+
 Sessions are created and deleted from the drawer. The 🗑 button in the header is
 **clean session**: it clears the transcript *and* rotates pi's session directory,
 so the agent's context is genuinely reset rather than just visually cleared.
