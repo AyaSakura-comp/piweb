@@ -1,8 +1,6 @@
-import { exec } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve as pathResolve } from 'node:path';
-import { promisify } from 'node:util';
 import {
   MessageFlags,
   SlashCommandBuilder,
@@ -49,6 +47,7 @@ import {
 import { abortChannelTask, isChannelProcessing } from '../agent/queue.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
+import { getGptUsageText } from '../gpt-usage.js';
 
 const PI_COMMAND = new SlashCommandBuilder()
   .setName('pi')
@@ -633,21 +632,18 @@ function reply(content: string, interaction: ChatInputCommandInteraction): Inter
   return { content };
 }
 
-const execAsync = promisify(exec);
-
 async function handleGptUsage(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply(
     interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : undefined,
   );
 
   try {
-    const scriptPath = pathResolve(homedir(), '.gemini/antigravity/skills/gpt-usage/bin/gpt-usage.mjs');
-    const { stdout } = await execAsync(`node "${scriptPath}"`);
-    await interaction.editReply({ content: `\`\`\`text\n${stdout.trim()}\n\`\`\`` });
+    const output = await getGptUsageText();
+    await interaction.editReply({ content: `\`\`\`text\n${output.trim()}\n\`\`\`` });
   } catch (err: any) {
     logger.error({ err: err.message }, 'Failed to check gpt-usage');
     await interaction.editReply({
-      content: `⚠️ Failed to get GPT usage status: ${err.stderr || err.message}`,
+      content: `⚠️ Failed to get GPT usage status: ${err.message}`,
     });
   }
 }

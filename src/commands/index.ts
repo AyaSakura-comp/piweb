@@ -8,15 +8,13 @@
  * They run in the WORKER process, not the web server: `/pi status` spawns pi
  * over RPC for token stats, `/pi stop` needs the worker's in-memory
  * AbortController, `/pi new` must not race an in-flight run, and `/gpt-usage`
- * shells out on the host. The web server enqueues intents into control_queue
+ * reads the host's pi OAuth credentials. The web server enqueues intents into control_queue
  * and the worker calls these.
  */
 
-import { exec } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve as pathResolve } from 'node:path';
-import { promisify } from 'node:util';
 import {
   getChannelSessionStatus,
   UNTIL_DONE_MARKER,
@@ -24,7 +22,6 @@ import {
   type SessionContextUsage,
   type SessionTokenUsage,
 } from '../agent/invoke.js';
-import { config } from '../config.js';
 import {
   clearChannelCwdOverride,
   clearChannelModelOverride,
@@ -52,8 +49,7 @@ import {
 import { abortChannelTask, isChannelProcessing } from '../agent/queue.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
-
-const execAsync = promisify(exec);
+import { getGptUsageText } from '../gpt-usage.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -321,15 +317,11 @@ async function cmdStatus(channel: RegisteredChannel): Promise<CommandResult> {
 
 async function cmdGptUsage(): Promise<CommandResult> {
   try {
-    const scriptPath = pathResolve(
-      homedir(),
-      '.gemini/antigravity/skills/gpt-usage/bin/gpt-usage.mjs',
-    );
-    const { stdout } = await execAsync(`node "${scriptPath}"`);
-    return { ok: true, text: '```text\n' + stdout.trim() + '\n```' };
+    const output = await getGptUsageText();
+    return { ok: true, text: '```text\n' + output.trim() + '\n```' };
   } catch (err: any) {
     logger.error({ err: err.message }, 'Failed to check gpt-usage');
-    return { ok: false, text: `⚠️ Failed to get GPT usage status: ${err.stderr || err.message}` };
+    return { ok: false, text: `⚠️ Failed to get GPT usage status: ${err.message}` };
   }
 }
 
