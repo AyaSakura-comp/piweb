@@ -60,6 +60,14 @@ class RpcSession {
     return Boolean(this.proc) && !this.proc!.killed;
   }
 
+  matchesOptions(opts: RpcSessionOpts): boolean {
+    return (
+      this.opts.model === opts.model &&
+      this.opts.thinking === opts.thinking &&
+      this.opts.cwd === opts.cwd
+    );
+  }
+
   private ensureProc(): void {
     if (this.isAlive) return;
     const dir = resolveChannelSessionDir(this.folder);
@@ -250,6 +258,10 @@ function keyFor(folder: string): string {
 export function getRpcSession(folder: string, opts: RpcSessionOpts): RpcSession {
   const key = keyFor(folder);
   let session = sessions.get(key);
+  if (session && !session.matchesOptions(opts)) {
+    session.close();
+    session = undefined;
+  }
   if (!session) {
     session = new RpcSession(folder, opts);
     sessions.set(key, session);

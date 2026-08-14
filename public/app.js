@@ -383,6 +383,7 @@ async function loadSessions() {
   state.sessions = sessions;
   renderSessions();
   renderHeaderBadge();
+  renderThinkingButton();
 }
 
 /** Mirror the provider badge next to the title, so it is visible without opening the drawer. */
@@ -557,10 +558,11 @@ async function selectSession(jid, opts = {}) {
   $('composer-wrap').hidden = state.previewingDeleted;
   // btn-more stays: Search still works on a trashed session (the other rows are
   // disabled in openMoreMenu). The rest act on a live session, so they go.
-  for (const id of ['btn-model', 'btn-status', 'btn-gpt-usage']) {
+  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
     $(id).hidden = state.previewingDeleted;
   }
   closeModelSheet();
+  closeThinkingSheet();
   closeMoreMenu();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
@@ -897,6 +899,7 @@ function currentModelRef() {
 
 async function openModelSheet() {
   if (!state.activeJid || state.previewingDeleted) return;
+  closeThinkingSheet();
   $('model-sheet').hidden = false;
   syncSheetHeight();
   $('model-search').value = '';
@@ -1064,6 +1067,87 @@ $('btn-model').addEventListener('click', openModelSheet);
 $('btn-model-close').addEventListener('click', closeModelSheet);
 $('model-sheet').addEventListener('click', (e) => {
   if (e.target === $('model-sheet')) closeModelSheet();
+});
+
+// ── thinking level sheet ─────────────────────────────────────────────────
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const THINKING_DESCRIPTIONS = {
+  off: 'No extended thinking',
+  minimal: 'Fastest, for simple requests',
+  low: 'Light reasoning',
+  medium: 'Balanced speed and depth',
+  high: 'Deep reasoning for harder work',
+  xhigh: 'Maximum model-supported effort',
+};
+
+function currentThinkingLevel() {
+  const session = state.sessions.find((s) => s.jid === state.activeJid);
+  return session?.thinking || '';
+}
+
+function renderThinkingButton() {
+  const button = $('btn-thinking');
+  const current = currentThinkingLevel();
+  button.dataset.level = current || 'default';
+  const label = current || 'runtime default';
+  button.title = `Thinking: ${label}`;
+  button.setAttribute('aria-label', `Choose thinking level. Current: ${label}`);
+}
+
+function openThinkingSheet() {
+  if (!state.activeJid || state.previewingDeleted) return;
+  closeModelSheet();
+  $('thinking-sheet').hidden = false;
+  syncSheetHeight();
+  renderThinkingList();
+}
+
+function renderThinkingList() {
+  const list = $('thinking-list');
+  const current = currentThinkingLevel();
+  list.textContent = '';
+  $('thinking-note').textContent = current
+    ? `This session uses ${current}.`
+    : 'This session follows the pi runtime default.';
+
+  for (const level of THINKING_LEVELS) {
+    const item = el('button', `thinking-item${level === current ? ' current' : ''}`);
+    item.type = 'button';
+    item.dataset.level = level;
+
+    const copy = el('span', 'thinking-copy');
+    copy.append(el('span', 'thinking-name', level));
+    copy.append(el('span', 'thinking-description', THINKING_DESCRIPTIONS[level]));
+    item.append(copy);
+
+    item.addEventListener('click', async () => {
+      const jid = state.activeJid;
+      closeThinkingSheet();
+      await runQuickCommand('pi thinking', { level });
+      await awaitThinkingOverride(jid, level);
+    });
+    list.append(item);
+  }
+}
+
+async function awaitThinkingOverride(jid, level, attempts = 6) {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 400));
+    await loadSessions();
+    const session = state.sessions.find((s) => s.jid === jid);
+    if (session?.thinking === level) return;
+  }
+}
+
+function closeThinkingSheet() {
+  $('thinking-sheet').hidden = true;
+}
+
+$('btn-thinking').addEventListener('click', openThinkingSheet);
+$('btn-thinking-close').addEventListener('click', closeThinkingSheet);
+$('thinking-sheet').addEventListener('click', (e) => {
+  if (e.target === $('thinking-sheet')) closeThinkingSheet();
 });
 
 // ── rename ───────────────────────────────────────────────────────────────
@@ -1613,8 +1697,6 @@ async function trySendCommand(line) {
 
 // ── slash autocomplete ───────────────────────────────────────────────────
 
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-
 function updateAutocomplete() {
   const value = input.value;
   if (!value.startsWith('/')) return hideAutocomplete();
@@ -2149,7 +2231,12 @@ function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
   if (window.matchMedia('(min-width: 768px)').matches) return false;
   if (!$('login').hidden) return false;
-  return $('lightbox').hidden && $('trash-sheet').hidden && $('model-sheet').hidden;
+  return (
+    $('lightbox').hidden &&
+    $('trash-sheet').hidden &&
+    $('model-sheet').hidden &&
+    $('thinking-sheet').hidden
+  );
 }
 
 document.addEventListener(

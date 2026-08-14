@@ -1605,6 +1605,95 @@ svg {
   width: 1ch;
 }
 
+/* Thinking is a per-session setting. The bulb stays muted for the runtime
+   default/off and becomes progressively brighter as the selected effort rises. */
+#btn-thinking {
+  position: relative;
+}
+
+#btn-thinking[data-level='minimal'],
+#btn-thinking[data-level='low'] {
+  color: #a5b4fc;
+}
+
+#btn-thinking[data-level='medium'],
+#btn-thinking[data-level='high'],
+#btn-thinking[data-level='xhigh'] {
+  color: var(--thinking);
+}
+
+#btn-thinking[data-level='high']::after,
+#btn-thinking[data-level='xhigh']::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--thinking);
+  box-shadow: 0 0 6px var(--thinking);
+}
+
+.thinking-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 6px 0 12px;
+}
+
+.thinking-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 16px;
+  border: 0;
+  border-top: 1px solid var(--bg-dark);
+  background: none;
+  color: var(--text);
+  text-align: left;
+}
+
+.thinking-item::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+
+.thinking-item.current {
+  background: rgb(167 139 250 / 0.08);
+  color: var(--text-bright);
+}
+
+.thinking-item.current::before {
+  border-color: var(--thinking);
+  background: var(--thinking);
+  box-shadow: 0 0 0 3px rgb(167 139 250 / 0.16);
+}
+
+.thinking-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.thinking-name {
+  font-weight: 650;
+  text-transform: capitalize;
+}
+
+.thinking-description {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* ── provider badge ──────────────────────────────────────────────────── */
 
 .provider-badge {

@@ -130,6 +130,18 @@
           </button>
           <button
             class="icon-btn"
+            id="btn-thinking"
+            title="Thinking level"
+            aria-label="Choose thinking level"
+            aria-haspopup="dialog"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8.5 15.5a6 6 0 117 0c-1 .7-1.5 1.5-1.5 2.5h-4c0-1-.5-1.8-1.5-2.5z" />
+              <path d="M10 21h4M12 1V0M4.2 4.2l-1.4-1.4M19.8 4.2l1.4-1.4M2 11H0M24 11h-2" />
+            </svg>
+          </button>
+          <button
+            class="icon-btn"
             id="btn-more"
             title="More"
             aria-label="More actions"
@@ -286,6 +298,19 @@
         </div>
         <p class="sheet-note" id="model-note"></p>
         <div class="model-list" id="model-list"></div>
+      </div>
+    </div>
+
+    <div class="sheet" id="thinking-sheet" hidden>
+      <div class="sheet-panel thinking-panel" role="dialog" aria-modal="true" aria-labelledby="thinking-title">
+        <header class="sheet-head">
+          <span class="sheet-title" id="thinking-title">Thinking level</span>
+          <button class="icon-btn" id="btn-thinking-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <p class="sheet-note" id="thinking-note"></p>
+        <div class="thinking-list" id="thinking-list"></div>
       </div>
     </div>
 
