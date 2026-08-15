@@ -224,10 +224,7 @@ class RpcSession {
   }
 
   /** Run a new turn. Must only be called when not already streaming. */
-  prompt(
-    message: string,
-    onEvent?: (event: any) => void | Promise<void>,
-  ): Promise<AgentResult> {
+  prompt(message: string, onEvent?: (event: any) => void | Promise<void>): Promise<AgentResult> {
     this.ensureProc();
     this.clearIdleTimer();
     return new Promise<AgentResult>((resolve) => {
@@ -257,7 +254,7 @@ class RpcSession {
   /** Abort after Pi has persisted the active user prompt in the session. */
   requestAbort(): boolean {
     const turn = this.pending;
-    if (!this.isAlive || !turn) return false;
+    if (!this.isAlive || !turn || turn.abortRequested) return false;
     turn.abortRequested = true;
     if (turn.userPromptPersisted) this.sendAbort(turn);
     return true;
