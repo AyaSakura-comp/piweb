@@ -54,6 +54,21 @@ describe('persistent RPC abort', () => {
       text: '',
     });
   });
+
+  it('classifies an explicitly aborted provider error as abort rather than agent failure', async () => {
+    prepareFakeRpc();
+    const rpc = await import('../src/agent/rpc-session.js');
+    const session = rpc.getRpcSession('web_abort_error', {});
+
+    const resultPromise = session.prompt('abort-error-test');
+
+    expect(rpc.abortRpcSession('web_abort_error')).toBe(true);
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      aborted: true,
+      text: '',
+    });
+  });
 });
 
 function prepareFakeRpc(): void {
@@ -67,8 +82,10 @@ import readline from 'node:readline';
 const rl = readline.createInterface({ input: process.stdin });
 const send = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
 let userPersisted = false;
+let currentPrompt = '';
 rl.on('line', (line) => {
   const command = JSON.parse(line);
+  if (command.type === 'prompt') currentPrompt = command.message;
   if (command.type === 'prompt' && command.message === 'settled-test') {
     send({ type: 'agent_start' });
     send({ type: 'message_start', message: { role: 'assistant', content: [] } });
@@ -81,7 +98,7 @@ rl.on('line', (line) => {
       send({ type: 'agent_end', messages: [] });
       send({ type: 'agent_settled' });
     }, 60);
-  } else if (command.type === 'prompt' && command.message === 'abort-test') {
+  } else if (command.type === 'prompt' && ['abort-test', 'abort-error-test'].includes(command.message)) {
     send({ type: 'agent_start' });
     setTimeout(() => {
       send({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'abort-test' }] } });
@@ -95,7 +112,11 @@ rl.on('line', (line) => {
     }
     send({ type: 'response', command: 'abort', success: true });
     send({ type: 'message_start', message: { role: 'assistant', content: [] } });
-    send({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'Request was aborted' } });
+    if (currentPrompt === 'abort-error-test') {
+      send({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'This operation was aborted' } });
+    } else {
+      send({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'Request was aborted' } });
+    }
     send({ type: 'agent_end', messages: [] });
     send({ type: 'agent_settled' });
   }

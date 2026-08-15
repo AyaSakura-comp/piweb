@@ -146,7 +146,7 @@ class RpcSession {
           .map((c: any) => c.text)
           .join('');
         turn.lastAssistantText = fromMessage || turn.currentAssistantText;
-        turn.aborted = event.message?.stopReason === 'aborted';
+        turn.aborted = turn.aborted || event.message?.stopReason === 'aborted';
         turn.inAssistant = false;
       } else if (event.type === 'message_update' && turn.inAssistant) {
         const ev = event.assistantMessageEvent;
@@ -171,7 +171,7 @@ class RpcSession {
     const turn = this.pending;
     if (!turn) return;
     this.pending = undefined;
-    if (turn.aborted) {
+    if (turn.abortRequested || turn.aborted) {
       turn.resolve({ ok: false, text: '', error: 'Agent invocation aborted', aborted: true });
     } else if (!turn.lastAssistantText && turn.lastError) {
       turn.resolve({ ok: false, text: '', error: formatStreamError(turn.lastError) });
