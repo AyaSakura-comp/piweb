@@ -12,6 +12,7 @@ import {
   channelsWithPending,
   claimNextMessage,
   clearPendingMessages,
+  markMessageAborted,
   markMessageDone,
   markMessageFailed,
   requeueMessage,
@@ -20,7 +21,7 @@ import {
   getChannel,
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
-import { getRpcSession, closeAllRpcSessions } from './rpc-session.js';
+import { abortRpcSession, getRpcSession, closeAllRpcSessions } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
@@ -54,6 +55,22 @@ export function abortChannelTask(jid: string): { aborted: boolean; cleared: numb
   }
   const cleared = clearPendingMessages(jid);
   return { aborted, cleared };
+}
+
+/** Stop the active turn, preferring Pi's session-preserving RPC abort. */
+export function stopChannelTask(jid: string): {
+  aborted: boolean;
+  cleared: number;
+  preservedSession: boolean;
+} {
+  const channel = getChannel(jid);
+  if (channel && abortRpcSession(channel.folder)) {
+    return { aborted: true, cleared: 0, preservedSession: true };
+  }
+
+  const controller = activeChannelControllers.get(jid);
+  if (controller) controller.abort();
+  return { aborted: Boolean(controller), cleared: 0, preservedSession: false };
 }
 
 /**
@@ -295,6 +312,12 @@ async function processMessage(
           attachments,
           onEvent,
         });
+
+    if (result.aborted) {
+      markMessageAborted(rowid);
+      logger.info({ jid, rowid }, 'Message processing aborted with session preserved');
+      return;
+    }
 
     if (signal.aborted) {
       markMessageFailed(rowid);

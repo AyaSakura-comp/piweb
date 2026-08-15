@@ -36,6 +36,10 @@ interface PendingTurn {
   currentAssistantText: string;
   lastAssistantText: string;
   lastError: string;
+  userPromptPersisted: boolean;
+  abortRequested: boolean;
+  abortSent: boolean;
+  aborted: boolean;
   resolve: (result: AgentResult) => void;
 }
 
@@ -53,7 +57,8 @@ class RpcSession {
   ) {}
 
   get isStreaming(): boolean {
-    return this.streaming;
+    // A prompt is active as soon as it has been written, before agent_start.
+    return this.streaming || Boolean(this.pending);
   }
 
   get isAlive(): boolean {
@@ -132,12 +137,16 @@ class RpcSession {
       if (event.type === 'message_start' && event.message?.role === 'assistant') {
         turn.inAssistant = true;
         turn.currentAssistantText = '';
+      } else if (event.type === 'message_end' && event.message?.role === 'user') {
+        turn.userPromptPersisted = true;
+        if (turn.abortRequested) this.sendAbort(turn);
       } else if (event.type === 'message_end' && turn.inAssistant) {
         const fromMessage = (event.message?.content ?? [])
           .filter((c: any) => c?.type === 'text')
           .map((c: any) => c.text)
           .join('');
         turn.lastAssistantText = fromMessage || turn.currentAssistantText;
+        turn.aborted = event.message?.stopReason === 'aborted';
         turn.inAssistant = false;
       } else if (event.type === 'message_update' && turn.inAssistant) {
         const ev = event.assistantMessageEvent;
@@ -150,7 +159,9 @@ class RpcSession {
     }
 
     if (event.type === 'agent_start' || event.type === 'turn_start') this.streaming = true;
-    if (event.type === 'agent_end') {
+    // agent_end can be followed by retry, compaction, or another low-level run.
+    // agent_settled is the durable session-level completion boundary.
+    if (event.type === 'agent_settled') {
       this.streaming = false;
       this.finishTurn();
     }
@@ -160,7 +171,9 @@ class RpcSession {
     const turn = this.pending;
     if (!turn) return;
     this.pending = undefined;
-    if (!turn.lastAssistantText && turn.lastError) {
+    if (turn.aborted) {
+      turn.resolve({ ok: false, text: '', error: 'Agent invocation aborted', aborted: true });
+    } else if (!turn.lastAssistantText && turn.lastError) {
       turn.resolve({ ok: false, text: '', error: formatStreamError(turn.lastError) });
     } else {
       turn.resolve({ ok: true, text: turn.lastAssistantText || '(empty response)' });
@@ -184,6 +197,12 @@ class RpcSession {
 
   private send(cmd: object): void {
     this.proc?.stdin?.write(JSON.stringify(cmd) + '\n');
+  }
+
+  private sendAbort(turn: PendingTurn): void {
+    if (turn.abortSent) return;
+    turn.abortSent = true;
+    this.send({ type: 'abort' });
   }
 
   private armIdleTimer(): void {
@@ -218,6 +237,10 @@ class RpcSession {
         currentAssistantText: '',
         lastAssistantText: '',
         lastError: '',
+        userPromptPersisted: false,
+        abortRequested: false,
+        abortSent: false,
+        aborted: false,
         resolve,
       };
       this.send({ type: 'prompt', message });
@@ -226,8 +249,17 @@ class RpcSession {
 
   /** Inject a message into the running turn (redirect the agent in-flight). */
   steer(message: string): boolean {
-    if (!this.isAlive) return false;
+    if (!this.isAlive || !this.pending) return false;
     this.send({ type: 'steer', message });
+    return true;
+  }
+
+  /** Abort after Pi has persisted the active user prompt in the session. */
+  requestAbort(): boolean {
+    const turn = this.pending;
+    if (!this.isAlive || !turn) return false;
+    turn.abortRequested = true;
+    if (turn.userPromptPersisted) this.sendAbort(turn);
     return true;
   }
 
@@ -280,6 +312,12 @@ export function steerRpcSession(folder: string, message: string): boolean {
   const session = sessions.get(keyFor(folder));
   if (!session || !session.isAlive || !session.isStreaming) return false;
   return session.steer(message);
+}
+
+/** Abort an active RPC turn without terminating its persistent Pi process. */
+export function abortRpcSession(folder: string): boolean {
+  const session = sessions.get(keyFor(folder));
+  return session?.requestAbort() ?? false;
 }
 
 /** Shut down every RPC session (graceful gateway stop). */

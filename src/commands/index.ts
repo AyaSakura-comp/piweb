@@ -46,7 +46,7 @@ import {
   getDesiredThinkingLevel,
   type EffectiveChannelSettings,
 } from '../agent/channel-settings.js';
-import { abortChannelTask, isChannelProcessing } from '../agent/queue.js';
+import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
@@ -141,7 +141,7 @@ function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): 
 }
 
 function cmdStop(channel: RegisteredChannel): CommandResult {
-  const result = abortChannelTask(channel.jid);
+  const result = stopChannelTask(channel.jid);
 
   if (!result.aborted && result.cleared === 0) {
     return { ok: true, text: 'No active task or queued messages in this session.' };

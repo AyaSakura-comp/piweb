@@ -356,6 +356,12 @@ export function markMessageFailed(rowid: number): void {
   ).run(rowid);
 }
 
+export function markMessageAborted(rowid: number): void {
+  db.prepare(
+    "update message_queue set status = 'aborted', processed_at = datetime('now') where rowid = ?",
+  ).run(rowid);
+}
+
 /**
  * Put a claimed message back on the queue so it runs again.
  *

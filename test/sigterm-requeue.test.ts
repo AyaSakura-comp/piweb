@@ -12,7 +12,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeAgentMock } = vi.hoisted(() => ({ invokeAgentMock: vi.fn() }));
 
-vi.mock('../src/agent/invoke.js', () => ({ invokeAgent: invokeAgentMock }));
+vi.mock('../src/agent/invoke.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/agent/invoke.js')>()),
+  invokeAgent: invokeAgentMock,
+}));
 
 const tempDirs: string[] = [];
 
@@ -30,6 +33,7 @@ async function setup() {
   process.env.POLL_INTERVAL_MS = '1';
   process.env.MAX_CONCURRENCY = '1';
   process.env.INTERRUPT_ON_NEW_MESSAGE = 'false';
+  process.env.RPC_STEER = 'false';
 
   vi.resetModules();
   const db = await import('../src/db.js');
