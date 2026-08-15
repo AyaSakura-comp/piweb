@@ -31,6 +31,8 @@ const activeChannels = new Set<string>();
 const activeTaskPromises = new Set<Promise<void>>();
 const activeTaskControllers = new Map<number, AbortController>();
 const activeChannelControllers = new Map<string, AbortController>();
+/** Channels whose next queued user message explicitly replaces the aborted task. */
+const supersededChannels = new Set<string>();
 
 let running = false;
 let pollTimer: NodeJS.Timeout | undefined;
@@ -152,12 +154,25 @@ function clearPollTimer(): void {
 function interruptSupersededRuns(): void {
   if (!config.interruptOnNewMessage) return;
   for (const jid of channelsWithPending()) {
-    if (activeChannels.has(jid) && interruptChannelTask(jid)) {
-      logger.info({ jid }, 'Interrupting in-flight run for a newer message');
-      // Visible marker in the transcript so the interruption is obvious — the
-      // aborted run's partial thinking/tool events are already streamed above it.
-      void getTransport().sendNotice?.(jid, '⏸ Interrupted — running your new message.');
-    }
+    if (!activeChannels.has(jid)) continue;
+
+    // Persistent RPC prompts do not observe the queue's AbortController. Abort
+    // them through Pi's RPC protocol; retain the controller path only for
+    // attachment/until-done turns that still use the one-shot process.
+    const channel = getChannel(jid);
+    const rpcAborted = Boolean(config.rpcSteer && channel && abortRpcSession(channel.folder));
+    const interrupted = rpcAborted || interruptChannelTask(jid);
+    if (!interrupted) continue;
+
+    supersededChannels.add(jid);
+    logger.info(
+      { jid, mode: rpcAborted ? 'rpc' : 'process' },
+      'Interrupting in-flight run for a newer message',
+    );
+    void getTransport().sendNotice?.(
+      jid,
+      '⏹ Stopped the previous task — running your new message.',
+    );
   }
 }
 
@@ -280,7 +295,11 @@ async function processMessage(
   const typingLoop = createTypingLoop(jid);
 
   try {
-    const prompt = `[Web user: ${senderName}]\n${content}`;
+    const supersedesPrevious = supersededChannels.delete(jid);
+    const handoff = supersedesPrevious
+      ? '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. Follow only the latest instruction below. If asked for a screenshot, take it and immediately return it using [[file: /absolute/path/to/screenshot.png]].]\n'
+      : '';
+    const prompt = `${handoff}[Web user: ${senderName}]\n${content}`;
 
     logMessage(jid, 'user', content);
 
@@ -295,8 +314,7 @@ async function processMessage(
     // Persistent RPC session path (steer-able). Falls back to the one-shot
     // print path for attachments and the until-done loop, which the RPC prompt
     // path doesn't carry. The session stays warm for in-flight steering.
-    const useRpc =
-      config.rpcSteer && !attachments && content.indexOf(UNTIL_DONE_MARKER) === -1;
+    const useRpc = config.rpcSteer && !attachments && content.indexOf(UNTIL_DONE_MARKER) === -1;
 
     const result = useRpc
       ? await getRpcSession(channel.folder, {
@@ -357,7 +375,10 @@ async function processMessage(
       const attempts = (sigtermRetries.get(rowid) ?? 0) + 1;
       if (attempts <= MAX_SIGTERM_RETRIES) {
         sigtermRetries.set(rowid, attempts);
-        logger.info({ jid, rowid, attempts }, 'Run terminated (SIGTERM) — resuming original message');
+        logger.info(
+          { jid, rowid, attempts },
+          'Run terminated (SIGTERM) — resuming original message',
+        );
         requeueMessage(rowid);
         return;
       }
