@@ -9,7 +9,8 @@ const { invokeAgentMock, sendResponseMock, setTypingMock } = vi.hoisted(() => ({
   setTypingMock: vi.fn(),
 }));
 
-vi.mock('../src/agent/invoke.js', () => ({
+vi.mock('../src/agent/invoke.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/agent/invoke.js')>()),
   invokeAgent: invokeAgentMock,
 }));
 
@@ -24,6 +25,7 @@ const CONFIG_ENV_KEYS = [
   'MAX_CONCURRENCY',
   'PI_CWD',
   'POLL_INTERVAL_MS',
+  'RPC_STEER',
   'SESSIONS_DIR',
 ];
 
@@ -66,6 +68,7 @@ async function runQueuedMessage(cwdOverride: string): Promise<{ cwd?: string } |
   process.env.POLL_INTERVAL_MS = '1';
   process.env.MAX_CONCURRENCY = '1';
   process.env.PI_CWD = '/global/project';
+  process.env.RPC_STEER = 'false';
 
   invokeAgentMock.mockResolvedValue({ ok: true, text: 'done' });
   sendResponseMock.mockResolvedValue(true);

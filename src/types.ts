@@ -22,7 +22,7 @@ export interface QueuedMessage {
   sender_name: string;
   content: string;
   timestamp: string;
-  status: 'pending' | 'processing' | 'done' | 'failed';
+  status: 'pending' | 'processing' | 'done' | 'failed' | 'aborted';
   /** JSON array of attachment metadata, or null */
   attachments: string | null;
 }
@@ -32,4 +32,6 @@ export interface AgentResult {
   ok: boolean;
   text: string;
   error?: string;
+  /** The active turn was cancelled through Pi's session-level abort API. */
+  aborted?: boolean;
 }

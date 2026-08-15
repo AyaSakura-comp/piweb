@@ -29,7 +29,7 @@ export const COMMANDS: CommandSpec[] = [
     arg: { name: 'level', kind: 'thinking', required: true },
   },
   { name: 'pi new', description: 'Start a fresh pi session (archives the old one)' },
-  { name: 'pi stop', description: 'Abort the current task and clear the queue' },
+  { name: 'pi stop', description: 'Abort the current task while preserving the session and queue' },
   {
     name: 'pi cwd',
     description: 'Set the working directory override',
@@ -43,6 +43,9 @@ export const COMMANDS: CommandSpec[] = [
     arg: { name: 'text', kind: 'text', required: true },
   },
   { name: 'until status', description: 'Ask pi to report progress on the current goal' },
-  { name: 'until stop', description: 'Abort the current task and clear the queue' },
+  {
+    name: 'until stop',
+    description: 'Abort the current task while preserving the session and queue',
+  },
   { name: 'gpt-usage', description: 'Show ChatGPT/Codex rate-limit usage' },
 ];
