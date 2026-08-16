@@ -160,6 +160,15 @@ describe('upload progress UI', () => {
     expect(html).toContain('id="upload-progress-percent"');
   });
 
+  it('lets iPhone Files select documents even when iOS reports an unexpected MIME type', () => {
+    const html = readFileSync(resolve(import.meta.dirname, '../public/index.html'), 'utf8');
+    const fileInput = html.match(/<input[^>]*id="file-input"[^>]*>/)?.[0] ?? '';
+
+    expect(fileInput).toContain('type="file"');
+    expect(fileInput).toContain('multiple');
+    expect(fileInput).not.toContain('accept=');
+  });
+
   it('connects attachment sends to the progress request and visible bar styles', () => {
     const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
     const css = readFileSync(resolve(import.meta.dirname, '../public/app.css'), 'utf8');
