@@ -17,7 +17,7 @@ import {
   purgeChannel,
 } from '../db.js';
 import { mediaDirName } from '../media-path.js';
-import { resolveChannelSessionDir } from '../session/path.js';
+import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
 import { listAvailableModels } from '../agent/model-catalog.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -48,7 +48,7 @@ async function sweepTrash(): Promise<void> {
     const expired = listExpiredDeletedSessions(config.webTrashRetentionDays);
     for (const session of expired) {
       for (const target of [
-        resolveChannelSessionDir(session.folder),
+        ...listSessionFamilyDirs(resolveChannelSessionDir(session.folder)),
         join(config.webMediaDir, mediaDirName(session.jid)),
         join(config.webUploadDir, mediaDirName(session.jid)),
       ]) {

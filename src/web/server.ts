@@ -48,7 +48,7 @@ import {
 import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { rm } from 'node:fs/promises';
-import { resolveChannelSessionDir } from '../session/path.js';
+import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
 import {
   getSessionModel,
   modelIdFromRef,
@@ -667,7 +667,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
  */
 async function purgeSessionFiles(folder: string, jid: string): Promise<void> {
   const targets = [
-    resolveChannelSessionDir(folder),
+    ...listSessionFamilyDirs(resolveChannelSessionDir(folder)),
     join(config.webMediaDir, mediaDirName(jid)),
     join(config.webUploadDir, mediaDirName(jid)),
   ];

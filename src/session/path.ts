@@ -67,6 +67,31 @@ export function resolveChannelMediaMessageDir(folder: string, messageId: string)
   return resolve(resolveChannelSessionDir(folder), 'media', `msg-${trimmedMessageId}`);
 }
 
+/**
+ * List the active session directory plus every archived sibling created from it.
+ * Permanent deletion must remove this complete family rather than orphaning
+ * transcripts (and any session-scoped knowledge databases) in rotated folders.
+ */
+export function listSessionFamilyDirs(sessionDir: string): string[] {
+  const activeDir = resolve(sessionDir);
+  const parentDir = dirname(activeDir);
+  const sessionName = basename(activeDir);
+  const archivePrefix = `${sessionName}__archived_`;
+
+  let entries;
+  try {
+    entries = readdirSync(parentDir, { withFileTypes: true });
+  } catch {
+    return [activeDir];
+  }
+
+  const archives = entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(archivePrefix))
+    .map((entry) => resolve(parentDir, entry.name));
+
+  return [activeDir, ...archives];
+}
+
 /** Rotate a channel session directory out of the active path without deleting it. */
 export function rotateChannelSessionDir(folder: string): string | undefined {
   const sessionDir = resolveChannelSessionDir(folder);
