@@ -22,6 +22,49 @@ import type { AgentResult } from '../types.js';
  */
 export const UNTIL_DONE_MARKER = 'UNTIL_DONE_GOAL';
 
+// pi's CLI expands non-image @files into the model prompt. Restrict @file to
+// image formats so uploaded documents do not consume the context window before
+// the agent decides whether it needs to inspect them.
+const PI_INLINE_IMAGE_EXTENSIONS = new Set(['bmp', 'gif', 'jpeg', 'jpg', 'png']);
+const BINARY_MEDIA_EXTENSIONS = new Set([
+  'aac',
+  'avi',
+  'flac',
+  'm4a',
+  'mkv',
+  'mov',
+  'mp3',
+  'mp4',
+  'mpeg',
+  'mpg',
+  'ogg',
+  'wav',
+  'webm',
+]);
+
+function fileExtension(filePath: string): string {
+  return filePath.split('.').pop()?.toLowerCase() ?? '';
+}
+
+function canPiInlineImage(filePath: string): boolean {
+  return PI_INLINE_IMAGE_EXTENSIONS.has(fileExtension(filePath));
+}
+
+function localFileReference(filePath: string): string {
+  if (BINARY_MEDIA_EXTENSIONS.has(fileExtension(filePath))) {
+    return (
+      `[Binary attachment: ${filePath}]\n` +
+      'Do not use the read tool on this binary file; it only supports text and images and will corrupt the model context. ' +
+      'Use bash with ffprobe/ffmpeg or another format-aware command-line tool to inspect or convert it.'
+    );
+  }
+  return (
+    `[Uploaded file: ${filePath}]\n` +
+    'The file is stored at this exact local path. Use the read tool when it supports the format, ' +
+    'or an appropriate local command-line tool when it does not.'
+  );
+}
+
 /**
  * Turn a pi in-stream error string into a concise, user-facing message.
  * Special-cases the ChatGPT/Codex `usage_limit_reached` 429 (the common one) into
@@ -131,7 +174,8 @@ export async function invokeAgent(
 
   let promptText = userText;
 
-  // Download attachments and pass as @file args (pi handles all types natively).
+  // Download attachments. Images go through pi's native @file image handling;
+  // non-images are referenced by path so they are not expanded into the prompt.
   // Discord voice messages are also transcribed locally with Breeze ASR and
   // injected as text so pi can respond naturally without needing to decode audio.
   if (opts?.attachments) {
@@ -163,14 +207,20 @@ export async function invokeAgent(
       }
 
       const transcribedAudioPaths = new Set(transcriptions.map((item) => item.filePath));
-      let forwardedCount = 0;
+      let inlinedCount = 0;
+      let referencedCount = 0;
       for (const file of downloaded) {
         if (transcribedAudioPaths.has(file.filePath)) continue;
-        args.push(`@${file.filePath}`);
-        forwardedCount += 1;
+        if (canPiInlineImage(file.filePath)) {
+          args.push(`@${file.filePath}`);
+          inlinedCount += 1;
+        } else {
+          promptText += `\n${localFileReference(file.filePath)}`;
+          referencedCount += 1;
+        }
       }
-      if (forwardedCount > 0) {
-        logger.info({ channelFolder, count: forwardedCount }, 'Attached files for pi');
+      if (inlinedCount > 0 || referencedCount > 0) {
+        logger.info({ channelFolder, inlinedCount, referencedCount }, 'Attached files for pi');
       }
     } catch (err: any) {
       logger.warn({ err: err.message }, 'Failed to process attachments');
@@ -366,7 +416,10 @@ export async function invokeAgent(
       // error to Discord instead of a useless "(empty response)".
       if (!lastAssistantText && lastErrorMessage) {
         const friendly = formatStreamError(lastErrorMessage);
-        logger.warn({ channelFolder, error: lastErrorMessage.slice(0, 300) }, 'pi turn produced no text but reported an error');
+        logger.warn(
+          { channelFolder, error: lastErrorMessage.slice(0, 300) },
+          'pi turn produced no text but reported an error',
+        );
         resolve({ ok: false, text: '', error: friendly });
         return;
       }
