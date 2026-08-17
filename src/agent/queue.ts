@@ -21,6 +21,7 @@ import {
   getChannel,
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
+import { invokeAgy, isAgyModelRef } from './agy.js';
 import { abortRpcSession, getRpcSession, closeAllRpcSessions } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
@@ -316,7 +317,22 @@ async function processMessage(
     // path doesn't carry. The session stays warm for in-flight steering.
     const useRpc = config.rpcSteer && !attachments && content.indexOf(UNTIL_DONE_MARKER) === -1;
 
-    const result = useRpc
+    // agy models are not pi models: the whole turn is delegated to the
+    // Antigravity CLI, which owns its own tools and conversation store. It has
+    // no RPC/steer mode, so this branch precedes the RPC one.
+    const useAgy = isAgyModelRef(effective.rawModelRef);
+
+    const result = useAgy
+      ? await invokeAgy(channel.folder, prompt, {
+          channelJid: channel.jid,
+          model: effective.rawModelRef,
+          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+          cwd: effective.effectiveCwd,
+          signal,
+          attachments,
+          onEvent,
+        })
+      : useRpc
       ? await getRpcSession(channel.folder, {
           model: effective.rawModelRef || undefined,
           thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
