@@ -2,6 +2,7 @@ import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
 import { supportsModelXhigh } from './pi-ai-compat.js';
+import { cachedAgyModels, listAgyModels } from './agy.js';
 
 const CACHE_TTL_MS = 30_000;
 
@@ -35,14 +36,24 @@ export function listAvailableModels(options?: { forceRefresh?: boolean }): Avail
   const registry = createModelRegistry(authStorage);
   registry.refresh();
 
+  // agy is a separate CLI, so its catalog is fetched out of band and merged
+  // from cache. Kick off a refresh here and use whatever the last one produced;
+  // the eager prime below makes the first render already populated.
+  void listAgyModels({ forceRefresh });
+
   const models = registry
     .getAvailable()
     .map(toAvailableModelInfo)
+    .concat(cachedAgyModels())
     .sort((a, b) => a.ref.localeCompare(b.ref));
 
   cache = { loadedAt: now, models };
   return models;
 }
+
+// Populate the agy catalog at startup so the first model-picker render already
+// lists the Gemini models rather than waiting for a later refresh.
+void listAgyModels();
 
 export function resolveModelReference(
   ref: string,

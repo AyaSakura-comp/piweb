@@ -19,6 +19,7 @@ import {
 import { mediaDirName } from '../media-path.js';
 import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
 import { listAvailableModels } from '../agent/model-catalog.js';
+import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { setTransport } from '../transport/index.js';
@@ -85,6 +86,10 @@ export async function startWorker(): Promise<void> {
   startControlLoop();
   stopScheduler = startScheduler();
   stopArchiveCleanup = startArchiveCleanup();
+  // agy's catalog comes from a separate CLI and merges in from cache, so wait
+  // for the first fetch before publishing or the picker's first render after a
+  // worker restart would be missing every Gemini model.
+  await listAgyModels({ forceRefresh: true });
   publishModelCatalog();
   modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
   void sweepTrash();

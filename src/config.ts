@@ -139,6 +139,29 @@ export const config = {
   /** Pi binary path */
   piBin: env('PI_BIN', 'pi'),
 
+  /**
+   * Google Antigravity (`agy`) bridge. When enabled, `agy models` are offered
+   * as `agy/<id>` refs and every turn on such a model is delegated to the agy
+   * CLI instead of pi.
+   */
+  agyEnabled: envBool('AGY_ENABLED', true),
+
+  /** agy binary path */
+  agyBin: env('AGY_BIN', 'agy'),
+
+  /** Timeout for the `agy models` catalog probe */
+  agyModelsTimeoutMs: envInt('AGY_MODELS_TIMEOUT_MS', 20000, { min: 1000 }),
+
+  /** Passed to agy as --print-timeout; agy's own default is 5m */
+  agyPrintTimeout: env('AGY_PRINT_TIMEOUT', '15m'),
+
+  /**
+   * agy blocks on interactive tool-permission prompts, and Piweb has no UI to
+   * answer them, so auto-approval is on by default. Turning it off makes any
+   * tool-using agy turn hang until --print-timeout.
+   */
+  agySkipPermissions: envBool('AGY_SKIP_PERMISSIONS', true),
+
   /** Default model for pi */
   piModel: env('PI_MODEL'),
 
