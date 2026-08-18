@@ -20,6 +20,14 @@ import { join } from 'node:path';
 const QUOTA_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
 const USER_AGENT = 'antigravity-cli/1.1.13';
 
+/**
+ * The control loop drains commands strictly serially and does not schedule its
+ * next tick until the current one resolves, so a request that never settles
+ * wedges every command for every session — `/pi stop` included. Node's fetch
+ * has no default timeout, so this bound is the only thing preventing that.
+ */
+const QUOTA_TIMEOUT_MS = 10_000;
+
 export function agyTokenPath(): string {
   return join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
 }
@@ -62,29 +70,50 @@ export async function readAgyAccessToken(now = Date.now()): Promise<string> {
     throw new AgyUsageError('agy 的憑證檔沒有 access token。');
   }
 
-  const expiry = parsed?.token?.expiry ? Date.parse(parsed.token.expiry) : NaN;
-  if (Number.isFinite(expiry) && expiry <= now) {
-    throw new AgyUsageError(
-      'agy 的 access token 已過期。跑一次 agy（任何 prompt）讓它自動換發後再查詢。',
-    );
-  }
-
+  // Deliberately NOT refusing an expired-looking token. agy refreshes it only
+  // when it next runs, so the stamp on disk goes stale within the hour while the
+  // credential itself may still be accepted; pre-refusing turned a working query
+  // into a false "已過期". Let the API decide, and translate a 401 instead.
+  void now;
   return token;
 }
 
-export async function fetchAgyQuota(fetchImpl: typeof fetch = fetch): Promise<AgyQuotaGroup[]> {
-  const token = await readAgyAccessToken();
-  const response = await fetchImpl(QUOTA_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'User-Agent': USER_AGENT,
-    },
-    body: '{}',
-  });
+export async function fetchAgyQuota(
+  fetchImpl: typeof fetch = fetch,
+  tokenOverride?: string,
+): Promise<AgyQuotaGroup[]> {
+  const token = tokenOverride ?? (await readAgyAccessToken());
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS);
+  let response: Awaited<ReturnType<typeof fetch>>;
+  try {
+    response = await fetchImpl(QUOTA_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
+      },
+      body: '{}',
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    throw new AgyUsageError(
+      err?.name === 'AbortError'
+        ? `查詢 agy 額度逾時（${QUOTA_TIMEOUT_MS / 1000} 秒）。`
+        : `查詢 agy 額度失敗：${err?.message ?? err}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
+  if (response.status === 401 || response.status === 403) {
+    throw new AgyUsageError(
+      'agy 的登入憑證已失效或過期。在終端機跑一次 agy（任何 prompt）讓它換發後再查詢。',
+    );
+  }
   if (!response.ok) {
     throw new AgyUsageError(`查詢 agy 額度失敗 (HTTP ${response.status})：${text.slice(0, 200)}`);
   }

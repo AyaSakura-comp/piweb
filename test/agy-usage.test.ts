@@ -103,17 +103,53 @@ describe('fetchAgyQuota', () => {
       return { ok: true, status: 200, text: async () => JSON.stringify({ groups: GROUPS }) };
     }) as unknown as typeof fetch;
 
-    await fetchAgyQuota(fake).catch(() => undefined);
+    await fetchAgyQuota(fake, 'test-token').catch(() => undefined);
     if (seen) expect(String(seen.headers['User-Agent'])).toMatch(/^antigravity-cli\//);
   });
 
-  it('surfaces an HTTP failure as an AgyUsageError', async () => {
+  // The control loop is serial and schedules its next tick only after the
+  // current command resolves, so an unbounded request wedges /pi stop too.
+  it('gives up rather than hanging when the request never settles', async () => {
+    const fake = ((_url: string, init: any) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      })) as unknown as typeof fetch;
+
+    const started = Date.now();
+    await expect(fetchAgyQuota(fake, 'test-token')).rejects.toBeInstanceOf(AgyUsageError);
+    expect(Date.now() - started).toBeLessThan(15_000);
+  }, 20_000);
+
+  it('passes an abort signal so the timeout can fire', async () => {
+    let seen: any;
+    const fake = (async (_url: string, init: any) => {
+      seen = init;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: [] }) };
+    }) as unknown as typeof fetch;
+    await fetchAgyQuota(fake, 'test-token');
+    expect(seen.signal).toBeDefined();
+  });
+
+  it('explains an expired login rather than dumping the 403 body', async () => {
     const fake = (async () => ({
       ok: false,
       status: 403,
       text: async () => '{"error":{"status":"PERMISSION_DENIED"}}',
     })) as unknown as typeof fetch;
+    await expect(fetchAgyQuota(fake, 'test-token')).rejects.toThrow(/憑證已失效或過期/);
+  });
 
-    await expect(fetchAgyQuota(fake)).rejects.toBeInstanceOf(AgyUsageError);
+  it('surfaces an HTTP failure as an AgyUsageError', async () => {
+    const fake = (async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'boom',
+    })) as unknown as typeof fetch;
+
+    await expect(fetchAgyQuota(fake, 'test-token')).rejects.toBeInstanceOf(AgyUsageError);
   });
 });
