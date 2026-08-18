@@ -50,6 +50,7 @@ import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
+import { getAgyUsageReport } from '../agy-usage.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -91,6 +92,8 @@ export async function runCommand(
       case 'pi gpt-usage':
       case 'gpt-usage':
         return await cmdGptUsage();
+      case 'agy-usage':
+        return await cmdAgyUsage();
       case 'until goal':
         return cmdUntilGoal(channel, args.text ?? '');
       case 'until status':
@@ -313,6 +316,13 @@ async function cmdStatus(channel: RegisteredChannel): Promise<CommandResult> {
   const effective = computeEffectiveChannelSettings(channel);
   const sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
   return { ok: true, text: buildStatusMessage(effective, sessionStatus) };
+}
+
+async function cmdAgyUsage(): Promise<CommandResult> {
+  // getAgyUsageReport never throws; it renders its own failure text so a missing
+  // or expired agy login reads as an explanation rather than a stack trace.
+  const output = await getAgyUsageReport();
+  return { ok: true, text: '```text\n' + output.trim() + '\n```' };
 }
 
 async function cmdGptUsage(): Promise<CommandResult> {
