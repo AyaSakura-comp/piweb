@@ -398,6 +398,17 @@ export function convertLocalMediaLinks(text: string, baseDir = config.piCwd): st
 /** Turn an agy failure into a message worth showing the user. */
 export function formatAgyError(status: string, text: string): string {
   const combined = `${status} ${text}`;
+
+  // agy's own wording for hitting --print-timeout. On its own it reads like the
+  // model stopped responding; in fact the turn was cut off by our own cap, and
+  // the conversation survives, so say both.
+  if (/timeout waiting for response/i.test(combined)) {
+    return (
+      'agy 這一輪超過 print-timeout 被中止（目前上限 ' +
+      `${config.agyPrintTimeout}）。對話本身沒有遺失 —— 直接接著問就會從剛才的進度繼續；` +
+      '若這類長任務很常見，調高 AGY_PRINT_TIMEOUT。'
+    );
+  }
   if (/RESOURCE_EXHAUSTED|quota|429/i.test(combined)) {
     const resets = /Resets in ([0-9hms]+)/i.exec(combined)?.[1];
     return resets
