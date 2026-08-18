@@ -21,6 +21,8 @@ const {
   readAgyConversationId,
   convertLocalMediaLinks,
   createAgyEventTranslator,
+  describeToolCall,
+  humanizeDuration,
   translateAgyEvent,
   unwrapUntilDoneGoal,
   writeAgyConversationId,
@@ -391,5 +393,35 @@ describe('createAgyEventTranslator', () => {
     const out = translate(toolCall('run_command')).events;
     expect(out).toHaveLength(1);
     expect(out[0].assistantMessageEvent.type).toBe('toolcall_end');
+  });
+});
+
+describe('describeToolCall', () => {
+  it('names the command so a stalled call is recognisable', () => {
+    expect(describeToolCall('run_command', { CommandLine: './scripts/verify_x.sh' })).toBe(
+      'run_command ./scripts/verify_x.sh',
+    );
+  });
+
+  it('falls back to the bare tool name when there is nothing useful', () => {
+    expect(describeToolCall('manage_task', {})).toBe('manage_task');
+    expect(describeToolCall('view_file', undefined)).toBe('view_file');
+    expect(describeToolCall('x', { n: 5 })).toBe('x');
+  });
+
+  it('collapses whitespace and truncates a long argument', () => {
+    const out = describeToolCall('run_command', { CommandLine: 'a\n b  c' });
+    expect(out).toBe('run_command a b c');
+    const long = describeToolCall('run_command', { CommandLine: 'x'.repeat(200) });
+    expect(long.length).toBeLessThan(100);
+    expect(long.endsWith('…')).toBe(true);
+  });
+});
+
+describe('humanizeDuration', () => {
+  it('reads naturally at each scale', () => {
+    expect(humanizeDuration(45_000)).toBe('45 秒');
+    expect(humanizeDuration(120_000)).toBe('2 分');
+    expect(humanizeDuration(150_000)).toBe('2 分 30 秒');
   });
 });
