@@ -395,6 +395,29 @@ export function convertLocalMediaLinks(text: string, baseDir = config.piCwd): st
   });
 }
 
+/** "run_command ./scripts/verify_x.sh" — enough to recognise which call is stuck. */
+export function describeToolCall(name: string, args: unknown): string {
+  if (!args || typeof args !== 'object') return name;
+  const values = Object.values(args as Record<string, unknown>)
+    .filter((v) => typeof v === 'string' && v.trim())
+    .map((v) => String(v).replace(/\s+/g, ' ').trim());
+  if (values.length === 0) return name;
+  return `${name} ${_compactArg(values[0])}`;
+}
+
+function _compactArg(value: string): string {
+  return value.length <= 80 ? value : `${value.slice(0, 80)}…`;
+}
+
+/** "2 分 30 秒" */
+export function humanizeDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 0) return `${seconds} 秒`;
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
+}
+
 /** Turn an agy failure into a message worth showing the user. */
 export function formatAgyError(status: string, text: string): string {
   const combined = `${status} ${text}`;
@@ -408,6 +431,10 @@ export function formatAgyError(status: string, text: string): string {
       `${config.agyPrintTimeout}）。對話本身沒有遺失 —— 直接接著問就會從剛才的進度繼續；` +
       '若這類長任務很常見，調高 AGY_PRINT_TIMEOUT。'
     );
+  }
+
+  if (/^stalled-tool:/.test(text)) {
+    return text.slice('stalled-tool:'.length).trim();
   }
   if (/RESOURCE_EXHAUSTED|quota|429/i.test(combined)) {
     const resets = /Resets in ([0-9hms]+)/i.exec(combined)?.[1];
@@ -494,6 +521,11 @@ export async function invokeAgy(
     });
 
     const translate = createAgyEventTranslator();
+    // Which tool call is currently outstanding (ACTIVE with no DONE yet). A
+    // wedged command is otherwise invisible — the row is already on screen with
+    // no result, and nothing tells "slow" apart from "hung".
+    let outstanding: { label: string; startedAt: number } | null = null;
+    let stallWarned = false;
     let lineBuf = '';
     let assistantText = '';
     let finalText: string | undefined;
@@ -528,6 +560,22 @@ export async function invokeAgy(
         return;
       }
 
+      const step = parsed?.step_update;
+      if (step?.step_type === 'tool') {
+        if (step.state === 'ACTIVE') {
+          outstanding = {
+            label: describeToolCall(
+              String(step.tool_name || step.tool_info?.name || 'tool'),
+              step.tool_info?.parameters,
+            ),
+            startedAt: Date.now(),
+          };
+          stallWarned = false;
+        } else if (step.state === 'DONE') {
+          outstanding = null;
+        }
+      }
+
       const translated = translate(parsed);
       for (const event of translated.events) emit(event);
       if (translated.conversationId) seenConversationId = translated.conversationId;
@@ -546,14 +594,35 @@ export async function invokeAgy(
       }
     });
 
+    // Say so in the transcript while it is still happening, not only at the end.
+    const stallTimer = setInterval(() => {
+      if (!outstanding || stallWarned) return;
+      const elapsed = Date.now() - outstanding.startedAt;
+      if (elapsed < config.agyToolStallWarnMs) return;
+      stallWarned = true;
+      emit({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'thinking_end',
+          content:
+            `⏳ 這個工具呼叫已經執行 ${humanizeDuration(elapsed)} 還沒回應：\n` +
+            `${outstanding.label}\n` +
+            '常見原因是它啟動了不會自己結束的程式（例如前景啟動 daemon）。' +
+            '可以用 /pi stop 中止這一輪。',
+        },
+      });
+    }, 15_000);
+
     proc.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk));
 
     proc.on('error', (err: any) => {
+      clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       resolve({ ok: false, text: '', error: `Failed to spawn agy: ${err.message}` });
     });
 
     proc.on('close', (code) => {
+      clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       if (lineBuf.trim()) handleLine(lineBuf);
 
@@ -580,14 +649,18 @@ export async function invokeAgy(
         return;
       }
 
-      resolve({
-        ok: false,
-        text,
-        error: formatAgyError(
-          status === 'UNKNOWN' ? `exit ${code}` : status,
-          agyErrorText || stderrText || text,
-        ),
-      });
+      let error = formatAgyError(
+        status === 'UNKNOWN' ? `exit ${code}` : status,
+        agyErrorText || stderrText || text,
+      );
+      // The single most useful fact about a stalled turn is which call never
+      // returned; without it the user is left guessing at a wall of tool rows.
+      if (outstanding) {
+        error +=
+          `\n\n最後一個沒有回應的工具呼叫（已執行 ${humanizeDuration(Date.now() - outstanding.startedAt)}）：\n` +
+          outstanding.label;
+      }
+      resolve({ ok: false, text, error });
     });
   });
 }

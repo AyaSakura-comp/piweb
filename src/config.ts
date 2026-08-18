@@ -155,13 +155,21 @@ export const config = {
   /**
    * Passed to agy as --print-timeout (agy's own default is 5m).
    *
-   * Deliberately generous: pi runs are not capped at all, so a low value here
-   * is an artificial asymmetry that kills long agent work — a 15m default was
-   * measured ending a legitimate multi-step deploy at exactly 900s with
-   * "timeout waiting for response". A runaway run is still bounded by /pi stop
-   * and by INTERRUPT_ON_NEW_MESSAGE, so length alone need not be policed.
+   * A deliberate middle ground. 15m was too short: it ended a legitimate
+   * multi-step deploy at exactly 900s. But unbounded is worse — agy can launch
+   * a foreground daemon that never exits (observed: it started the nodriver
+   * browser server without detaching, and run_command waited on it forever), and
+   * a long cap turns that into a session locked up for hours. 60m covers real
+   * work while still self-healing from a wedged tool.
    */
-  agyPrintTimeout: env('AGY_PRINT_TIMEOUT', '6h'),
+  agyPrintTimeout: env('AGY_PRINT_TIMEOUT', '60m'),
+
+  /**
+   * How long a single agy tool call may run before the transcript says so.
+   * Without this a wedged command is invisible: the tool row is already on
+   * screen with no result, and nothing distinguishes "slow" from "hung".
+   */
+  agyToolStallWarnMs: envInt('AGY_TOOL_STALL_WARN_MS', 120_000, { min: 5_000 }),
 
   /**
    * agy blocks on interactive tool-permission prompts, and Piweb has no UI to
