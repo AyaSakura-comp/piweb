@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,7 @@ const {
   modelIdEncodesEffort,
   parseAgyModels,
   readAgyConversationId,
+  convertLocalMediaLinks,
   translateAgyEvent,
   unwrapUntilDoneGoal,
   writeAgyConversationId,
@@ -255,5 +256,63 @@ describe('conversation id persistence', () => {
     const { writeFileSync } = require('node:fs');
     writeFileSync(join(dir, 'agy-conversation.json'), 'not json', 'utf8');
     expect(readAgyConversationId('web_abc')).toBeUndefined();
+  });
+});
+
+describe('convertLocalMediaLinks', () => {
+  let dir: string;
+  let png: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agy-media-'));
+    png = join(dir, 'chart.png');
+    writeFileSync(png, 'not really a png');
+  });
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // agy writes markdown; the attachment pipeline only reads pi's outbox marker.
+  it('turns a markdown image of a real local file into an outbox marker', () => {
+    const out = convertLocalMediaLinks(`成果如下：\n![benchmark chart](${png})`, dir);
+    expect(out).toContain(`[[file: ${png}]]`);
+    expect(out).not.toContain('![');
+  });
+
+  it('keeps the caption when the link is not an image embed', () => {
+    const out = convertLocalMediaLinks(`[報告](${png})`, dir);
+    expect(out).toBe(`報告 [[file: ${png}]]`);
+  });
+
+  it('resolves a relative path against the run cwd', () => {
+    const out = convertLocalMediaLinks('![c](chart.png)', dir);
+    expect(out).toContain(`[[file: ${png}]]`);
+  });
+
+  it('unwraps a file:// URL', () => {
+    const out = convertLocalMediaLinks(`![c](file://${png})`, dir);
+    expect(out).toContain(`[[file: ${png}]]`);
+  });
+
+  it('leaves http links and ordinary prose alone', () => {
+    const text = 'see [docs](https://example.com/a.png) and ![x](https://e.com/b.png)';
+    expect(convertLocalMediaLinks(text, dir)).toBe(text);
+  });
+
+  it('leaves a link to a file that does not exist alone', () => {
+    const text = `![missing](${join(dir, 'nope.png')})`;
+    expect(convertLocalMediaLinks(text, dir)).toBe(text);
+  });
+
+  it('leaves a directory alone', () => {
+    const text = `![d](${dir})`;
+    expect(convertLocalMediaLinks(text, dir)).toBe(text);
+  });
+
+  it('converts every image in a reply', () => {
+    const second = join(dir, 'b.png');
+    writeFileSync(second, 'x');
+    const out = convertLocalMediaLinks(`![a](${png}) 與 ![b](${second})`, dir);
+    expect(out).toContain(`[[file: ${png}]]`);
+    expect(out).toContain(`[[file: ${second}]]`);
   });
 });

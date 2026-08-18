@@ -58,6 +58,7 @@ queue.ts ── model ref is agy/* ? ──▶ invokeAgy()  ──spawn──▶
 | attachments | staged by `downloadAttachments` and handed over by absolute path — agy has its own file tools, so nothing is inlined into the prompt |
 | errors | `formatAgyError()` turns the common 429 into "quota exhausted — resets in 4h5m58s" |
 | abort | the signal SIGTERMs agy and returns `aborted`, matching the pi path |
+| outbound media | agy emits markdown (`![c](/abs/chart.png)`); `convertLocalMediaLinks()` rewrites links that resolve to a real local file into pi's `[[file: …]]` marker so the existing attachment pipeline delivers them |
 | `/until goal` | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt |
 
 ### Three things that will bite anyone editing this
@@ -94,7 +95,7 @@ With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 
 ## Verification
 
-Unit (`npm test`, 147 passing — 25 new):
+Unit (`npm test`, 167 passing — 45 new):
 
 - `test/agy-bridge.test.ts` — ref detection, catalog parsing, every event
   translation, quota/error formatting, conversation-id round trip and corrupt-store handling.
@@ -124,6 +125,7 @@ Deployed, through the real HTTPS UI at a 390x844 phone viewport:
 | reply | markdown code block renders; no horizontal page scroll (390 == 390) |
 | **continuity** | second turn in the same session returned `SILVER_HERON` |
 | `/until goal` | goal ran autonomously, wrote the probe file, re-read it to verify, and summarised — no sentinel in the prompt |
+| media | asked agy for a matplotlib chart; the PNG arrived as a real 900x600 attachment rendered inline, not a broken `![…]` |
 
 ## Follow-ups not done here
 
