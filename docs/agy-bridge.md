@@ -59,8 +59,16 @@ queue.ts ── model ref is agy/* ? ──▶ invokeAgy()  ──spawn──▶
 | errors | `formatAgyError()` turns the common 429 into "quota exhausted — resets in 4h5m58s" |
 | abort | the signal SIGTERMs agy and returns `aborted`, matching the pi path |
 
-### Two things that will bite anyone editing this
+### Three things that will bite anyone editing this
 
+- **agy model ids already encode the reasoning effort.** `gemini-3.5-flash-low`
+  plus `--effort medium` is rejected outright with
+  `invalid model selection … conflicts with --effort=medium`, and the turn fails
+  before `init`. `modelIdEncodesEffort()` suppresses the flag for any id ending
+  in `-low`/`-medium`/`-high`, so the id wins; only ids without a suffix
+  (`claude-sonnet-4-6`) actually take `--effort`. This only reproduces with a
+  thinking level set, which is why it survived the first round of testing and
+  was caught by the deployed end-to-end run.
 - **agy blocks on an open stdin.** `agy models` produces no output at all and
   eventually times out if stdin is a pipe that never closes. `runAgy()` spawns
   with `stdio: ['ignore', …]` for exactly this reason; an `execFile`-style call
@@ -85,7 +93,7 @@ With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 
 ## Verification
 
-Unit (`npm test`, 141 passing — 19 new):
+Unit (`npm test`, 144 passing — 22 new):
 
 - `test/agy-bridge.test.ts` — ref detection, catalog parsing, every event
   translation, quota/error formatting, conversation-id round trip and corrupt-store handling.
@@ -103,6 +111,17 @@ End to end against the real `agy` binary and real Gemini:
 | tool use | `echo AGY_BRIDGE_E2E` ran; `toolcall_end` + `tool` events emitted; output reported |
 | conversation persistence | id written to the channel's session dir |
 | **memory across turns** | codeword seeded in turn 1, returned verbatim in turn 2, same conversation id |
+
+Deployed, through the real HTTPS UI at a 390x844 phone viewport:
+
+| check | result |
+|---|---|
+| picker | `agy/gemini-3.5-flash-low` listed, `AGY` badge, `reasoning` tag |
+| badge adjacency | AGY (grey) sits directly above LOCAL (green) and GEM (blue) and stays tellable apart |
+| selection | `/pi model` round-trips; topbar badge switches to AGY |
+| tool streaming | `run_command` call and its `PIWEB_E2E_OK` result render as tool / tool_result rows |
+| reply | markdown code block renders; no horizontal page scroll (390 == 390) |
+| **continuity** | second turn in the same session returned `SILVER_HERON` |
 
 ## Follow-ups not done here
 

@@ -70,6 +70,18 @@ const EFFORT_BY_THINKING: Record<ThinkingLevel, 'low' | 'medium' | 'high' | unde
   xhigh: 'high',
 };
 
+/**
+ * Most agy model ids already encode their reasoning effort as a suffix
+ * (`gemini-3.5-flash-low`). Passing --effort alongside one is rejected outright:
+ *   invalid model selection … --model gemini-3.5-flash-low conflicts with --effort=medium
+ * so the id wins and the flag is suppressed for those models.
+ */
+const EFFORT_SUFFIX = /-(low|medium|high)$/;
+
+export function modelIdEncodesEffort(id: string): boolean {
+  return EFFORT_SUFFIX.test(id.trim());
+}
+
 const MODEL_CACHE_TTL_MS = 300_000;
 const CONVERSATION_FILE = 'agy-conversation.json';
 
@@ -192,6 +204,7 @@ export function translateAgyEvent(raw: any): {
   textDelta?: string;
   finalText?: string;
   status?: string;
+  errorText?: string;
 } {
   if (!raw || typeof raw !== 'object') return { events: [] };
 
@@ -209,6 +222,9 @@ export function translateAgyEvent(raw: any): {
         typeof result.conversation_id === 'string' ? result.conversation_id : undefined,
       finalText: typeof result.response === 'string' ? result.response : '',
       status: typeof result.status === 'string' ? result.status : 'UNKNOWN',
+      // agy explains the failure here; without it the user only ever sees
+      // "agy failed (ERROR)", which says nothing actionable.
+      errorText: typeof result.error === 'string' ? result.error : undefined,
     };
   }
 
@@ -297,10 +313,11 @@ export async function invokeAgy(
   const modelRef = opts?.model || '';
   const args = ['--output-format', 'stream-json'];
 
-  if (modelRef) args.push('--model', agyModelId(modelRef));
+  const modelId = modelRef ? agyModelId(modelRef) : '';
+  if (modelId) args.push('--model', modelId);
 
   const effort = opts?.thinking ? EFFORT_BY_THINKING[opts.thinking] : undefined;
-  if (effort) args.push('--effort', effort);
+  if (effort && !modelIdEncodesEffort(modelId)) args.push('--effort', effort);
 
   // Piweb has no UI for agy's interactive permission prompts; without this the
   // subprocess blocks forever on the first tool call.
@@ -351,6 +368,7 @@ export async function invokeAgy(
     let assistantText = '';
     let finalText: string | undefined;
     let status = 'UNKNOWN';
+    let agyErrorText = '';
     let seenConversationId = conversationId;
     let aborted = false;
     const errChunks: Buffer[] = [];
@@ -386,6 +404,7 @@ export async function invokeAgy(
       if (translated.textDelta) assistantText += translated.textDelta;
       if (translated.finalText !== undefined) finalText = translated.finalText;
       if (translated.status) status = translated.status;
+      if (translated.errorText) agyErrorText = translated.errorText;
     };
 
     proc.stdout.on('data', (chunk: Buffer) => {
@@ -434,7 +453,10 @@ export async function invokeAgy(
       resolve({
         ok: false,
         text,
-        error: formatAgyError(status === 'UNKNOWN' ? `exit ${code}` : status, stderrText || text),
+        error: formatAgyError(
+          status === 'UNKNOWN' ? `exit ${code}` : status,
+          agyErrorText || stderrText || text,
+        ),
       });
     });
   });
