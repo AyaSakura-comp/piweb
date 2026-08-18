@@ -280,6 +280,59 @@ export function translateAgyEvent(raw: any): {
 }
 
 /**
+ * Stateful wrapper over translateAgyEvent that makes a run's narration visible.
+ *
+ * agy emits no `thinking` steps at all, and its running commentary arrives as
+ * `agent_response` steps whose text the bare translator only accumulates. A run
+ * whose steps are mostly reasoning therefore showed nothing at all until the
+ * final answer landed in one lump.
+ *
+ * Intermediate narration is surfaced as thinking blocks instead. The catch is
+ * that the *last* agent_response is the final answer, which is delivered
+ * separately; emitting it here too would print it twice. So each response is
+ * held back and only flushed once something else follows it, and whatever is
+ * still held when `result` arrives is dropped.
+ */
+export function createAgyEventTranslator() {
+  let pending = '';
+
+  const flushInto = (events: AgyPiEvent[]) => {
+    const text = pending.trim();
+    pending = '';
+    if (text) {
+      events.push({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'thinking_end', content: text },
+      });
+    }
+  };
+
+  return (raw: any) => {
+    const translated = translateAgyEvent(raw);
+
+    if (translated.finalText !== undefined) {
+      // The held text is the final answer; the caller delivers it.
+      pending = '';
+      return translated;
+    }
+
+    if (translated.textDelta !== undefined) {
+      pending += translated.textDelta;
+      return translated;
+    }
+
+    if (translated.events.length === 0) return translated;
+
+    // A tool call (or anything else visible) means the narration before it was
+    // a step in the run, not the conclusion — show it, ahead of this event.
+    const events: AgyPiEvent[] = [];
+    flushInto(events);
+    events.push(...translated.events);
+    return { ...translated, events };
+  };
+}
+
+/**
  * `/until goal …` prepends UNTIL_DONE_MARKER to the message. agy has no
  * equivalent of pi's --until-done loop, so rather than leaking the sentinel
  * into the Gemini prompt the goal is unwrapped and restated as an autonomous
@@ -429,6 +482,7 @@ export async function invokeAgy(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const translate = createAgyEventTranslator();
     let lineBuf = '';
     let assistantText = '';
     let finalText: string | undefined;
@@ -463,7 +517,7 @@ export async function invokeAgy(
         return;
       }
 
-      const translated = translateAgyEvent(parsed);
+      const translated = translate(parsed);
       for (const event of translated.events) emit(event);
       if (translated.conversationId) seenConversationId = translated.conversationId;
       if (translated.textDelta) assistantText += translated.textDelta;

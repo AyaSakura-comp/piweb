@@ -20,6 +20,7 @@ const {
   parseAgyModels,
   readAgyConversationId,
   convertLocalMediaLinks,
+  createAgyEventTranslator,
   translateAgyEvent,
   unwrapUntilDoneGoal,
   writeAgyConversationId,
@@ -314,5 +315,72 @@ describe('convertLocalMediaLinks', () => {
     const out = convertLocalMediaLinks(`![a](${png}) 與 ![b](${second})`, dir);
     expect(out).toContain(`[[file: ${png}]]`);
     expect(out).toContain(`[[file: ${second}]]`);
+  });
+});
+
+describe('createAgyEventTranslator', () => {
+  const response = (text: string) => ({
+    event: 'step_update',
+    step_update: { state: 'DONE', step_type: 'agent_response', text_delta: text },
+  });
+  const toolCall = (name: string) => ({
+    event: 'step_update',
+    step_update: { state: 'ACTIVE', step_type: 'tool', tool_name: name, tool_info: { name } },
+  });
+  const result = (text: string) => ({
+    event: 'result',
+    result: { conversation_id: 'c', status: 'SUCCESS', response: text },
+  });
+  const thinkingTexts = (events: any[]) =>
+    events
+      .filter((e) => e.assistantMessageEvent?.type === 'thinking_end')
+      .map((e) => e.assistantMessageEvent.content);
+
+  it('shows narration that precedes a tool call, before that call', () => {
+    const translate = createAgyEventTranslator();
+    expect(translate(response('先檢查環境')).events).toEqual([]);
+
+    const out = translate(toolCall('run_command')).events;
+    expect(thinkingTexts(out)).toEqual(['先檢查環境']);
+    // Order matters: the narration explains the call that follows it.
+    expect(out[0].assistantMessageEvent.type).toBe('thinking_end');
+    expect(out[1].assistantMessageEvent.type).toBe('toolcall_end');
+  });
+
+  it('never emits the final answer as a thinking block', () => {
+    const translate = createAgyEventTranslator();
+    translate(response('這是最終答案'));
+    const out = translate(result('這是最終答案'));
+    expect(thinkingTexts(out.events)).toEqual([]);
+    expect(out.finalText).toBe('這是最終答案');
+  });
+
+  it('emits one block per narration step across a multi-step run', () => {
+    const translate = createAgyEventTranslator();
+    const seen: string[] = [];
+    for (const raw of [
+      response('步驟一'),
+      toolCall('a'),
+      response('步驟二'),
+      toolCall('b'),
+      response('結論'),
+      result('結論'),
+    ]) {
+      seen.push(...thinkingTexts(translate(raw).events));
+    }
+    expect(seen).toEqual(['步驟一', '步驟二']);
+  });
+
+  it('ignores whitespace-only narration', () => {
+    const translate = createAgyEventTranslator();
+    translate(response('   \n '));
+    expect(thinkingTexts(translate(toolCall('a')).events)).toEqual([]);
+  });
+
+  it('still passes tool events through untouched when there is no narration', () => {
+    const translate = createAgyEventTranslator();
+    const out = translate(toolCall('run_command')).events;
+    expect(out).toHaveLength(1);
+    expect(out[0].assistantMessageEvent.type).toBe('toolcall_end');
   });
 });
