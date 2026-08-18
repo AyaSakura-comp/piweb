@@ -561,6 +561,7 @@ async function selectSession(jid, opts = {}) {
   for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
     $(id).hidden = state.previewingDeleted;
   }
+  syncUsageButton();
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
@@ -841,7 +842,21 @@ function newPiSession() {
 $('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
 
 $('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
-$('btn-gpt-usage').addEventListener('click', () => runQuickCommand('gpt-usage'));
+// The usage button reports the agent the session actually runs on: an agy model
+// draws on Antigravity's Gemini quota, not the ChatGPT/Codex rate limit, so
+// showing GPT usage there would answer a question the user did not ask.
+function usageCommandForSession() {
+  return currentModelRef().startsWith('agy/') ? 'agy-usage' : 'gpt-usage';
+}
+
+function syncUsageButton() {
+  const command = usageCommandForSession();
+  const button = $('btn-gpt-usage');
+  button.title = `/${command}`;
+  button.setAttribute('aria-label', command === 'agy-usage' ? 'Show agy usage' : 'Show GPT usage');
+}
+
+$('btn-gpt-usage').addEventListener('click', () => runQuickCommand(usageCommandForSession()));
 
 // ── overflow menu ────────────────────────────────────────────────────────
 //
@@ -1009,7 +1024,12 @@ async function awaitOverride(jid, ref, attempts = 6) {
     await new Promise((r) => setTimeout(r, 400));
     await loadSessions();
     const session = state.sessions.find((s) => s.jid === jid);
-    if (session && session.model === ref) return;
+    if (session && session.model === ref) {
+      // Switching to or away from an agy model changes which quota the usage
+      // button should report, so re-sync it the moment the override lands.
+      syncUsageButton();
+      return;
+    }
   }
 }
 

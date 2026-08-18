@@ -48,4 +48,5 @@ export const COMMANDS: CommandSpec[] = [
     description: 'Abort the current task while preserving the session and queue',
   },
   { name: 'gpt-usage', description: 'Show ChatGPT/Codex rate-limit usage' },
+  { name: 'agy-usage', description: 'Show Antigravity (Gemini) quota usage' },
 ];
