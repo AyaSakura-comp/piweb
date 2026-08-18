@@ -225,6 +225,15 @@ describe('formatAgyError', () => {
     expect(formatAgyError('ERROR', 'code 429 quota')).toContain('quota exhausted');
   });
 
+  // agy's own wording for --print-timeout reads like the model went silent; it
+  // actually means our own cap cut the turn, and the conversation survives.
+  it('explains a print-timeout instead of repeating agy raw wording', () => {
+    const text = formatAgyError('ERROR', 'timeout waiting for response');
+    expect(text).toContain('print-timeout');
+    expect(text).toContain('對話本身沒有遺失');
+    expect(text).toContain('AGY_PRINT_TIMEOUT');
+  });
+
   it('passes other failures through with their status', () => {
     expect(formatAgyError('FAILED', 'model unavailable')).toBe(
       'agy failed (FAILED): model unavailable',

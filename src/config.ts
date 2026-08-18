@@ -152,8 +152,16 @@ export const config = {
   /** Timeout for the `agy models` catalog probe */
   agyModelsTimeoutMs: envInt('AGY_MODELS_TIMEOUT_MS', 20000, { min: 1000 }),
 
-  /** Passed to agy as --print-timeout; agy's own default is 5m */
-  agyPrintTimeout: env('AGY_PRINT_TIMEOUT', '15m'),
+  /**
+   * Passed to agy as --print-timeout (agy's own default is 5m).
+   *
+   * Deliberately generous: pi runs are not capped at all, so a low value here
+   * is an artificial asymmetry that kills long agent work — a 15m default was
+   * measured ending a legitimate multi-step deploy at exactly 900s with
+   * "timeout waiting for response". A runaway run is still bounded by /pi stop
+   * and by INTERRUPT_ON_NEW_MESSAGE, so length alone need not be policed.
+   */
+  agyPrintTimeout: env('AGY_PRINT_TIMEOUT', '6h'),
 
   /**
    * agy blocks on interactive tool-permission prompts, and Piweb has no UI to
