@@ -510,6 +510,10 @@ export async function invokeAgy(
   );
 
   return new Promise<AgentResult>((resolve) => {
+    // detached makes agy a process-group leader so the whole group can be
+    // signalled. agy's tools freely spawn long-lived grandchildren (it was seen
+    // starting the nodriver browser daemon in the foreground); killing only agy
+    // leaves those running, and they inherit its stdout.
     const proc = spawn(config.agyBin, args, {
       cwd: opts?.cwd || config.piCwd,
       env: {
@@ -518,7 +522,21 @@ export async function invokeAgy(
         PIWEB_CHANNEL_FOLDER: channelFolder,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     });
+
+    /** Signal the whole process group, falling back to the child alone. */
+    const killTree = (signal: NodeJS.Signals) => {
+      try {
+        if (proc.pid) process.kill(-proc.pid, signal);
+      } catch {
+        try {
+          proc.kill(signal);
+        } catch {
+          /* already gone */
+        }
+      }
+    };
 
     const translate = createAgyEventTranslator();
     // Which tool call is currently outstanding (ACTIVE with no DONE yet). A
@@ -537,7 +555,9 @@ export async function invokeAgy(
 
     const onAbort = () => {
       aborted = true;
-      proc.kill('SIGTERM');
+      killTree('SIGTERM');
+      // A grandchild that ignores SIGTERM would otherwise keep the group alive.
+      setTimeout(() => killTree('SIGKILL'), 5_000).unref();
     };
     opts?.signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -621,7 +641,35 @@ export async function invokeAgy(
       resolve({ ok: false, text: '', error: `Failed to spawn agy: ${err.message}` });
     });
 
-    proc.on('close', (code) => {
+    // `close` waits for every stdio pipe to close, and a surviving grandchild
+    // holds agy's stdout open — that wedged a channel in "processing" for two
+    // hours with no agy process left alive. `exit` fires on process exit
+    // regardless, so settle on that and give trailing output a bounded window.
+    let settled = false;
+    proc.on('exit', (code) => {
+      if (settled) return;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        finalize(code);
+      };
+      let drained = false;
+      proc.stdout.once('end', () => {
+        drained = true;
+        finish();
+      });
+      setTimeout(() => {
+        if (!drained) {
+          logger.warn(
+            { channelFolder },
+            'agy exited but stdout stayed open; a grandchild still holds it',
+          );
+        }
+        finish();
+      }, 2_000).unref();
+    });
+
+    const finalize = (code: number | null) => {
       clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       if (lineBuf.trim()) handleLine(lineBuf);
@@ -661,6 +709,6 @@ export async function invokeAgy(
           outstanding.label;
       }
       resolve({ ok: false, text, error });
-    });
+    };
   });
 }
