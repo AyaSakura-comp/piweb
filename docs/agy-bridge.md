@@ -58,6 +58,7 @@ queue.ts ── model ref is agy/* ? ──▶ invokeAgy()  ──spawn──▶
 | attachments | staged by `downloadAttachments` and handed over by absolute path — agy has its own file tools, so nothing is inlined into the prompt |
 | errors | `formatAgyError()` turns the common 429 into "quota exhausted — resets in 4h5m58s" |
 | abort | the signal SIGTERMs agy and returns `aborted`, matching the pi path |
+| `/until goal` | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt |
 
 ### Three things that will bite anyone editing this
 
@@ -93,7 +94,7 @@ With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 
 ## Verification
 
-Unit (`npm test`, 144 passing — 22 new):
+Unit (`npm test`, 147 passing — 25 new):
 
 - `test/agy-bridge.test.ts` — ref detection, catalog parsing, every event
   translation, quota/error formatting, conversation-id round trip and corrupt-store handling.
@@ -122,6 +123,7 @@ Deployed, through the real HTTPS UI at a 390x844 phone viewport:
 | tool streaming | `run_command` call and its `PIWEB_E2E_OK` result render as tool / tool_result rows |
 | reply | markdown code block renders; no horizontal page scroll (390 == 390) |
 | **continuity** | second turn in the same session returned `SILVER_HERON` |
+| `/until goal` | goal ran autonomously, wrote the probe file, re-read it to verify, and summarised — no sentinel in the prompt |
 
 ## Follow-ups not done here
 
@@ -130,7 +132,5 @@ Deployed, through the real HTTPS UI at a 390x844 phone viewport:
   `providerBadgeFor()` plus a visual check against its neighbours in the real
   list (see CLAUDE.md §5) — not something to pick blind.
 - **`/pi status`** reports pi's context and does not describe an agy session.
-- **`--until-done`** has no agy equivalent; such a message would need to fall
-  back to pi or be refused.
 - **Steering** (`RPC_STEER`) does not apply — a running agy turn can be aborted
   but not steered.

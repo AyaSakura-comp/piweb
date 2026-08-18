@@ -21,6 +21,7 @@ import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { downloadAttachments } from '../session/media.js';
+import { UNTIL_DONE_MARKER } from './invoke.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import type { AvailableModelInfo } from './model-catalog.js';
@@ -277,6 +278,27 @@ export function translateAgyEvent(raw: any): {
   return { events: [] };
 }
 
+/**
+ * `/until goal …` prepends UNTIL_DONE_MARKER to the message. agy has no
+ * equivalent of pi's --until-done loop, so rather than leaking the sentinel
+ * into the Gemini prompt the goal is unwrapped and restated as an autonomous
+ * instruction agy can actually act on.
+ */
+export function unwrapUntilDoneGoal(promptText: string): string {
+  const markerIdx = promptText.indexOf(UNTIL_DONE_MARKER);
+  if (markerIdx === -1) return promptText;
+
+  const goal = promptText.slice(markerIdx + UNTIL_DONE_MARKER.length).trim();
+  const preamble = promptText.slice(0, markerIdx).trim();
+  if (!goal) return preamble;
+
+  return (
+    `${preamble}\nGoal: ${goal}\n` +
+    'Work autonomously until this goal is done and verified, without pausing to ask ' +
+    'for confirmation, then give a brief summary of what you did.'
+  ).trim();
+}
+
 /** Turn an agy failure into a message worth showing the user. */
 export function formatAgyError(status: string, text: string): string {
   const combined = `${status} ${text}`;
@@ -330,7 +352,7 @@ export async function invokeAgy(
 
   // agy has its own file tools, so every upload — images included — is handed
   // over by absolute path rather than inlined into the prompt.
-  let promptText = userText;
+  let promptText = unwrapUntilDoneGoal(userText);
   if (opts?.attachments) {
     try {
       const metas: AttachmentMeta[] = JSON.parse(opts.attachments);
