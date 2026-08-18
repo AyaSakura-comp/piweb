@@ -16,6 +16,7 @@ const {
   agyModelId,
   formatAgyError,
   isAgyModelRef,
+  modelIdEncodesEffort,
   parseAgyModels,
   readAgyConversationId,
   translateAgyEvent,
@@ -35,6 +36,22 @@ describe('agy model refs', () => {
   it('strips the prefix to the id agy expects', () => {
     expect(agyModelId('agy/gemini-3.1-pro-high')).toBe('gemini-3.1-pro-high');
     expect(agyModelId('agy/claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+});
+
+describe('modelIdEncodesEffort', () => {
+  // agy rejects `--model gemini-3.5-flash-low --effort medium` outright with
+  // "conflicts with --effort", so the suffix must suppress the flag.
+  it('detects the effort suffix agy bakes into most model ids', () => {
+    expect(modelIdEncodesEffort('gemini-3.5-flash-low')).toBe(true);
+    expect(modelIdEncodesEffort('gemini-3.1-pro-high')).toBe(true);
+    expect(modelIdEncodesEffort('gpt-oss-120b-medium')).toBe(true);
+  });
+
+  it('leaves ids without an effort suffix free to take --effort', () => {
+    expect(modelIdEncodesEffort('claude-sonnet-4-6')).toBe(false);
+    expect(modelIdEncodesEffort('claude-opus-4-6-thinking')).toBe(false);
+    expect(modelIdEncodesEffort('')).toBe(false);
   });
 });
 
@@ -135,6 +152,20 @@ describe('translateAgyEvent', () => {
       type: 'message_update',
       assistantMessageEvent: { type: 'thinking_end', content: 'a whole thought' },
     });
+  });
+
+  it('carries agy own error text out of a failed result event', () => {
+    const out = translateAgyEvent({
+      event: 'result',
+      result: {
+        conversation_id: '',
+        status: 'ERROR',
+        response: '',
+        error: '--model gemini-3.5-flash-low conflicts with --effort=medium',
+      },
+    });
+    expect(out.status).toBe('ERROR');
+    expect(out.errorText).toBe('--model gemini-3.5-flash-low conflicts with --effort=medium');
   });
 
   it('takes the final response and status from the result event', () => {
