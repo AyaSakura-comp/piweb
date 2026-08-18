@@ -125,27 +125,40 @@ export function humanizeUntil(resetTime: string, now: number): string {
   return `還有 ${minutes} 分`;
 }
 
+/** "08/23 18:06" — the year is noise for a window that resets within a week. */
 function localTime(resetTime: string): string {
   const at = new Date(resetTime);
   if (Number.isNaN(at.getTime())) return resetTime;
-  return at.toLocaleString('zh-TW', { hour12: false });
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(at.getMonth() + 1)}/${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+/**
+ * agy's own bucket labels ("Five Hour Limit Remaining") plus a reset stamp
+ * overflow a 390px phone and get clipped mid-bar, so the window field drives a
+ * short label instead.
+ */
+function windowLabel(bucket: AgyQuotaBucket): string {
+  if (bucket.window === 'weekly') return '週窗';
+  if (bucket.window === '5h') return '5小時窗';
+  return bucket.displayName;
 }
 
 export function formatAgyUsage(groups: AgyQuotaGroup[], now = Date.now()): string {
   if (groups.length === 0) return '🤖 Antigravity (agy) 用量：沒有回報任何額度資訊。';
 
+  // Kept narrow on purpose: this renders in a code block on a phone, and the
+  // group descriptions agy returns ("Models within this group: …") are alone
+  // wide enough to push the bars off screen.
   const lines = ['🤖 Antigravity (agy) 用量'];
   for (const group of groups) {
     lines.push('', `▸ ${group.displayName}`);
-    if (group.description) lines.push(`  ${group.description}`);
     for (const bucket of group.buckets ?? []) {
       const remaining = Number(bucket.remainingFraction ?? 0);
       const usedPercent = Math.round((1 - remaining) * 100);
-      lines.push(
-        `  ${dot(remaining)} ${bucket.displayName}` +
-          ` 已用 ${usedPercent}% 剩 ${100 - usedPercent}% ${bar(remaining)}`,
-      );
-      lines.push(`     重置: ${localTime(bucket.resetTime)} (${humanizeUntil(bucket.resetTime, now)})`);
+      const label = windowLabel(bucket).padEnd(6, ' ');
+      lines.push(`  ${dot(remaining)} ${label} 已用 ${usedPercent}% ${bar(remaining)}`);
+      lines.push(`     ${localTime(bucket.resetTime)} ${humanizeUntil(bucket.resetTime, now)}`);
     }
   }
   return lines.join('\n');

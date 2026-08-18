@@ -37,12 +37,28 @@ describe('formatAgyUsage', () => {
   it('reports used and remaining percentages per bucket', () => {
     const out = formatAgyUsage(GROUPS, NOW);
     expect(out).toContain('Gemini Models');
-    expect(out).toContain('Weekly Limit Remaining 已用 0% 剩 100%');
-    expect(out).toContain('Five Hour Limit Remaining 已用 50% 剩 50%');
+    expect(out).toContain('週窗');
+    expect(out).toContain('已用 0%');
+    expect(out).toContain('5小時窗');
+    expect(out).toContain('已用 50%');
   });
 
   it('draws a bar proportional to the fraction used', () => {
     expect(formatAgyUsage(GROUPS, NOW)).toContain('█████░░░░░');
+  });
+
+  // The block renders in a code fence on a 390px phone; agy's own labels and
+  // group descriptions overflow it and clip the bars.
+  it('keeps every line narrow enough for a phone', () => {
+    const width = (line: string) =>
+      [...line].reduce((n, c) => n + (c.charCodeAt(0) > 0x2000 ? 2 : 1), 0);
+    for (const line of formatAgyUsage(GROUPS, NOW).split('\n')) {
+      expect(width(line)).toBeLessThanOrEqual(46);
+    }
+  });
+
+  it('omits the wide group description agy returns', () => {
+    expect(formatAgyUsage(GROUPS, NOW)).not.toContain('Models within this group');
   });
 
   it('colours the dot by how little is left', () => {
