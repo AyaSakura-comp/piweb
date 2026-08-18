@@ -20,8 +20,11 @@ const {
   parseAgyModels,
   readAgyConversationId,
   translateAgyEvent,
+  unwrapUntilDoneGoal,
   writeAgyConversationId,
 } = await import('../src/agent/agy.js');
+
+const { UNTIL_DONE_MARKER } = await import('../src/agent/invoke.js');
 
 describe('agy model refs', () => {
   it('recognises only the agy provider prefix', () => {
@@ -182,6 +185,28 @@ describe('translateAgyEvent', () => {
     expect(translateAgyEvent({ event: 'step_update', step_update: { step_type: 'checkpoint' } }).events).toEqual([]);
     expect(translateAgyEvent(null).events).toEqual([]);
     expect(translateAgyEvent({ event: 'mystery' }).events).toEqual([]);
+  });
+});
+
+describe('unwrapUntilDoneGoal', () => {
+  // agy has no --until-done loop, so the sentinel must never reach the prompt.
+  it('replaces the sentinel with an autonomous instruction carrying the goal', () => {
+    const out = unwrapUntilDoneGoal(
+      `[Web user: Alice]\n${UNTIL_DONE_MARKER} ship the release notes`,
+    );
+    expect(out).not.toContain(UNTIL_DONE_MARKER);
+    expect(out).toContain('Goal: ship the release notes');
+    expect(out).toContain('[Web user: Alice]');
+    expect(out).toContain('without pausing to ask');
+  });
+
+  it('leaves an ordinary message untouched', () => {
+    expect(unwrapUntilDoneGoal('just a normal question')).toBe('just a normal question');
+  });
+
+  it('drops a sentinel with no goal rather than emitting it', () => {
+    const out = unwrapUntilDoneGoal(`hello ${UNTIL_DONE_MARKER}   `);
+    expect(out).toBe('hello');
   });
 });
 
