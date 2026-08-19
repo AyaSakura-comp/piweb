@@ -44,6 +44,7 @@ import {
   registerChannel,
   savePushSubscription,
   type WebEventRow,
+  listSessionMedia,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
@@ -547,6 +548,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         hasMore: oldest > 0 ? hasWebEventsBefore(jid, oldest) : false,
         hasMoreNewer: newest > 0 ? hasWebEventsAfter(jid, newest) : false,
       });
+      return;
+    }
+
+    if (sub === 'media' && method === 'GET') {
+      sendJson(res, 200, { items: listSessionMedia(jid) });
       return;
     }
 

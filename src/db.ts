@@ -649,6 +649,68 @@ export interface WebSearchHit {
  * Snippets are cut around the first match so the UI can show context without
  * shipping whole tool outputs to the client.
  */
+export interface SessionMediaItem {
+  url: string;
+  name: string;
+  eventId: number;
+  createdAt: string;
+  type: 'image' | 'video' | 'audio';
+}
+
+const MEDIA_TYPE_BY_EXT: Record<string, SessionMediaItem['type']> = {
+  apng: 'image', avif: 'image', bmp: 'image', gif: 'image', heic: 'image', heif: 'image',
+  jpeg: 'image', jpg: 'image', png: 'image', svg: 'image', webp: 'image',
+  m4v: 'video', mkv: 'video', mov: 'video', mp4: 'video', webm: 'video',
+  aac: 'audio', flac: 'audio', m4a: 'audio', mp3: 'audio', oga: 'audio', ogg: 'audio', opus: 'audio', wav: 'audio',
+};
+
+/**
+ * Every image/video/audio attachment in a session, newest first.
+ *
+ * Scans this channel's events by the (channel_jid, rowid) index; non-media
+ * attachments (source files, CSVs) are skipped so the gallery stays a gallery.
+ * A URL is listed once even if the same file was attached to several events.
+ */
+export function listSessionMedia(channelJid: string, limit = 500): SessionMediaItem[] {
+  const rows = db
+    .prepare(
+      `select rowid, files, created_at
+         from web_events
+        where channel_jid = ? and files is not null and files != '' and files != '[]'
+        order by rowid desc`,
+    )
+    .all(channelJid) as Array<{ rowid: number; files: string; created_at: string }>;
+
+  const items: SessionMediaItem[] = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    let urls: unknown;
+    try {
+      urls = JSON.parse(row.files);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(urls)) continue;
+
+    for (const raw of urls) {
+      if (typeof raw !== 'string' || !raw) continue;
+      if (seen.has(raw)) continue;
+
+      const name = decodeURIComponent(raw.split('/').pop() ?? raw);
+      const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+      const type = MEDIA_TYPE_BY_EXT[ext];
+      if (!type) continue;
+
+      seen.add(raw);
+      items.push({ url: raw, name, eventId: row.rowid, createdAt: row.created_at, type });
+      if (items.length >= limit) return items;
+    }
+  }
+
+  return items;
+}
+
 export function searchWebEvents(
   channelJid: string,
   query: string,

@@ -565,6 +565,9 @@ async function selectSession(jid, opts = {}) {
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
+  // The gallery belongs to the session that was open; switching must not leave
+  // the previous session's media on screen.
+  closeMediaSheet();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
   const { events, busy, hasMore } = await api(
@@ -890,7 +893,9 @@ $('btn-more').addEventListener('click', () => {
 });
 $('menu-scrim').addEventListener('click', closeMoreMenu);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isMenuOpen()) closeMoreMenu();
+  if (e.key !== 'Escape') return;
+  if (isMenuOpen()) closeMoreMenu();
+  if (!$('media-sheet').hidden) closeMediaSheet();
 });
 
 /** Wire a menu row: always dismiss first, so the action never runs under an open menu. */
@@ -901,6 +906,100 @@ function onMenuItem(id, action) {
   });
 }
 
+// ── media gallery ──
+//
+// Everything visual the session produced, on one screen. It lives behind ⋯
+// rather than the topbar because it is a browse action, not something reached
+// mid-conversation, and the transcript only ever holds the pages scrolled in.
+
+function closeMediaSheet() {
+  $('media-sheet').hidden = true;
+}
+
+async function openMediaSheet() {
+  if (!state.activeJid) return;
+
+  const grid = $('media-grid');
+  const note = $('media-note');
+  grid.textContent = '';
+  note.textContent = 'Loading…';
+  $('media-sheet').hidden = false;
+
+  let items = [];
+  try {
+    ({ items } = await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/media`));
+  } catch {
+    note.textContent = 'Could not load media for this session.';
+    return;
+  }
+
+  if (items.length === 0) {
+    note.textContent = 'No images or videos in this session yet.';
+    return;
+  }
+
+  const images = items.filter((i) => i.type === 'image').map((i) => i.url);
+  note.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}`;
+
+  const frag = document.createDocumentFragment();
+  for (const item of items) {
+    frag.append(buildMediaTile(item, images));
+  }
+  grid.append(frag);
+}
+
+function buildMediaTile(item, images) {
+  const tile = el('button', 'media-tile');
+  tile.type = 'button';
+  tile.title = item.name;
+  tile.setAttribute('aria-label', `${item.type}: ${item.name}`);
+
+  if (item.type === 'image') {
+    const img = document.createElement('img');
+    img.src = item.url;
+    img.alt = item.name;
+    img.loading = 'lazy';
+    // A file purged from disk should leave a readable tile, not a broken icon.
+    img.addEventListener('error', () => {
+      img.remove();
+      tile.prepend(el('span', 'media-fallback', item.name));
+    });
+    tile.append(img);
+  } else if (item.type === 'video') {
+    const video = document.createElement('video');
+    video.src = item.url;
+    // metadata only: a grid of fully buffered videos would be a lot of traffic
+    // for something the user has not opened yet.
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    tile.append(video);
+    tile.append(el('span', 'media-badge', 'VIDEO'));
+  } else {
+    tile.append(el('span', 'media-fallback', item.name));
+    tile.append(el('span', 'media-badge', 'AUDIO'));
+  }
+
+  tile.addEventListener('click', () => {
+    // Images get the in-app viewer and swipe between each other; video and
+    // audio are handed to the browser, which already plays them properly.
+    if (item.type === 'image') {
+      closeMediaSheet();
+      openLightbox(item.url, images);
+    } else {
+      window.open(item.url, '_blank', 'noopener');
+    }
+  });
+
+  return tile;
+}
+
+$('btn-media-close').addEventListener('click', closeMediaSheet);
+$('media-sheet').addEventListener('click', (e) => {
+  if (e.target === $('media-sheet')) closeMediaSheet();
+});
+
+onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());
 onMenuItem('mi-new-chat', newPiSession);
 onMenuItem('mi-clean', cleanSession);
@@ -1875,8 +1974,11 @@ function collectTranscriptImages() {
   return [...document.querySelectorAll('#messages .msg-files img')].map((n) => n.getAttribute('src'));
 }
 
-function openLightbox(url) {
-  lb.urls = collectTranscriptImages();
+function openLightbox(url, urls) {
+  // The transcript only holds the pages that have been scrolled in, so the
+  // gallery passes its own list; otherwise the tapped image would be the only
+  // one there and swiping would go nowhere.
+  lb.urls = urls && urls.length ? urls : collectTranscriptImages();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
   $('lightbox').classList.toggle('single', lb.urls.length < 2);
