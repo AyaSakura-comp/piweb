@@ -47,6 +47,7 @@ import {
   type EffectiveChannelSettings,
 } from '../agent/channel-settings.js';
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
+import { closeRpcSession } from '../agent/rpc-session.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
@@ -125,10 +126,16 @@ function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): 
   // deleted — the user sees their message vanish with no reply and no error.
   // An explicit /pi new still clears, which is the point of it.
   const cleared = args.keepQueue === 'true' ? 0 : clearPendingMessages(channel.jid);
+
+  // Retire the warm RPC process BEFORE moving the directory out from under it.
+  // It holds `--session-dir` plus an already-resolved session file; leaving it
+  // alive across the rename makes the next prompt fail with ENOENT on a .jsonl
+  // that now lives in the archive. The next message simply spawns a fresh one.
+  const closedRpc = closeRpcSession(channel.folder);
   const archivedSession = rotateChannelSessionDir(channel.folder);
 
   logger.info(
-    { jid: channel.jid, cleared, archived: Boolean(archivedSession) },
+    { jid: channel.jid, cleared, archived: Boolean(archivedSession), closedRpc },
     'Channel session reset',
   );
 

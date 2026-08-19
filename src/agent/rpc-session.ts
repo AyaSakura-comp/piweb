@@ -317,6 +317,25 @@ export function abortRpcSession(folder: string): boolean {
   return session?.requestAbort() ?? false;
 }
 
+/**
+ * Terminate the persistent Pi process for one channel and forget it.
+ *
+ * Required whenever the channel's session directory changes underneath it.
+ * A warm RPC session was started with `--session-dir <dir>` and has already
+ * resolved a session file inside it; `/pi new` renames that directory to
+ * `<folder>__archived_<ts>`, so the next prompt into the surviving process
+ * opens a path that no longer exists and the turn dies with
+ * "ENOENT: no such file or directory, open '.../<uuid>.jsonl'".
+ */
+export function closeRpcSession(folder: string): boolean {
+  const key = keyFor(folder);
+  const session = sessions.get(key);
+  if (!session) return false;
+  session.close();
+  sessions.delete(key);
+  return true;
+}
+
 /** Shut down every RPC session (graceful gateway stop). */
 export function closeAllRpcSessions(): void {
   for (const session of sessions.values()) session.close();
