@@ -179,7 +179,13 @@ function isTableStart(lines, i) {
 export function renderRich(container, raw) {
   const code = [];
   const math = [];
-  const text = extractMath(extractCode(String(raw ?? ''), code), math);
+  // Normalise line endings FIRST. `.` does not match `\r` in JavaScript (it is a
+  // line terminator), so a CRLF heading fails /^(#{1,6})\s+(.*)$/ while still
+  // matching the paragraph loop's guard /^(#{1,6})\s+/ — no branch consumes the
+  // line, `i` never advances, and the tab freezes. agy's tool output is CRLF,
+  // which is how this surfaced; every `$`-anchored rule here has the same flaw.
+  const source = String(raw ?? '').replace(/\r\n?/g, '\n');
+  const text = extractMath(extractCode(source, code), math);
   renderBlocks(container, text, code, math);
 }
 
@@ -280,6 +286,15 @@ function renderBlocks(container, text, code, math) {
       buf.push(lines[i]);
       i += 1;
     }
+    // Progress guarantee: if no rule above consumed this line and the paragraph
+    // scan rejected it too, emit it as-is rather than looping forever. Reaching
+    // here means a guard and its matching rule disagree — a bug worth fixing at
+    // the source, but never one worth hanging the tab over.
+    if (buf.length === 0) {
+      buf.push(lines[i]);
+      i += 1;
+    }
+
     const p = document.createElement('p');
     // A single newline inside a paragraph is a visible line break here: agent
     // output uses them meaningfully, unlike strict markdown.
