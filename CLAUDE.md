@@ -752,6 +752,148 @@ Consequences worth knowing:
 - Cloud vision models (Gemini, GPT/openai-codex) work regardless of what is on
   8001.
 
+## 7b. The Antigravity (agy) bridge — Gemini models
+
+Gemini is served by bridging to Google's **Antigravity CLI (`agy`)**, not by adding a
+Gemini provider to pi. agy is already a complete agent — it owns its tools (shell,
+file edit, browser, web search, subagents, image gen), its permission model, and its
+own conversation store — so piweb delegates the whole turn to it rather than
+reimplementing any of that. Full design notes: `docs/agy-bridge.md`.
+
+### Installing the dependency
+
+The bridge is inert without the `agy` binary; nothing else in piweb changes.
+
+```bash
+# 1. Install the CLI (Google Antigravity). Verify it is on PATH:
+agy --version            # e.g. 1.1.15
+
+# 2. Log in once, interactively, in a real terminal. This writes
+#    ~/.gemini/antigravity-cli/antigravity-oauth-token and is the only
+#    credential the bridge uses.
+agy --print "hello"
+
+# 3. Confirm the model catalog answers — this is exactly what piweb calls:
+agy models               # two tab-separated columns: id and display name
+```
+
+Then point the worker at it. The systemd unit does **not** inherit `~/.local/bin`,
+so an absolute path is required — a bare `agy` fails with `spawn agy ENOENT` and the
+catalog silently comes back empty:
+
+```bash
+# ~/.config/piweb/config.env
+AGY_BIN=/home/chihmin/.local/bin/agy
+```
+
+`systemctl --user restart piweb-worker`, then check the catalog published to `meta`
+contains `agy/*` refs. Config knobs (all optional):
+
+| variable | default | meaning |
+|---|---|---|
+| `AGY_ENABLED` | `true` | offer agy models at all |
+| `AGY_BIN` | `agy` | binary path (set it; see above) |
+| `AGY_MODELS_TIMEOUT_MS` | `20000` | `agy models` probe timeout |
+| `AGY_PRINT_TIMEOUT` | `60m` | passed as `--print-timeout` |
+| `AGY_SKIP_PERMISSIONS` | `true` | `--dangerously-skip-permissions` |
+| `AGY_TOOL_STALL_WARN_MS` | `120000` | when a stuck tool call is announced |
+
+With no binary, or `AGY_ENABLED=false`, the probe fails soft: no `agy/*` refs are
+offered and every other model behaves exactly as before.
+
+**Two traps worth knowing before touching this code.** agy produces *no output at
+all* if stdin stays open, so `runAgy()` spawns with stdin ignored — an
+`execFile`-style call just looks like a hung binary. And agy blocks forever on its
+interactive permission prompts, which piweb has no UI to answer, which is why
+auto-approval is on by default. That last one is a real trust decision: agy can
+`rm`, start daemons, and run anything on the host without asking.
+
+### Architecture
+
+The bridge adds one module and one routing branch. Everything else is the existing
+piweb machinery.
+
+```mermaid
+flowchart TB
+    subgraph web["piweb-app (Docker, no pi/agy binary)"]
+        UI[Phone UI] -->|POST /messages| Q[(message_queue)]
+    end
+
+    Q -.->|SQLite, polled| W
+
+    subgraph host["piweb-worker (host)"]
+        W[queue loop] --> S{"model ref<br/>starts with agy/ ?"}
+        S -->|no| PI["pi<br/>(RPC session or one-shot)"]
+        S -->|yes| AGY["invokeAgy()"]
+        AGY -->|spawn| CLI["agy --output-format stream-json"]
+        CLI -->|NDJSON on stdout| TR[translateAgyEvent]
+        TR -->|pi-shaped events| EV[createEventStreamer]
+        PI --> EV
+        EV --> WE[(web_events)]
+    end
+
+    WE -.->|SSE| UI
+    CLI <-->|owns history| BRAIN[("~/.gemini/antigravity-cli/brain/")]
+```
+
+The routing test is a plain string check on the model ref, placed **before** the RPC
+branch because agy has no steer mode:
+
+```ts
+const useAgy = isAgyModelRef(effective.rawModelRef);   // "agy/…"
+```
+
+### Calling workflow, one turn
+
+```mermaid
+sequenceDiagram
+    participant U as Phone
+    participant Wk as worker
+    participant A as agy CLI
+    participant M as Gemini
+
+    U->>Wk: message (session model = agy/gemini-…)
+    Wk->>Wk: read agy-conversation.json for this channel
+    Wk->>A: --print <prompt> --conversation <id> --model <id>
+    Note over Wk,A: stdin closed, or agy never returns
+
+    A->>M: turn
+    A-->>Wk: init { conversation_id }
+    Wk->>Wk: persist id (first turn only)
+
+    loop while working
+        A-->>Wk: step_update tool ACTIVE  → toolcall_end
+        A-->>Wk: step_update tool DONE    → role=tool message_end
+        A-->>Wk: step_update agent_response → held, flushed as thinking
+        Wk-->>U: SSE events, live
+    end
+
+    A-->>Wk: result { status, response }
+    Wk->>Wk: markdown media links → [[file: …]] markers
+    Wk-->>U: assistant message + attachments
+```
+
+What each side owns:
+
+| concern | piweb | agy |
+|---|---|---|
+| model choice, inference | — | ✅ |
+| tools, permissions | — | ✅ |
+| conversation history | pointer only (`agy-conversation.json`, 63 bytes) | ✅ the content |
+| transcript shown to user | ✅ `web_events` | — |
+| quota reporting | ✅ `/agy-usage` | — |
+
+Consequences that surprise people:
+
+- **Switching model switches agent, and memory does not transfer.** pi's history is
+  in `sessions/<folder>/*.jsonl`; agy's is in its own brain directory. The on-screen
+  transcript is continuous, so the gap is invisible in the UI.
+- **`/pi new` does reset agy too** — `agy-conversation.json` lives in the session
+  directory and gets archived with it, so the next turn starts a fresh conversation.
+- **`/pi status` describes pi**, not an agy session; use `/agy-usage` for Gemini quota.
+- **`--until-done` has no agy equivalent**; the sentinel is unwrapped into a plain
+  autonomous instruction instead of leaking into the prompt.
+
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 
 - **`/pi new`** rotates the pi session directory to `<folder>__archived_<ts>` and
