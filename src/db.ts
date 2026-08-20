@@ -152,6 +152,7 @@ export function initDb(): void {
     create table if not exists live_output (
       channel_jid text primary key,
       content     text not null default '',
+      thinking    text not null default '',
       seq         integer not null default 0,
       updated_at  text not null default (datetime('now'))
     );
@@ -172,6 +173,9 @@ export function initDb(): void {
   // session no longer strands its pi session directory on disk.
   ensureTableColumn('channels', 'deleted_at', 'text');
   ensureTableColumn('message_queue', 'attachments', 'text');
+  // Reasoning streams on its own lane so the UI can show it while it happens
+  // and still fold it into one thinking block when it ends.
+  ensureTableColumn('live_output', 'thinking', "text not null default ''");
 
   logger.info({ path: config.dbPath }, 'Database initialized');
 }
@@ -725,29 +729,37 @@ export function listSessionMedia(channelJid: string, limit = 500): SessionMediaI
 
 export interface LiveOutput {
   content: string;
+  thinking: string;
   seq: number;
 }
 
-/** Publish the in-flight reply text. `seq` lets the UI ignore stale polls. */
-export function setLiveOutput(channelJid: string, content: string): number {
+/**
+ * Publish the in-flight turn: `content` is the answer, `thinking` the reasoning
+ * being written before it. `seq` lets the UI ignore a stale poll.
+ */
+export function setLiveOutput(
+  channelJid: string,
+  value: { content?: string; thinking?: string },
+): number {
   const row = db
     .prepare('select seq from live_output where channel_jid = ?')
     .get(channelJid) as { seq: number } | undefined;
   const seq = (row?.seq ?? 0) + 1;
   db.prepare(
-    `insert into live_output (channel_jid, content, seq, updated_at)
-     values (?, ?, ?, datetime('now'))
+    `insert into live_output (channel_jid, content, thinking, seq, updated_at)
+     values (?, ?, ?, ?, datetime('now'))
      on conflict(channel_jid) do update set
-       content = excluded.content, seq = excluded.seq, updated_at = excluded.updated_at`,
-  ).run(channelJid, content, seq);
+       content = excluded.content, thinking = excluded.thinking,
+       seq = excluded.seq, updated_at = excluded.updated_at`,
+  ).run(channelJid, value.content ?? '', value.thinking ?? '', seq);
   return seq;
 }
 
 export function getLiveOutput(channelJid: string): LiveOutput | null {
   const row = db
-    .prepare('select content, seq from live_output where channel_jid = ?')
+    .prepare('select content, thinking, seq from live_output where channel_jid = ?')
     .get(channelJid) as LiveOutput | undefined;
-  return row && row.content ? row : null;
+  return row && (row.content || row.thinking) ? row : null;
 }
 
 /** Called when the finished message is appended, so the two never both show. */

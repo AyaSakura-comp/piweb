@@ -71,9 +71,16 @@ async function publishFile(jid: string, filePath: string): Promise<string | unde
 const FLUSH_MS = 150;
 
 interface LiveBuffer {
+  /** The answer being written. */
   text: string;
+  /** The reasoning being written before it, its own lane. */
+  thinking: string;
   written: string;
   timer?: NodeJS.Timeout;
+}
+
+function snapshot(buf: LiveBuffer): string {
+  return `${buf.thinking}\u0000${buf.text}`;
 }
 
 const liveBuffers = new Map<string, LiveBuffer>();
@@ -97,30 +104,33 @@ function flushLive(jid: string, done = false): void {
 
   try {
     if (done) clearLiveOutput(jid);
-    else if (buf.text !== buf.written) setLiveOutput(jid, buf.text);
+    else if (snapshot(buf) !== buf.written) {
+      setLiveOutput(jid, { content: buf.text, thinking: buf.thinking });
+    }
   } catch (err: any) {
     logger.warn({ err: err.message, jid }, 'Failed to publish live output');
   }
 }
 
-function appendLive(jid: string, delta: string): void {
+function appendLive(jid: string, delta: string, lane: 'text' | 'thinking' = 'text'): void {
   if (!delta) return;
   let buf = liveBuffers.get(jid);
   if (!buf) {
-    buf = { text: '', written: '' };
+    buf = { text: '', thinking: '', written: '' };
     liveBuffers.set(jid, buf);
   }
-  buf.text += delta;
+  buf[lane] += delta;
   if (buf.timer) return;
 
   buf.timer = setTimeout(() => {
     const current = liveBuffers.get(jid);
     if (!current) return;
     current.timer = undefined;
-    if (current.text === current.written) return;
+    const snap = snapshot(current);
+    if (snap === current.written) return;
     try {
-      setLiveOutput(jid, current.text);
-      current.written = current.text;
+      setLiveOutput(jid, { content: current.text, thinking: current.thinking });
+      current.written = snap;
     } catch (err: any) {
       logger.warn({ err: err.message, jid }, 'Failed to publish live output');
     }
@@ -185,6 +195,19 @@ export const webTransport: Transport = {
         return;
       }
 
+      // Reasoning, token by token, on its own lane. The finished block still
+      // arrives as a `thinking` row below, so the lane is emptied on
+      // thinking_end to stop the preview and the real block both showing.
+      if (
+        config.streamPartialText &&
+        config.streamThinking &&
+        event.type === 'message_update' &&
+        event.assistantMessageEvent?.type === 'thinking_delta'
+      ) {
+        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''), 'thinking');
+        return;
+      }
+
       // A turn that ends without a reply (aborted, error, empty) must not leave
       // half a sentence frozen on screen.
       if (event.type === 'turn_end' || event.type === 'agent_end') {
@@ -199,6 +222,17 @@ export const webTransport: Transport = {
         event.type === 'message_update' &&
         event.assistantMessageEvent?.type === 'thinking_end'
       ) {
+        const buf = liveBuffers.get(jid);
+        if (buf) {
+          buf.thinking = '';
+          try {
+            setLiveOutput(jid, { content: buf.text, thinking: '' });
+            buf.written = snapshot(buf);
+          } catch {
+            /* the next flush will retry */
+          }
+        }
+
         const text = String(event.assistantMessageEvent.content ?? '').trim();
         if (text) {
           appendWebEvent({
