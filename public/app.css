@@ -2177,3 +2177,14 @@ svg {
     animation: none;
   }
 }
+
+/* Streaming markdown: completed blocks render normally, the unfinished tail
+ * stays plain until its block closes. Keep the tail's whitespace so a
+ * half-written table still lines up instead of collapsing onto one line. */
+.grow-tail {
+  white-space: pre-wrap;
+}
+
+.grow-done > :last-child {
+  margin-bottom: 0;
+}

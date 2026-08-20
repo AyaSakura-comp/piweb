@@ -1546,22 +1546,67 @@ let partialSeenText = '';
 let partialSeenThinking = '';
 
 /**
- * Grow a block by appending only its new tail, each tail in its own span so it
- * can fade in independently. `key` names the module-level cursor to use.
+ * Where it is safe to render markdown for a half-written message.
+ *
+ * Markdown is block-structured — a table, list or heading only means anything
+ * once its block is complete — so the text is split at the last blank line and
+ * only the part before it is rendered. The unfinished tail stays plain until
+ * its block closes. Splitting inside an open code fence would render a partial
+ * fence as garbage, so an odd number of ``` pushes the boundary back.
+ */
+function stableMarkdownSplit(text) {
+  let cut = text.lastIndexOf('\n\n');
+  while (cut > 0) {
+    const head = text.slice(0, cut);
+    if ((head.match(/```/g) || []).length % 2 === 0) return cut + 2;
+    cut = text.lastIndexOf('\n\n', cut - 1);
+  }
+  return 0;
+}
+
+/**
+ * Grow a block as text arrives.
+ *
+ * Completed blocks are handed to the markdown renderer; the still-growing tail
+ * is appended as plain spans that fade in. Re-rendering everything on each poll
+ * would restart the fade on text already read and reflow the whole bubble, so
+ * the markdown half is only rebuilt when the block boundary actually advances.
  */
 function growInto(target, text, seen) {
+  const state = target.__grow || (target.__grow = { boundary: -1, tail: '' });
+
   if (!text.startsWith(seen)) {
     target.textContent = '';
+    state.boundary = -1;
+    state.tail = '';
     seen = '';
   }
-  const added = text.slice(seen.length);
-  if (added) {
+
+  const boundary = stableMarkdownSplit(text);
+
+  if (boundary !== state.boundary) {
+    state.boundary = boundary;
+    state.tail = '';
+    target.textContent = '';
+    if (boundary > 0) {
+      const done = el('div', 'grow-done');
+      renderRich(done, text.slice(0, boundary));
+      target.append(done);
+    }
+    target.append(el('span', 'grow-tail'));
+  }
+
+  const tailHost = target.querySelector('.grow-tail');
+  const tail = text.slice(boundary);
+  const added = tail.slice(state.tail.length);
+  if (added && tailHost) {
     const ink = el('span', 'ink', added);
-    target.append(ink);
+    tailHost.append(ink);
     // Let the browser settle the fresh node before flipping the class on, or
     // the transition is skipped and the text simply pops in.
     requestAnimationFrame(() => ink.classList.add('lit'));
   }
+  state.tail = tail;
   return text;
 }
 
