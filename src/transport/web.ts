@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { logger } from '../logger.js';
-import { appendWebEvent, setChannelBusy } from '../db.js';
+import { appendWebEvent, clearLiveOutput, setChannelBusy, setLiveOutput } from '../db.js';
 import type { Transport } from './index.js';
 
 function truncate(s: string, cap: number): string {
@@ -60,8 +60,79 @@ async function publishFile(jid: string, filePath: string): Promise<string | unde
   }
 }
 
+/**
+ * Streaming reply buffer.
+ *
+ * pi emits one `text_delta` per token — hundreds per reply — so the DB write is
+ * throttled rather than done per delta. The buffer lives in memory and is
+ * mirrored into `live_output` at most every FLUSH_MS; the SSE loop polls that
+ * row, so the phone sees the answer grow instead of waiting for the whole turn.
+ */
+const FLUSH_MS = 150;
+
+interface LiveBuffer {
+  text: string;
+  written: string;
+  timer?: NodeJS.Timeout;
+}
+
+const liveBuffers = new Map<string, LiveBuffer>();
+
+function flushLive(jid: string, done = false): void {
+  const buf = liveBuffers.get(jid);
+  if (!buf) {
+    // `done` with no buffer still has to clear a row left by an aborted turn.
+    if (done) {
+      try {
+        clearLiveOutput(jid);
+      } catch (err: any) {
+        logger.warn({ err: err.message, jid }, 'Failed to clear live output');
+      }
+    }
+    return;
+  }
+
+  if (buf.timer) clearTimeout(buf.timer);
+  liveBuffers.delete(jid);
+
+  try {
+    if (done) clearLiveOutput(jid);
+    else if (buf.text !== buf.written) setLiveOutput(jid, buf.text);
+  } catch (err: any) {
+    logger.warn({ err: err.message, jid }, 'Failed to publish live output');
+  }
+}
+
+function appendLive(jid: string, delta: string): void {
+  if (!delta) return;
+  let buf = liveBuffers.get(jid);
+  if (!buf) {
+    buf = { text: '', written: '' };
+    liveBuffers.set(jid, buf);
+  }
+  buf.text += delta;
+  if (buf.timer) return;
+
+  buf.timer = setTimeout(() => {
+    const current = liveBuffers.get(jid);
+    if (!current) return;
+    current.timer = undefined;
+    if (current.text === current.written) return;
+    try {
+      setLiveOutput(jid, current.text);
+      current.written = current.text;
+    } catch (err: any) {
+      logger.warn({ err: err.message, jid }, 'Failed to publish live output');
+    }
+  }, FLUSH_MS);
+  buf.timer.unref?.();
+}
+
 export const webTransport: Transport = {
   async sendResponse(jid: string, text: string): Promise<boolean> {
+    // The finished message replaces the streaming preview; clear it first so a
+    // poll landing between the two can never show the reply twice.
+    flushLive(jid, true);
     const body = text?.trim();
     if (!body) return true;
     appendWebEvent({ channelJid: jid, kind: 'message', role: 'assistant', content: body });
@@ -69,6 +140,7 @@ export const webTransport: Transport = {
   },
 
   async sendFilesResponse(jid: string, text: string, files: string[]): Promise<boolean> {
+    flushLive(jid, true);
     const urls: string[] = [];
     for (const file of files) {
       const url = await publishFile(jid, file);
@@ -100,6 +172,25 @@ export const webTransport: Transport = {
   createEventStreamer(jid: string): (event: any) => Promise<void> {
     return async (event: any) => {
       if (!event || typeof event !== 'object') return;
+
+      // Assistant text, token by token. Buffered and throttled by appendLive;
+      // the finished message still arrives through sendResponse, which clears
+      // the preview so the reply never appears twice.
+      if (
+        config.streamPartialText &&
+        event.type === 'message_update' &&
+        event.assistantMessageEvent?.type === 'text_delta'
+      ) {
+        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''));
+        return;
+      }
+
+      // A turn that ends without a reply (aborted, error, empty) must not leave
+      // half a sentence frozen on screen.
+      if (event.type === 'turn_end' || event.type === 'agent_end') {
+        flushLive(jid, true);
+        return;
+      }
 
       // Thinking blocks: fire on `_end` only, so one bubble per block rather
       // than one per token.

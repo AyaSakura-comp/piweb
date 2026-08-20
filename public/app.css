@@ -2102,3 +2102,45 @@ svg {
   word-break: break-all;
   text-align: center;
 }
+
+/* ── streaming reply ────────────────────────────────────────────────────────
+ *
+ * The answer appears as it is generated rather than in one lump at the end.
+ * Only the newly arrived tail fades in: animating the whole string on every
+ * poll would restart the fade on text already read, which reads as flicker.
+ */
+.msg.partial .msg-text .ink {
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+
+.msg.partial .msg-text .ink.lit {
+  opacity: 1;
+}
+
+/* A soft cursor so a pause in generation still looks alive rather than stuck. */
+.msg.partial .msg-text::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.5;
+  animation: partial-caret 1s steps(2, start) infinite;
+}
+
+@keyframes partial-caret {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg.partial .msg-text .ink {
+    opacity: 1;
+    transition: none;
+  }
+  .msg.partial .msg-text::after {
+    animation: none;
+  }
+}

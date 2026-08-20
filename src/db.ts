@@ -144,6 +144,18 @@ export function initDb(): void {
       created_at text not null default (datetime('now'))
     );
 
+    -- The assistant reply currently being generated, one row per channel,
+    -- UPDATED in place rather than appended. Streaming deltas as web_events
+    -- rows would add hundreds of rows per reply and wreck the rowid cursor
+    -- that unread marks, paging and push all key off; this keeps the
+    -- transcript clean and is dropped the moment the real message lands.
+    create table if not exists live_output (
+      channel_jid text primary key,
+      content     text not null default '',
+      seq         integer not null default 0,
+      updated_at  text not null default (datetime('now'))
+    );
+
     -- Per-channel transient runtime state the UI polls (typing indicator).
     create table if not exists channel_state (
       channel_jid text primary key,
@@ -709,6 +721,38 @@ export function listSessionMedia(channelJid: string, limit = 500): SessionMediaI
   }
 
   return items;
+}
+
+export interface LiveOutput {
+  content: string;
+  seq: number;
+}
+
+/** Publish the in-flight reply text. `seq` lets the UI ignore stale polls. */
+export function setLiveOutput(channelJid: string, content: string): number {
+  const row = db
+    .prepare('select seq from live_output where channel_jid = ?')
+    .get(channelJid) as { seq: number } | undefined;
+  const seq = (row?.seq ?? 0) + 1;
+  db.prepare(
+    `insert into live_output (channel_jid, content, seq, updated_at)
+     values (?, ?, ?, datetime('now'))
+     on conflict(channel_jid) do update set
+       content = excluded.content, seq = excluded.seq, updated_at = excluded.updated_at`,
+  ).run(channelJid, content, seq);
+  return seq;
+}
+
+export function getLiveOutput(channelJid: string): LiveOutput | null {
+  const row = db
+    .prepare('select content, seq from live_output where channel_jid = ?')
+    .get(channelJid) as LiveOutput | undefined;
+  return row && row.content ? row : null;
+}
+
+/** Called when the finished message is appended, so the two never both show. */
+export function clearLiveOutput(channelJid: string): void {
+  db.prepare('delete from live_output where channel_jid = ?').run(channelJid);
 }
 
 export function searchWebEvents(

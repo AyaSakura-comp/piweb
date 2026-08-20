@@ -178,6 +178,13 @@ export const config = {
    */
   agySkipPermissions: envBool('AGY_SKIP_PERMISSIONS', true),
 
+  /**
+   * Stream the assistant's reply into the UI as it is generated, instead of
+   * posting it only when the turn finishes. Costs one small SQLite write per
+   * 150ms of output.
+   */
+  streamPartialText: envBool('STREAM_PARTIAL_TEXT', true),
+
   /** Default model for pi */
   piModel: env('PI_MODEL'),
 
