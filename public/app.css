@@ -421,6 +421,11 @@ svg {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Explicit, and not optional: with only overflow-y set, overflow-x computes
+     to `auto` rather than `visible`, so one wide table turned the whole
+     transcript into a horizontally draggable pane and pushed the messages off
+     screen. Wide content scrolls inside its own box (.table-wrap, pre). */
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   padding: 12px 0 4px;
 }
@@ -455,6 +460,14 @@ svg {
 .msg-body {
   flex: 1;
   min-width: 0;
+}
+
+/* A flex/grid child defaults to min-width:auto, refusing to shrink below its
+   content's intrinsic width — which is how a table's full width leaks out to
+   the ancestors even though .table-wrap scrolls. */
+.msg-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .msg-head {
