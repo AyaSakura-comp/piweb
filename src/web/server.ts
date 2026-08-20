@@ -45,6 +45,7 @@ import {
   savePushSubscription,
   type WebEventRow,
   listSessionMedia,
+  getLiveOutput,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
@@ -544,6 +545,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       sendJson(res, 200, {
         events: events.map(serializeEvent),
         busy: isChannelBusy(jid),
+        // Opening a session mid-reply should show the text so far, not nothing.
+        partial: getLiveOutput(jid),
         // Lets the client stop asking once it has reached either end.
         hasMore: oldest > 0 ? hasWebEventsBefore(jid, oldest) : false,
         hasMoreNewer: newest > 0 ? hasWebEventsAfter(jid, newest) : false,
@@ -746,6 +749,7 @@ function streamEvents(
 
   let cursor = afterRowid;
   let lastBusy: boolean | undefined;
+  let lastLiveSeq = -1;
   let closed = false;
 
   const send = (event: string, data: unknown) => {
@@ -768,6 +772,16 @@ function streamEvents(
       if (busy !== lastBusy) {
         lastBusy = busy;
         send('busy', { busy });
+      }
+
+      // The reply as it is being generated. Sent only when it changes, and
+      // once more as null when it ends, so the client can drop the preview
+      // exactly when the finished message row arrives.
+      const live = getLiveOutput(jid);
+      const liveSeq = live?.seq ?? 0;
+      if (liveSeq !== lastLiveSeq) {
+        lastLiveSeq = liveSeq;
+        send('partial', live ? { content: live.content, seq: live.seq } : null);
       }
     } catch (err: any) {
       logger.warn({ err: err.message, jid }, 'SSE poll failed');

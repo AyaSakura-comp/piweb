@@ -565,15 +565,19 @@ async function selectSession(jid, opts = {}) {
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
+  // Same for a half-written reply from the session being left.
+  renderPartial('');
   // The gallery belongs to the session that was open; switching must not leave
   // the previous session's media on screen.
   closeMediaSheet();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
-  const { events, busy, hasMore } = await api(
+  const { events, busy, hasMore, partial } = await api(
     `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
   );
   for (const event of events) appendEvent(event, false);
+  // Opening a session while pi is mid-reply should show the text so far.
+  renderPartial(partial?.content ?? '');
   const openedSession = state.sessions.find((s) => s.jid === jid);
   if (openedSession) {
     markSeen(jid, openedSession.lastReplyId);
@@ -1427,6 +1431,13 @@ function openStream() {
 
   source.addEventListener('busy', (e) => setBusy(JSON.parse(e.data).busy));
 
+  // The reply as it is being written. Null means the turn ended and the real
+  // message row is arriving, so the preview must go.
+  source.addEventListener('partial', (e) => {
+    const data = JSON.parse(e.data);
+    renderPartial(data && state.atLive ? data.content : '');
+  });
+
   // EventSource reconnects on its own, but it would replay from the ORIGINAL
   // `after` value in the URL and duplicate everything, so reopen with the
   // current cursor instead.
@@ -1523,6 +1534,61 @@ function appendEvent(event, live) {
 }
 
 /** Build the DOM for one event. Shared by live append and paged prepend. */
+/**
+ * The in-flight reply, shown as a normal assistant bubble that grows.
+ *
+ * Only the newly arrived tail is animated: re-rendering the whole string each
+ * poll would restart the fade on text the user has already read, which reads as
+ * flickering rather than typing.
+ */
+let partialSeenText = '';
+
+function renderPartial(text) {
+  const host = $('messages');
+  let node = document.getElementById('partial-msg');
+
+  if (!text) {
+    if (node) node.remove();
+    partialSeenText = '';
+    return;
+  }
+
+  if (!node) {
+    node = el('div', 'msg partial');
+    node.id = 'partial-msg';
+    node.append(el('div', 'avatar pi', 'π'));
+    const body = el('div', 'msg-body');
+    const head = el('div', 'msg-head');
+    head.append(el('span', 'msg-author', 'pi'));
+    head.append(el('span', 'msg-time', ''));
+    body.append(head);
+    body.append(el('div', 'msg-text'));
+    node.append(body);
+    host.append(node);
+    partialSeenText = '';
+  }
+
+  const target = node.querySelector('.msg-text');
+
+  // A shrinking or diverging string means a new turn reused the bubble; start over.
+  if (!text.startsWith(partialSeenText)) {
+    target.textContent = '';
+    partialSeenText = '';
+  }
+
+  const added = text.slice(partialSeenText.length);
+  if (added) {
+    const ink = el('span', 'ink', added);
+    target.append(ink);
+    // Let the browser settle the fresh node before flipping the class on, or
+    // the transition is skipped and the text simply pops in.
+    requestAnimationFrame(() => ink.classList.add('lit'));
+    partialSeenText = text;
+  }
+
+  if (state.atLive) host.scrollTop = host.scrollHeight;
+}
+
 function buildEventNode(event) {
   if (event.kind === 'message') {
     const isUser = event.role === 'user';
