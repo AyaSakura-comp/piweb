@@ -1435,7 +1435,8 @@ function openStream() {
   // message row is arriving, so the preview must go.
   source.addEventListener('partial', (e) => {
     const data = JSON.parse(e.data);
-    renderPartial(data && state.atLive ? data.content : '');
+    const live = data && state.atLive ? data : null;
+    renderPartial(live?.content ?? '', live?.thinking ?? '');
   });
 
   // EventSource reconnects on its own, but it would replay from the ORIGINAL
@@ -1542,8 +1543,59 @@ function appendEvent(event, live) {
  * flickering rather than typing.
  */
 let partialSeenText = '';
+let partialSeenThinking = '';
 
-function renderPartial(text) {
+/**
+ * Grow a block by appending only its new tail, each tail in its own span so it
+ * can fade in independently. `key` names the module-level cursor to use.
+ */
+function growInto(target, text, seen) {
+  if (!text.startsWith(seen)) {
+    target.textContent = '';
+    seen = '';
+  }
+  const added = text.slice(seen.length);
+  if (added) {
+    const ink = el('span', 'ink', added);
+    target.append(ink);
+    // Let the browser settle the fresh node before flipping the class on, or
+    // the transition is skipped and the text simply pops in.
+    requestAnimationFrame(() => ink.classList.add('lit'));
+  }
+  return text;
+}
+
+function renderPartialThinking(thinking) {
+  const host = $('messages');
+  let node = document.getElementById('partial-thinking');
+
+  if (!thinking) {
+    if (node) node.remove();
+    partialSeenThinking = '';
+    return;
+  }
+
+  if (!node) {
+    // Matches the shape of a finished thinking row, so the swap at
+    // thinking_end is not a visible jump.
+    node = el('details', 'event thinking partial');
+    node.id = 'partial-thinking';
+    node.open = true;
+    const summary = el('summary');
+    summary.append(el('span', 'label', '💭 Thinking'));
+    node.append(summary);
+    node.append(el('div', 'event-body'));
+    host.append(node);
+    partialSeenThinking = '';
+  }
+
+  partialSeenThinking = growInto(node.querySelector('.event-body'), thinking, partialSeenThinking);
+  if (state.atLive) host.scrollTop = host.scrollHeight;
+}
+
+function renderPartial(text, thinking = '') {
+  renderPartialThinking(thinking);
+
   const host = $('messages');
   let node = document.getElementById('partial-msg');
 
@@ -1568,24 +1620,7 @@ function renderPartial(text) {
     partialSeenText = '';
   }
 
-  const target = node.querySelector('.msg-text');
-
-  // A shrinking or diverging string means a new turn reused the bubble; start over.
-  if (!text.startsWith(partialSeenText)) {
-    target.textContent = '';
-    partialSeenText = '';
-  }
-
-  const added = text.slice(partialSeenText.length);
-  if (added) {
-    const ink = el('span', 'ink', added);
-    target.append(ink);
-    // Let the browser settle the fresh node before flipping the class on, or
-    // the transition is skipped and the text simply pops in.
-    requestAnimationFrame(() => ink.classList.add('lit'));
-    partialSeenText = text;
-  }
-
+  partialSeenText = growInto(node.querySelector('.msg-text'), text, partialSeenText);
   if (state.atLive) host.scrollTop = host.scrollHeight;
 }
 

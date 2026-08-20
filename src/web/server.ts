@@ -781,7 +781,7 @@ function streamEvents(
       const liveSeq = live?.seq ?? 0;
       if (liveSeq !== lastLiveSeq) {
         lastLiveSeq = liveSeq;
-        send('partial', live ? { content: live.content, seq: live.seq } : null);
+        send('partial', live ? { content: live.content, thinking: live.thinking, seq: live.seq } : null);
       }
     } catch (err: any) {
       logger.warn({ err: err.message, jid }, 'SSE poll failed');

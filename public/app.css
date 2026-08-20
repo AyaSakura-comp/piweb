@@ -2144,3 +2144,36 @@ svg {
     animation: none;
   }
 }
+
+/* The streaming thinking block reuses the finished row's look, so the swap when
+ * the block closes is not a visible jump. Only the caret marks it as live. */
+.event.thinking.partial .event-body .ink {
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+
+.event.thinking.partial .event-body .ink.lit {
+  opacity: 1;
+}
+
+.event.thinking.partial .event-body::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.4;
+  animation: partial-caret 1s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .event.thinking.partial .event-body .ink {
+    opacity: 1;
+    transition: none;
+  }
+  .event.thinking.partial .event-body::after {
+    animation: none;
+  }
+}
