@@ -250,6 +250,29 @@ export const webTransport: Transport = {
         event.type === 'message_update' &&
         event.assistantMessageEvent?.type === 'toolcall_end'
       ) {
+        // Text followed by a tool call is intermediate narration, not the final
+        // answer. Fold it into thinking and clear the answer lane before the
+        // tool row lands; otherwise it stays behind as a stray assistant bubble
+        // throughout the rest of the tool loop.
+        const buf = liveBuffers.get(jid);
+        const narration = buf?.text.trim() ?? '';
+        if (buf && narration) {
+          if (config.streamThinking) {
+            appendWebEvent({
+              channelJid: jid,
+              kind: 'thinking',
+              content: truncate(narration, config.maxEventChars),
+            });
+          }
+          buf.text = '';
+          try {
+            setLiveOutput(jid, { content: '', thinking: buf.thinking });
+            buf.written = snapshot(buf);
+          } catch {
+            /* the next flush will retry */
+          }
+        }
+
         const tc = event.assistantMessageEvent.toolCall ?? {};
         appendWebEvent({
           channelJid: jid,

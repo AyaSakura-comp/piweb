@@ -25,6 +25,8 @@ export interface QueuedMessage {
   status: 'pending' | 'processing' | 'done' | 'failed' | 'aborted';
   /** JSON array of attachment metadata, or null */
   attachments: string | null;
+  /** Whether this message may pre-empt an active turn in the same channel. */
+  interrupt_active: 0 | 1;
 }
 
 /** Agent invocation result */

@@ -99,6 +99,40 @@ describe('send command', () => {
   });
 });
 
+describe('task command', () => {
+  it('preserves an explicit web channel JID when adding a scheduled task', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-cli-task-'));
+    tempDirs.push(tempDir);
+    process.env.DB_PATH = resolve(tempDir, 'gateway.db');
+
+    vi.resetModules();
+    const { main } = await import('../src/cli/index.js');
+
+    await expect(
+      main([
+        'task',
+        'add',
+        '--name',
+        'daily-web-report',
+        '--schedule',
+        '0 9 * * *',
+        '--channel',
+        'web:abc123',
+        '--prompt',
+        'Generate the daily report',
+      ]),
+    ).resolves.toBe(0);
+
+    const db = await import('../src/db.js');
+    db.initDb();
+    try {
+      expect(db.listScheduledTasks()[0]?.channel_jid).toBe('web:abc123');
+    } finally {
+      db.closeDb();
+    }
+  });
+});
+
 describe('register command cwd support', () => {
   it('stores a per-channel cwd override and shows it in channel listings', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pidg-cli-'));

@@ -25,6 +25,7 @@ const tempDirs: string[] = [];
 afterEach(() => {
   vi.clearAllMocks();
   vi.resetModules();
+  vi.unstubAllGlobals();
   Object.assign(process.env, originalEnv);
   for (const key of Object.keys(process.env)) {
     if (!(key in originalEnv)) delete process.env[key];
@@ -66,6 +67,45 @@ describe('invokeAgent attachment paths', () => {
     expect(prompt).toContain(`[Uploaded file: ${documentPath}]`);
     expect(prompt).toContain('read tool');
     expect(prompt).not.toContain(documentContents);
+  });
+
+  it('passes Piweb audio uploads by path without injecting an ASR transcript', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-invoke-audio-'));
+    tempDirs.push(tempDir);
+    process.env.SESSIONS_DIR = join(tempDir, 'sessions');
+    process.env.PI_BIN = 'pi';
+    process.env.VOICE_ASR_ENABLED = 'true';
+    process.env.VOICE_ASR_URL = 'http://127.0.0.1:8025';
+
+    const audioPath = join(tempDir, 'meeting.mp3');
+    writeFileSync(audioPath, Buffer.from('audio-data'));
+    downloadAttachmentsMock.mockResolvedValue([
+      { filePath: audioPath, originalName: 'meeting.mp3', size: 10 },
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ text: 'TRANSCRIPT_MUST_NOT_BE_INJECTED' }))),
+    );
+    spawnMock.mockImplementation(fakeSuccessfulPi);
+
+    const { invokeAgent } = await import('../src/agent/invoke.js');
+    await invokeAgent('web_audio', '[Web user: Aya]\n處理音訊', {
+      attachments: JSON.stringify([
+        {
+          url: `file://${audioPath}`,
+          name: 'meeting.mp3',
+          contentType: 'audio/mpeg',
+          size: 10,
+        },
+      ]),
+    });
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    const prompt = args[args.indexOf('-p') + 1];
+    expect(args).not.toContain(`@${audioPath}`);
+    expect(prompt).toContain(`[Binary attachment: ${audioPath}]`);
+    expect(prompt).not.toContain('TRANSCRIPT_MUST_NOT_BE_INJECTED');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('continues passing image uploads through pi image attachment handling', async () => {

@@ -131,6 +131,7 @@ export async function invokeAgent(
   channelFolder: string,
   userText: string,
   opts?: {
+    channelJid?: string;
     model?: string;
     thinking?: string;
     cwd?: string;
@@ -185,7 +186,9 @@ export async function invokeAgent(
       const downloaded = await downloadAttachments(metas, channelFolder, messageId, opts.signal);
       let transcriptions: Awaited<ReturnType<typeof transcribeVoiceFiles>> = [];
 
-      if (config.voiceAsrEnabled && downloaded.length > 0) {
+      // Piweb uploads follow the path-only contract for every non-image file;
+      // keep automatic voice transcription only for Discord-delivered audio.
+      if (config.voiceAsrEnabled && !channelFolder.startsWith('web_') && downloaded.length > 0) {
         try {
           transcriptions = await transcribeVoiceFiles(downloaded, {
             endpoint: config.voiceAsrUrl,
@@ -272,7 +275,11 @@ export async function invokeAgent(
   return new Promise<AgentResult>((resolve, reject) => {
     const proc = spawn(effectiveBin, effectiveArgs, {
       cwd: effectiveCwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        PIWEB_CHANNEL_JID: opts?.channelJid ?? '',
+        PIWEB_CHANNEL_FOLDER: channelFolder,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

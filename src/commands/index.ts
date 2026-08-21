@@ -26,9 +26,11 @@ import {
   clearChannelCwdOverride,
   clearChannelModelOverride,
   clearChannelThinkingOverride,
+  addScheduledTask,
   clearPendingMessages,
   enqueueMessage,
   getChannel,
+  listScheduledTasks,
   setChannelCwdOverride,
   setChannelModelOverride,
   setChannelThinkingOverride,
@@ -48,6 +50,7 @@ import {
 } from '../agent/channel-settings.js';
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { closeRpcSession } from '../agent/rpc-session.js';
+import { computeNextRun } from '../agent/scheduler.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
@@ -99,6 +102,10 @@ export async function runCommand(
         return cmdUntilGoal(channel, args.text ?? '');
       case 'until status':
         return cmdUntilStatus(channel);
+      case 'task cron':
+        return cmdTaskCron(channel, args.text ?? '');
+      case 'task list':
+        return cmdTaskList(channel);
       default:
         return { ok: false, text: `Unknown command: ${command}` };
     }
@@ -160,7 +167,9 @@ function cmdStop(channel: RegisteredChannel): CommandResult {
   const notes: string[] = [];
   if (result.aborted) notes.push('Aborted the current task.');
   if (result.cleared > 0) {
-    notes.push(`Cleared ${result.cleared} queued ${result.cleared === 1 ? 'message' : 'messages'}.`);
+    notes.push(
+      `Cleared ${result.cleared} queued ${result.cleared === 1 ? 'message' : 'messages'}.`,
+    );
   }
 
   return { ok: true, text: notes.join(' ') };
@@ -198,6 +207,52 @@ function cmdUntilStatus(channel: RegisteredChannel): CommandResult {
   });
 
   return { ok: true, text: '📊 Asked pi to report the current until-done status.' };
+}
+
+// ── scheduled agent prompts ──
+
+function cmdTaskCron(channel: RegisteredChannel, raw: string): CommandResult {
+  const parts = raw.split('|').map((part) => part.trim());
+  if (parts.length < 3 || !parts[0] || !parts[1] || !parts.slice(2).join('|').trim()) {
+    return {
+      ok: false,
+      text: 'Usage: `/task cron name | minute hour day month weekday | prompt`',
+    };
+  }
+
+  const [name, schedule] = parts;
+  const prompt = parts.slice(2).join('|').trim();
+  const nextRunAt = computeNextRun(schedule, 'recurring');
+  if (!nextRunAt) {
+    return { ok: false, text: `Invalid cron schedule: ${schedule}` };
+  }
+
+  const id = addScheduledTask({
+    name,
+    type: 'recurring',
+    schedule,
+    channelJid: channel.jid,
+    prompt,
+    createdBy: 'web',
+    nextRunAt,
+  });
+
+  return {
+    ok: true,
+    text: `⏰ Scheduled task #${id} (${name}). Next run: ${nextRunAt}`,
+  };
+}
+
+function cmdTaskList(channel: RegisteredChannel): CommandResult {
+  const tasks = listScheduledTasks().filter((task) => task.channel_jid === channel.jid);
+  if (tasks.length === 0) return { ok: true, text: 'No scheduled tasks for this session.' };
+
+  const lines = tasks.map(
+    (task) =>
+      `#${task.id} ${task.enabled ? 'enabled' : 'disabled'} — ${task.name} — ` +
+      `${task.schedule} — next: ${task.next_run_at ?? 'none'}`,
+  );
+  return { ok: true, text: lines.join('\n') };
 }
 
 // ── model / thinking / cwd ──
@@ -251,7 +306,9 @@ function cmdModelReset(channel: RegisteredChannel): CommandResult {
     const currentThinking = effective.hasManagedThinking
       ? effective.effectiveThinking
       : '(pi runtime default)';
-    notes.push(`Current effective thinking is ${currentThinking}. ${effective.thinkingAdjustmentMessage}`);
+    notes.push(
+      `Current effective thinking is ${currentThinking}. ${effective.thinkingAdjustmentMessage}`,
+    );
   }
 
   return { ok: true, text: notes.join('\n') };
@@ -270,7 +327,11 @@ function cmdThinkingSet(channel: RegisteredChannel, rawLevel: string): CommandRe
   const notes = [`Thinking level set to ${resolution.effective}.`];
   if (resolution.adjusted) {
     notes.push(
-      buildThinkingAdjustmentMessage(resolution.requested, resolution.effective, effective.modelInfo),
+      buildThinkingAdjustmentMessage(
+        resolution.requested,
+        resolution.effective,
+        effective.modelInfo,
+      ),
     );
   }
 
@@ -382,7 +443,11 @@ function formatThinkingValue(effective: EffectiveChannelSettings): string {
 }
 
 function formatThinkingFallback(effective: EffectiveChannelSettings): string {
-  if (effective.modelInfo && !effective.modelInfo.reasoning && effective.requestedThinking !== 'off') {
+  if (
+    effective.modelInfo &&
+    !effective.modelInfo.reasoning &&
+    effective.requestedThinking !== 'off'
+  ) {
     return `${effective.requestedThinking} -> off (no reasoning)`;
   }
   if (effective.requestedThinking === 'xhigh' && effective.effectiveThinking === 'high') {
@@ -409,7 +474,10 @@ function formatSettingSource(source: EffectiveChannelSettings['modelSource']): s
 function formatSessionCreatedAt(timestamp: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return timestamp;
-  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+  return date
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/, ' UTC');
 }
 
 function formatTokenUsage(
@@ -429,7 +497,8 @@ function formatTokenUsage(
 function formatContextUsage(contextUsage: SessionContextUsage | undefined): string {
   if (!contextUsage) return '?';
   const tokens = contextUsage.tokens == null ? '?' : formatNumber(contextUsage.tokens);
-  const window = contextUsage.contextWindow == null ? '?' : formatNumber(contextUsage.contextWindow);
+  const window =
+    contextUsage.contextWindow == null ? '?' : formatNumber(contextUsage.contextWindow);
   const percent = contextUsage.percent == null ? '?' : `${formatPercent(contextUsage.percent)}%`;
   return `${tokens} / ${window} (${percent})`;
 }

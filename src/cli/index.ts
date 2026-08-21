@@ -136,7 +136,7 @@ async function cliRegister(args: string[]): Promise<void> {
   const options = parseRegisterOptions(channelId, optionArgs, validateSessionFolder);
 
   await withDb(({ getChannel, registerChannel }) => {
-    const jid = toDiscordChannelJid(channelId);
+    const jid = toChannelJid(channelId);
     const existing = getChannel(jid);
     const channel: RegisteredChannel = {
       jid,
@@ -166,7 +166,7 @@ async function cliUnregister(args: string[]): Promise<void> {
   }
 
   await withDb(({ unregisterChannel }) => {
-    const jid = toDiscordChannelJid(args[0]);
+    const jid = toChannelJid(args[0]);
     const ok = unregisterChannel(jid);
     if (ok) {
       console.log(`Unregistered channel: ${jid}`);
@@ -270,7 +270,7 @@ async function cliSend(args: string[]): Promise<void> {
   }
 
   const { sendFilesToDiscord } = await import('../discord/send.js');
-  const channelJid = toDiscordChannelJid(channel);
+  const channelJid = toChannelJid(channel);
   const result = await sendFilesToDiscord({ channelJid, text, files });
   if (result.sentFiles === 0) {
     console.log(`Sent message to ${channelJid}`);
@@ -294,7 +294,7 @@ async function cliAddTask(args: string[]): Promise<void> {
       name: options.name,
       type: options.type,
       schedule: options.schedule,
-      channelJid: toDiscordChannelJid(options.channel),
+      channelJid: toChannelJid(options.channel),
       prompt: options.prompt,
       createdBy: 'cli',
       nextRunAt,
@@ -648,8 +648,10 @@ function formatChannelSummary(channel: RegisteredChannel): string {
   return `  ${channel.jid}  ${channel.name}  [${flags}]  folder=${channel.folder}${overrides ? ` ${overrides}` : ''}`;
 }
 
-function toDiscordChannelJid(channelId: string): string {
-  return channelId.startsWith('dc:') ? channelId : `dc:${channelId}`;
+function toChannelJid(channelId: string): string {
+  // Bare IDs remain backwards-compatible Discord IDs; explicit transport JIDs
+  // such as web:abc123 must pass through unchanged for piweb scheduling.
+  return channelId.includes(':') ? channelId : `dc:${channelId}`;
 }
 
 if (isDirectExecution()) {
