@@ -25,6 +25,7 @@ import { formatStreamError, resolvePiSpawn } from './invoke.js';
 import type { AgentResult } from '../types.js';
 
 export interface RpcSessionOpts {
+  channelJid?: string;
   model?: string;
   thinking?: string;
   cwd?: string;
@@ -67,6 +68,7 @@ class RpcSession {
 
   matchesOptions(opts: RpcSessionOpts): boolean {
     return (
+      this.opts.channelJid === opts.channelJid &&
       this.opts.model === opts.model &&
       this.opts.thinking === opts.thinking &&
       this.opts.cwd === opts.cwd
@@ -87,7 +89,11 @@ class RpcSession {
     const { bin, args: spawnArgs } = resolvePiSpawn(config.piBin, args);
     const proc = spawn(bin, spawnArgs, {
       cwd: this.opts.cwd || config.piCwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        PIWEB_CHANNEL_JID: this.opts.channelJid ?? '',
+        PIWEB_CHANNEL_FOLDER: this.folder,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc = proc;

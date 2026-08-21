@@ -54,6 +54,7 @@ export function initDb(): void {
       content       text not null,
       timestamp     text not null,
       status        text not null default 'pending',
+      interrupt_active integer not null default 1,
       created_at    text not null default (datetime('now')),
       processed_at  text
     );
@@ -176,6 +177,9 @@ export function initDb(): void {
   // Reasoning streams on its own lane so the UI can show it while it happens
   // and still fold it into one thinking block when it ends.
   ensureTableColumn('live_output', 'thinking', "text not null default ''");
+  // Scheduler/background events must wait behind an active user turn rather
+  // than triggering INTERRUPT_ON_NEW_MESSAGE. User messages keep the default.
+  ensureTableColumn('message_queue', 'interrupt_active', 'integer not null default 1');
 
   logger.info({ path: config.dbPath }, 'Database initialized');
 }
@@ -298,7 +302,6 @@ export function clearChannelCwdOverride(jid: string): boolean {
   return result.changes > 0;
 }
 
-
 function rowToChannel(row: any): RegisteredChannel {
   return {
     jid: row.jid,
@@ -321,11 +324,13 @@ export function enqueueMessage(msg: {
   content: string;
   timestamp: string;
   attachments?: string | null;
+  interruptActive?: boolean;
 }): void {
   db.prepare(
     `
-    insert into message_queue (channel_jid, sender, sender_name, content, timestamp, attachments)
-    values (?, ?, ?, ?, ?, ?)
+    insert into message_queue
+      (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active)
+    values (?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     msg.channelJid,
@@ -334,6 +339,7 @@ export function enqueueMessage(msg: {
     msg.content,
     msg.timestamp,
     msg.attachments ?? null,
+    msg.interruptActive === false ? 0 : 1,
   );
 }
 
@@ -352,7 +358,8 @@ export function claimNextMessage(channelJid: string): QueuedMessage | undefined 
     set status = 'processing'
     where rowid = (select rowid from next_message)
       and status = 'pending'
-    returning rowid, channel_jid, sender, sender_name, content, timestamp, status, attachments
+    returning rowid, channel_jid, sender, sender_name, content, timestamp, status, attachments,
+              interrupt_active
   `,
     )
     .get(channelJid) as QueuedMessage | undefined;
@@ -402,6 +409,22 @@ export function recoverStuckMessages(): number {
     .prepare("update message_queue set status = 'pending' where status = 'processing'")
     .run();
   return result.changes;
+}
+
+/** Get channels with pending messages that are allowed to pre-empt an active turn. */
+export function channelsWithInterruptingPending(): string[] {
+  const rows = db
+    .prepare(
+      `
+    select channel_jid
+    from message_queue
+    where status = 'pending' and interrupt_active = 1
+    group by channel_jid
+    order by min(rowid) asc
+  `,
+    )
+    .all() as any[];
+  return rows.map((r) => r.channel_jid);
 }
 
 /** Get channels that have pending messages */
@@ -518,7 +541,7 @@ export function enqueueScheduledTask(
   nextRunAt: string | null,
 ): void {
   db.transaction(() => {
-    enqueueMessage(msg);
+    enqueueMessage({ ...msg, interruptActive: false });
     updateTaskAfterRun(taskId, lastRunAt, nextRunAt);
   })();
 }
@@ -580,9 +603,7 @@ export function getWebEventsSince(
   limit = 500,
 ): WebEventRow[] {
   return db
-    .prepare(
-      'select * from web_events where channel_jid = ? and rowid > ? order by rowid limit ?',
-    )
+    .prepare('select * from web_events where channel_jid = ? and rowid > ? order by rowid limit ?')
     .all(channelJid, afterRowid, limit) as WebEventRow[];
 }
 
@@ -620,11 +641,7 @@ export function getWebEventsBefore(
  * A window of history centred on `rowid` — what "jump to this search result"
  * needs: the hit plus context on both sides, in one round trip.
  */
-export function getWebEventsAround(
-  channelJid: string,
-  rowid: number,
-  limit = 50,
-): WebEventRow[] {
+export function getWebEventsAround(channelJid: string, rowid: number, limit = 50): WebEventRow[] {
   const half = Math.max(1, Math.floor(limit / 2));
   const before = db
     .prepare(
@@ -767,11 +784,7 @@ export function clearLiveOutput(channelJid: string): void {
   db.prepare('delete from live_output where channel_jid = ?').run(channelJid);
 }
 
-export function searchWebEvents(
-  channelJid: string,
-  query: string,
-  limit = 50,
-): WebSearchHit[] {
+export function searchWebEvents(channelJid: string, query: string, limit = 50): WebSearchHit[] {
   const rows = db
     .prepare(
       `select rowid, kind, role, content, created_at
@@ -793,7 +806,10 @@ export function searchWebEvents(
     const start = Math.max(0, at - 40);
     const snippet =
       (start > 0 ? '…' : '') +
-      r.content.slice(start, start + 160).replace(/\s+/g, ' ').trim() +
+      r.content
+        .slice(start, start + 160)
+        .replace(/\s+/g, ' ')
+        .trim() +
       (start + 160 < r.content.length ? '…' : '');
     return { id: r.rowid, kind: r.kind, role: r.role, snippet, createdAt: r.created_at };
   });
@@ -948,8 +964,9 @@ export function deletePushSubscription(endpoint: string): void {
 }
 
 export function listPushSubscriptions(): PushSubscriptionRow[] {
-  return db.prepare('select endpoint, p256dh, auth from push_subscriptions').all() as
-    PushSubscriptionRow[];
+  return db
+    .prepare('select endpoint, p256dh, auth from push_subscriptions')
+    .all() as PushSubscriptionRow[];
 }
 
 export function countPushSubscriptions(): number {
@@ -964,7 +981,10 @@ export function countPushSubscriptions(): number {
  * is command output ("Model set to X"), which echoes something the user just
  * did on this device and does not need announcing back to them.
  */
-export function getNotifiableEventsSince(afterRowid: number, limit = 20): Array<{
+export function getNotifiableEventsSince(
+  afterRowid: number,
+  limit = 20,
+): Array<{
   rowid: number;
   channel_jid: string;
   kind: string;

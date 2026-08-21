@@ -9,6 +9,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -147,10 +148,23 @@ export function resolveLatestChannelSessionFile(folder: string): string | undefi
  *   "Cannot continue from message role: assistant"
  * and the session is stuck there until it happens to complete a clean turn.
  *
- * This truncates the file back to the last COMPLETE turn — the last assistant
- * message that produced text and has no pending toolCall — discarding only the
- * aborted turn's partial work. A single rolling backup (`<file>.prerepair.bak`)
- * is kept. Returns true if it changed anything.
+ * Only the *dangling toolCall* tail actually breaks pi. A session ending on a
+ * `toolResult` continues fine — verified by handing an unrepaired 150-event
+ * session straight to `pi --session <file> --continue`, which resumed and
+ * correctly recalled the interrupted work.
+ *
+ * So instead of truncating, we CLOSE the turn: append a synthetic `toolResult`
+ * for every toolCall in the trailing assistant message that never got one. All
+ * history — every thinking block, every tool call — is preserved, which is what
+ * `pi --continue` gives you on the CLI.
+ *
+ * The old behaviour truncated back to the last assistant message with text and
+ * no toolCall. During a tool loop *no* message qualifies, so a single interrupt
+ * discarded the whole loop: one measured case dropped 98 of 150 events and 45
+ * of 66 thinking blocks. Do not reintroduce that.
+ *
+ * A single rolling backup (`<file>.prerepair.bak`) is kept whenever the file is
+ * rewritten. Returns true if it changed anything.
  *
  * Safe to call right before spawning pi: the queue's per-channel serial lock
  * guarantees no pi process is writing this session's file at the same time.
@@ -169,8 +183,8 @@ export function repairSessionForContinue(folder: string): boolean {
   const rawLines = text.split('\n');
   interface Row {
     raw: string;
+    ev: any;
     isMessage: boolean;
-    complete: boolean; // assistant final reply: has text, no pending toolCall
   }
   const rows: Row[] = [];
   for (const raw of rawLines) {
@@ -179,22 +193,10 @@ export function repairSessionForContinue(folder: string): boolean {
     try {
       ev = JSON.parse(raw);
     } catch {
-      rows.push({ raw, isMessage: false, complete: false });
+      rows.push({ raw, ev: undefined, isMessage: false });
       continue;
     }
-    if (ev?.type === 'message') {
-      const content = ev.message?.content;
-      const parts = Array.isArray(content)
-        ? content.map((p: any) => p?.type)
-        : [];
-      const complete =
-        ev.message?.role === 'assistant' &&
-        parts.includes('text') &&
-        !parts.includes('toolCall');
-      rows.push({ raw, isMessage: true, complete });
-    } else {
-      rows.push({ raw, isMessage: false, complete: false });
-    }
+    rows.push({ raw, ev, isMessage: ev?.type === 'message' });
   }
 
   const lastMessageIdx = (() => {
@@ -203,35 +205,68 @@ export function repairSessionForContinue(folder: string): boolean {
   })();
   if (lastMessageIdx === -1) return false; // no conversation yet — nothing to fix
 
-  // Already ends on a completed assistant reply → continuable, leave it alone.
-  if (rows[lastMessageIdx].complete) return false;
-
-  const lastComplete = (() => {
-    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i].complete) return i;
-    return -1;
-  })();
-
-  // Keep everything up to and including the last complete reply. If there is no
-  // complete reply at all, keep only the leading non-message preamble (session
-  // header, model_change) so the session is valid but empty.
-  let keepUpto: number;
-  if (lastComplete >= 0) {
-    keepUpto = lastComplete;
-  } else {
-    keepUpto = -1;
-    for (let i = 0; i < rows.length; i += 1) {
-      if (rows[i].isMessage) break;
-      keepUpto = i;
-    }
+  const last = rows[lastMessageIdx].ev;
+  if (last?.message?.role !== 'assistant') {
+    // Ends on user/toolResult/etc. pi continues from these, so keep every event.
+    return false;
   }
+
+  // Which toolCalls in the trailing assistant message never received a result?
+  const satisfied = new Set<string>();
+  for (const r of rows) {
+    if (!r.isMessage) continue;
+    const id = r.ev?.message?.toolCallId;
+    if (r.ev?.message?.role === 'toolResult' && typeof id === 'string') satisfied.add(id);
+  }
+  // pi writes the call as {type:'toolCall', id, name, arguments}. Read the id and
+  // name defensively so a shape change degrades to "leave the file alone" rather
+  // than to the old destructive truncation.
+  const callId = (c: any): string | undefined =>
+    typeof c?.id === 'string' ? c.id : typeof c?.toolCall?.id === 'string' ? c.toolCall.id : undefined;
+  const callName = (c: any): string =>
+    (typeof c?.name === 'string' ? c.name : c?.toolCall?.name) ?? 'unknown';
+
+  const dangling = (Array.isArray(last.message?.content) ? last.message.content : []).filter(
+    (c: any) => c?.type === 'toolCall' && callId(c) !== undefined && !satisfied.has(callId(c)!),
+  );
+
+  if (dangling.length === 0) {
+    // A plain assistant message with no pending call — already continuable.
+    return false;
+  }
+
+  const stamp = new Date().toISOString();
+  let parentId: string = typeof last.id === 'string' ? last.id : '';
+  const synthetic = dangling.map((call: any) => {
+    const id = randomBytes(4).toString('hex');
+    const row = JSON.stringify({
+      type: 'message',
+      id,
+      parentId: parentId || null,
+      timestamp: stamp,
+      message: {
+        role: 'toolResult',
+        toolCallId: callId(call),
+        toolName: callName(call),
+        content: [
+          {
+            type: 'text',
+            text: '[interrupted] The run was stopped before this tool returned. No result is available; re-run the tool if you still need it.',
+          },
+        ],
+      },
+    });
+    parentId = id;
+    return row;
+  });
 
   try {
     copyFileSync(file, `${file}.prerepair.bak`);
-    const kept = rows.slice(0, keepUpto + 1).map((r) => r.raw);
-    writeFileSync(file, kept.length ? kept.join('\n') + '\n' : '');
+    const kept = rows.map((r) => r.raw).concat(synthetic);
+    writeFileSync(file, kept.join('\n') + '\n');
     logger.warn(
-      { folder, file: basename(file), droppedMessages: lastMessageIdx - keepUpto },
-      'Repaired interrupted session so pi can continue',
+      { folder, file: basename(file), closedToolCalls: synthetic.length },
+      'Closed interrupted tool calls so pi can continue (history preserved)',
     );
     return true;
   } catch (err: any) {

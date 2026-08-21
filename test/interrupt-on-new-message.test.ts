@@ -107,6 +107,94 @@ describe('interrupt on new message', () => {
     }
   });
 
+  it('queues a scheduled prompt without interrupting an in-flight user turn', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-scheduler-interrupt-'));
+    tempDirs.push(tempDir);
+    process.env.DB_PATH = ':memory:';
+    process.env.SESSIONS_DIR = resolve(tempDir, 'sessions');
+    process.env.POLL_INTERVAL_MS = '1';
+    process.env.MAX_CONCURRENCY = '1';
+    process.env.INTERRUPT_ON_NEW_MESSAGE = 'true';
+    process.env.RPC_STEER = 'false';
+
+    let firstAborted = false;
+    let releaseFirst: () => void = () => {};
+    invokeAgentMock.mockImplementationOnce(
+      (_folder: string, _prompt: string, opts: any) =>
+        new Promise((resolveRun) => {
+          opts.signal.addEventListener('abort', () => {
+            firstAborted = true;
+          });
+          releaseFirst = () => resolveRun({ ok: true, text: 'first reply' });
+        }),
+    );
+    invokeAgentMock.mockResolvedValue({ ok: true, text: 'scheduled reply' });
+
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    const queue = await import('../src/agent/queue.js');
+    const transport = await import('../src/transport/index.js');
+    transport.setTransport({
+      sendResponse: vi.fn().mockResolvedValue(true),
+      sendFilesResponse: vi.fn().mockResolvedValue(true),
+      setTyping: vi.fn().mockResolvedValue(undefined),
+      clearTyping: vi.fn().mockResolvedValue(undefined),
+      createEventStreamer: () => vi.fn().mockResolvedValue(undefined),
+    });
+    db.initDb();
+
+    try {
+      db.registerChannel({
+        jid: 'web:cron',
+        name: 'cron test',
+        folder: 'web_cron',
+        requiresTrigger: false,
+        isMain: false,
+        modelOverride: '',
+        thinkingOverride: '',
+        cwdOverride: '',
+      });
+      db.enqueueMessage({
+        channelJid: 'web:cron',
+        sender: 'web',
+        senderName: 'web',
+        content: 'long user turn',
+        timestamp: new Date().toISOString(),
+      });
+      queue.startProcessingLoop();
+      await vi.waitFor(() => expect(invokeAgentMock).toHaveBeenCalledTimes(1), {
+        timeout: 2000,
+        interval: 5,
+      });
+
+      db.enqueueScheduledTask(
+        999,
+        {
+          channelJid: 'web:cron',
+          sender: 'scheduler',
+          senderName: 'Scheduler',
+          content: 'scheduled prompt',
+          timestamp: new Date().toISOString(),
+        },
+        new Date().toISOString(),
+        null,
+      );
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      expect(firstAborted).toBe(false);
+      expect(invokeAgentMock).toHaveBeenCalledTimes(1);
+
+      releaseFirst();
+      await vi.waitFor(() => expect(invokeAgentMock).toHaveBeenCalledTimes(2), {
+        timeout: 2000,
+        interval: 5,
+      });
+    } finally {
+      await queue.stopProcessingLoop({ timeoutMs: 1000 });
+      db.closeDb();
+    }
+  });
+
   it('does not interrupt when INTERRUPT_ON_NEW_MESSAGE is off (message queues)', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'piweb-interrupt-'));
     tempDirs.push(tempDir);

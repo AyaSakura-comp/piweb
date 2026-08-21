@@ -1,5 +1,26 @@
 const DEFAULT_LONG_PRESS_MS = 550;
 const DEFAULT_MOVE_TOLERANCE_PX = 10;
+const DEFAULT_BOTTOM_THRESHOLD_PX = 16;
+
+/** Whether the reader is close enough to the tail to keep following live output. */
+export function isTranscriptNearBottom(scroller, threshold = DEFAULT_BOTTOM_THRESHOLD_PX) {
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < threshold;
+}
+
+/**
+ * Preserve the reader's intent after transcript content changes: follow only
+ * when they were already at the tail, otherwise expose the opt-in jump button.
+ */
+export function settleTranscriptUpdate(scroller, jumpButton, wasNearBottom, behavior = 'auto') {
+  jumpButton.classList.toggle('visible', !wasNearBottom);
+  if (wasNearBottom) scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+}
+
+/** Return to the live tail without making later output force-scroll a reader who leaves it again. */
+export function jumpToLatest(scroller, jumpButton) {
+  jumpButton.classList.toggle('visible', false);
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+}
 
 /**
  * Bind a pointer-based long press without mistaking a vertical drawer scroll

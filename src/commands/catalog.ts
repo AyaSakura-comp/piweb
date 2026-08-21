@@ -49,4 +49,10 @@ export const COMMANDS: CommandSpec[] = [
   },
   { name: 'gpt-usage', description: 'Show ChatGPT/Codex rate-limit usage' },
   { name: 'agy-usage', description: 'Show Antigravity (Gemini) quota usage' },
+  {
+    name: 'task cron',
+    description: 'Schedule a recurring agent prompt: name | cron | prompt',
+    arg: { name: 'text', kind: 'text', required: true },
+  },
+  { name: 'task list', description: 'List scheduled prompts for this session' },
 ];

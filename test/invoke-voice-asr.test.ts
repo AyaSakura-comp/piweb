@@ -38,6 +38,113 @@ afterEach(() => {
   }
 });
 
+describe('invokeAgent channel context', () => {
+  it('exposes the piweb channel identity to the spawned agent', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-invoke-channel-'));
+    tempDirs.push(tempDir);
+    process.env.SESSIONS_DIR = join(tempDir, 'sessions');
+    process.env.PI_BIN = 'pi';
+
+    spawnMock.mockImplementation(() => {
+      const proc = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      proc.stdout = new PassThrough();
+      proc.stderr = new PassThrough();
+      proc.kill = vi.fn();
+      setImmediate(() => {
+        proc.stdout.emit(
+          'data',
+          Buffer.from(
+            JSON.stringify({ type: 'message_start', message: { role: 'assistant' } }) +
+              '\n' +
+              JSON.stringify({
+                type: 'message_end',
+                message: { content: [{ type: 'text', text: 'ok' }] },
+              }) +
+              '\n',
+          ),
+        );
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const { invokeAgent } = await import('../src/agent/invoke.js');
+    await invokeAgent('web_abc123', 'hello', { channelJid: 'web:abc123' });
+
+    const spawnOptions = spawnMock.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv };
+    expect(spawnOptions.env.PIWEB_CHANNEL_JID).toBe('web:abc123');
+    expect(spawnOptions.env.PIWEB_CHANNEL_FOLDER).toBe('web_abc123');
+  });
+});
+
+describe('invokeAgent attachment integration', () => {
+  it('passes binary video attachments by path without inlining or inviting read', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-invoke-video-'));
+    tempDirs.push(tempDir);
+    process.env.SESSIONS_DIR = join(tempDir, 'sessions');
+    process.env.PI_BIN = 'pi';
+    process.env.VOICE_ASR_ENABLED = 'false';
+
+    const videoPath = join(tempDir, 'clip.mov');
+    writeFileSync(videoPath, Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70]));
+    downloadAttachmentsMock.mockResolvedValue([
+      { filePath: videoPath, originalName: 'clip.mov', size: 8 },
+    ]);
+
+    spawnMock.mockImplementation(() => {
+      const proc = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      proc.stdout = new PassThrough();
+      proc.stderr = new PassThrough();
+      proc.kill = vi.fn();
+      setImmediate(() => {
+        proc.stdout.emit(
+          'data',
+          Buffer.from(
+            JSON.stringify({ type: 'message_start', message: { role: 'assistant' } }) +
+              '\n' +
+              JSON.stringify({
+                type: 'message_end',
+                message: { content: [{ type: 'text', text: 'ok' }] },
+              }) +
+              '\n',
+          ),
+        );
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const { invokeAgent } = await import('../src/agent/invoke.js');
+    const result = await invokeAgent('web_video', '[Web user: Aya]\ninspect this video', {
+      attachments: JSON.stringify([
+        {
+          url: `file://${videoPath}`,
+          name: 'clip.mov',
+          contentType: 'video/quicktime',
+          size: 8,
+        },
+      ]),
+    });
+
+    expect(result).toEqual({ ok: true, text: 'ok' });
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    const prompt = args[args.indexOf('-p') + 1];
+    expect(prompt).toContain(`[Binary attachment: ${videoPath}]`);
+    expect(prompt).toContain('Do not use the read tool on this binary file;');
+    expect(prompt).toContain('Use bash with ffprobe/ffmpeg');
+    expect(prompt).not.toContain(`<file name="${videoPath}"></file>`);
+    expect(args).not.toContain(`@${videoPath}`);
+  });
+});
+
 describe('invokeAgent voice ASR integration', () => {
   it('transcribes downloaded Discord voice attachments before prompting pi', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pidg-invoke-voice-'));
@@ -55,7 +162,9 @@ describe('invokeAgent voice ASR integration', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ text: '這是語音轉文字內容' }), { status: 200 })),
+      vi.fn(
+        async () => new Response(JSON.stringify({ text: '這是語音轉文字內容' }), { status: 200 }),
+      ),
     );
 
     spawnMock.mockImplementation(() => {
@@ -86,16 +195,20 @@ describe('invokeAgent voice ASR integration', () => {
     });
 
     const { invokeAgent } = await import('../src/agent/invoke.js');
-    const result = await invokeAgent('ch_voice', '[Discord user: Aya]\n[Attachment-only message: 1 file attached.]', {
-      attachments: JSON.stringify([
-        {
-          url: 'https://discord.example/voice-message.ogg',
-          name: 'voice-message.ogg',
-          contentType: 'audio/ogg',
-          size: 1234,
-        },
-      ]),
-    });
+    const result = await invokeAgent(
+      'ch_voice',
+      '[Discord user: Aya]\n[Attachment-only message: 1 file attached.]',
+      {
+        attachments: JSON.stringify([
+          {
+            url: 'https://discord.example/voice-message.ogg',
+            name: 'voice-message.ogg',
+            contentType: 'audio/ogg',
+            size: 1234,
+          },
+        ]),
+      },
+    );
 
     expect(result).toEqual({ ok: true, text: 'ok' });
     const args = spawnMock.mock.calls[0]?.[1] as string[];

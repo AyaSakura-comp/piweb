@@ -10,6 +10,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
   channelsWithPending,
+  channelsWithInterruptingPending,
   claimNextMessage,
   clearPendingMessages,
   markMessageAborted,
@@ -154,7 +155,7 @@ function clearPollTimer(): void {
  */
 function interruptSupersededRuns(): void {
   if (!config.interruptOnNewMessage) return;
-  for (const jid of channelsWithPending()) {
+  for (const jid of channelsWithInterruptingPending()) {
     if (!activeChannels.has(jid)) continue;
 
     // Persistent RPC prompts do not observe the queue's AbortController. Abort
@@ -334,11 +335,13 @@ async function processMessage(
         })
       : useRpc
       ? await getRpcSession(channel.folder, {
+          channelJid: channel.jid,
           model: effective.rawModelRef || undefined,
           thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
           cwd: effective.effectiveCwd,
         }).prompt(prompt, onEvent)
       : await invokeAgent(channel.folder, prompt, {
+          channelJid: channel.jid,
           model: effective.rawModelRef || undefined,
           thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
           cwd: effective.effectiveCwd,

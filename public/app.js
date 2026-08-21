@@ -13,7 +13,13 @@
 import { renderRich } from './markdown.js';
 import { createVideoAttachment } from './media-files.js';
 import { bindCodeCopy } from './message-copy.js';
-import { bindLongPress, setDrawerCollapsed } from './session-ui.js';
+import {
+  bindLongPress,
+  isTranscriptNearBottom,
+  jumpToLatest,
+  setDrawerCollapsed,
+  settleTranscriptUpdate,
+} from './session-ui.js';
 import {
   hideUploadProgress,
   sendJsonWithUploadProgress,
@@ -565,11 +571,11 @@ async function selectSession(jid, opts = {}) {
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
-  // Same for a half-written reply from the session being left.
-  renderPartial('');
   // The gallery belongs to the session that was open; switching must not leave
   // the previous session's media on screen.
   closeMediaSheet();
+  // Same for a half-written reply from the session being left.
+  renderPartial('');
 
   // Only the newest page; older history is pulled in as the user scrolls up.
   const { events, busy, hasMore, partial } = await api(
@@ -696,16 +702,22 @@ $('messages').addEventListener(
     const m = $('messages');
     if (m.scrollTop < 300) loadOlder();
     if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
+    // Show/hide the FAB when streaming and user scrolls away from / back to bottom
+    if (state.atLive) setJumpLive(!isNearBottom());
   },
   { passive: true },
 );
 
 function setJumpLive(show) {
-  $('jump-live').hidden = !show;
+  $('jump-live').classList.toggle('visible', !!show);
 }
 
 $('jump-live').addEventListener('click', () => {
-  if (state.activeJid) selectSession(state.activeJid);
+  if (!state.atLive && state.activeJid) {
+    selectSession(state.activeJid);
+    return;
+  }
+  jumpToLatest($('messages'), $('jump-live'));
 });
 
 // ── search ───────────────────────────────────────────────────────────────
@@ -1175,6 +1187,7 @@ $('model-search').addEventListener('input', () => {
 });
 
 $('model-search').addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Escape') {
     e.preventDefault();
     if ($('model-search').value) {
@@ -1369,6 +1382,9 @@ $('session-name').addEventListener('keydown', (e) => {
   }
 });
 $('session-name-input').addEventListener('keydown', (e) => {
+  // Same IME rule as the composer: Enter/Escape belong to the input method
+  // while a composition is in flight, not to the rename.
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter') {
     e.preventDefault();
     commitRename(true);
@@ -1529,9 +1545,9 @@ const EVENT_LABELS = {
 function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
-  const stick = isNearBottom();
+  const followLatest = isNearBottom();
   messages.append(buildEventNode(event));
-  if (live && stick) scrollToBottom();
+  if (live) settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'smooth');
 }
 
 /** Build the DOM for one event. Shared by live append and paged prepend. */
@@ -1610,14 +1626,20 @@ function growInto(target, text, seen) {
   return text;
 }
 
+function removeFinishedPartial(node) {
+  if (!node) return false;
+  node.remove();
+  return true;
+}
+
 function renderPartialThinking(thinking) {
   const host = $('messages');
   let node = document.getElementById('partial-thinking');
 
   if (!thinking) {
-    if (node) node.remove();
+    const removed = removeFinishedPartial(node);
     partialSeenThinking = '';
-    return;
+    return removed;
   }
 
   if (!node) {
@@ -1625,7 +1647,6 @@ function renderPartialThinking(thinking) {
     // thinking_end is not a visible jump.
     node = el('details', 'event thinking partial');
     node.id = 'partial-thinking';
-    node.open = true;
     const summary = el('summary');
     summary.append(el('span', 'label', '💭 Thinking'));
     node.append(summary);
@@ -1635,38 +1656,45 @@ function renderPartialThinking(thinking) {
   }
 
   partialSeenThinking = growInto(node.querySelector('.event-body'), thinking, partialSeenThinking);
-  if (state.atLive) host.scrollTop = host.scrollHeight;
+  return false;
 }
 
 function renderPartial(text, thinking = '') {
-  renderPartialThinking(thinking);
-
   const host = $('messages');
+  const followLatest = isNearBottom();
+  const removedThinking = renderPartialThinking(thinking);
   let node = document.getElementById('partial-msg');
+  let removedAnswer = false;
 
   if (!text) {
-    if (node) node.remove();
+    removedAnswer = removeFinishedPartial(node);
     partialSeenText = '';
-    return;
+  } else {
+    if (!node) {
+      node = el('div', 'msg partial');
+      node.id = 'partial-msg';
+      node.append(el('div', 'avatar pi', 'π'));
+      const body = el('div', 'msg-body');
+      const head = el('div', 'msg-head');
+      head.append(el('span', 'msg-author', 'pi'));
+      head.append(el('span', 'msg-time', ''));
+      body.append(head);
+      body.append(el('div', 'msg-text'));
+      node.append(body);
+      host.append(node);
+      partialSeenText = '';
+    }
+
+    partialSeenText = growInto(node.querySelector('.msg-text'), text, partialSeenText);
   }
 
-  if (!node) {
-    node = el('div', 'msg partial');
-    node.id = 'partial-msg';
-    node.append(el('div', 'avatar pi', 'π'));
-    const body = el('div', 'msg-body');
-    const head = el('div', 'msg-head');
-    head.append(el('span', 'msg-author', 'pi'));
-    head.append(el('span', 'msg-time', ''));
-    body.append(head);
-    body.append(el('div', 'msg-text'));
-    node.append(body);
-    host.append(node);
-    partialSeenText = '';
+  if (state.atLive) {
+    const settle = () => settleTranscriptUpdate(host, $('jump-live'), followLatest);
+    // Safari can report pre-layout geometry immediately after removing a tall
+    // partial, so re-clamp only after that removal has been laid out.
+    if (removedThinking || removedAnswer) requestAnimationFrame(settle);
+    else settle();
   }
-
-  partialSeenText = growInto(node.querySelector('.msg-text'), text, partialSeenText);
-  if (state.atLive) host.scrollTop = host.scrollHeight;
 }
 
 function buildEventNode(event) {
@@ -1718,8 +1746,7 @@ function buildEventNode(event) {
 }
 
 function isNearBottom() {
-  const messages = $('messages');
-  return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 120;
+  return isTranscriptNearBottom($('messages'));
 }
 
 function scrollToBottom(instant) {
@@ -1753,7 +1780,22 @@ input.addEventListener('input', () => {
   updateAutocomplete();
 });
 
+// Safari fires the composition-committing Enter's keydown *after*
+// compositionend, with isComposing already false, so that check alone still
+// sends the half-typed line. Remember when composing ended and ignore an Enter
+// that lands in the same tick-ish window; a human follow-up keypress is far
+// slower than this.
+let compositionEndedAt = 0;
+input.addEventListener('compositionstart', () => { compositionEndedAt = 0; });
+input.addEventListener('compositionend', () => { compositionEndedAt = Date.now(); });
+
 input.addEventListener('keydown', (e) => {
+  // An IME (Chinese, Japanese, …) uses Enter to commit the composition; that
+  // keydown must not send the message or pick an autocomplete row. `isComposing`
+  // is the standard signal, keyCode 229 the fallback browsers that omit it use.
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === 'Enter' && Date.now() - compositionEndedAt < 100) return;
+
   if (state.ac.open) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();

@@ -918,15 +918,27 @@ Consequences that surprise people:
   (`--continue`, context preserved — verified a codeword survives an interrupt),
   with a visible `system`/`interrupt` marker appended via the transport's
   optional `sendNotice`.
-- **Interrupted runs self-heal.** A run killed mid-tool-loop (INTERRUPT_ON_NEW_MESSAGE,
-  OOM, crash) leaves the session ending on an assistant `toolCall`/`toolResult`
-  with no closing reply; pi then refuses the *next* `--continue` with
-  "Cannot continue from message role: assistant" and the session is stuck.
+- **Interrupted runs self-heal, without losing history.** A run killed mid-tool-loop
+  (INTERRUPT_ON_NEW_MESSAGE, OOM, crash) can leave the session ending on an
+  assistant message whose `toolCall` never got a result; pi then refuses the
+  *next* `--continue` with "Cannot continue from message role: assistant".
   `repairSessionForContinue()` (session/path.ts) runs before every spawn and
-  truncates the file back to the last complete assistant reply (text, no pending
-  toolCall), keeping a `.prerepair.bak`. Safe because the per-channel serial lock
-  means no pi is writing the file at spawn time. This keeps INTERRUPT_ON_NEW_MESSAGE
-  usable: interrupt the old run, the new message heals and continues.
+  **appends a synthetic `toolResult`** closing each unanswered call, keeping a
+  `.prerepair.bak`. Every event — thinking blocks included — is preserved, which
+  is what `pi --continue` gives you on the CLI. Safe because the per-channel
+  serial lock means no pi is writing the file at spawn time.
+  - **A session ending on a `toolResult` is left completely alone.** Only the
+    dangling-`toolCall` tail breaks pi. Verified by handing an unrepaired
+    150-event session straight to `pi --session <file> --continue`: it resumed
+    and correctly described the interrupted work.
+  - **Do not reintroduce truncation.** The original version rewound to the last
+    assistant message with text and no toolCall. *During a tool loop no message
+    qualifies*, so one interrupt discarded the entire loop — a measured case lost
+    98 of 150 events and 45 of 66 thinking blocks, which is what "piweb forgets
+    its thinking after a stop" actually was.
+  - The UI's own transcript is separate and unaffected: `web_events` thinking rows
+    are written on `thinking_end` (`transport/web.ts`), so only a block cut off
+    mid-stream is missing there — same as the CLI.
 - **A killed run resumes; it is not lost.** Exit code **143 = SIGTERM**, i.e. pi
   was *killed*, not crashed — a worker restart (deploys!), a shutdown, or an OOM
   kill. Surfacing the raw "pi exited with code 143" reads as a scary failure, and

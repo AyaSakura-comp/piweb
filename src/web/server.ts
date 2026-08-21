@@ -134,16 +134,48 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
 }
 
 /** Serve a file from `root`, refusing anything that escapes it via `..`. */
-function serveStatic(res: ServerResponse, root: string, relPath: string): boolean {
+export function serveStatic(
+  req: IncomingMessage,
+  res: ServerResponse,
+  root: string,
+  relPath: string,
+): boolean {
   const target = join(root, normalize(relPath).replace(/^(\.\.[/\\])+/, ''));
   if (!target.startsWith(root)) return false;
-  if (!existsSync(target) || !statSync(target).isFile()) return false;
+  if (!existsSync(target)) return false;
+  const stat = statSync(target);
+  if (!stat.isFile()) return false;
 
-  res.writeHead(200, {
+  const headers: Record<string, string | number> = {
     'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream',
     'cache-control': root === PUBLIC_DIR ? 'no-cache' : 'public, max-age=31536000',
-  });
-  createReadStream(target).pipe(res);
+    'accept-ranges': 'bytes',
+  };
+  const range = req.headers.range?.match(/^bytes=(\d*)-(\d*)$/);
+  if (range && (range[1] || range[2])) {
+    const suffixLength = range[1] ? undefined : Number(range[2]);
+    const start =
+      suffixLength === undefined ? Number(range[1]) : Math.max(0, stat.size - suffixLength);
+    const requestedEnd = range[2] && range[1] ? Number(range[2]) : stat.size - 1;
+    const end = Math.min(requestedEnd, stat.size - 1);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end) {
+      res.writeHead(416, { ...headers, 'content-range': `bytes */${stat.size}` });
+      res.end();
+      return true;
+    }
+    res.writeHead(206, {
+      ...headers,
+      'content-range': `bytes ${start}-${end}/${stat.size}`,
+      'content-length': end - start + 1,
+    });
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(target, { start, end }).pipe(res);
+    return true;
+  }
+
+  res.writeHead(200, { ...headers, 'content-length': stat.size });
+  if (req.method === 'HEAD') res.end();
+  else createReadStream(target).pipe(res);
   return true;
 }
 
@@ -322,13 +354,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // The login screen is part of the SPA, so the shell itself stays public;
   // every route that touches data is gated below.
   if (method === 'GET' && (path === '/' || path === '/index.html')) {
-    if (serveStatic(res, PUBLIC_DIR, 'index.html')) return;
+    if (serveStatic(req, res, PUBLIC_DIR, 'index.html')) return;
     sendJson(res, 500, { error: 'UI not built' });
     return;
   }
 
   if (method === 'GET' && !path.startsWith('/api/') && !path.startsWith('/media/')) {
-    if (serveStatic(res, PUBLIC_DIR, path)) return;
+    if (serveStatic(req, res, PUBLIC_DIR, path)) return;
   }
 
   // ── everything below requires auth ──
@@ -340,7 +372,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // CSRF gate. Tailscale identity is attached by serve to whatever the browser
   // sends, including requests a hostile page triggers, so authentication alone
   // does not make a mutation safe — the origin has to match too.
-  if (method !== 'GET' && method !== 'HEAD' && !isSameOriginRequest(req.headers, req.headers.host)) {
+  if (
+    method !== 'GET' &&
+    method !== 'HEAD' &&
+    !isSameOriginRequest(req.headers, req.headers.host)
+  ) {
     logger.warn(
       { url: req.url, origin: req.headers.origin, login: whoami(req) },
       'Rejected cross-origin state-changing request',
@@ -350,7 +386,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (method === 'GET' && path.startsWith('/media/')) {
-    if (serveStatic(res, config.webMediaDir, decodeURIComponent(path.slice('/media/'.length)))) {
+    if (
+      serveStatic(req, res, config.webMediaDir, decodeURIComponent(path.slice('/media/'.length)))
+    ) {
       return;
     }
     sendJson(res, 404, { error: 'Not found' });
