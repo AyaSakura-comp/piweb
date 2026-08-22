@@ -263,6 +263,10 @@ function hideSelectionActions(clearSelection = false) {
 
 function showSelectionActions(text, rect) {
   selectedText = text;
+  if (!state.previewingDeleted && text) {
+    state.pendingQuote = text;
+    renderQuotePreview();
+  }
   $('selection-quote').disabled = state.previewingDeleted;
   const actions = $('selection-actions');
   actions.hidden = false;
