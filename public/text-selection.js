@@ -219,6 +219,69 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     onClear();
   }
 
+  function getFilteredLineRects(range) {
+    const raw = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+    if (raw.length <= 1) return raw;
+
+    // Discard any container bounding box that completely wraps multiple smaller line boxes
+    const filtered = [];
+    for (let i = 0; i < raw.length; i++) {
+      const a = raw[i];
+      let isContainer = false;
+      for (let j = 0; j < raw.length; j++) {
+        if (i === j) continue;
+        const b = raw[j];
+        if (a.top <= b.top - 1 && a.bottom >= b.bottom + 1 && a.height > b.height * 1.3) {
+          isContainer = true;
+          break;
+        }
+      }
+      if (!isContainer) filtered.push(a);
+    }
+    return filtered.length > 0 ? filtered : raw;
+  }
+
+  function getHandlePointRect(doc, point, isStart) {
+    if (!point || !point.node) return null;
+    const node = point.node;
+    const offset = point.offset;
+    const docObj = doc || node.ownerDocument || document;
+    if (!docObj.createRange) return null;
+
+    try {
+      const r = docObj.createRange();
+      if (node.nodeType === 3) {
+        const len = node.nodeValue?.length || 0;
+        if (isStart) {
+          if (offset < len) {
+            r.setStart(node, offset);
+            r.setEnd(node, offset + 1);
+          } else if (offset > 0) {
+            r.setStart(node, offset - 1);
+            r.setEnd(node, offset);
+          } else {
+            r.selectNodeContents(node);
+          }
+        } else {
+          if (offset > 0) {
+            r.setStart(node, offset - 1);
+            r.setEnd(node, offset);
+          } else if (offset < len) {
+            r.setStart(node, offset);
+            r.setEnd(node, offset + 1);
+          } else {
+            r.selectNodeContents(node);
+          }
+        }
+        const rect = r.getBoundingClientRect();
+        if (rect.width > 0 || rect.height > 0) return rect;
+      }
+    } catch {}
+
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    return el ? el.getBoundingClientRect() : null;
+  }
+
   function renderHighlightBoxes(rects) {
     if (!boxesContainer) return;
     boxesContainer.innerHTML = '';
@@ -245,19 +308,19 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       highlights.set('piweb-selection', new Highlight(currentRange));
     }
 
-    const rects = currentRange.getClientRects();
-    if (rects.length === 0 || !overlayEl || !startHandle || !endHandle) return;
+    const lineRects = getFilteredLineRects(currentRange);
+    if (lineRects.length === 0 || !overlayEl || !startHandle || !endHandle) return;
 
-    renderHighlightBoxes(rects);
+    renderHighlightBoxes(lineRects);
 
-    const firstRect = rects[0];
-    const lastRect = rects[rects.length - 1];
+    const startRect = getHandlePointRect(document, startPoint, true) || lineRects[0];
+    const endRect = getHandlePointRect(document, endPoint, false) || lineRects[lineRects.length - 1];
 
-    startHandle.style.left = `${firstRect.left}px`;
-    startHandle.style.top = `${firstRect.top}px`;
+    startHandle.style.left = `${startRect.left}px`;
+    startHandle.style.top = `${startRect.top}px`;
 
-    endHandle.style.left = `${lastRect.right}px`;
-    endHandle.style.top = `${lastRect.bottom}px`;
+    endHandle.style.left = `${endRect.right}px`;
+    endHandle.style.top = `${endRect.bottom}px`;
 
     overlayEl.hidden = false;
     overlayEl.classList.add('active');
