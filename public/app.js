@@ -1674,7 +1674,9 @@ function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
   const followLatest = isNearBottom();
-  messages.append(buildEventNode(event));
+  const node = buildEventNode(event);
+  if (live) node.classList.add('pop-in');
+  messages.append(node);
   if (live) settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'smooth');
 }
 
@@ -1775,6 +1777,7 @@ function renderPartialThinking(thinking) {
     // thinking_end is not a visible jump.
     node = el('details', 'event thinking partial');
     node.id = 'partial-thinking';
+    node.classList.add('pop-in');
     const summary = el('summary');
     summary.append(el('span', 'event-chevron', '›'));
     summary.append(el('span', 'label', '💭 Thinking…'));
@@ -1802,7 +1805,7 @@ function renderPartial(text, thinking = '') {
     partialSeenText = '';
   } else {
     if (!node) {
-      node = el('div', 'msg partial');
+      node = el('div', 'msg partial pop-in');
       node.id = 'partial-msg';
       node.append(el('div', 'avatar pi', 'π'));
       const body = el('div', 'msg-body');

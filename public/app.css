@@ -597,6 +597,17 @@ svg {
 
 /* ── streamed events (thinking / tools) ──────────────────────────────── */
 
+@keyframes popInSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .event {
   margin: 4px 14px;
   border-radius: 8px;
@@ -605,6 +616,13 @@ svg {
   border-left: 3px solid var(--border);
   overflow: hidden;
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.event.partial,
+.event.pop-in,
+.msg.pop-in {
+  animation: popInSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .event.thinking {
