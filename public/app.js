@@ -2489,11 +2489,17 @@ function buildFilmstrip() {
     const btn = el('button', 'lb-thumb');
     btn.type = 'button';
     btn.setAttribute('aria-label', `Image ${i + 1}`);
+    btn.dataset.index = String(i);
+
+    // Numbered placeholder card (0 bandwidth upfront)
+    const num = el('span', 'lb-thumb-num', String(i + 1));
+    btn.append(num);
+
     const img = el('img');
-    img.src = url;
-    img.loading = 'lazy';
     img.alt = '';
+    img.onload = () => img.classList.add('loaded');
     btn.append(img);
+
     btn.addEventListener('click', () => {
       const dir = i > lb.index ? 1 : -1;
       lb.index = i;
@@ -2505,10 +2511,26 @@ function buildFilmstrip() {
 
 function syncFilmstrip() {
   const strip = $('lb-strip');
+  const total = lb.urls.length;
+  const curr = lb.index;
+
+  // Background window: current index and +/- 2 neighbors
+  const start = Math.max(0, curr - 2);
+  const end = Math.min(total - 1, curr + 2);
+
   [...strip.children].forEach((btn, i) => {
-    const active = i === lb.index;
+    const active = i === curr;
     btn.classList.toggle('active', active);
     if (active) btn.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+
+    // Only load thumbnail image if within the active +/- 2 window
+    if (i >= start && i <= end) {
+      const img = btn.querySelector('img');
+      const url = lb.urls[i];
+      if (img && !img.src && url) {
+        img.src = url;
+      }
+    }
   });
 }
 
@@ -2552,8 +2574,12 @@ function showLightboxImage(direction = 0) {
   $('lb-next').disabled = lb.index === lb.urls.length - 1;
   syncFilmstrip();
 
-  for (const i of [lb.index - 1, lb.index + 1]) {
-    if (i >= 0 && i < lb.urls.length) new Image().src = lb.urls[i];
+  // Background prefetch window: preload +/- 2 images (lb.index - 2, -1, +1, +2)
+  for (const offset of [-2, -1, 1, 2]) {
+    const targetIdx = lb.index + offset;
+    if (targetIdx >= 0 && targetIdx < lb.urls.length) {
+      new Image().src = lb.urls[targetIdx];
+    }
   }
 }
 
