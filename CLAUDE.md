@@ -171,18 +171,19 @@ origin check.
 | feature | where |
 |---|---|
 | markdown + LaTeX | `public/markdown.js` (`renderRich`), KaTeX in `vendor/` |
+| Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
-| image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, filmstrip, pointer gestures |
+| image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]` |
 | multimedia paste | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents) |
 | thinking & tool physics | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia) |
 | Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
-| session ordering | `activityKey()` + `sessionsForDisplay()` in `public/app.js` (recency) |
+| session ordering & boot default | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default) |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
-| topbar ⋯ overflow menu | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js` |
+| topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
 
 ### Context compaction is pi's, not piweb's

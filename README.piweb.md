@@ -153,8 +153,10 @@ node dist/cli/piweb.js web      # web only
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
   Voice notes and audio files receive automatic Breeze ASR transcription. Lightbox features numbered placeholder thumbnails
   and dynamic +/-2 sliding-window background prefetching.
-- **Mermaid Diagram Rendering**: Markdown code blocks with `mermaid` (`flowchart`, `sequenceDiagram`, `gantt`, `mindmap`, etc.)
-  automatically render into dark-themed, interactive SVG diagrams with fallback handling.
+- **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `sequenceDiagram`, `gantt`, `mindmap`, etc.)
+  automatically render into dark-themed, crisp vector SVG diagrams. Includes two-finger pinch-to-zoom (0.2x–5x), single-finger pan, double-tap zoom toggle, fullscreen zoom modal, and one-click code copying.
+- **Recency-First Session Management**: Session list and initial home page load automatically default to the most recently updated session (`lastActivity DESC`).
+- **iPadOS Window Multitasking Clearance**: Topbar layout incorporates dynamic safe area padding (`padding-left: max(60px, ...)`) to prevent obstruction by iPadOS system multitasking pills (`•••`).
 - **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
   automatically requeue and resume with session context preserved.
 - **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON
