@@ -69,7 +69,79 @@ function renderMath(item) {
   return node;
 }
 
+let mermaidInitDone = false;
+function ensureMermaid() {
+  if (mermaidInitDone || !window.mermaid) return;
+  try {
+    window.mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#2b2d31',
+        primaryColor: '#5865f2',
+        primaryTextColor: '#f2f3f5',
+        primaryBorderColor: '#3f4147',
+        lineColor: '#949ba4',
+        secondaryColor: '#383a40',
+        tertiaryColor: '#1e1f22',
+        fontFamily:
+          "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        fontSize: '14px',
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis',
+      },
+      securityLevel: 'loose',
+      suppressErrorRendering: true,
+    });
+    mermaidInitDone = true;
+  } catch (err) {
+    console.error('Failed to init mermaid', err);
+  }
+}
+
 function renderCode(item) {
+  if (item.lang === 'mermaid' && window.mermaid) {
+    ensureMermaid();
+    const wrap = document.createElement('div');
+    wrap.className = 'mermaid-wrap';
+
+    const chart = document.createElement('div');
+    chart.className = 'mermaid-chart';
+
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'lang-mermaid';
+    code.textContent = item.code;
+    pre.append(code);
+    wrap.append(pre);
+
+    const id = `mm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    window.mermaid
+      .render(id, item.code)
+      .then(({ svg, bindFunctions }) => {
+        chart.innerHTML = svg;
+        if (bindFunctions) {
+          try {
+            bindFunctions(chart);
+          } catch {}
+        }
+        pre.remove();
+        wrap.append(chart);
+      })
+      .catch(() => {
+        const errEl = document.getElementById(id);
+        if (errEl) errEl.remove();
+        const dError = document.getElementById('d' + id);
+        if (dError) dError.remove();
+      });
+
+    return wrap;
+  }
+
   const pre = document.createElement('pre');
   const code = document.createElement('code');
   if (item.lang) code.className = `lang-${item.lang}`;
