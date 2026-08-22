@@ -2483,14 +2483,32 @@ $('lb-download')?.addEventListener('click', async (e) => {
   if (!url) return;
 
   try {
-    showToast('正在下載圖片…');
     const res = await fetch(url);
     const blob = await res.blob();
+    const cleanUrl = url.split('#')[0].split('?')[0];
+    const rawName = cleanUrl.split('/').pop() || 'image';
+    const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+    const filename = rawName.includes('.') ? rawName : `${rawName}.${ext}`;
+    const file = new File([blob], filename, { type: blob.type || 'image/png' });
+
+    // On iOS Safari / Android: Web Share API opens the native share sheet
+    // ("儲存影像", "儲存到檔案", AirDrop, etc.) directly in place without navigating away!
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: filename,
+        });
+        return;
+      } catch (err) {
+        if (err?.name === 'AbortError') return; // User simply closed the share sheet
+      }
+    }
+
+    // Desktop browser fallback: trigger standard download to Downloads folder
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    const cleanUrl = url.split('#')[0].split('?')[0];
-    const filename = cleanUrl.split('/').pop() || `image-${Date.now()}.png`;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
@@ -2501,7 +2519,6 @@ $('lb-download')?.addEventListener('click', async (e) => {
     const a = document.createElement('a');
     a.href = url;
     a.download = url.split('/').pop() || 'image.png';
-    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     a.remove();
