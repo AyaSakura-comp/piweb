@@ -151,7 +151,10 @@ node dist/cli/piweb.js web      # web only
   and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
 - **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
-  Voice notes and audio files receive automatic Breeze ASR transcription.
+  Voice notes and audio files receive automatic Breeze ASR transcription. Lightbox features numbered placeholder thumbnails
+  and dynamic +/-2 sliding-window background prefetching.
+- **Mermaid Diagram Rendering**: Markdown code blocks with `mermaid` (`flowchart`, `sequenceDiagram`, `gantt`, `mindmap`, etc.)
+  automatically render into dark-themed, interactive SVG diagrams with fallback handling.
 - **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
   automatically requeue and resume with session context preserved.
 - **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON

@@ -68,9 +68,10 @@ src/worker/      index.ts  = worker startup (loops + model-catalog + trash sweep
 src/media-path.ts  ONE spelling of a media dir/URL (invariant 9)
 src/cli/piweb.ts   entrypoint: worker | web | all
 public/          index.html, app.css, app.js — no framework, no build step
-                 markdown.js = markdown + KaTeX renderer (DOM nodes only)
+                 markdown.js = markdown + KaTeX + Mermaid renderer (DOM nodes only)
                  sw.js       = service worker (Web Push receive only)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
+                 vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  icons/piweb/  = home-screen icon set; manifest.webmanifest
 scripts/history.py  read-only history query CLI (stdlib only)
 deploy/          piweb-worker.service
