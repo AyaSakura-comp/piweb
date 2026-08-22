@@ -121,18 +121,16 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   let posY = 0;
   let panStartX = 0;
   let panStartY = 0;
+  let pinchCenter = { x: 0, y: 0 };
   let lastTap = 0;
   let lastTapX = 0;
   let lastTapY = 0;
-  let touchMoved = false;
 
   const updateTransform = (animate = false) => {
     chartEl.style.transition = animate ? 'transform 0.2s cubic-bezier(0.2, 0, 0.2, 1)' : 'none';
     chartEl.style.transformOrigin = '0 0';
-    if (scale <= 1.02) {
-      posX = 0;
-      posY = 0;
-      chartEl.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    if (scale === 1 && posX === 0 && posY === 0) {
+      chartEl.style.transform = '';
     } else {
       chartEl.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
     }
@@ -146,13 +144,16 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
         if (e.cancelable) e.preventDefault();
         isPinching = true;
         isPanning = false;
-        touchMoved = true;
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         startScale = scale;
         startX = posX;
         startY = posY;
+        pinchCenter = {
+          x: (t1.clientX + t2.clientX) / 2,
+          y: (t1.clientY + t2.clientY) / 2,
+        };
         return;
       }
 
@@ -160,14 +161,12 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
       if (e.touches.length === 1) {
         const touch = e.touches[0];
         const now = Date.now();
-        touchMoved = false;
 
-        // Double-tap to toggle zoom (1x <-> 2x)
+        // Double-tap to toggle zoom (1x <-> 1.8x)
         if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 35) {
           if (e.cancelable) e.preventDefault();
           lastTap = 0;
-          touchMoved = true;
-          if (scale > 1.1) {
+          if (Math.abs(scale - 1) > 0.15) {
             scale = 1;
             posX = 0;
             posY = 0;
@@ -183,7 +182,7 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
         lastTapX = touch.clientX;
         lastTapY = touch.clientY;
 
-        if (scale > 1.05) {
+        if (Math.abs(scale - 1) > 0.05) {
           isPanning = true;
           panStartX = touch.clientX - posX;
           panStartY = touch.clientY - posY;
@@ -199,20 +198,23 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
       // Two-finger pinch
       if (isPinching && e.touches.length === 2) {
         if (e.cancelable) e.preventDefault();
-        touchMoved = true;
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         const ratio = dist / (initialDist || 1);
-        scale = Math.min(4, Math.max(0.6, startScale * ratio));
+        scale = Math.min(5, Math.max(0.2, startScale * ratio));
+
+        const cx = (t1.clientX + t2.clientX) / 2;
+        const cy = (t1.clientY + t2.clientY) / 2;
+        posX = startX + (cx - pinchCenter.x);
+        posY = startY + (cy - pinchCenter.y);
         updateTransform(false);
         return;
       }
 
-      // Single finger panning when zoomed in
+      // Single finger panning when scaled
       if (isPanning && e.touches.length === 1) {
         if (e.cancelable) e.preventDefault();
-        touchMoved = true;
         const touch = e.touches[0];
         posX = touch.clientX - panStartX;
         posY = touch.clientY - panStartY;
@@ -225,10 +227,11 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   const endGesture = () => {
     isPinching = false;
     isPanning = false;
-    if (scale < 0.95) {
-      scale = 1;
-      posX = 0;
-      posY = 0;
+    if (scale < 0.2) {
+      scale = 0.2;
+      updateTransform(true);
+    } else if (scale > 5) {
+      scale = 5;
       updateTransform(true);
     }
   };
@@ -409,10 +412,11 @@ function openMermaidModal(svgHtml) {
     const endTouch = () => {
       isPinching = false;
       isPanning = false;
-      if (scale < 0.8) {
-        scale = 1;
-        x = 0;
-        y = 0;
+      if (scale < 0.2) {
+        scale = 0.2;
+        updateTransform(true);
+      } else if (scale > 6) {
+        scale = 6;
         updateTransform(true);
       }
     };

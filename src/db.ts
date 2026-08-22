@@ -920,7 +920,7 @@ export function listWebSessions(): Array<{
          from channels c
          left join channel_state s on s.channel_jid = c.jid
         where c.jid like 'web:%' and c.deleted_at is null
-        order by c.created_at`,
+        order by coalesce((select max(created_at) from web_events e where e.channel_jid = c.jid), c.created_at) desc, c.created_at desc`,
     )
     .all() as any[];
 

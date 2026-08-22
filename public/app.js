@@ -639,7 +639,10 @@ function renderSessions(force = false) {
         closeStream();
       }
       await loadSessions();
-      if (!state.activeJid && state.sessions.length > 0) selectSession(state.sessions[0].jid);
+      if (!state.activeJid) {
+        const nextTarget = sessionsForDisplay()[0]?.jid;
+        if (nextTarget) selectSession(nextTarget);
+      }
     });
     item.append(del);
 
@@ -3124,7 +3127,8 @@ async function boot() {
 
   // A notification tap can hand us a session to open.
   const wanted = new URLSearchParams(location.search).get('session');
-  const target = wanted && state.sessions.some((s) => s.jid === wanted) ? wanted : state.sessions[0]?.jid;
+  const sorted = sessionsForDisplay();
+  const target = wanted && state.sessions.some((s) => s.jid === wanted) ? wanted : sorted[0]?.jid;
   if (target) selectSession(target);
 }
 
