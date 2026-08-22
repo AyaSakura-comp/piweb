@@ -14,6 +14,11 @@ import { renderRich } from './markdown.js';
 import { createVideoAttachment } from './media-files.js';
 import { bindCodeCopy } from './message-copy.js';
 import {
+  bindCustomSelection,
+  quotePreview,
+  selectedTranscriptText,
+} from './text-selection.js';
+import {
   bindLongPress,
   isTranscriptNearBottom,
   jumpToLatest,
@@ -34,6 +39,7 @@ const state = {
   cursor: 0,
   source: null,
   attachments: [],
+  pendingQuote: '',
   uploading: false,
   commands: [],
   models: [],
@@ -239,6 +245,116 @@ document.addEventListener('click', async (e) => {
     label: 'Open',
     run: () => window.open(url, '_blank', 'noopener'),
   });
+});
+
+// ── transcript selection actions ─────────────────────────────────────────
+
+let selectedText = '';
+let selectionFrame = 0;
+let clearCustomSelection = () => {};
+
+function hideSelectionActions(clearSelection = false) {
+  $('selection-actions').hidden = true;
+  if (clearSelection) {
+    window.getSelection()?.removeAllRanges();
+    clearCustomSelection();
+  }
+}
+
+function showSelectionActions(text, rect) {
+  selectedText = text;
+  $('selection-quote').disabled = state.previewingDeleted;
+  const actions = $('selection-actions');
+  actions.hidden = false;
+
+  const toolbarWidth = actions.offsetWidth || 150;
+  const toolbarHeight = actions.offsetHeight || 42;
+  const composer = $('composer-wrap');
+  const composerTop = composer ? composer.getBoundingClientRect().top : window.innerHeight - 70;
+
+  // Center horizontally over selection, clamped within margins
+  const left = Math.min(
+    window.innerWidth - toolbarWidth / 2 - 12,
+    Math.max(toolbarWidth / 2 + 12, rect.left + rect.width / 2)
+  );
+
+  // Position directly BELOW the selection box
+  let top = rect.bottom + 12;
+
+  // If placing below overflows past the composer/screen bottom, flip directly above
+  if (top + toolbarHeight > composerTop - 8) {
+    top = Math.max(8, rect.top - toolbarHeight - 12);
+  }
+
+  actions.style.left = `${left}px`;
+  actions.style.top = `${top}px`;
+  actions.style.bottom = 'auto';
+}
+
+function syncSelectionActions() {
+  selectionFrame = 0;
+  const selection = window.getSelection();
+  const text = selectedTranscriptText(selection, $('messages'));
+  if (!text) {
+    hideSelectionActions();
+    return;
+  }
+  showSelectionActions(text, selection.getRangeAt(0).getBoundingClientRect());
+}
+
+document.addEventListener('selectionchange', () => {
+  cancelAnimationFrame(selectionFrame);
+  selectionFrame = requestAnimationFrame(syncSelectionActions);
+});
+
+$('messages')?.addEventListener('scroll', () => {
+  if (!$('selection-actions').hidden) {
+    cancelAnimationFrame(selectionFrame);
+    selectionFrame = requestAnimationFrame(syncSelectionActions);
+  }
+}, { passive: true });
+
+$('messages')?.addEventListener('contextmenu', (event) => {
+  if (event.target.closest('.msg-text, .event-body')) {
+    event.preventDefault();
+  }
+});
+
+clearCustomSelection = bindCustomSelection($('messages'), $('custom-selection-overlay'), {
+  onSelection: showSelectionActions,
+  onClear: () => hideSelectionActions(),
+});
+
+// Keep the native drag handles and selection alive until the chosen action's
+// click fires. Without this, iOS collapses the range on pointer-down.
+$('selection-actions').addEventListener('pointerdown', (event) => event.preventDefault());
+
+$('selection-copy').addEventListener('click', async () => {
+  const copied = selectedText ? await copyText(selectedText) : false;
+  hideSelectionActions(true);
+  showToast(copied ? '已複製選取文字' : '無法複製文字');
+});
+
+$('selection-quote').addEventListener('click', () => {
+  if (!selectedText) return;
+  state.pendingQuote = selectedText;
+  renderQuotePreview();
+  hideSelectionActions(true);
+  $('input').focus();
+});
+
+function renderQuotePreview() {
+  const preview = $('quote-preview');
+  preview.hidden = !state.pendingQuote;
+  $('quote-preview-text').textContent = state.pendingQuote
+    ? `「${quotePreview(state.pendingQuote)}」`
+    : '';
+}
+
+$('quote-preview-remove').addEventListener('click', () => {
+  state.pendingQuote = '';
+  renderQuotePreview();
+  $('input').focus();
 });
 
 // ── push notifications ───────────────────────────────────────────────────
@@ -555,6 +671,8 @@ async function selectSession(jid, opts = {}) {
   commitRename(false);
   $('session-name').textContent = opts.name || (session ? session.name : jid);
   $('messages').textContent = '';
+  state.pendingQuote = '';
+  renderQuotePreview();
   renderSessions();
 
   // A trashed session is previewable but frozen: hide the composer so there is
@@ -1830,6 +1948,54 @@ function isTouch() {
 
 $('btn-attach').addEventListener('click', () => $('file-input').click());
 
+$('btn-paste')?.addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read();
+        const imageFiles = [];
+        for (const item of items) {
+          const imageType = item.types.find((t) => t.startsWith('image/'));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            const ext = imageType.split('/')[1] || 'png';
+            imageFiles.push(new File([blob], `pasted-${Date.now()}.${ext}`, { type: imageType }));
+          }
+        }
+        if (imageFiles.length > 0) {
+          addFiles(imageFiles);
+          showToast('已貼上圖片附件');
+          return;
+        }
+      } catch {
+        // Fallback to readText if read() is not permitted for images
+      }
+    }
+
+    if (navigator.clipboard?.readText) {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? input.value.length;
+        const before = input.value.slice(0, start);
+        const after = input.value.slice(end);
+        input.value = before + text + after;
+        input.selectionStart = input.selectionEnd = start + text.length;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+        autoGrow();
+        showToast('已貼上文字');
+      } else {
+        showToast('剪貼簿中沒有文字內容');
+      }
+    } else {
+      showToast('此瀏覽器不支援讀取剪貼簿');
+    }
+  } catch (err) {
+    showToast('無法存取剪貼簿（請確認瀏覽器授權）');
+  }
+});
+
 // Pasting an image (screenshot, copied photo) drops it in with a preview.
 $('input').addEventListener('paste', (e) => {
   const items = [...(e.clipboardData?.items ?? [])];
@@ -1922,10 +2088,12 @@ $('composer').addEventListener('submit', async (e) => {
   }
 
   const text = input.value.trim();
-  if (!text && state.attachments.length === 0) return;
+  const quote = state.pendingQuote;
+  if (!text && !quote && state.attachments.length === 0) return;
 
-  // A slash line is a command, not a prompt.
-  if (text.startsWith('/') && state.attachments.length === 0) {
+  // A slash line is a command, not a prompt. A quoted selection always makes
+  // the turn a normal prompt, even when the reply itself begins with a slash.
+  if (!quote && text.startsWith('/') && state.attachments.length === 0) {
     const sent = await trySendCommand(text);
     if (sent) {
       input.value = '';
@@ -1948,6 +2116,8 @@ $('composer').addEventListener('submit', async (e) => {
     }
 
     input.value = '';
+    state.pendingQuote = '';
+    renderQuotePreview();
     for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
     state.attachments = [];
     renderAttachments();
@@ -1955,7 +2125,7 @@ $('composer').addEventListener('submit', async (e) => {
     hideAutocomplete();
 
     const path = `/api/sessions/${encodeURIComponent(state.activeJid)}/messages`;
-    const payload = { text, attachments };
+    const payload = { text, quote, attachments };
     if (hasAttachments) {
       await sendJsonWithUploadProgress(path, payload, {
         onProgress: (percent) => showUploadProgress(uploadProgress, percent),
