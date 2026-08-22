@@ -1776,9 +1776,12 @@ function renderPartialThinking(thinking) {
     node = el('details', 'event thinking partial');
     node.id = 'partial-thinking';
     const summary = el('summary');
-    summary.append(el('span', 'label', '💭 Thinking'));
+    summary.append(el('span', 'event-chevron', '›'));
+    summary.append(el('span', 'label', '💭 Thinking…'));
     node.append(summary);
-    node.append(el('div', 'event-body'));
+    const bodyWrap = el('div', 'event-body-wrap');
+    bodyWrap.append(el('div', 'event-body'));
+    node.append(bodyWrap);
     host.append(node);
     partialSeenThinking = '';
   }
@@ -1854,6 +1857,7 @@ function buildEventNode(event) {
     details.open = openByDefault;
 
     const summary = el('summary');
+    summary.append(el('span', 'event-chevron', '›'));
     summary.append(el('span', 'label', `${icon} ${event.role || label}`));
     // A peek would just repeat the body verbatim when it is already expanded.
     if (!openByDefault) {
@@ -1866,9 +1870,11 @@ function buildEventNode(event) {
     }
     details.append(summary);
 
+    const bodyWrap = el('div', 'event-body-wrap');
     const bodyNode = el('div', 'event-body');
     renderText(bodyNode, event.content);
-    details.append(bodyNode);
+    bodyWrap.append(bodyNode);
+    details.append(bodyWrap);
     return details;
   }
 }

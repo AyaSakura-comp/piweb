@@ -77,7 +77,7 @@ describe('intermediate assistant text', () => {
       })),
     ).toEqual([
       { kind: 'thinking', content: 'Now let me generate the song:' },
-      { kind: 'tool', content: '{"command":"generate-song"}' },
+      { kind: 'tool', content: '$ generate-song' },
     ]);
   });
 });

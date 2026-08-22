@@ -30,6 +30,24 @@ function truncate(s: string, cap: number): string {
 function summarizeToolArgs(args: unknown): string {
   if (args == null) return '';
   if (typeof args === 'string') return args.replace(/\s+/g, ' ').slice(0, 300);
+  if (typeof args === 'object' && args !== null) {
+    const obj = args as Record<string, any>;
+    if (typeof obj.command === 'string' && obj.command.trim()) {
+      return `$ ${obj.command.trim()}`;
+    }
+    if (typeof obj.CommandLine === 'string' && obj.CommandLine.trim()) {
+      return `$ ${obj.CommandLine.trim()}`;
+    }
+    if (typeof obj.AbsolutePath === 'string' && obj.AbsolutePath.trim()) {
+      return obj.AbsolutePath.trim();
+    }
+    if (typeof obj.TargetFile === 'string' && obj.TargetFile.trim()) {
+      return obj.TargetFile.trim();
+    }
+    if (typeof obj.query === 'string' && obj.query.trim()) {
+      return `"${obj.query.trim()}"`;
+    }
+  }
   try {
     const s = JSON.stringify(args);
     return s.length > 300 ? s.slice(0, 297) + '...' : s;
