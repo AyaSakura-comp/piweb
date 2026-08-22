@@ -748,8 +748,8 @@ svg {
 }
 
 ::highlight(piweb-selection) {
-  color: #ffffff;
-  background: rgb(88 101 242 / 0.6);
+  color: inherit;
+  background-color: rgba(99, 102, 241, 0.28);
 }
 
 .custom-selection-overlay {
@@ -784,29 +784,18 @@ svg {
 
 .sel-highlight-rect {
   position: fixed;
-  background: rgba(88, 101, 242, 0.45);
-  border-bottom: 2px solid var(--accent);
-  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.25);
+  border-radius: 4px;
   pointer-events: none;
-  box-shadow: 0 0 10px rgba(88, 101, 242, 0.35);
-  animation: highlightGlow 0.15s ease-out;
+  box-shadow: none;
 }
 
-@keyframes highlightGlow {
-  0% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
-  }
-}
+/* ── iOS-style sleek teardrop selection handles ────────────────────────── */
 
 .sel-handle {
   position: fixed;
-  width: 38px;
-  height: 38px;
-  margin-left: -19px;
-  margin-top: -19px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -814,68 +803,93 @@ svg {
   touch-action: none;
   z-index: 36;
   pointer-events: auto;
-  animation: handleSpring 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.sel-handle-pin {
-  width: 14px;
-  height: 14px;
+.sel-handle-line {
+  position: absolute;
+  width: 2.5px;
+  height: 100%;
+  max-height: 20px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.5);
+}
+
+.sel-handle-pin,
+.sel-handle-knob {
+  position: absolute;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2.5px solid #ffffff;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.55);
-  transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.sel-handle:active .sel-handle-pin,
-.sel-handle.dragging .sel-handle-pin {
-  transform: scale(1.4);
-  background: #7983f5;
-  box-shadow: 0 0 14px var(--accent);
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s ease;
 }
 
 .sel-handle-start {
-  transform: translateY(-8px);
+  margin-left: -22px;
+  margin-top: -22px;
+}
+
+.sel-handle-start .sel-handle-line {
+  top: 12px;
+}
+
+.sel-handle-start .sel-handle-pin,
+.sel-handle-start .sel-handle-knob {
+  top: 4px;
 }
 
 .sel-handle-end {
-  transform: translateY(8px);
+  margin-left: -22px;
+  margin-top: -22px;
 }
 
-@keyframes handleSpring {
-  0% {
-    opacity: 0;
-    transform: scale(0.2);
-  }
-  70% {
-    transform: scale(1.2);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
+.sel-handle-end .sel-handle-line {
+  bottom: 12px;
 }
+
+.sel-handle-end .sel-handle-pin,
+.sel-handle-end .sel-handle-knob {
+  bottom: 4px;
+}
+
+.sel-handle:active .sel-handle-pin,
+.sel-handle:active .sel-handle-knob,
+.sel-handle.dragging .sel-handle-pin,
+.sel-handle.dragging .sel-handle-knob {
+  transform: scale(1.35);
+  background: var(--accent-light);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+/* ── Apple-style Floating Glass Pill Action Bar ────────────────────────── */
 
 .selection-actions {
   position: fixed;
-  z-index: 40;
+  z-index: 42;
   display: flex;
   align-items: center;
   overflow: hidden;
   transform: translateX(-50%);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-dark);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  animation: actionsPop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(28, 28, 32, 0.88);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  animation: actionsPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 3px 6px;
+  gap: 2px;
 }
 
 @keyframes actionsPop {
   0% {
     opacity: 0;
-    transform: translateX(-50%) scale(0.85) translateY(6px);
+    transform: translateX(-50%) scale(0.88) translateY(6px);
   }
   100% {
     opacity: 1;
@@ -884,29 +898,29 @@ svg {
 }
 
 .selection-actions button {
-  min-width: 72px;
-  min-height: 40px;
-  padding: 8px 16px;
+  min-width: 58px;
+  height: 32px;
+  padding: 0 12px;
   border: 0;
-  border-right: 1px solid var(--border);
+  border-radius: 999px;
   background: transparent;
-  color: var(--text-bright);
-  font-size: 14px;
-  font-weight: 500;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   touch-action: manipulation;
-}
-
-.selection-actions button:last-child {
-  border-right: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .selection-actions button:active {
-  background: var(--bg-alt);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .selection-actions button:disabled {
-  color: var(--text-dim);
-  opacity: 0.55;
+  color: rgba(255, 255, 255, 0.35);
 }
 
 /* ── composer ────────────────────────────────────────────────────────── */
