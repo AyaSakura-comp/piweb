@@ -254,6 +254,7 @@ let selectionFrame = 0;
 let clearCustomSelection = () => {};
 
 function hideSelectionActions(clearSelection = false) {
+  selectedText = '';
   $('selection-actions').hidden = true;
   if (clearSelection) {
     window.getSelection()?.removeAllRanges();
@@ -358,6 +359,7 @@ function renderQuotePreview() {
 $('quote-preview-remove').addEventListener('click', () => {
   state.pendingQuote = '';
   renderQuotePreview();
+  hideSelectionActions(true);
   $('input').focus();
 });
 
@@ -2122,6 +2124,7 @@ $('composer').addEventListener('submit', async (e) => {
     input.value = '';
     state.pendingQuote = '';
     renderQuotePreview();
+    hideSelectionActions(true);
     for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
     state.attachments = [];
     renderAttachments();
