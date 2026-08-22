@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
   appendWebEvent,
   deletePushSubscription,
@@ -639,12 +640,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (sub === 'messages' && method === 'POST') {
       const body = await readJson<{
         text?: string;
+        quote?: string;
         attachments?: Array<{ name: string; dataBase64: string }>;
       }>(req);
 
       const text = (body.text ?? '').trim();
+      const quote = normalizeQuote(body.quote);
       const attachments = body.attachments ?? [];
-      if (!text && attachments.length === 0) {
+      if (!text && !quote && attachments.length === 0) {
         sendJson(res, 400, { error: 'Message is empty' });
         return;
       }
@@ -657,7 +660,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         channelJid: jid,
         kind: 'message',
         role: 'user',
-        content: text,
+        content: buildQuotedDisplay(text, quote),
         files: savedPaths.urls,
       });
 
@@ -665,7 +668,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         channelJid: jid,
         sender: 'web',
         senderName: 'web',
-        content: text,
+        content: buildQuotedPrompt(text, quote),
         timestamp: new Date().toISOString(),
         // AttachmentMeta shape, using the local-file variant: media.ts copies
         // these instead of fetching, so uploads flow through the same

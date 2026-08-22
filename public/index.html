@@ -247,6 +247,22 @@
 
         <div class="messages" id="messages"></div>
 
+        <div class="selection-actions" id="selection-actions" role="toolbar" hidden>
+          <button type="button" id="selection-quote">引用</button>
+          <button type="button" id="selection-copy">複製</button>
+        </div>
+
+        <div class="custom-selection-overlay" id="custom-selection-overlay" hidden>
+          <div class="sel-backdrop" id="sel-backdrop" aria-hidden="true"></div>
+          <div class="sel-highlight-boxes" id="sel-highlight-boxes" aria-hidden="true"></div>
+          <div class="sel-handle sel-handle-start" id="sel-handle-start" aria-label="選取起始游標">
+            <div class="sel-handle-pin"></div>
+          </div>
+          <div class="sel-handle sel-handle-end" id="sel-handle-end" aria-label="選取結束游標">
+            <div class="sel-handle-pin"></div>
+          </div>
+        </div>
+
         <button class="jump-live" id="jump-live">Jump to present ↓</button>
 
         <div class="typing" id="typing" hidden>
@@ -274,12 +290,23 @@
               <div class="upload-progress-bar" id="upload-progress-bar"></div>
             </div>
           </div>
+          <div class="quote-preview" id="quote-preview" hidden>
+            <span class="quote-preview-label">引用</span>
+            <span class="quote-preview-text" id="quote-preview-text"></span>
+            <button type="button" id="quote-preview-remove" aria-label="Remove quote">×</button>
+          </div>
           <div class="attachments" id="attachments" hidden></div>
           <form class="composer" id="composer">
             <button type="button" class="icon-btn" id="btn-attach" aria-label="Add attachment">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </button>
             <input id="file-input" type="file" multiple hidden />
+            <button type="button" class="icon-btn" id="btn-paste" aria-label="貼上剪貼簿內容" title="貼上">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+              </svg>
+            </button>
             <textarea id="input" rows="1" placeholder="Message pi…" aria-label="Message"></textarea>
             <button type="submit" class="icon-btn send" id="btn-send" aria-label="Send">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 8 6 8z" /></svg>
