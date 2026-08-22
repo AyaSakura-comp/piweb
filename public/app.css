@@ -913,6 +913,7 @@ svg {
 
 .composer-wrap {
   position: relative;
+  z-index: 40;
   flex: none;
   display: flex;
   flex-direction: column;
