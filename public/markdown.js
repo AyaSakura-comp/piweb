@@ -78,21 +78,27 @@ function ensureMermaid() {
       theme: 'dark',
       themeVariables: {
         darkMode: true,
-        background: '#2b2d31',
+        background: '#232428',
         primaryColor: '#5865f2',
         primaryTextColor: '#f2f3f5',
         primaryBorderColor: '#3f4147',
         lineColor: '#949ba4',
-        secondaryColor: '#383a40',
+        secondaryColor: '#2b2d31',
         tertiaryColor: '#1e1f22',
         fontFamily:
           "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
         fontSize: '14px',
       },
       flowchart: {
-        useMaxWidth: true,
+        useMaxWidth: false,
         htmlLabels: true,
         curve: 'basis',
+      },
+      sequence: {
+        useMaxWidth: false,
+      },
+      gantt: {
+        useMaxWidth: false,
       },
       securityLevel: 'loose',
       suppressErrorRendering: true,
@@ -103,11 +109,127 @@ function ensureMermaid() {
   }
 }
 
+function openMermaidModal(svgHtml) {
+  let modal = document.getElementById('mermaid-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'mermaid-modal';
+    modal.className = 'mermaid-modal';
+    modal.hidden = true;
+    modal.innerHTML = `
+      <div class="mm-modal-backdrop"></div>
+      <div class="mm-modal-content">
+        <header class="mm-modal-head">
+          <span class="mm-modal-title">Mermaid Diagram</span>
+          <div class="mm-modal-tools">
+            <button type="button" class="icon-btn mm-zoom-in" title="Zoom In" aria-label="Zoom in">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+            <button type="button" class="icon-btn mm-zoom-out" title="Zoom Out" aria-label="Zoom out">
+              <svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg>
+            </button>
+            <button type="button" class="icon-btn mm-zoom-reset" title="Reset Zoom" aria-label="Reset zoom">
+              <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+            </button>
+            <button type="button" class="icon-btn mm-modal-close" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+        </header>
+        <div class="mm-modal-body">
+          <div class="mm-modal-stage"></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    let scale = 1;
+    let x = 0;
+    let y = 0;
+    const stage = modal.querySelector('.mm-modal-stage');
+    const updateTransform = () => {
+      stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    };
+
+    modal.querySelector('.mm-zoom-in').addEventListener('click', () => {
+      scale = Math.min(4, scale * 1.25);
+      updateTransform();
+    });
+    modal.querySelector('.mm-zoom-out').addEventListener('click', () => {
+      scale = Math.max(0.25, scale / 1.25);
+      updateTransform();
+    });
+    modal.querySelector('.mm-zoom-reset').addEventListener('click', () => {
+      scale = 1;
+      x = 0;
+      y = 0;
+      updateTransform();
+    });
+    const closeModal = () => {
+      modal.hidden = true;
+      document.body.style.overflow = '';
+      scale = 1;
+      x = 0;
+      y = 0;
+      updateTransform();
+    };
+    modal.querySelector('.mm-modal-close').addEventListener('click', closeModal);
+    modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeModal);
+  }
+
+  const stage = modal.querySelector('.mm-modal-stage');
+  stage.innerHTML = svgHtml;
+  const svgEl = stage.querySelector('svg');
+  if (svgEl) {
+    svgEl.style.maxWidth = 'none';
+    svgEl.removeAttribute('width');
+    svgEl.removeAttribute('height');
+  }
+  modal.hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
 function renderCode(item) {
   if (item.lang === 'mermaid' && window.mermaid) {
     ensureMermaid();
     const wrap = document.createElement('div');
     wrap.className = 'mermaid-wrap';
+
+    const header = document.createElement('div');
+    header.className = 'mermaid-header';
+
+    const title = document.createElement('span');
+    title.className = 'mermaid-title';
+    title.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3zM10 6.5h4M17.5 10v4M6.5 10v4M10 17.5h4"/></svg> Flowchart`;
+    header.append(title);
+
+    const actions = document.createElement('div');
+    actions.className = 'mermaid-actions';
+
+    const btnZoom = document.createElement('button');
+    btnZoom.type = 'button';
+    btnZoom.className = 'mermaid-btn';
+    btnZoom.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M11 8v6M8 11h6"/></svg> 放大檢視`;
+
+    const btnCopy = document.createElement('button');
+    btnCopy.type = 'button';
+    btnCopy.className = 'mermaid-btn';
+    btnCopy.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 複製代碼`;
+    btnCopy.addEventListener('click', () => {
+      navigator.clipboard.writeText(item.code);
+      btnCopy.textContent = '已複製 ✓';
+      setTimeout(() => {
+        btnCopy.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 複製代碼`;
+      }, 1500);
+    });
+
+    actions.append(btnZoom);
+    actions.append(btnCopy);
+    header.append(actions);
+    wrap.append(header);
+
+    const scrollWrap = document.createElement('div');
+    scrollWrap.className = 'mermaid-scroll';
 
     const chart = document.createElement('div');
     chart.className = 'mermaid-chart';
@@ -117,20 +239,38 @@ function renderCode(item) {
     code.className = 'lang-mermaid';
     code.textContent = item.code;
     pre.append(code);
-    wrap.append(pre);
+    scrollWrap.append(pre);
+    wrap.append(scrollWrap);
+
+    let renderedSvg = '';
+    btnZoom.addEventListener('click', () => {
+      if (renderedSvg) openMermaidModal(renderedSvg);
+    });
 
     const id = `mm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     window.mermaid
       .render(id, item.code)
       .then(({ svg, bindFunctions }) => {
+        renderedSvg = svg;
         chart.innerHTML = svg;
+        const svgEl = chart.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.maxWidth = 'none';
+          const vb = svgEl.getAttribute('viewBox');
+          if (vb) {
+            const [, , w] = vb.split(' ').map(Number);
+            if (w && w > 320) {
+              svgEl.style.width = `${w}px`;
+            }
+          }
+        }
         if (bindFunctions) {
           try {
             bindFunctions(chart);
           } catch {}
         }
         pre.remove();
-        wrap.append(chart);
+        scrollWrap.append(chart);
       })
       .catch(() => {
         const errEl = document.getElementById(id);
