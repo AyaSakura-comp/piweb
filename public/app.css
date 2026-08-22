@@ -179,10 +179,18 @@ svg {
   align-items: center;
   gap: 8px;
   height: calc(var(--topbar-h) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 8px 0;
+  padding-top: env(safe-area-inset-top);
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
   background: var(--bg);
   border-bottom: 1px solid var(--bg-dark);
   flex: none;
+}
+
+@media (min-width: 600px) {
+  .topbar {
+    padding-left: max(60px, calc(env(safe-area-inset-left) + 12px));
+  }
 }
 
 .topbar-title {
@@ -229,6 +237,17 @@ svg {
 .hash {
   color: var(--text-dim);
   font-size: 20px;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.hash:hover,
+.hash:active {
+  color: var(--text-bright);
+  background: var(--bg-input);
 }
 
 .icon-btn {

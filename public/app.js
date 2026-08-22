@@ -1143,6 +1143,7 @@ $('media-sheet').addEventListener('click', (e) => {
   if (e.target === $('media-sheet')) closeMediaSheet();
 });
 
+onMenuItem('mi-sessions', openDrawer);
 onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());
 onMenuItem('mi-new-chat', newPiSession);
@@ -2992,6 +2993,7 @@ function hideDrawer() {
 
 $('btn-menu').setAttribute('aria-expanded', String(wideDrawer.matches));
 $('btn-menu').addEventListener('click', openDrawer);
+document.querySelector('.hash')?.addEventListener('click', openDrawer);
 $('btn-hide-drawer').addEventListener('click', hideDrawer);
 $('scrim').addEventListener('click', closeDrawer);
 
@@ -3001,10 +3003,10 @@ $('scrim').addEventListener('click', closeDrawer);
 // left puts it back. The drawer tracks the finger rather than just toggling on
 // release, so the gesture is reversible mid-way.
 //
-// Deliberately narrow (28px) and touch-only: anywhere else on screen a
+// Deliberately narrow and touch-only: anywhere else on screen a
 // horizontal drag belongs to a table, a code block or the image viewer.
 
-const EDGE_ZONE_PX = 28;
+const EDGE_ZONE_PX = 36;
 const DRAWER_AXIS_LOCK_PX = 8;
 let drawerDrag = null;
 
