@@ -1808,10 +1808,6 @@ function renderPartial(text, thinking = '') {
       node = el('div', 'msg partial pop-in');
       node.id = 'partial-msg';
       const body = el('div', 'msg-body');
-      const head = el('div', 'msg-head');
-      head.append(el('span', 'msg-author', 'pi'));
-      head.append(el('span', 'msg-time', ''));
-      body.append(head);
       body.append(el('div', 'msg-text'));
       node.append(body);
       host.append(node);
@@ -1835,19 +1831,33 @@ function buildEventNode(event) {
     const isUser = event.role === 'user';
     const row = el('div', `msg${isUser ? ' msg-user' : ''}`);
 
-    const body = el('div', 'msg-body');
-    const head = el('div', 'msg-head');
-    head.append(el('span', 'msg-author', isUser ? 'You' : 'pi'));
-    head.append(el('span', 'msg-time', timeLabel(event.createdAt)));
-    body.append(head);
+    if (isUser) {
+      const avatar = el('div', 'avatar', 'U');
+      row.append(avatar);
 
-    const textNode = el('div', 'msg-text');
-    renderText(textNode, event.content);
-    body.append(textNode);
-    renderFiles(body, event.files);
+      const body = el('div', 'msg-body');
+      const head = el('div', 'msg-head');
+      head.append(el('span', 'msg-author', 'You'));
+      head.append(el('span', 'msg-time', timeLabel(event.createdAt)));
+      body.append(head);
 
-    row.append(body);
-    return row;
+      const textNode = el('div', 'msg-text');
+      renderText(textNode, event.content);
+      body.append(textNode);
+      renderFiles(body, event.files);
+
+      row.append(body);
+      return row;
+    } else {
+      const body = el('div', 'msg-body');
+      const textNode = el('div', 'msg-text');
+      renderText(textNode, event.content);
+      body.append(textNode);
+      renderFiles(body, event.files);
+
+      row.append(body);
+      return row;
+    }
   }
   {
     const [label, icon] = EVENT_LABELS[event.kind] ?? ['Event', '•'];
