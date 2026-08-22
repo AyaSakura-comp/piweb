@@ -698,7 +698,7 @@ svg {
 }
 
 .mm-modal-stage {
-  transform-origin: center center;
+  transform-origin: 0 0;
   transition: transform 0.15s ease-out;
   display: inline-block;
   will-change: transform;

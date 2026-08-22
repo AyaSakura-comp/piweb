@@ -115,13 +115,12 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   let initialDist = 0;
   let isPinching = false;
   let isPanning = false;
-  let startX = 0;
-  let startY = 0;
   let posX = 0;
   let posY = 0;
   let panStartX = 0;
   let panStartY = 0;
-  let pinchCenter = { x: 0, y: 0 };
+  let contentFocalX = 0;
+  let contentFocalY = 0;
   let lastTap = 0;
   let lastTapX = 0;
   let lastTapY = 0;
@@ -139,21 +138,20 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   scrollEl.addEventListener(
     'touchstart',
     (e) => {
-      // 1. Two-finger pinch gesture
+      // 1. Two-finger pinch gesture: record focal point between the 2 fingers
       if (e.touches.length === 2) {
         if (e.cancelable) e.preventDefault();
         isPinching = true;
         isPanning = false;
         const t1 = e.touches[0];
         const t2 = e.touches[1];
+        const rect = scrollEl.getBoundingClientRect();
         initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         startScale = scale;
-        startX = posX;
-        startY = posY;
-        pinchCenter = {
-          x: (t1.clientX + t2.clientX) / 2,
-          y: (t1.clientY + t2.clientY) / 2,
-        };
+        const focalX = (t1.clientX + t2.clientX) / 2 - rect.left;
+        const focalY = (t1.clientY + t2.clientY) / 2 - rect.top;
+        contentFocalX = (focalX - posX) / startScale;
+        contentFocalY = (focalY - posY) / startScale;
         return;
       }
 
@@ -162,7 +160,7 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
         const touch = e.touches[0];
         const now = Date.now();
 
-        // Double-tap to toggle zoom (1x <-> 1.8x)
+        // Double-tap to toggle zoom centered around the tap point
         if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 35) {
           if (e.cancelable) e.preventDefault();
           lastTap = 0;
@@ -171,9 +169,14 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
             posX = 0;
             posY = 0;
           } else {
+            const rect = scrollEl.getBoundingClientRect();
+            const tapX = touch.clientX - rect.left;
+            const tapY = touch.clientY - rect.top;
+            const oldContentX = (tapX - posX) / scale;
+            const oldContentY = (tapY - posY) / scale;
             scale = 1.8;
-            posX = 0;
-            posY = 0;
+            posX = tapX - oldContentX * scale;
+            posY = tapY - oldContentY * scale;
           }
           updateTransform(true);
           return;
@@ -195,19 +198,20 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   scrollEl.addEventListener(
     'touchmove',
     (e) => {
-      // Two-finger pinch
+      // Two-finger pinch: scale centered on the moving focal point between fingers
       if (isPinching && e.touches.length === 2) {
         if (e.cancelable) e.preventDefault();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
+        const rect = scrollEl.getBoundingClientRect();
         const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         const ratio = dist / (initialDist || 1);
         scale = Math.min(5, Math.max(0.2, startScale * ratio));
 
-        const cx = (t1.clientX + t2.clientX) / 2;
-        const cy = (t1.clientY + t2.clientY) / 2;
-        posX = startX + (cx - pinchCenter.x);
-        posY = startY + (cy - pinchCenter.y);
+        const newFocalX = (t1.clientX + t2.clientX) / 2 - rect.left;
+        const newFocalY = (t1.clientY + t2.clientY) / 2 - rect.top;
+        posX = newFocalX - contentFocalX * scale;
+        posY = newFocalY - contentFocalY * scale;
         updateTransform(false);
         return;
       }
@@ -281,11 +285,10 @@ function openMermaidModal(svgHtml) {
     let isPanning = false;
     let initialDist = 0;
     let startScale = 1;
-    let startX = 0;
-    let startY = 0;
+    let contentFocalX = 0;
+    let contentFocalY = 0;
     let panStartX = 0;
     let panStartY = 0;
-    let pinchCenter = { x: 0, y: 0 };
     let lastTap = 0;
     let lastTapX = 0;
     let lastTapY = 0;
@@ -295,17 +298,24 @@ function openMermaidModal(svgHtml) {
 
     const updateTransform = (animate = false) => {
       stage.style.transition = animate ? 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)' : 'none';
+      stage.style.transformOrigin = '0 0';
       stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     };
 
-    modal.querySelector('.mm-zoom-in').addEventListener('click', () => {
-      scale = Math.min(5, scale * 1.3);
+    const zoomByRatio = (factor) => {
+      const bodyRect = body.getBoundingClientRect();
+      const cx = bodyRect.width / 2;
+      const cy = bodyRect.height / 2;
+      const oldContentX = (cx - x) / scale;
+      const oldContentY = (cy - y) / scale;
+      scale = Math.min(6, Math.max(0.2, scale * factor));
+      x = cx - oldContentX * scale;
+      y = cy - oldContentY * scale;
       updateTransform(true);
-    });
-    modal.querySelector('.mm-zoom-out').addEventListener('click', () => {
-      scale = Math.max(0.3, scale / 1.3);
-      updateTransform(true);
-    });
+    };
+
+    modal.querySelector('.mm-zoom-in').addEventListener('click', () => zoomByRatio(1.3));
+    modal.querySelector('.mm-zoom-out').addEventListener('click', () => zoomByRatio(1 / 1.3));
     modal.querySelector('.mm-zoom-reset').addEventListener('click', () => {
       scale = 1;
       x = 0;
@@ -323,7 +333,7 @@ function openMermaidModal(svgHtml) {
     modal.querySelector('.mm-modal-close').addEventListener('click', closeModal);
     modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeModal);
 
-    // Two-finger pinch and drag in fullscreen modal
+    // Two-finger pinch centered on the midpoint between fingers
     body.addEventListener(
       'touchstart',
       (e) => {
@@ -333,14 +343,13 @@ function openMermaidModal(svgHtml) {
           isPanning = false;
           const t1 = e.touches[0];
           const t2 = e.touches[1];
+          const bodyRect = body.getBoundingClientRect();
           initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
           startScale = scale;
-          startX = x;
-          startY = y;
-          pinchCenter = {
-            x: (t1.clientX + t2.clientX) / 2,
-            y: (t1.clientY + t2.clientY) / 2,
-          };
+          const focalX = (t1.clientX + t2.clientX) / 2 - bodyRect.left;
+          const focalY = (t1.clientY + t2.clientY) / 2 - bodyRect.top;
+          contentFocalX = (focalX - x) / startScale;
+          contentFocalY = (focalY - y) / startScale;
           return;
         }
 
@@ -348,7 +357,7 @@ function openMermaidModal(svgHtml) {
           const touch = e.touches[0];
           const now = Date.now();
 
-          // Double tap zoom toggle
+          // Double tap zoom toggle centered around the tapped spot
           if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 30) {
             if (e.cancelable) e.preventDefault();
             lastTap = 0;
@@ -357,12 +366,14 @@ function openMermaidModal(svgHtml) {
               x = 0;
               y = 0;
             } else {
+              const bodyRect = body.getBoundingClientRect();
+              const tapX = touch.clientX - bodyRect.left;
+              const tapY = touch.clientY - bodyRect.top;
+              const oldContentX = (tapX - x) / scale;
+              const oldContentY = (tapY - y) / scale;
               scale = 2.2;
-              const rect = body.getBoundingClientRect();
-              const cx = rect.left + rect.width / 2;
-              const cy = rect.top + rect.height / 2;
-              x = (cx - touch.clientX) * 1.2;
-              y = (cy - touch.clientY) * 1.2;
+              x = tapX - oldContentX * scale;
+              y = tapY - oldContentY * scale;
             }
             updateTransform(true);
             return;
@@ -386,14 +397,15 @@ function openMermaidModal(svgHtml) {
           if (e.cancelable) e.preventDefault();
           const t1 = e.touches[0];
           const t2 = e.touches[1];
+          const bodyRect = body.getBoundingClientRect();
           const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
           const ratio = dist / (initialDist || 1);
-          scale = Math.min(6, Math.max(0.3, startScale * ratio));
+          scale = Math.min(6, Math.max(0.2, startScale * ratio));
 
-          const cx = (t1.clientX + t2.clientX) / 2;
-          const cy = (t1.clientY + t2.clientY) / 2;
-          x = startX + (cx - pinchCenter.x);
-          y = startY + (cy - pinchCenter.y);
+          const newFocalX = (t1.clientX + t2.clientX) / 2 - bodyRect.left;
+          const newFocalY = (t1.clientY + t2.clientY) / 2 - bodyRect.top;
+          x = newFocalX - contentFocalX * scale;
+          y = newFocalY - contentFocalY * scale;
           updateTransform(false);
           return;
         }
