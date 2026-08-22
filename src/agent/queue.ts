@@ -384,29 +384,33 @@ async function processMessage(
 
     const rawError = result.error ?? '';
 
-    // Exit code 143 = SIGTERM: pi was KILLED, not crashed — by a worker
-    // restart/shutdown or an OOM kill (a user-initiated interrupt takes the
-    // signal.aborted path above). The request never got an answer, so re-queue
-    // it: the same session continues (repairSessionForContinue drops only the
-    // aborted turn's partial work) and pi re-runs the original message. Capped
-    // so a message that reliably kills pi can't loop forever.
-    if (/exited with code 143|SIGTERM/i.test(rawError)) {
+    // Exit code 143 = SIGTERM / Exit code 137 = SIGKILL: pi was KILLED, not
+    // crashed — by a worker restart/shutdown or an OOM kill (a user-initiated
+    // interrupt takes the signal.aborted path above). The request never got an
+    // answer, so re-queue it: the same session continues
+    // (repairSessionForContinue drops only the aborted turn's partial work) and
+    // pi re-runs the original message. Capped so a message that reliably kills
+    // pi can't loop forever.
+    if (/(?:exited (?:with )?code (?:143|137)|\(code (?:143|137)\)|SIGTERM|SIGKILL|oom-kill)/i.test(rawError)) {
       const attempts = (sigtermRetries.get(rowid) ?? 0) + 1;
+      const isOom = /137|oom-kill/i.test(rawError);
       if (attempts <= MAX_SIGTERM_RETRIES) {
         sigtermRetries.set(rowid, attempts);
         logger.info(
-          { jid, rowid, attempts },
-          'Run terminated (SIGTERM) — resuming original message',
+          { jid, rowid, attempts, isOom },
+          'Run terminated (SIGTERM/OOM) — resuming original message',
         );
         requeueMessage(rowid);
         return;
       }
       sigtermRetries.delete(rowid);
-      logger.warn({ jid, rowid }, 'Run terminated (SIGTERM) repeatedly — giving up');
+      logger.warn({ jid, rowid }, 'Run terminated repeatedly — giving up');
       if (getTransport().sendNotice) {
         await getTransport().sendNotice!(
           jid,
-          '⚠️ The agent kept being stopped before it could finish. Try sending your message again.',
+          isOom
+            ? '⚠️ The agent process ran out of memory (OOM) and was stopped. Try breaking your request into smaller steps.'
+            : '⚠️ The agent kept being stopped before it could finish. Try sending your message again.',
         );
       }
       markMessageFailed(rowid);

@@ -91,6 +91,26 @@ describe('SIGTERM requeue', () => {
     }
   });
 
+  it('re-queues when rpc session exits with code 143', async () => {
+    const { db, queue, sendNotice } = await setup();
+
+    // RPC session format: "pi rpc session exited (code 143)"
+    invokeAgentMock.mockResolvedValueOnce({ ok: false, text: '', error: 'pi rpc session exited (code 143)' });
+    invokeAgentMock.mockResolvedValue({ ok: true, text: 'done' });
+
+    try {
+      queue.startProcessingLoop();
+      await vi.waitFor(() => expect(invokeAgentMock).toHaveBeenCalledTimes(2), {
+        timeout: 2000,
+        interval: 5,
+      });
+      expect(sendNotice).not.toHaveBeenCalled();
+    } finally {
+      await queue.stopProcessingLoop({ timeoutMs: 1000 });
+      db.closeDb();
+    }
+  });
+
   it('gives up after the retry cap and notifies', async () => {
     const { db, queue, sendNotice } = await setup();
 
