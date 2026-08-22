@@ -109,6 +109,134 @@ function ensureMermaid() {
   }
 }
 
+function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
+  let scale = 1;
+  let startScale = 1;
+  let initialDist = 0;
+  let isPinching = false;
+  let isPanning = false;
+  let startX = 0;
+  let startY = 0;
+  let posX = 0;
+  let posY = 0;
+  let panStartX = 0;
+  let panStartY = 0;
+  let lastTap = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+  let touchMoved = false;
+
+  const updateTransform = (animate = false) => {
+    chartEl.style.transition = animate ? 'transform 0.2s cubic-bezier(0.2, 0, 0.2, 1)' : 'none';
+    chartEl.style.transformOrigin = '0 0';
+    if (scale <= 1.02) {
+      posX = 0;
+      posY = 0;
+      chartEl.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    } else {
+      chartEl.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+    }
+  };
+
+  scrollEl.addEventListener(
+    'touchstart',
+    (e) => {
+      // 1. Two-finger pinch gesture
+      if (e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
+        isPinching = true;
+        isPanning = false;
+        touchMoved = true;
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        startScale = scale;
+        startX = posX;
+        startY = posY;
+        return;
+      }
+
+      // 2. Single finger touch
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const now = Date.now();
+        touchMoved = false;
+
+        // Double-tap to toggle zoom (1x <-> 2x)
+        if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 35) {
+          if (e.cancelable) e.preventDefault();
+          lastTap = 0;
+          touchMoved = true;
+          if (scale > 1.1) {
+            scale = 1;
+            posX = 0;
+            posY = 0;
+          } else {
+            scale = 1.8;
+            posX = 0;
+            posY = 0;
+          }
+          updateTransform(true);
+          return;
+        }
+        lastTap = now;
+        lastTapX = touch.clientX;
+        lastTapY = touch.clientY;
+
+        if (scale > 1.05) {
+          isPanning = true;
+          panStartX = touch.clientX - posX;
+          panStartY = touch.clientY - posY;
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  scrollEl.addEventListener(
+    'touchmove',
+    (e) => {
+      // Two-finger pinch
+      if (isPinching && e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
+        touchMoved = true;
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const ratio = dist / (initialDist || 1);
+        scale = Math.min(4, Math.max(0.6, startScale * ratio));
+        updateTransform(false);
+        return;
+      }
+
+      // Single finger panning when zoomed in
+      if (isPanning && e.touches.length === 1) {
+        if (e.cancelable) e.preventDefault();
+        touchMoved = true;
+        const touch = e.touches[0];
+        posX = touch.clientX - panStartX;
+        posY = touch.clientY - panStartY;
+        updateTransform(false);
+      }
+    },
+    { passive: false }
+  );
+
+  const endGesture = () => {
+    isPinching = false;
+    isPanning = false;
+    if (scale < 0.95) {
+      scale = 1;
+      posX = 0;
+      posY = 0;
+      updateTransform(true);
+    }
+  };
+
+  scrollEl.addEventListener('touchend', endGesture);
+  scrollEl.addEventListener('touchcancel', endGesture);
+}
+
 function openMermaidModal(svgHtml) {
   let modal = document.getElementById('mermaid-modal');
   if (!modal) {
@@ -146,24 +274,40 @@ function openMermaidModal(svgHtml) {
     let scale = 1;
     let x = 0;
     let y = 0;
+    let isPinching = false;
+    let isPanning = false;
+    let initialDist = 0;
+    let startScale = 1;
+    let startX = 0;
+    let startY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    let pinchCenter = { x: 0, y: 0 };
+    let lastTap = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
     const stage = modal.querySelector('.mm-modal-stage');
-    const updateTransform = () => {
+    const body = modal.querySelector('.mm-modal-body');
+
+    const updateTransform = (animate = false) => {
+      stage.style.transition = animate ? 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)' : 'none';
       stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     };
 
     modal.querySelector('.mm-zoom-in').addEventListener('click', () => {
-      scale = Math.min(4, scale * 1.25);
-      updateTransform();
+      scale = Math.min(5, scale * 1.3);
+      updateTransform(true);
     });
     modal.querySelector('.mm-zoom-out').addEventListener('click', () => {
-      scale = Math.max(0.25, scale / 1.25);
-      updateTransform();
+      scale = Math.max(0.3, scale / 1.3);
+      updateTransform(true);
     });
     modal.querySelector('.mm-zoom-reset').addEventListener('click', () => {
       scale = 1;
       x = 0;
       y = 0;
-      updateTransform();
+      updateTransform(true);
     });
     const closeModal = () => {
       modal.hidden = true;
@@ -171,10 +315,110 @@ function openMermaidModal(svgHtml) {
       scale = 1;
       x = 0;
       y = 0;
-      updateTransform();
+      updateTransform(false);
     };
     modal.querySelector('.mm-modal-close').addEventListener('click', closeModal);
     modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeModal);
+
+    // Two-finger pinch and drag in fullscreen modal
+    body.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length === 2) {
+          if (e.cancelable) e.preventDefault();
+          isPinching = true;
+          isPanning = false;
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+          startScale = scale;
+          startX = x;
+          startY = y;
+          pinchCenter = {
+            x: (t1.clientX + t2.clientX) / 2,
+            y: (t1.clientY + t2.clientY) / 2,
+          };
+          return;
+        }
+
+        if (e.touches.length === 1) {
+          const touch = e.touches[0];
+          const now = Date.now();
+
+          // Double tap zoom toggle
+          if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 30) {
+            if (e.cancelable) e.preventDefault();
+            lastTap = 0;
+            if (scale > 1.2) {
+              scale = 1;
+              x = 0;
+              y = 0;
+            } else {
+              scale = 2.2;
+              const rect = body.getBoundingClientRect();
+              const cx = rect.left + rect.width / 2;
+              const cy = rect.top + rect.height / 2;
+              x = (cx - touch.clientX) * 1.2;
+              y = (cy - touch.clientY) * 1.2;
+            }
+            updateTransform(true);
+            return;
+          }
+          lastTap = now;
+          lastTapX = touch.clientX;
+          lastTapY = touch.clientY;
+
+          isPanning = true;
+          panStartX = touch.clientX - x;
+          panStartY = touch.clientY - y;
+        }
+      },
+      { passive: false }
+    );
+
+    body.addEventListener(
+      'touchmove',
+      (e) => {
+        if (isPinching && e.touches.length === 2) {
+          if (e.cancelable) e.preventDefault();
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+          const ratio = dist / (initialDist || 1);
+          scale = Math.min(6, Math.max(0.3, startScale * ratio));
+
+          const cx = (t1.clientX + t2.clientX) / 2;
+          const cy = (t1.clientY + t2.clientY) / 2;
+          x = startX + (cx - pinchCenter.x);
+          y = startY + (cy - pinchCenter.y);
+          updateTransform(false);
+          return;
+        }
+
+        if (isPanning && e.touches.length === 1) {
+          if (e.cancelable) e.preventDefault();
+          const touch = e.touches[0];
+          x = touch.clientX - panStartX;
+          y = touch.clientY - panStartY;
+          updateTransform(false);
+        }
+      },
+      { passive: false }
+    );
+
+    const endTouch = () => {
+      isPinching = false;
+      isPanning = false;
+      if (scale < 0.8) {
+        scale = 1;
+        x = 0;
+        y = 0;
+        updateTransform(true);
+      }
+    };
+
+    body.addEventListener('touchend', endTouch);
+    body.addEventListener('touchcancel', endTouch);
   }
 
   const stage = modal.querySelector('.mm-modal-stage');
@@ -271,6 +515,9 @@ function renderCode(item) {
         }
         pre.remove();
         scrollWrap.append(chart);
+        attachMermaidGesture(scrollWrap, chart, () => {
+          if (renderedSvg) openMermaidModal(renderedSvg);
+        });
       })
       .catch(() => {
         const errEl = document.getElementById(id);

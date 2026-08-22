@@ -609,20 +609,25 @@ svg {
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
   display: flex;
   justify-content: flex-start;
+  user-select: none;
 }
 
 .mermaid-chart {
   display: inline-block;
   min-width: max-content;
   margin: 0 auto;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .mermaid-chart svg {
   display: block;
   height: auto;
   max-width: none;
+  cursor: grab;
 }
 
 /* ── mermaid modal fullscreen ── */
@@ -684,23 +689,26 @@ svg {
 
 .mm-modal-body {
   flex: 1;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+  touch-action: none;
   padding: 24px;
   display: grid;
   place-items: center;
+  user-select: none;
 }
 
 .mm-modal-stage {
   transform-origin: center center;
   transition: transform 0.15s ease-out;
   display: inline-block;
+  will-change: transform;
 }
 
 .mm-modal-stage svg {
   display: block;
   max-width: none;
   height: auto;
+  cursor: grab;
 }
 
 .msg-text pre code {
