@@ -442,8 +442,11 @@ export function formatAgyError(status: string, text: string): string {
       ? `agy (Gemini) quota exhausted — resets in ${resets}.`
       : 'agy (Gemini) quota exhausted; try again later or switch models.';
   }
-  const trimmed = text.trim();
-  return trimmed ? `agy failed (${status}): ${trimmed}` : `agy failed (${status})`;
+  if (/(?:502|503|504|Bad Gateway|Server Error)/i.test(combined) && /(?:Eligibility check failed|request failed)/i.test(combined)) {
+    return 'Google 雲端伺服器暫時性異常 (HTTP 502/503 Server Error)，請稍候直接重新發送訊息即可。';
+  }
+  const cleanText = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return cleanText ? `agy failed (${status}): ${cleanText}` : `agy failed (${status})`;
 }
 
 /**
