@@ -2329,7 +2329,47 @@ const lb = {
   urls: [],
   index: 0,
   drag: null,
+  scale: 1,
+  x: 0,
+  y: 0,
+  startScale: 1,
+  startX: 0,
+  startY: 0,
+  pinchDist: 0,
+  pinchCenter: { x: 0, y: 0 },
+  isPinching: false,
+  isPanning: false,
+  panStartX: 0,
+  panStartY: 0,
+  lastTap: 0,
+  lastTapX: 0,
+  lastTapY: 0,
 };
+
+function resetLightboxTransform(animate = false) {
+  lb.scale = 1;
+  lb.x = 0;
+  lb.y = 0;
+  lb.drag = null;
+  lb.isPinching = false;
+  lb.isPanning = false;
+  const img = $('lb-img');
+  if (img) {
+    if (animate) {
+      img.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)';
+    } else {
+      img.style.transition = 'none';
+    }
+    img.style.transform = 'translate(0px, 0px) scale(1)';
+  }
+}
+
+function applyLightboxTransform(animate = false) {
+  const img = $('lb-img');
+  if (!img) return;
+  img.style.transition = animate ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale})`;
+}
 
 /** Every image currently in the transcript, in reading order. */
 function collectTranscriptImages() {
@@ -2337,15 +2377,12 @@ function collectTranscriptImages() {
 }
 
 function openLightbox(url, urls) {
-  // The transcript only holds the pages that have been scrolled in, so the
-  // gallery passes its own list; otherwise the tapped image would be the only
-  // one there and swiping would go nowhere.
   lb.urls = urls && urls.length ? urls : collectTranscriptImages();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
   $('lightbox').classList.toggle('single', lb.urls.length < 2);
-  // Stop the transcript scrolling underneath the overlay.
   document.body.style.overflow = 'hidden';
+  resetLightboxTransform(false);
   buildFilmstrip();
   showLightboxImage();
 }
@@ -2386,7 +2423,7 @@ function syncFilmstrip() {
 function closeLightbox() {
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
-  lb.drag = null;
+  resetLightboxTransform(false);
 }
 
 /**
@@ -2397,14 +2434,14 @@ function showLightboxImage(direction = 0) {
   const img = $('lb-img');
   const url = lb.urls[lb.index];
 
+  resetLightboxTransform(false);
+
   img.style.transition = 'none';
   img.style.transform = direction ? `translateX(${direction * 36}px)` : 'translateX(0)';
   img.style.opacity = direction ? '0' : '1';
   img.classList.remove('fit-up');
   img.src = url;
 
-  // Decide upscaling once the real dimensions are known: only pad out images
-  // genuinely smaller than the stage, and never stretch a wide photo.
   img.onload = () => {
     const stage = $('lb-stage').getBoundingClientRect();
     const small = img.naturalWidth < stage.width * 0.6 && img.naturalHeight < stage.height * 0.6;
@@ -2423,7 +2460,6 @@ function showLightboxImage(direction = 0) {
   $('lb-next').disabled = lb.index === lb.urls.length - 1;
   syncFilmstrip();
 
-  // Warm the neighbours so paging does not flash an empty frame.
   for (const i of [lb.index - 1, lb.index + 1]) {
     if (i >= 0 && i < lb.urls.length) new Image().src = lb.urls[i];
   }
@@ -2441,6 +2477,37 @@ $('lb-close').addEventListener('click', closeLightbox);
 $('lb-prev').addEventListener('click', () => stepLightbox(-1));
 $('lb-next').addEventListener('click', () => stepLightbox(1));
 
+$('lb-download')?.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const url = lb.urls[lb.index];
+  if (!url) return;
+
+  try {
+    showToast('正在下載圖片…');
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    const cleanUrl = url.split('#')[0].split('?')[0];
+    const filename = cleanUrl.split('/').pop() || `image-${Date.now()}.png`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+    showToast('圖片下載完成');
+  } catch {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = url.split('/').pop() || 'image.png';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+});
+
 // Tapping the backdrop closes; tapping the image itself must not.
 $('lightbox').addEventListener('click', (e) => {
   if (e.target === $('lightbox') || e.target === $('lb-stage')) closeLightbox();
@@ -2453,81 +2520,180 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowRight') stepLightbox(1);
 });
 
-// ── swipe ──
-// Horizontal drag pages between images, a downward drag dismisses. The axis is
-// decided by whichever displacement is larger, so a slightly diagonal swipe
-// still does what was meant.
+// ── Touch & Gesture Controller (Pinch-to-zoom, Pan, Double-tap, Swipe) ──
+
+const lightboxEl = $('lightbox');
 const SWIPE_PAGE_PX = 60;
 const SWIPE_DISMISS_PX = 110;
 
-$('lightbox').addEventListener('pointerdown', (e) => {
+lightboxEl.addEventListener('touchstart', (e) => {
   if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip')) return;
-  lb.drag = { x: e.clientX, y: e.clientY, id: e.pointerId, axis: null };
-  $('lb-img').style.transition = 'none';
-});
 
-$('lightbox').addEventListener('pointermove', (e) => {
-  if (!lb.drag || e.pointerId !== lb.drag.id) return;
-  const dx = e.clientX - lb.drag.x;
-  const dy = e.clientY - lb.drag.y;
-
-  if (!lb.drag.axis && Math.hypot(dx, dy) > 10) {
-    lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-  }
-
-  const img = $('lb-img');
-  if (lb.drag.axis === 'x') {
-    // Resist at the ends so it is obvious there is nothing further that way.
-    const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
-    img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
-  } else if (lb.drag.axis === 'y') {
-    img.style.transform = `translateY(${dy}px)`;
-    img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
-  }
-});
-
-function endLightboxDrag(e) {
-  if (!lb.drag || e.pointerId !== lb.drag.id) return;
-  const dx = e.clientX - lb.drag.x;
-  const dy = e.clientY - lb.drag.y;
-  const axis = lb.drag.axis;
-  lb.drag = null;
-
-  const img = $('lb-img');
-  img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
-
-  // Either direction dismisses — reaching for "up" to close is as natural as
-  // "down", and having only one work feels broken rather than deliberate.
-  if (axis === 'y' && Math.abs(dy) > SWIPE_DISMISS_PX) {
-    // Carry on in the direction of the flick instead of blinking out.
-    img.style.transform = `translateY(${dy > 0 ? 120 : -120}%)`;
-    img.style.opacity = '0';
-    $('lightbox').style.transition = 'opacity 0.18s ease';
-    $('lightbox').style.opacity = '0';
-    setTimeout(() => {
-      $('lightbox').style.transition = '';
-      $('lightbox').style.opacity = '';
-      closeLightbox();
-    }, 170);
+  // 1. Two-finger pinch gesture
+  if (e.touches.length === 2) {
+    if (e.cancelable) e.preventDefault();
+    lb.isPinching = true;
+    lb.isPanning = false;
+    lb.drag = null;
+    const t1 = e.touches[0];
+    const t2 = e.touches[1];
+    lb.pinchDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    lb.startScale = lb.scale;
+    lb.startX = lb.x;
+    lb.startY = lb.y;
+    lb.pinchCenter = {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    };
     return;
   }
-  if (axis === 'x' && Math.abs(dx) > SWIPE_PAGE_PX) {
-    if (stepLightbox(dx < 0 ? 1 : -1)) return;
+
+  // 2. Single finger touch
+  if (e.touches.length === 1) {
+    const touch = e.touches[0];
+    const now = Date.now();
+
+    // Double-tap zoom toggle
+    if (now - lb.lastTap < 300 && Math.hypot(touch.clientX - (lb.lastTapX || 0), touch.clientY - (lb.lastTapY || 0)) < 40) {
+      if (e.cancelable) e.preventDefault();
+      lb.lastTap = 0;
+      if (lb.scale > 1.1) {
+        lb.scale = 1;
+        lb.x = 0;
+        lb.y = 0;
+      } else {
+        lb.scale = 2.5;
+        const stage = $('lb-stage').getBoundingClientRect();
+        const centerX = stage.left + stage.width / 2;
+        const centerY = stage.top + stage.height / 2;
+        lb.x = (centerX - touch.clientX) * 1.5;
+        lb.y = (centerY - touch.clientY) * 1.5;
+      }
+      applyLightboxTransform(true);
+      return;
+    }
+    lb.lastTap = now;
+    lb.lastTapX = touch.clientX;
+    lb.lastTapY = touch.clientY;
+
+    if (lb.scale > 1.05) {
+      lb.isPanning = true;
+      lb.panStartX = touch.clientX - lb.x;
+      lb.panStartY = touch.clientY - lb.y;
+    } else {
+      lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
+    }
+    $('lb-img').style.transition = 'none';
+  }
+}, { passive: false });
+
+lightboxEl.addEventListener('touchmove', (e) => {
+  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip')) return;
+
+  // 1. Two-finger pinch scaling
+  if (lb.isPinching && e.touches.length === 2) {
+    if (e.cancelable) e.preventDefault();
+    const t1 = e.touches[0];
+    const t2 = e.touches[1];
+    const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    const ratio = dist / (lb.pinchDist || 1);
+    lb.scale = Math.min(6, Math.max(0.6, lb.startScale * ratio));
+
+    const cx = (t1.clientX + t2.clientX) / 2;
+    const cy = (t1.clientY + t2.clientY) / 2;
+    lb.x = lb.startX + (cx - lb.pinchCenter.x);
+    lb.y = lb.startY + (cy - lb.pinchCenter.y);
+
+    applyLightboxTransform(false);
+    return;
   }
 
-  img.style.transform = 'translateX(0)';
-  img.style.opacity = '1';
+  // 2. Single finger panning when zoomed in
+  if (lb.isPanning && e.touches.length === 1) {
+    if (e.cancelable) e.preventDefault();
+    const touch = e.touches[0];
+    lb.x = touch.clientX - lb.panStartX;
+    lb.y = touch.clientY - lb.panStartY;
+    applyLightboxTransform(false);
+    return;
+  }
+
+  // 3. Single finger swipe when 1x
+  if (lb.drag && e.touches.length === 1) {
+    const touch = e.touches[0];
+    const dx = touch.clientX - lb.drag.x;
+    const dy = touch.clientY - lb.drag.y;
+
+    if (!lb.drag.axis && Math.hypot(dx, dy) > 8) {
+      lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+
+    const img = $('lb-img');
+    if (lb.drag.axis === 'x') {
+      const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
+      img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
+    } else if (lb.drag.axis === 'y') {
+      img.style.transform = `translateY(${dy}px)`;
+      img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
+    }
+  }
+}, { passive: false });
+
+function endLightboxTouch(e) {
+  if (lb.isPinching) {
+    lb.isPinching = false;
+    if (lb.scale < 1.05) {
+      resetLightboxTransform(true);
+    } else if (lb.scale > 5) {
+      lb.scale = 5;
+      applyLightboxTransform(true);
+    }
+    return;
+  }
+
+  if (lb.isPanning) {
+    lb.isPanning = false;
+    if (lb.scale < 1.05) {
+      resetLightboxTransform(true);
+    }
+    return;
+  }
+
+  if (lb.drag) {
+    const img = $('lb-img');
+    const drag = lb.drag;
+    lb.drag = null;
+
+    img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+
+    const touch = e.changedTouches?.[0];
+    const dx = touch ? touch.clientX - drag.x : 0;
+    const dy = touch ? touch.clientY - drag.y : 0;
+
+    if (drag.axis === 'y' && Math.abs(dy) > SWIPE_DISMISS_PX) {
+      img.style.transform = `translateY(${dy > 0 ? 120 : -120}%)`;
+      img.style.opacity = '0';
+      lightboxEl.style.transition = 'opacity 0.18s ease';
+      lightboxEl.style.opacity = '0';
+      setTimeout(() => {
+        lightboxEl.style.transition = '';
+        lightboxEl.style.opacity = '';
+        closeLightbox();
+      }, 170);
+      return;
+    }
+
+    if (drag.axis === 'x' && Math.abs(dx) > SWIPE_PAGE_PX) {
+      if (stepLightbox(dx < 0 ? 1 : -1)) return;
+    }
+
+    img.style.transform = 'translateX(0)';
+    img.style.opacity = '1';
+  }
 }
 
-$('lightbox').addEventListener('pointerup', endLightboxDrag);
-$('lightbox').addEventListener('pointercancel', () => {
-  if (!lb.drag) return;
-  lb.drag = null;
-  const img = $('lb-img');
-  img.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
-  img.style.transform = 'translateX(0)';
-  img.style.opacity = '1';
-});
+lightboxEl.addEventListener('touchend', endLightboxTouch);
+lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
 
 // ── recently deleted ─────────────────────────────────────────────────────
 
