@@ -432,34 +432,16 @@ svg {
 }
 
 .msg {
-  display: flex;
-  gap: 10px;
-  padding: 5px 14px;
+  display: block;
+  padding: 6px 14px;
 }
 
 .msg:hover {
-  background: rgb(0 0 0 / 0.08);
-}
-
-.avatar {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 14px;
-  font-weight: 700;
-  color: #fff;
-  background: var(--accent);
-}
-
-.avatar.pi {
-  background: #43b581;
+  background: rgb(0 0 0 / 0.04);
 }
 
 .msg-body {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 
@@ -475,6 +457,7 @@ svg {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  margin-bottom: 2px;
 }
 
 .msg-author {

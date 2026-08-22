@@ -1807,7 +1807,6 @@ function renderPartial(text, thinking = '') {
     if (!node) {
       node = el('div', 'msg partial pop-in');
       node.id = 'partial-msg';
-      node.append(el('div', 'avatar pi', 'π'));
       const body = el('div', 'msg-body');
       const head = el('div', 'msg-head');
       head.append(el('span', 'msg-author', 'pi'));
@@ -1834,9 +1833,7 @@ function renderPartial(text, thinking = '') {
 function buildEventNode(event) {
   if (event.kind === 'message') {
     const isUser = event.role === 'user';
-    const row = el('div', 'msg');
-    const avatar = el('div', `avatar${isUser ? '' : ' pi'}`, isUser ? 'U' : 'π');
-    row.append(avatar);
+    const row = el('div', `msg${isUser ? ' msg-user' : ''}`);
 
     const body = el('div', 'msg-body');
     const head = el('div', 'msg-head');
