@@ -393,7 +393,7 @@ async function processMessage(
     // pi can't loop forever.
     if (/(?:exited (?:with )?code (?:143|137)|\(code (?:143|137)\)|SIGTERM|SIGKILL|oom-kill)/i.test(rawError)) {
       const attempts = (sigtermRetries.get(rowid) ?? 0) + 1;
-      const isOom = /137|oom-kill/i.test(rawError);
+      const isOom = /137|143|oom-kill|SIGKILL/i.test(rawError);
       if (attempts <= MAX_SIGTERM_RETRIES) {
         sigtermRetries.set(rowid, attempts);
         logger.info(
@@ -409,8 +409,8 @@ async function processMessage(
         await getTransport().sendNotice!(
           jid,
           isOom
-            ? '⚠️ The agent process ran out of memory (OOM) and was stopped. Try breaking your request into smaller steps.'
-            : '⚠️ The agent kept being stopped before it could finish. Try sending your message again.',
+            ? '⚠️ 系統記憶體不足 (OOM / SIGTERM 終止)。建議將任務拆解或稍後再試。'
+            : '⚠️ 任務在完成前多次被系統終止。請嘗試重新發送您的訊息。',
         );
       }
       markMessageFailed(rowid);
