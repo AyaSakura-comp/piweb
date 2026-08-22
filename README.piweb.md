@@ -144,8 +144,15 @@ node dist/cli/piweb.js web      # web only
   long run replays exactly what it missed instead of losing it. Every message,
   thinking block, tool call and command result is persisted in `web_events` —
   the transcript survives reconnects and restarts.
-- **Attachments** are staged by the web tier and picked up by the worker through
-  the same pipeline as Discord attachments, so WEBP/HEIC → PNG transcoding and
-  Breeze ASR voice transcription still apply.
+- **Thinking & Tool Accordions**: Streamed reasoning and tool executions render inside
+  smooth, physics-animated collapsible cards (`grid-template-rows: 0fr -> 1fr`) with animated chevrons
+  and pop-in slide-up inertia, keeping intermediate chatter neatly contained.
+- **Apple-Style Text Selection & Quoting**: Custom selection overlays with iOS lollipop handles
+  and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
+- **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
+  images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
+  Voice notes and audio files receive automatic Breeze ASR transcription.
+- **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
+  automatically requeue and resume with session context preserved.
 - **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON
   rather than multipart to keep the container dependency-free.

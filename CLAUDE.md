@@ -171,7 +171,10 @@ origin check.
 |---|---|
 | markdown + LaTeX | `public/markdown.js` (`renderRich`), KaTeX in `vendor/` |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
-| image lightbox (swipe) | `public/app.js` `openLightbox`, filmstrip, pointer gestures |
+| text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
+| image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, filmstrip, pointer gestures |
+| multimedia paste | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents) |
+| thinking & tool physics | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia) |
 | Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
@@ -644,12 +647,35 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   **Never recover a drag position with `getComputedStyle`** — it depends on a
   style flush, so a fast burst of events reads the stale CSS value and silently
   drops the gesture. Keep the offset in the drag state.
-- **Image lightbox**: tapping an image opens an in-app viewer (`openLightbox`)
+- **Image lightbox (Swipe, Pinch-to-zoom & Pan)**: tapping an image opens an in-app viewer (`openLightbox`)
   rather than a new tab, collecting every image in the transcript so swiping
   pages through them. The overlay sets `touch-action: none` and handles its own
-  gestures: the axis is locked by whichever displacement is larger, horizontal
-  pages, downward dismisses. Small images are shown at native size rather than
+  gestures: multi-touch pinch-to-zoom scales with transform matrix bounds, double-tap toggles
+  2.5x zoom, horizontal swipe pages at 1x scale, and downward drag dismisses. Small images are shown at native size rather than
   upscaled — an icon blown up to fill the screen just looks blurry.
+- **Apple-style Text Selection & Quoting (`public/text-selection.js`)**:
+  Custom selection UI overlays iOS-style teardrop lollipop handle pins (`.sel-handle-line` + `.sel-handle-knob`)
+  and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
+  - Uses `getFilteredLineRects()` to strip out container bounding boxes (such as `<ul>` or `<div>` wrapper blocks)
+    that distort table/markdown highlights.
+  - Character-level alignment (`getHandlePointRect`) pins the lollipops precisely to the selection endpoints.
+  - The quote cancel button (`.quote-preview-remove`) has an enlarged 32x32px hit target with `stopPropagation()`
+    and deliberately avoids focusing the textarea to prevent keyboard popups on mobile devices.
+- **Thinking & Tool Accordion Physics (`public/app.css` & `public/app.js`)**:
+  - Streamed events (thinking / tools) are encapsulated inside collapsible `<details class="event">` cards
+    with left accent color bars (purple for thinking, indigo for tools, emerald for tool results).
+  - Smooth physics expand/collapse transitions use CSS Grid (`grid-template-rows: 0fr -> 1fr`) and
+    a 90-degree rotating chevron (`.event-chevron`).
+  - In-flight thinking blocks remain cleanly collapsed by default so they never leak raw text into the transcript.
+  - **Pop-in Slide-up Inertia Animation**: When thinking, tools, or messages first appear, they animate with
+    `@keyframes popInSlideUp` (`translateY(14px) -> translateY(0)` with `cubic-bezier(0.16, 1, 0.3, 1)`), ensuring
+    viewport scroll and element entry flow upward in a single seamless physical motion.
+  - Tool arguments are formatted cleanly (e.g. `$ <cmd>` or file path) instead of dumping raw JSON.
+- **Multimedia Clipboard Paste (`public/app.js`)**:
+  - Both the paste icon button (`btn-paste`) and `Ctrl+V` / `Cmd+V` handle images (PNG, JPEG, WebP, GIF, SVG),
+    audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF, CSV).
+  - Files are automatically staged into the composer with visual chips and appropriate icons (`🎵`, `🎬`, `📎`)
+    or image previews.
 - **Selection fires on pointerUP with a movement guard**, never on pointerdown.
   pointerdown selects the moment a finger lands, so dragging the list to scroll
   it picks whatever was underneath. `bindAutocompleteTaps()` treats <10px of
@@ -939,24 +965,26 @@ Consequences that surprise people:
   - The UI's own transcript is separate and unaffected: `web_events` thinking rows
     are written on `thinking_end` (`transport/web.ts`), so only a block cut off
     mid-stream is missing there — same as the CLI.
-- **A killed run resumes; it is not lost.** Exit code **143 = SIGTERM**, i.e. pi
+- **A killed run resumes; it is not lost.** Exit code **143 = SIGTERM** or **137 = SIGKILL**, i.e. pi
   was *killed*, not crashed — a worker restart (deploys!), a shutdown, or an OOM
-  kill. Surfacing the raw "pi exited with code 143" reads as a scary failure, and
+  kill (e.g. heavy ROCm/Flux generation). Surfacing the raw "pi exited with code 143" reads as a scary failure, and
   marking the message failed threw away a request the user never got an answer
-  to. The 143 branch in `queue.ts` instead calls `requeueMessage(rowid)`: the row
+  to. The 143/137 branch in `queue.ts` instead calls `requeueMessage(rowid)`: the row
   goes back to `pending`, the next poll re-dispatches it, and because
   `repairSessionForContinue()` drops only the aborted turn's partial work, pi
   `--continue`s the **same session** and re-runs the original message with its
   context intact.
   - Capped at `MAX_SIGTERM_RETRIES` (2) via an in-memory `Map` keyed by message
     rowid, so a message that *reliably* kills pi (deterministic OOM) cannot loop
-    forever; past the cap it falls back to `markMessageFailed` + a notice. A
-    worker restart resets that counter, which is correct — a restart is a
-    one-off, not a loop.
+    forever; past the cap it falls back to `markMessageFailed` + a clear user-facing notice
+    (`⚠️ 系統記憶體不足 (OOM / SIGTERM 終止)`). A worker restart resets that counter,
+    which is correct — a restart is a one-off, not a loop.
   - The user-interrupt path (`signal.aborted`) is handled *earlier* and must
     never re-queue: there the old message is deliberately abandoned.
   - Two layers: this covers a killed pi child; `recoverStuckMessages()` at
     startup covers a killed *worker* (rows stranded in `processing`).
+  - **Upstream Google/Agy 502/503 Error Translation**: `formatAgyError()` strips raw HTML
+    gateway payloads from upstream Google Cloud backend transient errors and presents clean, friendly notifications.
 - **Do not restart the worker while a run is in flight** — it SIGTERMs the user's
   pi and (before the above) silently dropped their message. Check first:
   `select rowid, channel_jid, status from message_queue where status in
