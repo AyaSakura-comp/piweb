@@ -356,11 +356,15 @@ function renderQuotePreview() {
     : '';
 }
 
-$('quote-preview-remove').addEventListener('click', () => {
+$('quote-preview-remove').addEventListener('pointerdown', (e) => {
+  e.stopPropagation();
+});
+
+$('quote-preview-remove').addEventListener('click', (e) => {
+  e.stopPropagation();
   state.pendingQuote = '';
   renderQuotePreview();
   hideSelectionActions(true);
-  $('input').focus();
 });
 
 // ── push notifications ───────────────────────────────────────────────────
