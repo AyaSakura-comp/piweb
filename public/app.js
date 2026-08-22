@@ -1967,27 +1967,80 @@ function isTouch() {
 
 $('btn-attach').addEventListener('click', () => $('file-input').click());
 
+const MIME_EXT_MAP = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/svg+xml': 'svg',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/webm': 'webm',
+  'audio/flac': 'flac',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
+  'video/ogg': 'ogv',
+  'application/pdf': 'pdf',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/csv': 'csv',
+};
+
+function formatPasteToast(files) {
+  const hasImg = files.some((f) => f.type.startsWith('image/'));
+  const hasAud = files.some((f) => f.type.startsWith('audio/'));
+  const hasVid = files.some((f) => f.type.startsWith('video/'));
+
+  if (files.length === 1) {
+    if (hasImg) return '已貼上圖片附件';
+    if (hasAud) return '已貼上音訊附件';
+    if (hasVid) return '已貼上影片附件';
+    return `已貼上附件 (${files[0].name})`;
+  }
+  return `已貼上 ${files.length} 個附件檔案`;
+}
+
 $('btn-paste')?.addEventListener('click', async () => {
   try {
     if (navigator.clipboard?.read) {
       try {
         const items = await navigator.clipboard.read();
-        const imageFiles = [];
-        for (const item of items) {
-          const imageType = item.types.find((t) => t.startsWith('image/'));
-          if (imageType) {
-            const blob = await item.getType(imageType);
-            const ext = imageType.split('/')[1] || 'png';
-            imageFiles.push(new File([blob], `pasted-${Date.now()}.${ext}`, { type: imageType }));
+        const mediaFiles = [];
+
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const fileType = item.types.find(
+            (t) =>
+              t.startsWith('image/') ||
+              t.startsWith('audio/') ||
+              t.startsWith('video/') ||
+              (t.startsWith('application/') && !t.includes('json') && !t.includes('xml')),
+          );
+
+          if (fileType) {
+            const blob = await item.getType(fileType);
+            const ext = MIME_EXT_MAP[fileType] || fileType.split('/')[1]?.split('+')[0] || 'bin';
+            const file = new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type: fileType });
+            mediaFiles.push(file);
           }
         }
-        if (imageFiles.length > 0) {
-          addFiles(imageFiles);
-          showToast('已貼上圖片附件');
+
+        if (mediaFiles.length > 0) {
+          addFiles(mediaFiles);
+          showToast(formatPasteToast(mediaFiles));
           return;
         }
       } catch {
-        // Fallback to readText if read() is not permitted for images
+        // Fallback to readText if read() is not permitted for binary items
       }
     }
 
@@ -2005,7 +2058,7 @@ $('btn-paste')?.addEventListener('click', async () => {
         autoGrow();
         showToast('已貼上文字');
       } else {
-        showToast('剪貼簿中沒有文字內容');
+        showToast('剪貼簿中沒有文字或多媒體內容');
       }
     } else {
       showToast('此瀏覽器不支援讀取剪貼簿');
@@ -2015,15 +2068,18 @@ $('btn-paste')?.addEventListener('click', async () => {
   }
 });
 
-// Pasting an image (screenshot, copied photo) drops it in with a preview.
+// Pasting files (screenshot, audio, video, documents) drops them in with previews.
 $('input').addEventListener('paste', (e) => {
   const items = [...(e.clipboardData?.items ?? [])];
-  const files = items.filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
-  const images = files.filter((f) => f.type.startsWith('image/'));
-  if (images.length === 0) return;
-  // Don't paste the image's binary as text into the textarea as well.
+  const files = items
+    .filter((it) => it.kind === 'file')
+    .map((it) => it.getAsFile())
+    .filter(Boolean);
+  if (files.length === 0) return;
+  // Don't paste the binary file as garbage text into the textarea as well.
   e.preventDefault();
-  addFiles(images);
+  addFiles(files);
+  showToast(formatPasteToast(files));
 });
 
 $('file-input').addEventListener('change', (e) => {
@@ -2034,7 +2090,7 @@ $('file-input').addEventListener('change', (e) => {
 /**
  * Add files (from the picker or a paste) to the pending list.
  *
- * A pasted image arrives as a Blob with no filename, so one is synthesised;
+ * A pasted item arrives as a Blob with no filename, so one is synthesised;
  * without it the server has nothing to name the upload and pi cannot @-attach
  * it. Object URLs back the thumbnails and are revoked when the chip is removed
  * or the message sends, so previewing images does not leak memory.
@@ -2043,12 +2099,18 @@ function addFiles(fileList) {
   let added = 0;
   for (const file of fileList) {
     if (!file) continue;
-    const isImage = file.type.startsWith('image/');
-    const name = file.name || `pasted-${Date.now()}-${added}.${(file.type.split('/')[1] || 'png')}`;
+    const type = file.type || '';
+    const isImage = type.startsWith('image/');
+    const isAudio = type.startsWith('audio/');
+    const isVideo = type.startsWith('video/');
+    const ext = MIME_EXT_MAP[type] || type.split('/')[1]?.split('+')[0] || 'bin';
+    const name = file.name || `pasted-${Date.now()}-${added}.${ext}`;
     state.attachments.push({
       name,
       file,
       isImage,
+      isAudio,
+      isVideo,
       url: isImage ? URL.createObjectURL(file) : null,
     });
     added += 1;
@@ -2068,16 +2130,23 @@ function renderAttachments() {
   wrap.hidden = state.attachments.length === 0;
 
   state.attachments.forEach((attachment, i) => {
-    const chip = el('div', `chip${attachment.isImage ? ' chip-image' : ''}`);
+    const isImg = attachment.isImage;
+    const isAud = attachment.isAudio;
+    const isVid = attachment.isVideo;
+    const chip = el(
+      'div',
+      `chip${isImg ? ' chip-image' : isAud ? ' chip-audio' : isVid ? ' chip-video' : ''}`,
+    );
 
-    if (attachment.isImage) {
+    if (isImg) {
       // Small square preview, matching what was asked for.
       const thumb = el('img', 'chip-thumb');
       thumb.src = attachment.url;
       thumb.alt = attachment.name;
       chip.append(thumb);
     } else {
-      chip.append(el('span', 'chip-name', attachment.name));
+      const icon = isAud ? '🎵 ' : isVid ? '🎬 ' : '📎 ';
+      chip.append(el('span', 'chip-name', `${icon}${attachment.name}`));
     }
 
     const remove = el('button', 'chip-remove', '×');
