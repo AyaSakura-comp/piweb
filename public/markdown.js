@@ -121,6 +121,8 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
   let isPanning = false;
   let posX = 0;
   let posY = 0;
+  let originClientX = 0;
+  let originClientY = 0;
   let panStartX = 0;
   let panStartY = 0;
   let contentFocalX = 0;
@@ -149,13 +151,15 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
         isPanning = false;
         const t1 = e.touches[0];
         const t2 = e.touches[1];
-        const rect = scrollEl.getBoundingClientRect();
+        const chartRect = chartEl.getBoundingClientRect();
         initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         startScale = scale;
-        const focalX = (t1.clientX + t2.clientX) / 2 - rect.left;
-        const focalY = (t1.clientY + t2.clientY) / 2 - rect.top;
-        contentFocalX = (focalX - posX) / startScale;
-        contentFocalY = (focalY - posY) / startScale;
+        const focalClientX = (t1.clientX + t2.clientX) / 2;
+        const focalClientY = (t1.clientY + t2.clientY) / 2;
+        originClientX = chartRect.left - posX;
+        originClientY = chartRect.top - posY;
+        contentFocalX = (focalClientX - chartRect.left) / startScale;
+        contentFocalY = (focalClientY - chartRect.top) / startScale;
         return;
       }
 
@@ -173,14 +177,14 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
             posX = 0;
             posY = 0;
           } else {
-            const rect = scrollEl.getBoundingClientRect();
-            const tapX = touch.clientX - rect.left;
-            const tapY = touch.clientY - rect.top;
-            const oldContentX = (tapX - posX) / scale;
-            const oldContentY = (tapY - posY) / scale;
+            const chartRect = chartEl.getBoundingClientRect();
+            const originClientX = chartRect.left - posX;
+            const originClientY = chartRect.top - posY;
+            const tapContentX = (touch.clientX - chartRect.left) / scale;
+            const tapContentY = (touch.clientY - chartRect.top) / scale;
             scale = 1.8;
-            posX = tapX - oldContentX * scale;
-            posY = tapY - oldContentY * scale;
+            posX = touch.clientX - originClientX - tapContentX * scale;
+            posY = touch.clientY - originClientY - tapContentY * scale;
           }
           updateTransform(true);
           return;
@@ -207,15 +211,14 @@ function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
         if (e.cancelable) e.preventDefault();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
-        const rect = scrollEl.getBoundingClientRect();
         const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         const ratio = dist / (initialDist || 1);
         scale = Math.min(5, Math.max(0.2, startScale * ratio));
 
-        const newFocalX = (t1.clientX + t2.clientX) / 2 - rect.left;
-        const newFocalY = (t1.clientY + t2.clientY) / 2 - rect.top;
-        posX = newFocalX - contentFocalX * scale;
-        posY = newFocalY - contentFocalY * scale;
+        const newFocalClientX = (t1.clientX + t2.clientX) / 2;
+        const newFocalClientY = (t1.clientY + t2.clientY) / 2;
+        posX = newFocalClientX - originClientX - contentFocalX * scale;
+        posY = newFocalClientY - originClientY - contentFocalY * scale;
         updateTransform(false);
         return;
       }
@@ -285,6 +288,8 @@ function openMermaidModal(svgHtml) {
     let scale = 1;
     let x = 0;
     let y = 0;
+    let originClientX = 0;
+    let originClientY = 0;
     let isPinching = false;
     let isPanning = false;
     let initialDist = 0;
@@ -307,14 +312,17 @@ function openMermaidModal(svgHtml) {
     };
 
     const zoomByRatio = (factor) => {
+      const stageRect = stage.getBoundingClientRect();
       const bodyRect = body.getBoundingClientRect();
-      const cx = bodyRect.width / 2;
-      const cy = bodyRect.height / 2;
-      const oldContentX = (cx - x) / scale;
-      const oldContentY = (cy - y) / scale;
+      const cx = bodyRect.left + bodyRect.width / 2;
+      const cy = bodyRect.top + bodyRect.height / 2;
+      const origX = stageRect.left - x;
+      const origY = stageRect.top - y;
+      const contentX = (cx - stageRect.left) / scale;
+      const contentY = (cy - stageRect.top) / scale;
       scale = Math.min(6, Math.max(0.2, scale * factor));
-      x = cx - oldContentX * scale;
-      y = cy - oldContentY * scale;
+      x = cx - origX - contentX * scale;
+      y = cy - origY - contentY * scale;
       updateTransform(true);
     };
 
@@ -347,13 +355,15 @@ function openMermaidModal(svgHtml) {
           isPanning = false;
           const t1 = e.touches[0];
           const t2 = e.touches[1];
-          const bodyRect = body.getBoundingClientRect();
+          const stageRect = stage.getBoundingClientRect();
           initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
           startScale = scale;
-          const focalX = (t1.clientX + t2.clientX) / 2 - bodyRect.left;
-          const focalY = (t1.clientY + t2.clientY) / 2 - bodyRect.top;
-          contentFocalX = (focalX - x) / startScale;
-          contentFocalY = (focalY - y) / startScale;
+          const focalClientX = (t1.clientX + t2.clientX) / 2;
+          const focalClientY = (t1.clientY + t2.clientY) / 2;
+          originClientX = stageRect.left - x;
+          originClientY = stageRect.top - y;
+          contentFocalX = (focalClientX - stageRect.left) / startScale;
+          contentFocalY = (focalClientY - stageRect.top) / startScale;
           return;
         }
 
@@ -370,14 +380,14 @@ function openMermaidModal(svgHtml) {
               x = 0;
               y = 0;
             } else {
-              const bodyRect = body.getBoundingClientRect();
-              const tapX = touch.clientX - bodyRect.left;
-              const tapY = touch.clientY - bodyRect.top;
-              const oldContentX = (tapX - x) / scale;
-              const oldContentY = (tapY - y) / scale;
+              const stageRect = stage.getBoundingClientRect();
+              const origX = stageRect.left - x;
+              const origY = stageRect.top - y;
+              const tapContentX = (touch.clientX - stageRect.left) / scale;
+              const tapContentY = (touch.clientY - stageRect.top) / scale;
               scale = 2.2;
-              x = tapX - oldContentX * scale;
-              y = tapY - oldContentY * scale;
+              x = touch.clientX - origX - tapContentX * scale;
+              y = touch.clientY - origY - tapContentY * scale;
             }
             updateTransform(true);
             return;
@@ -401,15 +411,14 @@ function openMermaidModal(svgHtml) {
           if (e.cancelable) e.preventDefault();
           const t1 = e.touches[0];
           const t2 = e.touches[1];
-          const bodyRect = body.getBoundingClientRect();
           const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
           const ratio = dist / (initialDist || 1);
           scale = Math.min(6, Math.max(0.2, startScale * ratio));
 
-          const newFocalX = (t1.clientX + t2.clientX) / 2 - bodyRect.left;
-          const newFocalY = (t1.clientY + t2.clientY) / 2 - bodyRect.top;
-          x = newFocalX - contentFocalX * scale;
-          y = newFocalY - contentFocalY * scale;
+          const newFocalClientX = (t1.clientX + t2.clientX) / 2;
+          const newFocalClientY = (t1.clientY + t2.clientY) / 2;
+          x = newFocalClientX - originClientX - contentFocalX * scale;
+          y = newFocalClientY - originClientY - contentFocalY * scale;
           updateTransform(false);
           return;
         }
