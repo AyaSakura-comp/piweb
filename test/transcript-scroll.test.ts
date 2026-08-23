@@ -30,14 +30,29 @@ function setupScroller() {
 }
 
 describe('transcript live scrolling', () => {
-  it('animates completed live messages upward instead of snapping', () => {
+  it('keeps completed live messages locked to the tail without an in-flight smooth-scroll gap', () => {
     const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
     const appendEvent =
       app.match(/function appendEvent\(event, live\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
 
     expect(appendEvent).toContain(
-      "settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'smooth')",
+      "settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto')",
     );
+    expect(appendEvent).not.toContain("followLatest, 'smooth'");
+  });
+
+  it('reanchors the live tail when focusing the composer opens the mobile keyboard', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+    const viewportSync = app.match(/function syncViewportSizes\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+    expect(app).toContain("input.addEventListener('focus', captureComposerBottomLock)");
+    expect(app).toContain("input.addEventListener('blur', releaseComposerBottomLock)");
+    expect(app).toContain("$('messages').addEventListener('pointerdown', releaseComposerBottomLock");
+    expect(app).toContain("$('messages').addEventListener('touchmove', releaseComposerBottomLock");
+    expect(app).toContain("$('messages').addEventListener('wheel', releaseComposerBottomLock");
+    expect(app).toContain('if (shouldReleaseComposerBottomLock()) releaseComposerBottomLock()');
+    expect(app).not.toContain('if (composerBottomLocked && !isNearBottom()) releaseComposerBottomLock()');
+    expect(viewportSync).toContain('keepComposerBottomVisible()');
   });
 
   it('does not treat a reader 50px above the tail as being at the bottom', () => {

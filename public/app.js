@@ -833,7 +833,9 @@ $('messages').addEventListener(
     const m = $('messages');
     if (m.scrollTop < 300) loadOlder();
     if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
-    // Show/hide the FAB when streaming and user scrolls away from / back to bottom
+    // Layout shifts are guarded while the mobile keyboard opens; later unguarded
+    // scrolls still release the lock for keyboard/scrollbar navigation.
+    if (shouldReleaseComposerBottomLock()) releaseComposerBottomLock();
     if (state.atLive) setJumpLive(!isNearBottom());
   },
   { passive: true },
@@ -1681,7 +1683,10 @@ function appendEvent(event, live) {
   const node = buildEventNode(event);
   if (live) node.classList.add('pop-in');
   messages.append(node);
-  if (live) settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'smooth');
+  // Keep the tail lock synchronous. A smooth scroll can still be in flight when
+  // the next stream chunk arrives, making the viewport look "away" from the
+  // bottom and incorrectly disabling follow mode.
+  if (live) settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto');
 }
 
 /** Build the DOM for one event. Shared by live append and paged prepend. */
@@ -1905,6 +1910,52 @@ function scrollToBottom(instant) {
 // ── composer ─────────────────────────────────────────────────────────────
 
 const input = $('input');
+const COMPOSER_LAYOUT_GUARD_MS = 600;
+let composerBottomLocked = false;
+let composerBottomFrame = 0;
+let composerBottomGuardUntil = 0;
+
+function keepComposerBottomVisible() {
+  if (!composerBottomLocked) return;
+  composerBottomGuardUntil = performance.now() + COMPOSER_LAYOUT_GUARD_MS;
+  if (composerBottomFrame) cancelAnimationFrame(composerBottomFrame);
+  composerBottomFrame = requestAnimationFrame(() => {
+    composerBottomFrame = 0;
+    if (composerBottomLocked) scrollToBottom(true);
+  });
+}
+
+function captureComposerBottomLock() {
+  composerBottomLocked = isNearBottom();
+  keepComposerBottomVisible();
+}
+
+function shouldReleaseComposerBottomLock() {
+  return (
+    composerBottomLocked &&
+    !composerBottomFrame &&
+    performance.now() >= composerBottomGuardUntil &&
+    !isNearBottom()
+  );
+}
+
+function releaseComposerBottomLock() {
+  composerBottomLocked = false;
+  composerBottomGuardUntil = 0;
+  if (composerBottomFrame) cancelAnimationFrame(composerBottomFrame);
+  composerBottomFrame = 0;
+}
+
+// Release immediately for explicit reader gestures. The guarded scroll handler
+// above covers keyboard/scrollbar movement without mistaking keyboard layout
+// animation for user intent.
+$('messages').addEventListener('pointerdown', releaseComposerBottomLock, { passive: true });
+$('messages').addEventListener('touchmove', releaseComposerBottomLock, { passive: true });
+$('messages').addEventListener('wheel', releaseComposerBottomLock, { passive: true });
+
+input.addEventListener('focus', captureComposerBottomLock);
+input.addEventListener('blur', releaseComposerBottomLock);
+
 const uploadProgress = {
   container: $('upload-progress'),
   bar: $('upload-progress-bar'),
@@ -1926,6 +1977,9 @@ function autoGrow() {
 input.addEventListener('input', () => {
   autoGrow();
   updateAutocomplete();
+  // Growing the composer reduces transcript space just like opening the mobile
+  // keyboard; preserve the tail only when focus began at the bottom.
+  keepComposerBottomVisible();
 });
 
 // Safari fires the composition-committing Enter's keydown *after*
@@ -2956,6 +3010,9 @@ function syncAutocompleteHeight() {
 function syncViewportSizes() {
   syncAutocompleteHeight();
   syncSheetHeight();
+  // iOS reports the keyboard through visualViewport after focus. Re-anchor on
+  // each resize/scroll event while the composer owns a bottom lock.
+  keepComposerBottomVisible();
 }
 
 if (window.visualViewport) {
