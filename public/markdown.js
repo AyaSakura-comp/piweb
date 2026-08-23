@@ -2,8 +2,9 @@
  * Markdown + LaTeX rendering for message bodies.
  *
  * Everything is built as DOM nodes; model output is never assigned to innerHTML.
- * The single exception is KaTeX's own output, which KaTeX generates from the
- * math source with `trust: false`, so no author HTML can pass through.
+ * KaTeX and highlight.js are the only exceptions: both generate their own
+ * escaped markup from source text (with KaTeX configured as `trust: false`), so
+ * no author HTML can pass through.
  *
  * Order matters. Fenced code is lifted out first (nothing inside it should be
  * interpreted), then math (so `$a_1$` is not eaten by the italic rule and
@@ -594,6 +595,34 @@ function openMermaidModal(svgHtml) {
   document.body.style.overflow = 'hidden';
 }
 
+export function highlightCode(code, language = '', highlighter = globalThis.window?.hljs) {
+  if (!highlighter) return undefined;
+  try {
+    if (language && highlighter.getLanguage?.(language)) {
+      return highlighter.highlight(code, { language, ignoreIllegals: true });
+    }
+    return highlighter.highlightAuto(code);
+  } catch {
+    return undefined;
+  }
+}
+
+export function applySyntaxHighlighting(element, code, language = '', highlighter = globalThis.window?.hljs) {
+  const highlighted = highlightCode(code, language, highlighter);
+  if (!highlighted) return false;
+
+  // highlight.js escapes the source before returning this token-only markup;
+  // no model-authored HTML is passed through.
+  element.innerHTML = highlighted.value;
+  element.classList.add('hljs');
+  const detected = highlighted.language || language;
+  if (detected && /^[\w+-]+$/.test(detected)) {
+    element.classList.add(`language-${detected}`);
+    element.dataset.language = detected;
+  }
+  return true;
+}
+
 function renderCode(item) {
   if (item.lang === 'mermaid' && window.mermaid) {
     ensureMermaid();
@@ -692,8 +721,10 @@ function renderCode(item) {
 
   const pre = document.createElement('pre');
   const code = document.createElement('code');
-  if (item.lang) code.className = `lang-${item.lang}`;
-  code.textContent = item.code;
+  if (!applySyntaxHighlighting(code, item.code, item.lang)) {
+    if (item.lang) code.classList.add(`language-${item.lang}`);
+    code.textContent = item.code;
+  }
   pre.append(code);
   return pre;
 }

@@ -50,6 +50,7 @@ Thanks for your interest in contributing! This guide will help you get started.
    npm run lint      # ESLint
    npm run format    # Prettier (auto-fix)
    npm test          # Vitest
+   npm run test:e2e  # Playwright mobile E2E + visual regression + video
    npm run build     # TypeScript compilation
    ```
 

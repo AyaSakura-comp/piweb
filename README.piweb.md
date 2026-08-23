@@ -138,6 +138,31 @@ node dist/cli/piweb.js web      # web only
 
 `WEB_EMBEDDED_WORKER=true` makes `web` mode run the worker in-process.
 
+## Browser E2E, video, and visual regression tests
+
+The Playwright suite runs against deterministic local fixtures at the production
+phone viewport (390×844), records every test as WebM, and compares reviewed PNG
+baselines:
+
+```bash
+npm run test:e2e              # run behavior + screenshot comparisons
+npm run test:e2e:update       # accept reviewed visual changes
+```
+
+Videos, failure screenshots, traces, and the HTML evidence report are written to
+`artifacts/playwright/` (gitignored). Reviewed baselines live under
+`test/e2e/__screenshots__/` and are committed. Do not update a baseline until its
+pixels have been inspected.
+
+Live-account scroll checks are opt-in so normal tests never send messages to a
+real session. Point them at a disposable test session: command output and the
+quoted-reply probe remain in its transcript.
+
+```bash
+PIWEB_E2E_LIVE_URL=https://piweb.example/ \
+PIWEB_E2E_TOKEN=... npm run test:e2e
+```
+
 ## Notes
 
 - **Live updates** use SSE, resumed by event id, so a phone that slept through a
@@ -153,6 +178,7 @@ node dist/cli/piweb.js web      # web only
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
   Voice notes and audio files receive automatic Breeze ASR transcription. Lightbox features numbered placeholder thumbnails
   and dynamic +/-2 sliding-window background prefetching.
+- **Syntax-highlighted Code Blocks**: Fenced code uses the declared language when available and highlight.js auto-detection when the language tag is omitted or unknown. The browser build is vendored, so highlighting works without a CDN.
 - **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `pie`, `sequenceDiagram`, `stateDiagram`, `classDiagram`, `gantt`, `gitGraph`, `mindmap`, etc.)
   automatically render into crisp vector SVG diagrams using one restrained 12-color Japanese palette (moss, blue-grey, rust, tea, pine, muted violet, celadon, walnut, olive, indigo, adzuki, and warm slate) across every chart type. Wide Gantt charts use a readable 1000px canvas with expanded label spacing and horizontal scrolling instead of compressing labels into the phone viewport. Includes two-finger pinch-to-zoom (0.2x–5x), single-finger pan, double-tap zoom toggle, fullscreen zoom modal, diagram-type labels, and one-click code copying.
 - **Recency-First Session Management**: Session list and initial home page load automatically default to the most recently updated session (`lastActivity DESC`).

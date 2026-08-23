@@ -537,7 +537,9 @@ svg {
   opacity: 0.72;
 }
 
-.msg-text pre {
+.msg-text pre,
+.event-body pre {
+  max-width: 100%;
   margin: 6px 0;
   padding: 10px 12px;
   background: var(--bg-dark);
@@ -546,6 +548,8 @@ svg {
   /* Long tool output must scroll inside its own box; the page itself never
      scrolls sideways on a phone. */
   overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -725,11 +729,93 @@ svg {
   stroke-linejoin: initial;
 }
 
-.msg-text pre code {
+.msg-text pre code,
+.event-body pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
   background: none;
   padding: 0;
+  color: #c9d1d9;
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+/* highlight.js token palette, tuned for piweb's dark transcript. The library
+   supplies only semantic spans; keeping the colours here avoids a second theme
+   stylesheet and makes message and tool-event code blocks match. */
+.hljs-comment,
+.hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-type,
+.hljs-doctag {
+  color: #ff7b72;
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-section {
+  color: #d2a8ff;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: #a5d6ff;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: #79c0ff;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-property,
+.hljs-params {
+  color: #ffa657;
+}
+
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-meta {
+  color: #f2cc60;
+}
+
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #7ee787;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 700;
+}
+
+.hljs-addition {
+  color: #aff5b4;
+  background: rgb(46 160 67 / 0.16);
+}
+
+.hljs-deletion {
+  color: #ffdcd7;
+  background: rgb(248 81 73 / 0.16);
 }
 
 .msg-files {

@@ -68,10 +68,11 @@ src/worker/      index.ts  = worker startup (loops + model-catalog + trash sweep
 src/media-path.ts  ONE spelling of a media dir/URL (invariant 9)
 src/cli/piweb.ts   entrypoint: worker | web | all
 public/          index.html, app.css, app.js — no framework, no build step
-                 markdown.js = markdown + KaTeX + Mermaid renderer (DOM nodes only)
+                 markdown.js = markdown + KaTeX + Mermaid + code highlighting
                  sw.js       = service worker (Web Push receive only)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
+                 vendor/highlight/ = highlight.js browser build (no CDN)
                  icons/piweb/  = home-screen icon set; manifest.webmanifest
 scripts/history.py  read-only history query CLI (stdlib only)
 deploy/          piweb-worker.service
@@ -170,7 +171,7 @@ origin check.
 
 | feature | where |
 |---|---|
-| markdown + LaTeX | `public/markdown.js` (`renderRich`), KaTeX in `vendor/` |
+| markdown + LaTeX + syntax highlighting | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; unlabeled/unknown fences use language auto-detection |
 | Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
@@ -533,9 +534,13 @@ unusable, because it sat one row away from a near-identical green. Colour,
 contrast and adjacency only fail in the picture — compare elements **against
 their real neighbours**, in the real list, at the real size.
 
-Screenshots land in `~/` (not the repo) when driving the deployed URL through
-Playwright; `find /home/chihmin -maxdepth 2 -name '<file>.png'` if a relative
-path appears to vanish.
+The deterministic Playwright visual suite stores reviewed PNG baselines under
+`test/e2e/__screenshots__/` and records each run as WebM under
+`artifacts/playwright/test-results/`; the HTML evidence report is
+`artifacts/playwright/report/`. Inspect changed pixels before running
+`npm run test:e2e:update`. Screenshots made by one-off scripts against the
+live deployment may still land in `~/`; use
+`find /home/chihmin -maxdepth 2 -name '<file>.png'` if one appears to vanish.
 
 ### Control both directions
 
@@ -558,13 +563,21 @@ real HTTPS URL, not `127.0.0.1`.
 ### Commands
 
 ```bash
-npm test                      # 47 tests; keep them passing
+npm test                      # Vitest unit/integration suite
+npm run test:e2e             # Playwright mobile behavior + visual baselines + video
+npm run test:e2e:update      # accept visual changes only after pixel inspection
 ./node_modules/.bin/tsc --noEmit
 npm run build
 ./scripts/history.py stats    # read-only; safe against a live worker
 docker compose logs -f app
 journalctl --user -u piweb-worker -f
 ```
+
+The local Playwright fixture server is `test/e2e/fixture-server.mjs`; it serves
+production files from `public/` without auth or account state. Tests in
+`live-scroll.spec.ts` are skipped unless `PIWEB_E2E_LIVE_URL` is set, and token
+login reads `PIWEB_E2E_TOKEN` — never embed a deployed URL or credential in a
+test.
 
 `test/queue-cwd.test.ts` installs a stub transport via `setTransport()` — the
 queue no longer imports the Discord client, so module-mocking it does nothing.
@@ -583,7 +596,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   Long content (code, tool output) scrolls inside `overflow-x: auto`; the page
   body never scrolls horizontally.
 - **Message rendering**: minimal markdown (fenced code, inline code, bold) built
-  from **text nodes only** — never `innerHTML` on model output.
+  from **text nodes only**. Never assign model-authored HTML to `innerHTML`;
+  KaTeX and highlight.js may assign only the escaped markup they generate from
+  math/code source.
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a
   one-line peek; `system`/`error` open by default and omit the peek so the text
   is not shown twice.

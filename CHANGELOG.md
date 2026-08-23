@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Syntax highlighting for fenced code blocks, including automatic language detection when the language tag is omitted or unknown
+- Playwright mobile E2E coverage with WebM recording, reviewed screenshot baselines, traces, and an HTML evidence report
+
 ## [1.5.3] - 2026-05-19
 
 ### Fixed

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>piweb syntax highlighting fixture</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      body {
+        overflow: auto;
+        background: #313338;
+      }
+
+      .fixture {
+        min-height: 100dvh;
+        padding: 18px 0 32px;
+      }
+
+      .fixture h1 {
+        margin: 0 14px 12px;
+        color: #f2f3f5;
+        font:
+          700 18px/1.3 system-ui,
+          sans-serif;
+      }
+
+      .sample {
+        margin-bottom: 14px;
+      }
+
+      .sample-label {
+        margin: 0 14px 4px;
+        color: #949ba4;
+        font:
+          600 12px/1.4 system-ui,
+          sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="fixture">
+      <h1>Code highlighting</h1>
+
+      <section class="sample msg">
+        <p class="sample-label">Auto-detected JavaScript</p>
+        <div id="auto-javascript" class="msg-text"></div>
+      </section>
+
+      <section class="sample msg">
+        <p class="sample-label">Auto-detected Python</p>
+        <div id="auto-python" class="msg-text"></div>
+      </section>
+
+      <section class="sample msg">
+        <p class="sample-label">Explicit SQL · horizontal overflow</p>
+        <div id="explicit-sql" class="msg-text"></div>
+      </section>
+
+      <details class="event tool_result" open>
+        <summary>
+          <span class="event-chevron">›</span>
+          <span class="label">📤 Tool result</span>
+        </summary>
+        <div class="event-body-wrap">
+          <div id="tool-json" class="event-body"></div>
+        </div>
+      </details>
+    </main>
+
+    <script src="/vendor/highlight/highlight.min.js"></script>
+    <script type="module">
+      import { renderRich } from '/markdown.js';
+
+      renderRich(
+        document.getElementById('auto-javascript'),
+        `\`\`\`
+async function loadMessages(sessionId) {
+  const response = await fetch(\`/api/sessions/\${sessionId}/events\`);
+  const events = await response.json();
+  document.querySelector('#count').textContent = String(events.length);
+  return events;
+}
+\`\`\``,
+      );
+      renderRich(
+        document.getElementById('auto-python'),
+        `\`\`\`
+from pathlib import Path
+
+def files(root: Path) -> list[str]:
+    return [item.name for item in root.iterdir()]
+\`\`\``,
+      );
+      renderRich(
+        document.getElementById('explicit-sql'),
+        `\`\`\`sql
+SELECT session_id, COUNT(*) AS total_messages FROM web_events WHERE created_at >= CURRENT_DATE GROUP BY session_id ORDER BY total_messages DESC;
+\`\`\``,
+      );
+      renderRich(
+        document.getElementById('tool-json'),
+        `\`\`\`json
+{"ok": true, "count": 42, "items": ["alpha", "beta"]}
+\`\`\``,
+      );
+    </script>
+  </body>
+</html>
