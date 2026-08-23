@@ -46,7 +46,7 @@ describe('streamed thinking UI', () => {
 
     // Proximity is captured before either placeholder mutates the transcript,
     // then reused after layout so a reader who scrolled up is never pulled down.
-    expect(answerRenderer).toContain('const followLatest = isNearBottom()');
+    expect(answerRenderer).toContain('const followLatest = shouldFollowTranscriptTail()');
     expect(answerRenderer).toContain("settleTranscriptUpdate(host, $('jump-live'), followLatest)");
     expect(answerRenderer).toContain('requestAnimationFrame(settle)');
     expect(answerRenderer).not.toContain('host.scrollTop = host.scrollHeight');

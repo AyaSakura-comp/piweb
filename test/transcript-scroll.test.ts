@@ -35,10 +35,14 @@ describe('transcript live scrolling', () => {
     const appendEvent =
       app.match(/function appendEvent\(event, live\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
 
+    expect(appendEvent).toContain('const followLatest = shouldFollowTranscriptTail()');
     expect(appendEvent).toContain(
       "settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto')",
     );
     expect(appendEvent).not.toContain("followLatest, 'smooth'");
+    expect(app.match(/function renderPartial\(text, thinking = ''\) \{([\s\S]*?)\n\}/)?.[1]).toContain(
+      'const followLatest = shouldFollowTranscriptTail()',
+    );
   });
 
   it('reanchors the live tail when focusing the composer opens the mobile keyboard', () => {
@@ -46,7 +50,16 @@ describe('transcript live scrolling', () => {
     const viewportSync = app.match(/function syncViewportSizes\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
 
     expect(app).toContain("input.addEventListener('focus', captureComposerBottomLock)");
-    expect(app).toContain("input.addEventListener('blur', releaseComposerBottomLock)");
+    expect(app).toContain("input.addEventListener('blur', handleComposerBlur)");
+    expect(app).toContain("$('btn-send').addEventListener('pointerdown', captureComposerSendIntent)");
+    expect(app).toContain("$('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup)");
+    expect(app).toContain("$('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave)");
+    expect(app).toContain('holdComposerBottomForSend(followAfterSend)');
+    expect(app).toContain('scheduleComposerSendSettlement()');
+    const sendSettlement =
+      app.match(/function scheduleComposerSendSettlement\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(sendSettlement).not.toContain('needsViewportRecovery');
+    expect(app).not.toContain('COMPOSER_SEND_LOCK_MS');
     expect(app).toContain("$('messages').addEventListener('pointerdown', releaseComposerBottomLock");
     expect(app).toContain("$('messages').addEventListener('touchmove', releaseComposerBottomLock");
     expect(app).toContain("$('messages').addEventListener('wheel', releaseComposerBottomLock");

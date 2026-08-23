@@ -1681,7 +1681,7 @@ const EVENT_LABELS = {
 function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
-  const followLatest = isNearBottom();
+  const followLatest = shouldFollowTranscriptTail();
   const node = buildEventNode(event);
   if (live) node.classList.add('pop-in');
   messages.append(node);
@@ -1806,7 +1806,7 @@ function renderPartialThinking(thinking) {
 
 function renderPartial(text, thinking = '') {
   const host = $('messages');
-  const followLatest = isNearBottom();
+  const followLatest = shouldFollowTranscriptTail();
   const removedThinking = renderPartialThinking(thinking);
   let node = document.getElementById('partial-msg');
   let removedAnswer = false;
@@ -1904,6 +1904,10 @@ function isNearBottom() {
   return isTranscriptNearBottom($('messages'));
 }
 
+function shouldFollowTranscriptTail() {
+  return composerBottomLocked || isNearBottom();
+}
+
 function scrollToBottom(instant) {
   const messages = $('messages');
   messages.scrollTo({ top: messages.scrollHeight, behavior: instant ? 'auto' : 'smooth' });
@@ -1913,9 +1917,14 @@ function scrollToBottom(instant) {
 
 const input = $('input');
 const COMPOSER_LAYOUT_GUARD_MS = 600;
+const COMPOSER_VIEWPORT_SETTLE_MS = 180;
 let composerBottomLocked = false;
 let composerBottomFrame = 0;
 let composerBottomGuardUntil = 0;
+let composerSendIntent = false;
+let composerSendIntentCleanupTimer = 0;
+let composerSendLockActive = false;
+let composerSendSettleTimer = 0;
 
 function keepComposerBottomVisible() {
   if (!composerBottomLocked) return;
@@ -1944,8 +1953,84 @@ function shouldReleaseComposerBottomLock() {
 function releaseComposerBottomLock() {
   composerBottomLocked = false;
   composerBottomGuardUntil = 0;
+  composerSendIntent = false;
+  composerSendLockActive = false;
   if (composerBottomFrame) cancelAnimationFrame(composerBottomFrame);
   composerBottomFrame = 0;
+  if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
+  composerSendIntentCleanupTimer = 0;
+  if (composerSendSettleTimer) clearTimeout(composerSendSettleTimer);
+  composerSendSettleTimer = 0;
+}
+
+function captureComposerSendIntent() {
+  if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
+  composerSendIntentCleanupTimer = 0;
+  composerSendIntent = shouldFollowTranscriptTail();
+}
+
+function scheduleComposerSendIntentCleanup() {
+  if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
+  composerSendIntentCleanupTimer = setTimeout(() => {
+    composerSendIntentCleanupTimer = 0;
+    if (!composerSendIntent) return;
+    composerSendIntent = false;
+    if (document.activeElement !== input) releaseComposerBottomLock();
+  }, 0);
+}
+
+function cancelMouseSendIntentOnLeave(event) {
+  if (event.pointerType === 'mouse' && event.buttons !== 0) cancelComposerSendIntent();
+}
+
+function cancelComposerSendIntent() {
+  composerSendIntent = false;
+  if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
+  composerSendIntentCleanupTimer = 0;
+  if (document.activeElement !== input) releaseComposerBottomLock();
+}
+
+function consumeComposerSendIntent() {
+  const followLatest = composerSendIntent || shouldFollowTranscriptTail();
+  composerSendIntent = false;
+  if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
+  composerSendIntentCleanupTimer = 0;
+  return followLatest;
+}
+
+function abandonComposerSend() {
+  if (document.activeElement !== input) releaseComposerBottomLock();
+}
+
+function scheduleComposerSendSettlement() {
+  if (!composerSendLockActive || document.activeElement === input) return;
+  if (composerSendSettleTimer) clearTimeout(composerSendSettleTimer);
+  composerSendSettleTimer = setTimeout(() => {
+    composerSendSettleTimer = 0;
+    recoverStandaloneViewport();
+    requestAnimationFrame(() => {
+      if (!composerSendLockActive || document.activeElement === input) return;
+      // The reflow above is best-effort. Clamp once in the current viewport and
+      // release; a later viewport expansion only moves the tail closer, while
+      // retrying until innerHeight changes can loop forever on broken WebKit.
+      scrollToBottom(true);
+      releaseComposerBottomLock();
+    });
+  }, COMPOSER_VIEWPORT_SETTLE_MS);
+}
+
+function holdComposerBottomForSend(followLatest) {
+  if (!followLatest) return;
+  composerBottomLocked = true;
+  composerSendLockActive = true;
+  keepComposerBottomVisible();
+  scheduleComposerSendSettlement();
+}
+
+function handleComposerBlur() {
+  // Tapping Send blurs the textarea before the submit event. Keep the original
+  // tail intent alive until submit consumes it and the keyboard settles.
+  if (!composerSendIntent) releaseComposerBottomLock();
 }
 
 // Release immediately for explicit reader gestures. The guarded scroll handler
@@ -1955,10 +2040,14 @@ $('messages').addEventListener('pointerdown', releaseComposerBottomLock, { passi
 $('messages').addEventListener('touchmove', releaseComposerBottomLock, { passive: true });
 $('messages').addEventListener('wheel', releaseComposerBottomLock, { passive: true });
 
+$('btn-send').addEventListener('pointerdown', captureComposerSendIntent);
+$('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup);
+$('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave);
+$('btn-send').addEventListener('pointercancel', cancelComposerSendIntent);
 input.addEventListener('pointerdown', cancelStandaloneViewportRecovery);
 input.addEventListener('focus', captureComposerBottomLock);
 input.addEventListener('focus', cancelStandaloneViewportRecovery);
-input.addEventListener('blur', releaseComposerBottomLock);
+input.addEventListener('blur', handleComposerBlur);
 input.addEventListener('blur', scheduleStandaloneViewportRecovery);
 
 const uploadProgress = {
@@ -2239,15 +2328,24 @@ function fileToBase64(file) {
 
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (state.uploading) return;
+  const followAfterSend = consumeComposerSendIntent();
+  if (state.uploading) {
+    abandonComposerSend();
+    return;
+  }
   if (!state.activeJid) {
+    abandonComposerSend();
     alert('Create or pick a session first.');
     return;
   }
 
   const text = input.value.trim();
   const quote = state.pendingQuote;
-  if (!text && !quote && state.attachments.length === 0) return;
+  if (!text && !quote && state.attachments.length === 0) {
+    abandonComposerSend();
+    return;
+  }
+  holdComposerBottomForSend(followAfterSend);
 
   // A slash line is a command, not a prompt. A quoted selection always makes
   // the turn a normal prompt, even when the reply itself begins with a slash.
@@ -3017,7 +3115,7 @@ function recoverStandaloneViewport() {
   ) return;
 
   const messages = $('messages');
-  const followLatest = isNearBottom();
+  const followLatest = shouldFollowTranscriptTail();
   recoverViewportShell($('app'), messages, followLatest);
 }
 
@@ -3067,8 +3165,11 @@ function syncViewportSizes() {
   syncAutocompleteHeight();
   syncSheetHeight();
   // iOS reports the keyboard through visualViewport after focus. Re-anchor on
-  // each resize/scroll event while the composer owns a bottom lock.
+  // each resize/scroll event while the composer owns a bottom lock. A send
+  // lock is released only after these events have stopped, not on a fixed
+  // keyboard-animation deadline.
   keepComposerBottomVisible();
+  scheduleComposerSendSettlement();
 }
 
 if (window.visualViewport) {
