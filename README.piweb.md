@@ -59,6 +59,19 @@ Sessions are created and deleted from the drawer. The 🗑 button in the header 
 **clean session**: it clears the transcript *and* rotates pi's session directory,
 so the agent's context is genuinely reset rather than just visually cleared.
 
+## Appearance
+
+Piweb starts in dark mode. Open **Sessions** and use the appearance action below
+**Notifications** to switch themes. The choice is saved in `localStorage` under
+`piweb.theme` and applied before the stylesheet loads, so a saved light theme does
+not flash dark during startup.
+
+The light appearance uses a Japanese-minimal palette: a white main canvas, warm
+washi-toned secondary surfaces, sumi-like text, fine stone-coloured separators,
+and a restrained aizome blue-grey accent. Tool cards are flat in light mode, with
+semantic colour limited to quiet edge markers and controls. If browser storage is
+unavailable or contains an invalid value, Piweb safely falls back to dark mode.
+
 ## Authentication
 
 This endpoint can make pi run arbitrary commands on the host, so it always
@@ -140,19 +153,30 @@ node dist/cli/piweb.js web      # web only
 
 ## Browser E2E, video, and visual regression tests
 
-The Playwright suite runs against deterministic local fixtures at the production
-phone viewport (390×844), records every test as WebM, and compares reviewed PNG
-baselines:
+The Playwright suite runs end to end against deterministic local fixtures at the
+production phone viewport (390×844). Every test records a WebM video; visual tests
+also compare rendered pixels with reviewed PNG baselines. Current coverage includes
+syntax highlighting, persisted light/dark switching, the Japanese-minimal light
+palette, and drawer/sheet foreground layering:
 
 ```bash
-npm run test:e2e              # run behavior + screenshot comparisons
-npm run test:e2e:update       # accept reviewed visual changes
+npm run test:e2e              # behavior + visual regression + WebM evidence
+npm run test:e2e:update       # accept visual changes only after pixel review
 ```
 
 Videos, failure screenshots, traces, and the HTML evidence report are written to
 `artifacts/playwright/` (gitignored). Reviewed baselines live under
-`test/e2e/__screenshots__/` and are committed. Do not update a baseline until its
-pixels have been inspected.
+`test/e2e/__screenshots__/` and are committed. The report can be opened at
+`artifacts/playwright/report/index.html`. To inspect a recorded run directly:
+
+```bash
+find artifacts/playwright/test-results -name '*.webm'
+ffprobe -v error -show_entries stream=codec_name,width,height \
+  -show_entries format=duration,size <video.webm>
+```
+
+Do not commit generated WebM videos, traces, or reports, and do not update a
+baseline until its pixels have been inspected.
 
 Live-account scroll checks are opt-in so normal tests never send messages to a
 real session. Point them at a disposable test session: command output and the

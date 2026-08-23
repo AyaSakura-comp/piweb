@@ -8,21 +8,49 @@
  */
 
 :root {
+  color-scheme: dark;
   --bg: #313338;
   --bg-alt: #2b2d31;
   --bg-dark: #1e1f22;
   --bg-input: #383a40;
+  --bg-hover: rgb(255 255 255 / 0.1);
+  --bg-3: #2b2d31;
   --border: #3f4147;
   --text: #dbdee1;
+  --text-2: #b5bac1;
   --text-dim: #949ba4;
   --text-bright: #f2f3f5;
   --accent: #5865f2;
   --accent-hover: #4752c4;
+  --accent-light: #c4b5fd;
   --danger: #da373c;
   --thinking: #a78bfa;
   --tool: #3ba55d;
   --radius: 8px;
   --topbar-h: 48px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  /* Japanese minimal: white washi, warm stone neutrals and one quiet aizome
+     accent. Surfaces stay flat so spacing and hairlines create the hierarchy. */
+  --bg: #ffffff;
+  --bg-alt: #fbfaf7;
+  --bg-dark: #ebe8e1;
+  --bg-input: #f4f2ed;
+  --bg-hover: rgb(45 43 38 / 0.055);
+  --bg-3: #f4f2ed;
+  --border: #dedbd3;
+  --text: #35332f;
+  --text-2: #56534d;
+  --text-dim: #74716a;
+  --text-bright: #1f1e1a;
+  --accent: #3f5f6f;
+  --accent-hover: #324f5e;
+  --accent-light: #557789;
+  --danger: #ad4038;
+  --thinking: #6e5c87;
+  --tool: #397057;
 }
 
 * {
@@ -275,7 +303,9 @@ svg {
 
 .drawer {
   position: fixed;
-  z-index: 20;
+  /* Above transcript controls (composer 40, menu 45, jump 50), but below the
+     lightbox (60) and toast (70). An open drawer must own every tap in its area. */
+  z-index: 55;
   top: 0;
   left: 0;
   width: 78%;
@@ -296,7 +326,7 @@ svg {
 .scrim {
   position: fixed;
   inset: 0;
-  z-index: 15;
+  z-index: 54;
   background: rgb(0 0 0 / 0.5);
   /* Fades with the drawer; during an edge swipe JS drives opacity directly. */
   transition: opacity 0.18s ease;
@@ -1724,7 +1754,7 @@ svg {
   left: 50%;
   transform: translateX(-50%);
   bottom: 96px;
-  z-index: 5;
+  z-index: 50;
   padding: 8px 14px;
   background: var(--accent);
   color: #fff;
@@ -1891,7 +1921,9 @@ svg {
 .sheet {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /* Sheets can be launched from the drawer, so they sit above it (55) while
+     remaining below the dedicated image lightbox (60). */
+  z-index: 58;
   display: flex;
   align-items: flex-end;
   background: rgb(0 0 0 / 0.55);
@@ -2490,9 +2522,10 @@ svg {
   border-radius: 2px;
 }
 
-/* ── notification toggle ─────────────────────────────────────────────── */
+/* ── drawer preference toggles ───────────────────────────────────────── */
 
-.notif-toggle {
+.notif-toggle,
+.drawer-theme-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2502,7 +2535,8 @@ svg {
   text-align: left;
 }
 
-.notif-toggle svg {
+.notif-toggle svg,
+.drawer-theme-toggle svg {
   width: 16px;
   height: 16px;
   flex: none;
@@ -2711,6 +2745,18 @@ svg {
   background: var(--border);
 }
 
+.theme-icon-dark {
+  display: none;
+}
+
+:root[data-theme='light'] .theme-icon-light {
+  display: none;
+}
+
+:root[data-theme='light'] .theme-icon-dark {
+  display: block;
+}
+
 /* ── media gallery ──────────────────────────────────────────────────────────
  *
  * Every image/video in the session as square tiles, Discord-style. Square is
@@ -2779,6 +2825,206 @@ svg {
   color: var(--text-2, #b5bac1);
   word-break: break-all;
   text-align: center;
+}
+
+/* ── light appearance refinements ───────────────────────────────────────────
+ * Most surfaces use the semantic tokens at the top of this file. These rules
+ * cover components whose dark-mode translucency or fixed colour needs a
+ * contrast-safe daytime equivalent. The image viewer and selection pill stay
+ * intentionally dark so photos and native-style selection controls do not jump
+ * between appearances. */
+
+:root[data-theme='light'] .login-card {
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 40px rgb(45 43 38 / 0.08);
+}
+
+:root[data-theme='light'] .session-item .work-spinner {
+  border-color: rgb(45 43 38 / 0.14);
+  border-top-color: var(--accent);
+}
+
+:root[data-theme='light'] .event {
+  border-color: var(--border);
+  border-left-color: var(--border);
+  box-shadow: none;
+}
+
+:root[data-theme='light'] .event.thinking {
+  background: #fbf9fc;
+  border-left-color: var(--thinking);
+}
+
+:root[data-theme='light'] .event.tool {
+  background: #f7faf8;
+  border-left-color: var(--tool);
+}
+
+:root[data-theme='light'] .event.tool_result {
+  background: #f7faf8;
+  border-left-color: #397057;
+}
+
+:root[data-theme='light'] .event.system {
+  background: var(--bg-alt);
+  border-left-color: var(--accent);
+}
+
+:root[data-theme='light'] .event.error {
+  background: #fff8f7;
+  border-left-color: var(--danger);
+}
+
+:root[data-theme='light'] .event summary:hover,
+:root[data-theme='light'] #quote-preview-remove:hover,
+:root[data-theme='light'] #quote-preview-remove:active {
+  background: rgb(45 43 38 / 0.045);
+}
+
+:root[data-theme='light'] .autocomplete,
+:root[data-theme='light'] .menu-pop {
+  box-shadow: 0 12px 32px rgb(45 43 38 / 0.1);
+}
+
+:root[data-theme='light'] .msg-text a,
+:root[data-theme='light'] .video-download,
+:root[data-theme='light'] .file-link {
+  color: var(--accent);
+}
+
+/* Keep fenced code on a stable dark canvas; the syntax palette is designed for
+   it, while inline code follows the light input surface via --bg-dark. */
+:root[data-theme='light'] .msg-text pre,
+:root[data-theme='light'] .event-body pre {
+  background: #20242a;
+  border-color: #c8ccd1;
+}
+
+:root[data-theme='light'] .msg-text pre code,
+:root[data-theme='light'] .event-body pre code {
+  color: #dbe2ea;
+}
+
+/* Mermaid is rendered with an explicit dark diagram palette, so its chrome
+   remains dark as one self-contained figure in either app appearance. */
+:root[data-theme='light'] .mermaid-wrap,
+:root[data-theme='light'] .mm-modal-content {
+  background: #1c1c1a;
+  border-color: #51534d;
+  color: #e6e0d5;
+}
+
+:root[data-theme='light'] .mermaid-header,
+:root[data-theme='light'] .mm-modal-head {
+  background: #252622;
+  border-color: #51534d;
+  color: #b9b5ab;
+}
+
+:root[data-theme='light'] .mermaid-title,
+:root[data-theme='light'] .mm-modal-title {
+  color: #f4f0e6;
+}
+
+:root[data-theme='light'] .mermaid-btn {
+  background: #31322e;
+  border-color: #5d6058;
+  color: #e6e0d5;
+}
+
+:root[data-theme='light'] .deleted-banner {
+  background: #fcf6e8;
+  color: #655630;
+}
+
+:root[data-theme='light'] .login-error,
+:root[data-theme='light'] .trash-actions .danger,
+:root[data-theme='light'] .icon-btn.danger,
+:root[data-theme='light'] .menu-item.danger {
+  color: #b4232a;
+}
+
+:root[data-theme='light'] .trash-actions .danger {
+  border-color: #e3a9ac;
+}
+
+:root[data-theme='light'] .menu-item.danger:hover,
+:root[data-theme='light'] .menu-item.danger:focus-visible {
+  background: rgb(201 52 58 / 0.1);
+}
+
+:root[data-theme='light'] .provider-badge {
+  background: #ffffff;
+  border-color: var(--border);
+}
+
+:root[data-theme='light'] .provider-badge.local,
+:root[data-theme='light'] .notif-state.on {
+  color: #356348;
+}
+
+:root[data-theme='light'] .notif-state.on {
+  background: #f0f5f1;
+}
+
+:root[data-theme='light'] .provider-badge.nv {
+  color: #4d7400;
+}
+
+:root[data-theme='light'] .provider-badge.gpt {
+  color: #087761;
+}
+
+:root[data-theme='light'] .provider-badge.terra {
+  color: #963f2b;
+}
+
+:root[data-theme='light'] .provider-badge.sol {
+  color: #805c00;
+}
+
+:root[data-theme='light'] .provider-badge.luna {
+  color: #52606e;
+}
+
+:root[data-theme='light'] .provider-badge.gem {
+  color: #245cb5;
+}
+
+:root[data-theme='light'] .provider-badge.xai {
+  background: #ffffff;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .provider-badge.or {
+  color: #6741ad;
+}
+
+:root[data-theme='light'] .notif-state.blocked {
+  color: #a52b31;
+}
+
+:root[data-theme='light'] .toast {
+  background: #ffffff;
+  border-color: var(--border);
+  box-shadow: 0 12px 32px rgb(45 43 38 / 0.12);
+  color: var(--text-bright);
+}
+
+:root[data-theme='light'] ::selection {
+  background: rgb(63 95 111 / 0.22);
+}
+
+:root[data-theme='light'] ::highlight(piweb-selection) {
+  background-color: rgb(63 95 111 / 0.18);
+}
+
+/* The lightbox is always dark, including labels that would otherwise inherit
+   the daytime text tokens. */
+:root[data-theme='light'] .lb-thumb,
+:root[data-theme='light'] .lb-thumb-num {
+  color: #b5bac1;
 }
 
 /* ── streaming reply ────────────────────────────────────────────────────────

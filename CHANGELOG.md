@@ -7,7 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Syntax highlighting for fenced code blocks, including automatic language detection when the language tag is omitted or unknown
+- Persisted dark/light appearance switching from the Sessions drawer, with a Japanese-minimal daytime palette
 - Playwright mobile E2E coverage with WebM recording, reviewed screenshot baselines, traces, and an HTML evidence report
+- Deterministic Playwright behavior and visual regression coverage for theme persistence and drawer/sheet layering
+
+### Fixed
+
+- Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile
 
 ## [1.5.3] - 2026-05-19
 

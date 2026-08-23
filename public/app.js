@@ -12,6 +12,7 @@
 
 import { renderRich } from './markdown.js';
 import { createVideoAttachment } from './media-files.js';
+import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
 import {
   bindCustomSelection,
@@ -1037,6 +1038,8 @@ function closeMoreMenu() {
   $('menu-scrim').hidden = true;
   $('btn-more').setAttribute('aria-expanded', 'false');
 }
+
+bindThemeToggle($('btn-theme'));
 
 $('btn-more').addEventListener('click', () => {
   if (isMenuOpen()) closeMoreMenu();
