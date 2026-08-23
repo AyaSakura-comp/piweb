@@ -86,13 +86,17 @@ function ensureMermaid() {
         secondaryColor: '#2b2d31',
         tertiaryColor: '#1e1f22',
         fontFamily:
-          "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-        fontSize: '14px',
+          "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        fontSize: '15px',
+        nodePadding: '14px',
       },
       flowchart: {
         useMaxWidth: false,
         htmlLabels: true,
         curve: 'basis',
+        padding: 16,
+        nodeSpacing: 45,
+        rankSpacing: 45,
       },
       sequence: {
         useMaxWidth: false,
@@ -516,11 +520,13 @@ function renderCode(item) {
         const svgEl = chart.querySelector('svg');
         if (svgEl) {
           svgEl.style.maxWidth = 'none';
+          svgEl.style.display = 'block';
           const vb = svgEl.getAttribute('viewBox');
           if (vb) {
             const [, , w] = vb.split(' ').map(Number);
-            if (w && w > 320) {
-              svgEl.style.width = `${w}px`;
+            if (w) {
+              const targetWidth = Math.max(w, 360);
+              svgEl.style.width = `${targetWidth}px`;
             }
           }
         }

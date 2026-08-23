@@ -607,11 +607,12 @@ svg {
 .mermaid-scroll {
   padding: 16px;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  max-height: 75dvh;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   user-select: none;
 }
 
@@ -625,9 +626,16 @@ svg {
 
 .mermaid-chart svg {
   display: block;
-  height: auto;
+  width: auto;
+  min-width: 100%;
   max-width: none;
+  height: auto;
   cursor: grab;
+  fill: initial;
+  stroke: initial;
+  stroke-width: initial;
+  stroke-linecap: initial;
+  stroke-linejoin: initial;
 }
 
 /* ── mermaid modal fullscreen ── */
@@ -706,9 +714,15 @@ svg {
 
 .mm-modal-stage svg {
   display: block;
+  width: auto;
   max-width: none;
   height: auto;
   cursor: grab;
+  fill: initial;
+  stroke: initial;
+  stroke-width: initial;
+  stroke-linecap: initial;
+  stroke-linejoin: initial;
 }
 
 .msg-text pre code {
