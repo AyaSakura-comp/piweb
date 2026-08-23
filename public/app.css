@@ -612,7 +612,7 @@ svg {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   user-select: none;
 }
 

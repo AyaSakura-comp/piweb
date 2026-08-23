@@ -171,7 +171,7 @@ origin check.
 | feature | where |
 |---|---|
 | markdown + LaTeX | `public/markdown.js` (`renderRich`), KaTeX in `vendor/` |
-| Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
+| Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
 | image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]` |

@@ -69,51 +69,183 @@ function renderMath(item) {
   return node;
 }
 
+export const JAPANESE_MERMAID_PALETTE = [
+  '#64715a', // 苔色 — moss
+  '#4f6268', // 藍鼠 — blue grey
+  '#765a4d', // 赤錆 — red rust
+  '#81755b', // 利休茶 — tea brown
+  '#58645f', // 千歳緑 — pine grey
+  '#746574', // 鳩羽紫 — muted violet
+  '#5f746f', // 青磁 — celadon
+  '#806957', // 胡桃 — walnut
+  '#70745a', // 鶯 — olive
+  '#566775', // 藍鉄 — indigo iron
+  '#806763', // 小豆 — adzuki
+  '#696b5e', // 鈍色 — warm slate
+];
+
+function numberedThemeColors(prefix, colors, start = 0) {
+  return Object.fromEntries(colors.map((color, index) => [`${prefix}${index + start}`, color]));
+}
+
+export function getMermaidDiagramLabel(code) {
+  const diagramType = code
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('%%'))
+    ?.split(/\s+/)[0]
+    ?.toLowerCase();
+
+  const labels = {
+    gantt: 'Gantt',
+    flowchart: 'Flowchart',
+    graph: 'Flowchart',
+    sequencediagram: 'Sequence',
+    classdiagram: 'Class',
+    statediagram: 'State',
+    'statediagram-v2': 'State',
+    erdiagram: 'ER Diagram',
+    journey: 'Journey',
+    pie: 'Pie Chart',
+    mindmap: 'Mindmap',
+    timeline: 'Timeline',
+    gitgraph: 'Git Graph',
+    quadrantchart: 'Quadrant Chart',
+    sankey: 'Sankey',
+  };
+  return labels[diagramType] ?? 'Mermaid';
+}
+
+export function getMermaidConfig() {
+  return {
+    startOnLoad: false,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#1c1c1a',
+      primaryColor: JAPANESE_MERMAID_PALETTE[0],
+      primaryTextColor: '#f4f0e6',
+      primaryBorderColor: '#9a9488',
+      secondaryColor: JAPANESE_MERMAID_PALETTE[1],
+      secondaryTextColor: '#f4f0e6',
+      secondaryBorderColor: '#89989c',
+      tertiaryColor: JAPANESE_MERMAID_PALETTE[2],
+      tertiaryTextColor: '#f4f0e6',
+      tertiaryBorderColor: '#a98979',
+      textColor: '#e6e0d5',
+      lineColor: '#9b958a',
+      arrowheadColor: '#9b958a',
+      defaultLinkColor: '#9b958a',
+      titleColor: '#f4f0e6',
+      nodeBkg: JAPANESE_MERMAID_PALETTE[0],
+      mainBkg: JAPANESE_MERMAID_PALETTE[0],
+      nodeBorder: '#9a9488',
+      nodeTextColor: '#f4f0e6',
+      edgeLabelBackground: '#252622',
+      clusterBkg: '#252622',
+      clusterBorder: '#6f7168',
+      noteBkgColor: JAPANESE_MERMAID_PALETTE[3],
+      noteBorderColor: '#aaa083',
+      noteTextColor: '#f4f0e6',
+      actorBkg: JAPANESE_MERMAID_PALETTE[1],
+      actorBorder: '#89989c',
+      actorTextColor: '#f4f0e6',
+      actorLineColor: '#777a74',
+      signalColor: '#ded8ca',
+      signalTextColor: '#e6e0d5',
+      labelBoxBkgColor: '#252622',
+      labelBoxBorderColor: '#6f7168',
+      labelTextColor: '#e6e0d5',
+      activationBkgColor: JAPANESE_MERMAID_PALETTE[6],
+      activationBorderColor: '#91a39e',
+      sectionBkgColor: '#252723',
+      sectionBkgColor2: '#202522',
+      taskBkgColor: '#64715a',
+      taskBorderColor: '#a5aa96',
+      taskTextColor: '#f4f0e6',
+      taskTextOutsideColor: '#ded8ca',
+      gridColor: '#5c5b55',
+      doneTaskBkgColor: '#4f6268',
+      doneTaskBorderColor: '#8c9ba0',
+      critBkgColor: '#765a4d',
+      critBorderColor: '#b58a75',
+      todayLineColor: '#b58a75',
+      stateBkg: JAPANESE_MERMAID_PALETTE[0],
+      stateLabelColor: '#f4f0e6',
+      transitionColor: '#9b958a',
+      transitionLabelColor: '#e6e0d5',
+      compositeBackground: '#252622',
+      compositeBorder: '#6f7168',
+      classText: '#f4f0e6',
+      ...numberedThemeColors('fillType', JAPANESE_MERMAID_PALETTE.slice(0, 8)),
+      ...numberedThemeColors('cScale', JAPANESE_MERMAID_PALETTE),
+      scaleLabelColor: '#f4f0e6',
+      ...numberedThemeColors('pie', JAPANESE_MERMAID_PALETTE, 1),
+      pieTitleTextColor: '#f4f0e6',
+      pieSectionTextColor: '#f4f0e6',
+      pieLegendTextColor: '#e6e0d5',
+      pieStrokeColor: '#1c1c1a',
+      pieOuterStrokeColor: '#6f7168',
+      quadrant1Fill: JAPANESE_MERMAID_PALETTE[0],
+      quadrant2Fill: JAPANESE_MERMAID_PALETTE[1],
+      quadrant3Fill: JAPANESE_MERMAID_PALETTE[2],
+      quadrant4Fill: JAPANESE_MERMAID_PALETTE[3],
+      quadrant1TextFill: '#f4f0e6',
+      quadrant2TextFill: '#f4f0e6',
+      quadrant3TextFill: '#f4f0e6',
+      quadrant4TextFill: '#f4f0e6',
+      quadrantPointFill: '#ded8ca',
+      quadrantPointTextFill: '#f4f0e6',
+      ...numberedThemeColors('git', JAPANESE_MERMAID_PALETTE.slice(0, 8)),
+      branchLabelColor: '#f4f0e6',
+      tagLabelColor: '#f4f0e6',
+      tagLabelBackground: JAPANESE_MERMAID_PALETTE[2],
+      tagLabelBorder: '#a98979',
+      commitLabelColor: '#e6e0d5',
+      commitLabelBackground: '#252622',
+      fontFamily:
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      fontSize: '15px',
+      nodePadding: '14px',
+    },
+    flowchart: {
+      useMaxWidth: false,
+      htmlLabels: true,
+      curve: 'basis',
+      padding: 16,
+      nodeSpacing: 45,
+      rankSpacing: 45,
+    },
+    sequence: {
+      useMaxWidth: false,
+    },
+    gantt: {
+      useMaxWidth: false,
+      useWidth: 1000,
+      leftPadding: 220,
+      rightPadding: 48,
+      barHeight: 24,
+      barGap: 8,
+      fontSize: 13,
+      sectionFontSize: 12,
+    },
+    securityLevel: 'loose',
+    suppressErrorRendering: true,
+  };
+}
+
 let mermaidInitDone = false;
 function ensureMermaid() {
   if (mermaidInitDone || !window.mermaid) return;
   try {
-    window.mermaid.initialize({
-      startOnLoad: false,
-      theme: 'dark',
-      themeVariables: {
-        darkMode: true,
-        background: '#232428',
-        primaryColor: '#5865f2',
-        primaryTextColor: '#f2f3f5',
-        primaryBorderColor: '#3f4147',
-        lineColor: '#949ba4',
-        secondaryColor: '#2b2d31',
-        tertiaryColor: '#1e1f22',
-        fontFamily:
-          "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-        fontSize: '15px',
-        nodePadding: '14px',
-      },
-      flowchart: {
-        useMaxWidth: false,
-        htmlLabels: true,
-        curve: 'basis',
-        padding: 16,
-        nodeSpacing: 45,
-        rankSpacing: 45,
-      },
-      sequence: {
-        useMaxWidth: false,
-      },
-      gantt: {
-        useMaxWidth: false,
-      },
-      securityLevel: 'loose',
-      suppressErrorRendering: true,
-    });
+    window.mermaid.initialize(getMermaidConfig());
     mermaidInitDone = true;
   } catch (err) {
     console.error('Failed to init mermaid', err);
   }
 }
 
-function attachMermaidGesture(scrollEl, chartEl, onOpenModal) {
+function attachMermaidGesture(scrollEl, chartEl) {
   let scale = 1;
   let startScale = 1;
   let initialDist = 0;
@@ -473,7 +605,7 @@ function renderCode(item) {
 
     const title = document.createElement('span');
     title.className = 'mermaid-title';
-    title.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3zM10 6.5h4M17.5 10v4M6.5 10v4M10 17.5h4"/></svg> Flowchart`;
+    title.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3zM10 6.5h4M17.5 10v4M6.5 10v4M10 17.5h4"/></svg> ${getMermaidDiagramLabel(item.code)}`;
     header.append(title);
 
     const actions = document.createElement('div');
@@ -546,9 +678,7 @@ function renderCode(item) {
         }
         pre.remove();
         scrollWrap.append(chart);
-        attachMermaidGesture(scrollWrap, chart, () => {
-          if (renderedSvg) openMermaidModal(renderedSvg);
-        });
+        attachMermaidGesture(scrollWrap, chart);
       })
       .catch(() => {
         const errEl = document.getElementById(id);

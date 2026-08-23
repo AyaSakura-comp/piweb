@@ -153,8 +153,8 @@ node dist/cli/piweb.js web      # web only
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
   Voice notes and audio files receive automatic Breeze ASR transcription. Lightbox features numbered placeholder thumbnails
   and dynamic +/-2 sliding-window background prefetching.
-- **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `sequenceDiagram`, `gantt`, `mindmap`, etc.)
-  automatically render into dark-themed, crisp vector SVG diagrams. Includes two-finger pinch-to-zoom (0.2x–5x), single-finger pan, double-tap zoom toggle, fullscreen zoom modal, and one-click code copying.
+- **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `pie`, `sequenceDiagram`, `stateDiagram`, `classDiagram`, `gantt`, `gitGraph`, `mindmap`, etc.)
+  automatically render into crisp vector SVG diagrams using one restrained 12-color Japanese palette (moss, blue-grey, rust, tea, pine, muted violet, celadon, walnut, olive, indigo, adzuki, and warm slate) across every chart type. Wide Gantt charts use a readable 1000px canvas with expanded label spacing and horizontal scrolling instead of compressing labels into the phone viewport. Includes two-finger pinch-to-zoom (0.2x–5x), single-finger pan, double-tap zoom toggle, fullscreen zoom modal, diagram-type labels, and one-click code copying.
 - **Recency-First Session Management**: Session list and initial home page load automatically default to the most recently updated session (`lastActivity DESC`).
 - **iPadOS Window Multitasking Clearance**: Topbar layout incorporates dynamic safe area padding (`padding-left: max(60px, ...)`) to prevent obstruction by iPadOS system multitasking pills (`•••`).
 - **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
