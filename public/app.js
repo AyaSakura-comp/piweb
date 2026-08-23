@@ -22,6 +22,8 @@ import {
   bindLongPress,
   isTranscriptNearBottom,
   jumpToLatest,
+  needsViewportRecovery,
+  recoverViewportShell,
   setDrawerCollapsed,
   settleTranscriptUpdate,
 } from './session-ui.js';
@@ -1953,8 +1955,11 @@ $('messages').addEventListener('pointerdown', releaseComposerBottomLock, { passi
 $('messages').addEventListener('touchmove', releaseComposerBottomLock, { passive: true });
 $('messages').addEventListener('wheel', releaseComposerBottomLock, { passive: true });
 
+input.addEventListener('pointerdown', cancelStandaloneViewportRecovery);
 input.addEventListener('focus', captureComposerBottomLock);
+input.addEventListener('focus', cancelStandaloneViewportRecovery);
 input.addEventListener('blur', releaseComposerBottomLock);
+input.addEventListener('blur', scheduleStandaloneViewportRecovery);
 
 const uploadProgress = {
   container: $('upload-progress'),
@@ -2992,6 +2997,56 @@ $('btn-restore-inline').addEventListener('click', async () => {
  * runs off the top of the screen instead of scrolling.
  */
 /** Sheets are capped to the visible viewport, which the keyboard shrinks. */
+let maximumViewportHeight = window.innerHeight;
+let viewportRecoveryTimer = 0;
+let orientationRecoveryTimer = 0;
+let orientationChanging = false;
+
+function isStandaloneApp() {
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function recoverStandaloneViewport() {
+  if (
+    orientationChanging ||
+    !isStandaloneApp() ||
+    !needsViewportRecovery(maximumViewportHeight, window.innerHeight)
+  ) return;
+
+  const messages = $('messages');
+  const followLatest = isNearBottom();
+  recoverViewportShell($('app'), messages, followLatest);
+}
+
+function cancelStandaloneViewportRecovery() {
+  if (viewportRecoveryTimer) clearTimeout(viewportRecoveryTimer);
+  viewportRecoveryTimer = 0;
+}
+
+function scheduleStandaloneViewportRecovery() {
+  cancelStandaloneViewportRecovery();
+  viewportRecoveryTimer = setTimeout(() => {
+    viewportRecoveryTimer = 0;
+    if (document.activeElement === input) return;
+    recoverStandaloneViewport();
+  }, 140);
+}
+
+function handleOrientationChange() {
+  orientationChanging = true;
+  cancelStandaloneViewportRecovery();
+  if (orientationRecoveryTimer) clearTimeout(orientationRecoveryTimer);
+  orientationRecoveryTimer = setTimeout(() => {
+    orientationRecoveryTimer = 0;
+    maximumViewportHeight = window.innerHeight;
+    orientationChanging = false;
+    syncViewportSizes();
+  }, 250);
+}
+
 function syncSheetHeight() {
   const vv = window.visualViewport;
   const available = vv ? vv.height : window.innerHeight;
@@ -3008,6 +3063,7 @@ function syncAutocompleteHeight() {
 }
 
 function syncViewportSizes() {
+  maximumViewportHeight = Math.max(maximumViewportHeight, window.innerHeight);
   syncAutocompleteHeight();
   syncSheetHeight();
   // iOS reports the keyboard through visualViewport after focus. Re-anchor on
@@ -3020,6 +3076,7 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', syncViewportSizes);
 }
 window.addEventListener('resize', syncViewportSizes);
+window.addEventListener('orientationchange', handleOrientationChange);
 syncViewportSizes();
 
 // ── drawer ───────────────────────────────────────────────────────────────

@@ -1,6 +1,29 @@
 const DEFAULT_LONG_PRESS_MS = 550;
 const DEFAULT_MOVE_TOLERANCE_PX = 10;
 const DEFAULT_BOTTOM_THRESHOLD_PX = 16;
+const DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX = 4;
+
+/** Whether iOS left the standalone viewport shorter after dismissing its keyboard. */
+export function needsViewportRecovery(
+  maximumHeight,
+  currentHeight,
+  tolerance = DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX,
+) {
+  return maximumHeight - currentHeight > tolerance;
+}
+
+/**
+ * Force WebKit to remeasure a full-height shell after its standalone keyboard
+ * leaves the viewport stuck short. Preserve the reader's transcript position.
+ */
+export function recoverViewportShell(shell, scroller, followLatest) {
+  const display = shell.style.display;
+  const scrollTop = scroller.scrollTop;
+  shell.style.display = 'none';
+  void shell.offsetHeight;
+  shell.style.display = display;
+  scroller.scrollTop = followLatest ? scroller.scrollHeight : scrollTop;
+}
 
 /** Whether the reader is close enough to the tail to keep following live output. */
 export function isTranscriptNearBottom(scroller, threshold = DEFAULT_BOTTOM_THRESHOLD_PX) {
