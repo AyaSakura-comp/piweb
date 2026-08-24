@@ -17,7 +17,7 @@ All notable changes to this project will be documented in this file.
 - Render fenced code and command output on a warm, light syntax surface in the Japanese-minimal daytime appearance
 - Open Media gallery videos and audio in a responsive in-app player with a top download action instead of navigating to the raw file
 - Prevent iPhone Safari's native document-wide text selection from appearing underneath Piweb's transcript selection handles
-- Prefetch older transcript pages before iPhone momentum scrolling reaches the hard top, preventing page-boundary snap-back while reading history
+- Prefetch older transcript pages before iPhone momentum scrolling reaches the hard top and anchor each prepend to the visible message, preventing page-boundary snap-back while reading history
 
 ## [1.5.3] - 2026-05-19
 

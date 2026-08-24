@@ -161,14 +161,14 @@ also compare rendered pixels with reviewed PNG baselines. Current coverage inclu
 syntax highlighting, persisted light/dark switching, the Japanese-minimal light
 palette, drawer/sheet foreground layering, the in-app video/audio player with real
 download actions, touch transcript selection without Safari's document-wide
-native selection, and continuous upward history paging without a page-boundary
-jump:
+native selection, and a 500-message continuous upward history stress run across
+all nine older-page boundaries without a jump:
 
 ```bash
 npm run test:e2e                                      # full behavior + visual suite
 npx playwright test test/e2e/media-player.spec.ts    # video/audio player + downloads
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
-npx playwright test test/e2e/history-scroll.spec.ts  # repeated touch swipes + stable paging
+npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine touch-paged boundaries
 npm run test:e2e:update                               # accept pixels only after review
 ```
 

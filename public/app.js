@@ -772,6 +772,20 @@ async function loadOlder() {
     const messages = $('messages');
     const heightBefore = messages.scrollHeight;
     const topBefore = messages.scrollTop;
+    const viewportTop = messages.getBoundingClientRect().top;
+    const viewportAnchor = Array.from(messages.children).find((node) => {
+      if (node.id === 'top-sentinel') return false;
+      return node.getBoundingClientRect().bottom > viewportTop + 1;
+    });
+    const anchorTopBefore = viewportAnchor?.getBoundingClientRect().top;
+    // Piweb compensates this prepend explicitly below. Temporarily exclude the
+    // same mutation from native scroll anchoring so momentum cannot apply a
+    // second, one-row correction; restore it next frame for lazy media reflow.
+    const previousOverflowAnchor = messages.style.overflowAnchor;
+    messages.style.overflowAnchor = 'none';
+    requestAnimationFrame(() => {
+      messages.style.overflowAnchor = previousOverflowAnchor;
+    });
 
     // Build detached, then insert in one go so layout is touched once.
     const frag = document.createDocumentFragment();
@@ -782,7 +796,11 @@ async function loadOlder() {
     if (events.length > 0) state.oldest = events[0].id;
     state.hasMore = Boolean(hasMore);
 
-    messages.scrollTop = topBefore + (messages.scrollHeight - heightBefore);
+    if (viewportAnchor?.isConnected && anchorTopBefore != null) {
+      messages.scrollTop += viewportAnchor.getBoundingClientRect().top - anchorTopBefore;
+    } else {
+      messages.scrollTop = topBefore + (messages.scrollHeight - heightBefore);
+    }
   } finally {
     state.loadingOlder = false;
     renderTopSentinel();
