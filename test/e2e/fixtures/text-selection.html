@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <title>Piweb transcript selection fixture</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-title"><span class="hash">#</span><span>selection-check</span></div>
+        </header>
+        <div class="messages" id="messages">
+          <article class="msg">
+            <div class="msg-body">
+              <div class="msg-head"><span class="msg-author">pi</span></div>
+              <div class="msg-text">
+                <strong>多語言長文摘要傳統霸主：mT5-small (ONNX)</strong>
+                <p>支援語言：支援高達 101 種語言。</p>
+                <p>特點：適合跨語言摘要，同時保留目前對話的完整脈絡。</p>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div class="selection-actions" id="selection-actions" role="toolbar" hidden>
+          <button id="selection-quote" type="button">引用</button>
+          <button id="selection-copy" type="button">複製</button>
+        </div>
+        <div class="custom-selection-overlay" id="custom-selection-overlay" hidden>
+          <div class="sel-backdrop" id="sel-backdrop"></div>
+          <div class="sel-highlight-boxes" id="sel-highlight-boxes"></div>
+          <div class="sel-handle sel-handle-start" id="sel-handle-start" aria-label="選取起始游標">
+            <div class="sel-handle-line"></div>
+            <div class="sel-handle-knob"></div>
+          </div>
+          <div class="sel-handle sel-handle-end" id="sel-handle-end" aria-label="選取結束游標">
+            <div class="sel-handle-line"></div>
+            <div class="sel-handle-knob"></div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <div class="quote-preview" id="quote-preview" hidden>
+            <span class="quote-preview-label">引用</span>
+            <span class="quote-preview-text" id="quote-preview-text"></span>
+          </div>
+          <div class="composer">
+            <textarea aria-label="Message" placeholder="Message pi…"></textarea>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module">
+      import { bindCustomSelection, quotePreview } from '/text-selection.js';
+
+      const messages = document.getElementById('messages');
+      const overlay = document.getElementById('custom-selection-overlay');
+      const actions = document.getElementById('selection-actions');
+      let selectedText = '';
+
+      function hideActions() {
+        actions.hidden = true;
+      }
+
+      window.clearFixtureSelection = bindCustomSelection(messages, overlay, {
+        onSelection(text, rect) {
+          selectedText = text;
+          actions.hidden = false;
+          actions.style.left = `${Math.max(90, Math.min(innerWidth - 90, rect.left + rect.width / 2))}px`;
+          actions.style.top = `${Math.min(innerHeight - 130, rect.bottom + 12)}px`;
+        },
+        onClear: hideActions,
+      });
+
+      document.getElementById('selection-quote').addEventListener('click', () => {
+        document.getElementById('quote-preview').hidden = false;
+        document.getElementById('quote-preview-text').textContent =
+          `「${quotePreview(selectedText)}」`;
+        window.clearFixtureSelection();
+      });
+    </script>
+  </body>
+</html>

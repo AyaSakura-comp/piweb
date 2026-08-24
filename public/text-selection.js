@@ -205,8 +205,13 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   let pendingGesture = null;
   let isDragging = false;
 
+  function clearNativeSelection() {
+    window?.getSelection?.()?.removeAllRanges();
+  }
+
   function clearSelection() {
     if (highlights) highlights.delete('piweb-selection');
+    clearNativeSelection();
     currentRange = null;
     startPoint = null;
     endPoint = null;
@@ -386,6 +391,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       if (pendingGesture !== pending) return;
       pending.active = true;
       isDragging = false;
+      clearNativeSelection();
       const word = expandToWord(point);
       window.navigator?.vibrate?.(12);
       pending.anchor = word.start;
@@ -488,6 +494,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   bindHandle(endHandle, false);
 
   root.addEventListener('touchstart', onTouchStart, { passive: true });
+  root.addEventListener('selectstart', (event) => {
+    // iOS may start its own document-wide selection while our long-press timer
+    // is active. Cancel that selection without cancelling touchstart, which
+    // would also disable normal transcript scrolling.
+    if ((pendingGesture || currentRange) && event.cancelable) event.preventDefault();
+  });
   const globalTarget = window || document.defaultView || document;
   globalTarget?.addEventListener?.('touchmove', onTouchMove, { passive: false });
   globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: true });

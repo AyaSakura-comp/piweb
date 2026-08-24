@@ -80,6 +80,14 @@ describe('transcript text selection', () => {
     expect(css).toContain('::highlight(piweb-selection)');
   });
 
+  it('keeps custom touch actions visible when clearing Safari native ranges fires selectionchange', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+
+    expect(app).toContain('if (customSelectionActive && !text) return;');
+    expect(app).toContain('customSelectionActive = true;');
+    expect(app).toContain('customSelectionActive = false;');
+  });
+
   it('triggers custom touch selection on long-press and expands to word', () => {
     vi.useFakeTimers();
     const textNode = { nodeType: 3, textContent: 'hello world test' };
@@ -99,11 +107,13 @@ describe('transcript text selection', () => {
     }
 
     const highlights = new Map();
+    const removeAllRanges = vi.fn();
     const document = {
       defaultView: {
         CSS: { highlights },
         Highlight: class { constructor(public range: FakeRange) {} },
         navigator: { vibrate: vi.fn() },
+        getSelection: () => ({ removeAllRanges }),
         addEventListener: vi.fn(),
         setTimeout,
         clearTimeout,
@@ -150,8 +160,16 @@ describe('transcript text selection', () => {
       target,
     });
 
+    const preventNativeSelection = vi.fn();
+    listeners.get('selectstart')?.({
+      cancelable: true,
+      preventDefault: preventNativeSelection,
+    });
+    expect(preventNativeSelection).toHaveBeenCalledOnce();
+
     vi.advanceTimersByTime(320);
 
+    expect(removeAllRanges).toHaveBeenCalled();
     expect(onSelection).toHaveBeenCalledWith('hello', expect.anything());
     expect(overlayEl.hidden).toBe(false);
     expect(startHandle.style.left).toBe('10px');

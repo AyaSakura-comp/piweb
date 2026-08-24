@@ -256,6 +256,7 @@ document.addEventListener('click', async (e) => {
 
 let selectedText = '';
 let selectionFrame = 0;
+let customSelectionActive = false;
 let clearCustomSelection = () => {};
 
 function hideSelectionActions(clearSelection = false) {
@@ -305,6 +306,7 @@ function syncSelectionActions() {
   selectionFrame = 0;
   const selection = window.getSelection();
   const text = selectedTranscriptText(selection, $('messages'));
+  if (customSelectionActive && !text) return;
   if (!text) {
     hideSelectionActions();
     return;
@@ -331,8 +333,14 @@ $('messages')?.addEventListener('contextmenu', (event) => {
 });
 
 clearCustomSelection = bindCustomSelection($('messages'), $('custom-selection-overlay'), {
-  onSelection: showSelectionActions,
-  onClear: () => hideSelectionActions(),
+  onSelection: (text, rect) => {
+    customSelectionActive = true;
+    showSelectionActions(text, rect);
+  },
+  onClear: () => {
+    customSelectionActive = false;
+    hideSelectionActions();
+  },
 });
 
 // Keep the native drag handles and selection alive until the chosen action's
