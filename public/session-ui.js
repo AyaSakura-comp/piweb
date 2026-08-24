@@ -2,6 +2,8 @@ const DEFAULT_LONG_PRESS_MS = 550;
 const DEFAULT_MOVE_TOLERANCE_PX = 10;
 const DEFAULT_BOTTOM_THRESHOLD_PX = 16;
 const DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX = 4;
+const MIN_HISTORY_PREFETCH_PX = 300;
+const HISTORY_PREFETCH_VIEWPORTS = 2;
 
 /** Whether iOS left the standalone viewport shorter after dismissing its keyboard. */
 export function needsViewportRecovery(
@@ -23,6 +25,20 @@ export function recoverViewportShell(shell, scroller, followLatest) {
   void shell.offsetHeight;
   shell.style.display = display;
   scroller.scrollTop = followLatest ? scroller.scrollHeight : scrollTop;
+}
+
+/**
+ * Start the previous-page request well before touch momentum reaches the hard
+ * top. A fixed 300px lead is shorter than one phone viewport, so Safari can hit
+ * rubber-band overscroll while the request is still in flight and visibly snap
+ * when the prepended page is re-anchored.
+ */
+export function shouldLoadOlderHistory(scroller) {
+  const threshold = Math.max(
+    MIN_HISTORY_PREFETCH_PX,
+    scroller.clientHeight * HISTORY_PREFETCH_VIEWPORTS,
+  );
+  return scroller.scrollTop < threshold;
 }
 
 /** Whether the reader is close enough to the tail to keep following live output. */

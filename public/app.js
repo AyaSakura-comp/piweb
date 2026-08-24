@@ -26,6 +26,7 @@ import {
   needsViewportRecovery,
   recoverViewportShell,
   setDrawerCollapsed,
+  shouldLoadOlderHistory,
   settleTranscriptUpdate,
 } from './session-ui.js';
 import {
@@ -845,7 +846,7 @@ $('messages').addEventListener(
   'scroll',
   () => {
     const m = $('messages');
-    if (m.scrollTop < 300) loadOlder();
+    if (shouldLoadOlderHistory(m)) loadOlder();
     if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
     // Layout shifts are guarded while the mobile keyboard opens; later unguarded
     // scrolls still release the lock for keyboard/scrollbar navigation.
