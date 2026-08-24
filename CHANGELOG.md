@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 - Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile
 - Render fenced code and command output on a warm, light syntax surface in the Japanese-minimal daytime appearance
+- Open Media gallery videos and audio in a responsive in-app player with a top download action instead of navigating to the raw file
 
 ## [1.5.3] - 2026-05-19
 

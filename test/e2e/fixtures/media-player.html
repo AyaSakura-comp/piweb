@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1e1f22" />
+    <title>Piweb media player fixture</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="sheet" id="media-sheet">
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <span class="sheet-title">Media</span>
+          <button class="icon-btn" type="button" aria-label="Close media gallery">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <p class="sheet-note">2 items</p>
+        <div class="media-grid">
+          <button
+            class="media-tile"
+            id="open-video"
+            type="button"
+            aria-label="video: demo-loop.webm"
+          >
+            <video
+              src="/fixtures/media/demo-loop.webm"
+              muted
+              playsinline
+              preload="metadata"
+            ></video>
+            <span class="media-badge">VIDEO</span>
+          </button>
+          <button
+            class="media-tile"
+            id="open-audio"
+            type="button"
+            aria-label="audio: demo-tone.mp3"
+          >
+            <span class="media-fallback">demo-tone.mp3</span>
+            <span class="media-badge">AUDIO</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { createMediaViewer } from '/media-files.js';
+
+      const mediaSheet = document.getElementById('media-sheet');
+      const mediaViewer = createMediaViewer(document);
+      document.body.append(mediaViewer.element);
+
+      document.getElementById('open-video').addEventListener('click', () => {
+        mediaViewer.open({
+          type: 'video',
+          url: '/fixtures/media/demo-loop.webm',
+          name: 'demo-loop.webm',
+        });
+      });
+      document.getElementById('open-audio').addEventListener('click', () => {
+        mediaViewer.open({
+          type: 'audio',
+          url: '/fixtures/media/demo-tone.mp3',
+          name: 'demo-tone.mp3',
+        });
+      });
+      window.mediaViewerFixture = { mediaViewer, mediaSheet };
+    </script>
+  </body>
+</html>

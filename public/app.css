@@ -2827,6 +2827,115 @@ svg {
   text-align: center;
 }
 
+/* Video and audio open here instead of navigating the browser to a raw file.
+   Keep the controls dark in either app theme so native media chrome has a
+   stable, high-contrast canvas. */
+.media-player {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #0b0b0d;
+  color: #fff;
+  animation: lb-in 0.16s ease-out;
+}
+
+.media-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: calc(8px + env(safe-area-inset-top)) 8px 8px 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.media-player-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-player-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.media-player-download {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  color: #fff;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.media-player-download[data-ready='true'] {
+  background: rgb(63 95 111 / 0.5);
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.7);
+}
+
+.media-player-download[aria-busy='true'] svg {
+  animation: media-download-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes media-download-pulse {
+  to {
+    opacity: 0.35;
+    transform: translateY(2px);
+  }
+}
+
+.media-player-download:active,
+.media-player-download:focus-visible,
+.media-player-close:active,
+.media-player-close:focus-visible {
+  background: rgb(255 255 255 / 0.16);
+  color: #fff;
+  outline: none;
+}
+
+.media-player-stage {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.media-player-video,
+.media-player-audio {
+  max-width: 100%;
+}
+
+.media-player-video {
+  width: min(100%, 960px);
+  max-height: 100%;
+  border-radius: 10px;
+  background: #000;
+}
+
+.media-player-audio {
+  width: min(100%, 560px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-player {
+    animation: none;
+  }
+}
+
 /* ── light appearance refinements ───────────────────────────────────────────
  * Most surfaces use the semantic tokens at the top of this file. These rules
  * cover components whose dark-mode translucency or fixed colour needs a

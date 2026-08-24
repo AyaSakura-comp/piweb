@@ -11,7 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
-import { createVideoAttachment } from './media-files.js';
+import { createMediaViewer, createVideoAttachment } from './media-files.js';
 import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
 import {
@@ -35,6 +35,8 @@ import {
 } from './upload-progress.js';
 
 const $ = (id) => document.getElementById(id);
+const mediaViewer = createMediaViewer(document);
+document.body.append(mediaViewer.element);
 
 const state = {
   sessions: [],
@@ -705,8 +707,9 @@ async function selectSession(jid, opts = {}) {
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
-  // The gallery belongs to the session that was open; switching must not leave
-  // the previous session's media on screen.
+  // The gallery and player belong to the session that was open; switching must
+  // not leave the previous session's media on screen.
+  mediaViewer.close();
   closeMediaSheet();
   // Same for a half-written reply from the session being left.
   renderPartial('');
@@ -1049,7 +1052,8 @@ $('menu-scrim').addEventListener('click', closeMoreMenu);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (isMenuOpen()) closeMoreMenu();
-  if (!$('media-sheet').hidden) closeMediaSheet();
+  if (!mediaViewer.element.hidden) mediaViewer.close();
+  else if (!$('media-sheet').hidden) closeMediaSheet();
 });
 
 /** Wire a menu row: always dismiss first, so the action never runs under an open menu. */
@@ -1135,13 +1139,13 @@ function buildMediaTile(item, images) {
   }
 
   tile.addEventListener('click', () => {
-    // Images get the in-app viewer and swipe between each other; video and
-    // audio are handed to the browser, which already plays them properly.
     if (item.type === 'image') {
       closeMediaSheet();
       openLightbox(item.url, images);
     } else {
-      window.open(item.url, '_blank', 'noopener');
+      // Keep the gallery in place underneath the player so Close returns to the
+      // same scroll position rather than navigating Piweb to the original file.
+      mediaViewer.open(item, tile);
     }
   });
 
@@ -3241,6 +3245,7 @@ function isDrawerGestureAllowed() {
   if (!$('login').hidden) return false;
   return (
     $('lightbox').hidden &&
+    mediaViewer.element.hidden &&
     $('trash-sheet').hidden &&
     $('model-sheet').hidden &&
     $('thinking-sheet').hidden
