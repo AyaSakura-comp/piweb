@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile
+- Render fenced code and command output on a warm, light syntax surface in the Japanese-minimal daytime appearance
 
 ## [1.5.3] - 2026-05-19
 

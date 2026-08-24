@@ -119,6 +119,12 @@ describe('day mode', () => {
     expect(css).toContain('--text-bright: #1f1e1a;');
     expect(css).toContain('--accent: #3f5f6f;');
     expect(css).toMatch(/:root\[data-theme='light'\] \.event \{[^}]*box-shadow: none;/s);
+    expect(css).toMatch(
+      /:root\[data-theme='light'\] \.msg-text pre,[\s\S]*?background: var\(--bg-input\);/,
+    );
+    expect(css).toMatch(
+      /:root\[data-theme='light'\] \.msg-text pre code,[\s\S]*?color: var\(--text\);/,
+    );
     expect(app).toContain("import { bindThemeToggle } from './theme.js';");
     expect(app).toContain("bindThemeToggle($('btn-theme'))");
   });

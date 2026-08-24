@@ -69,8 +69,10 @@ not flash dark during startup.
 The light appearance uses a Japanese-minimal palette: a white main canvas, warm
 washi-toned secondary surfaces, sumi-like text, fine stone-coloured separators,
 and a restrained aizome blue-grey accent. Tool cards are flat in light mode, with
-semantic colour limited to quiet edge markers and controls. If browser storage is
-unavailable or contains an invalid value, Piweb safely falls back to dark mode.
+semantic colour limited to quiet edge markers and controls. Fenced code and command
+output also use a warm paper surface with a dedicated low-saturation syntax palette;
+dark mode keeps its original dark code canvas. If browser storage is unavailable or
+contains an invalid value, Piweb safely falls back to dark mode.
 
 ## Authentication
 

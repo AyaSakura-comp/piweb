@@ -2892,17 +2892,83 @@ svg {
   color: var(--accent);
 }
 
-/* Keep fenced code on a stable dark canvas; the syntax palette is designed for
-   it, while inline code follows the light input surface via --bg-dark. */
+/* Day-mode command output uses the same warm paper hierarchy as the rest of
+   the Japanese-minimal palette instead of leaving a heavy dark rectangle in
+   the transcript. Syntax colours are muted but remain contrast-safe. */
 :root[data-theme='light'] .msg-text pre,
 :root[data-theme='light'] .event-body pre {
-  background: #20242a;
-  border-color: #c8ccd1;
+  background: var(--bg-input);
+  border-color: var(--border);
 }
 
 :root[data-theme='light'] .msg-text pre code,
 :root[data-theme='light'] .event-body pre code {
-  color: #dbe2ea;
+  color: var(--text);
+}
+
+:root[data-theme='light'] .hljs-comment,
+:root[data-theme='light'] .hljs-quote {
+  color: #6f6a61;
+}
+
+:root[data-theme='light'] .hljs-keyword,
+:root[data-theme='light'] .hljs-selector-tag,
+:root[data-theme='light'] .hljs-literal,
+:root[data-theme='light'] .hljs-type,
+:root[data-theme='light'] .hljs-doctag {
+  color: #963f43;
+}
+
+:root[data-theme='light'] .hljs-title,
+:root[data-theme='light'] .hljs-title.class_,
+:root[data-theme='light'] .hljs-title.function_,
+:root[data-theme='light'] .hljs-section {
+  color: #6e5c87;
+}
+
+:root[data-theme='light'] .hljs-string,
+:root[data-theme='light'] .hljs-regexp,
+:root[data-theme='light'] .hljs-template-tag,
+:root[data-theme='light'] .hljs-template-variable {
+  color: #315f73;
+}
+
+:root[data-theme='light'] .hljs-number,
+:root[data-theme='light'] .hljs-symbol,
+:root[data-theme='light'] .hljs-bullet,
+:root[data-theme='light'] .hljs-link {
+  color: #765322;
+}
+
+:root[data-theme='light'] .hljs-attr,
+:root[data-theme='light'] .hljs-attribute,
+:root[data-theme='light'] .hljs-variable,
+:root[data-theme='light'] .hljs-property,
+:root[data-theme='light'] .hljs-params {
+  color: #8c4f2b;
+}
+
+:root[data-theme='light'] .hljs-built_in,
+:root[data-theme='light'] .hljs-builtin-name,
+:root[data-theme='light'] .hljs-meta {
+  color: #6f5d24;
+}
+
+:root[data-theme='light'] .hljs-tag,
+:root[data-theme='light'] .hljs-name,
+:root[data-theme='light'] .hljs-selector-id,
+:root[data-theme='light'] .hljs-selector-class {
+  color: #397057;
+}
+
+:root[data-theme='light'] .hljs-addition {
+  color: #2f684f;
+  background: #e6f0e9;
+}
+
+:root[data-theme='light'] .hljs-deletion {
+  color: #963f43;
+  background: #f7e8e5;
 }
 
 /* Mermaid is rendered with an explicit dark diagram palette, so its chrome

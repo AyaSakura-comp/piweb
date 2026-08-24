@@ -55,4 +55,28 @@ test.describe('mobile day mode', () => {
       maxDiffPixelRatio: 0.001,
     });
   });
+
+  test('renders command output on a light Japanese paper surface', async ({ page }) => {
+    await page.goto('/fixtures/theme-toggle.html');
+    await page.getByRole('button', { name: 'Switch to light mode' }).click();
+    await page.locator('#drawer').evaluate((drawer) => drawer.classList.remove('open'));
+    await page.locator('.scrim').evaluate((scrim) => scrim.setAttribute('hidden', ''));
+
+    const preview = page.locator('#light-code-preview');
+    const code = preview.locator('pre code');
+    await expect(preview).toBeVisible();
+    await expect
+      .poll(() =>
+        code.evaluate((element) => getComputedStyle(element.parentElement).backgroundColor),
+      )
+      .toBe('rgb(244, 242, 237)');
+    await expect
+      .poll(() => code.evaluate((element) => getComputedStyle(element).color))
+      .toBe('rgb(53, 51, 47)');
+    await expect(preview).toHaveScreenshot('day-mode-code-output.png', {
+      animations: 'disabled',
+      caret: 'hide',
+      maxDiffPixelRatio: 0.001,
+    });
+  });
 });
