@@ -24,11 +24,11 @@ spawns one. The two halves communicate only through SQLite (WAL mode).
 
 That split is why commands take the route they do:
 
-| Path | Why |
-|---|---|
-| Chat message | web writes `message_queue` → worker runs pi → appends to `web_events` → SSE |
-| Command | web writes `control_queue` → worker runs it → appends to `web_events` → SSE |
-| Model list | worker publishes to `meta` (listing models spawns pi) → web reads for autocomplete |
+| Path         | Why                                                                                |
+| ------------ | ---------------------------------------------------------------------------------- |
+| Chat message | web writes `message_queue` → worker runs pi → appends to `web_events` → SSE        |
+| Command      | web writes `control_queue` → worker runs it → appends to `web_events` → SSE        |
+| Model list   | worker publishes to `meta` (listing models spawns pi) → web reads for autocomplete |
 
 `/pi status` spawns pi over RPC, `/pi stop` needs the worker's in-memory
 `AbortController`, and `/pi new` must not race an in-flight run — none of which
@@ -56,7 +56,7 @@ node dist/cli/gpt-usage.js --json   # machine-readable output
 ```
 
 Sessions are created and deleted from the drawer. The 🗑 button in the header is
-**clean session**: it clears the transcript *and* rotates pi's session directory,
+**clean session**: it clears the transcript _and_ rotates pi's session directory,
 so the agent's context is genuinely reset rather than just visually cleared.
 
 ## Appearance
@@ -77,7 +77,7 @@ contains an invalid value, Piweb safely falls back to dark mode.
 ## Authentication
 
 This endpoint can make pi run arbitrary commands on the host, so it always
-authenticates. Being on the tailnet is *not* sufficient on its own: any website
+authenticates. Being on the tailnet is _not_ sufficient on its own: any website
 open in a browser on any tailnet device can issue POSTs to a tailnet URL — the
 same-origin policy blocks reading the reply, not sending the request.
 
@@ -94,7 +94,7 @@ Two ways in:
 The server refuses to start unless at least one of the two is configured.
 
 **CSRF is handled separately, and identity headers do not solve it**: serve
-stamps the device's identity onto *every* request the browser makes, including
+stamps the device's identity onto _every_ request the browser makes, including
 one triggered by a hostile page. Every state-changing request is therefore also
 checked against `WEB_PUBLIC_ORIGIN` (`Origin` / `Sec-Fetch-Site`) and rejected
 with 403 if it comes from elsewhere.
@@ -136,7 +136,7 @@ With Funnel on, the shared token is the only thing protecting an endpoint that
 runs commands on your host: use a long random one, and note that Tailscale
 identity auth is deliberately refused for public requests.
 
-> **Path gotcha:** `PIWEB_DATA` is mounted at the *same absolute path* inside the
+> **Path gotcha:** `PIWEB_DATA` is mounted at the _same absolute path_ inside the
 > container as on the host. The web tier records absolute upload paths in SQLite
 > and the host worker opens them directly, so mounting it elsewhere breaks
 > attachments while text messages keep working — a confusing half-failure.
@@ -168,7 +168,7 @@ all nine older-page boundaries without a jump:
 npm run test:e2e                                      # full behavior + visual suite
 npx playwright test test/e2e/media-player.spec.ts    # video/audio player + downloads
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
-npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine touch-paged boundaries
+npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine delayed, partially loaded touch boundaries
 npm run test:e2e:update                               # accept pixels only after review
 ```
 

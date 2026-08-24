@@ -21,7 +21,7 @@ function events(from: number, to: number) {
   return Array.from({ length: to - from + 1 }, (_, index) => event(from + index));
 }
 
-async function installHistoryApi(page: Page) {
+async function installHistoryApi(page: Page, responseDelayMs?: number) {
   let olderRequests = 0;
   const olderRequestQueries: Array<{ before: number; limit: number }> = [];
   const pendingReleases: Array<() => void> = [];
@@ -78,7 +78,11 @@ async function installHistoryApi(page: Page) {
         before,
         limit: Number(url.searchParams.get('limit') || 0),
       });
-      await new Promise<void>((resolve) => pendingReleases.push(resolve));
+      if (responseDelayMs == null) {
+        await new Promise<void>((resolve) => pendingReleases.push(resolve));
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+      }
       const pageEnd = before - 1;
       const pageStart = Math.max(1, pageEnd - PAGE_SIZE + 1);
       return route.fulfill({
@@ -173,6 +177,55 @@ async function armMovingPrependAnchorProbe(page: Page) {
   });
 }
 
+async function armPartialLoadProbe(page: Page, text: string) {
+  await page.locator('#messages').evaluate((messages, expectedText) => {
+    const row = Array.from(messages.querySelectorAll<HTMLElement>(':scope > .msg')).find(
+      (candidate) => candidate.textContent === expectedText,
+    );
+    if (!row) throw new Error('Partial-load anchor row is missing');
+    const topBefore = row.getBoundingClientRect().top - messages.getBoundingClientRect().top;
+    let touchActive = false;
+    const onTouchStart = () => {
+      touchActive = true;
+    };
+    const onTouchEnd = () => {
+      touchActive = false;
+    };
+    messages.addEventListener('touchstart', onTouchStart);
+    messages.addEventListener('touchend', onTouchEnd);
+    const host = window as Window & {
+      __partialLoadProbe?: Promise<{ drift: number; touchActiveAtMutation: boolean }>;
+    };
+    host.__partialLoadProbe = new Promise((resolve) => {
+      const observer = new MutationObserver(() => {
+        observer.disconnect();
+        const touchActiveAtMutation = touchActive;
+        messages.removeEventListener('touchstart', onTouchStart);
+        messages.removeEventListener('touchend', onTouchEnd);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const topAfter = row.getBoundingClientRect().top - messages.getBoundingClientRect().top;
+            resolve({ drift: Math.abs(topAfter - topBefore), touchActiveAtMutation });
+          });
+        });
+      });
+      observer.observe(messages, { childList: true });
+    });
+  }, text);
+}
+
+async function partialLoadProbe(page: Page) {
+  return page.evaluate(() => {
+    const probe = (
+      window as Window & {
+        __partialLoadProbe?: Promise<{ drift: number; touchActiveAtMutation: boolean }>;
+      }
+    ).__partialLoadProbe;
+    if (!probe) throw new Error('Partial-load probe was not armed');
+    return probe;
+  });
+}
+
 async function prependAnchorDrift(page: Page) {
   return page.evaluate(() => {
     const probe = (window as Window & { __prependAnchorProbe?: Promise<number> })
@@ -223,6 +276,26 @@ async function swipeTowardOlderHistory(page: Page): Promise<void> {
       touchPoints: [{ x: point.x, y }],
     });
     await page.waitForTimeout(16);
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await session.detach();
+}
+
+async function slowSwipeDuringLoad(page: Page, durationMs = 1_800): Promise<void> {
+  const point = await touchPoint(page);
+  const session = await page.context().newCDPSession(page);
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: point.x, y: point.top }],
+  });
+  const steps = 36;
+  for (let step = 1; step <= steps; step += 1) {
+    const y = Math.round(point.top + ((point.bottom - point.top) * step) / steps);
+    await session.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: point.x, y }],
+    });
+    await page.waitForTimeout(durationMs / steps);
   }
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await session.detach();
@@ -377,6 +450,95 @@ test('500-message touch history remains continuous across every older page', asy
     maxDiffPixelRatio: 0.001,
   });
 
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('history keeps loading partially while the user is still pulling upward', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+
+  const historyApi = await installHistoryApi(page, 4_000);
+  await page.goto('/');
+  const messages = page.locator('#messages');
+  await expect(
+    messages.getByText(`History message ${TOTAL_EVENTS}`, { exact: true }),
+  ).toBeVisible();
+
+  let ordinarySwipes = 0;
+  for (let pageNumber = 1; pageNumber <= OLDER_PAGE_COUNT; pageNumber += 1) {
+    ordinarySwipes += await swipeUntilRequest(page, historyApi.requestCount, pageNumber);
+
+    // The response is deliberately still in flight: only the pages completed
+    // before this request may exist, and the next oldest row must not exist yet.
+    await expect(page.locator('#top-sentinel')).toHaveText('Loading older messages…');
+    await expect(messages.locator(':scope > .msg')).toHaveCount(PAGE_SIZE * pageNumber);
+    const expectedOldest = INITIAL_OLDEST - pageNumber * PAGE_SIZE;
+    await expect(
+      messages.getByText(`History message ${expectedOldest}`, { exact: true }),
+    ).toHaveCount(0);
+
+    // Keep pulling while only the already-completed pages exist. These swipes
+    // drive the viewport to the loading boundary before the delayed JSON lands.
+    for (let pendingSwipe = 0; pendingSwipe < 3; pendingSwipe += 1) {
+      await swipeTowardOlderHistory(page);
+    }
+    await expect(page.locator('#top-sentinel')).toHaveText('Loading older messages…');
+    await expect(page.locator('#top-sentinel')).toBeInViewport();
+    await expect(messages.locator(':scope > .msg')).toHaveCount(PAGE_SIZE * pageNumber);
+
+    const anchor = await stableVisibleAnchor(page);
+    expect(anchor, `missing in-flight anchor before page ${pageNumber}`).not.toBeNull();
+    await armPartialLoadProbe(page, anchor!.text);
+
+    // Keep one real touch gesture down across the delayed response. The
+    // MutationObserver below proves the 50-row prepend happened before touchEnd.
+    const inFlightSwipe = slowSwipeDuringLoad(page, 4_500);
+    await page.waitForTimeout(250);
+    await expect(page.locator('#top-sentinel')).toHaveText('Loading older messages…');
+    expect(await messages.locator(':scope > .msg').count()).toBe(PAGE_SIZE * pageNumber);
+    if ([1, 5, 9].includes(pageNumber)) {
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `${String(pageNumber).padStart(2, '0')}-partial-page-loading.png`,
+        ),
+        animations: 'disabled',
+      });
+    }
+
+    await inFlightSwipe;
+    await expect(
+      messages.getByText(`History message ${expectedOldest}`, { exact: true }),
+    ).toBeAttached();
+    const probe = await partialLoadProbe(page);
+    expect(probe.touchActiveAtMutation, `page ${pageNumber} completed after touchEnd`).toBe(true);
+    expect(probe.drift, `page ${pageNumber} snapped by a fetched page`).toBeLessThan(
+      (await messages.evaluate((node) => node.clientHeight)) / 3,
+    );
+    await expect(messages.locator(':scope > .msg')).toHaveCount(PAGE_SIZE * (pageNumber + 1));
+  }
+
+  expect(historyApi.requestCount()).toBe(OLDER_PAGE_COUNT);
+  expect(historyApi.requestQueries()).toEqual(
+    Array.from({ length: OLDER_PAGE_COUNT }, (_, index) => ({
+      before: INITIAL_OLDEST - index * PAGE_SIZE,
+      limit: PAGE_SIZE,
+    })),
+  );
+  expect(ordinarySwipes + OLDER_PAGE_COUNT * 3).toBeGreaterThan(35);
+  const renderedIds = await messages
+    .locator(':scope > .msg')
+    .evaluateAll((rows) =>
+      rows.map((row) => Number(row.querySelector('.msg-text p')?.textContent?.match(/\d+/)?.[0])),
+    );
+  expect(renderedIds).toEqual(Array.from({ length: TOTAL_EVENTS }, (_, index) => index + 1));
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
