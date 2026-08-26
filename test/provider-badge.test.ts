@@ -17,6 +17,13 @@ describe('providerBadge', () => {
     expect(providerBadge('openai-codex')).toEqual({ label: 'GPT', kind: 'gpt' });
   });
 
+  it('gives the tmux-backed Claude Code provider its own badge', () => {
+    expect(providerBadge('claude-code', 'claude-code/sonnet')).toEqual({
+      label: 'CLAUDE',
+      kind: 'claude',
+    });
+  });
+
   it('leaves other providers unchanged', () => {
     expect(providerBadge('local-llama').label).toBe('LOCAL');
     expect(providerBadge('nvim').label).toBe('NV');

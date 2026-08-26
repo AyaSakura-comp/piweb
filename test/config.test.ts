@@ -8,6 +8,12 @@ const originalEnv = { ...process.env };
 const tempDirs: string[] = [];
 const CONFIG_ENV_KEYS = [
   'AUTO_REGISTER_DMS',
+  'CLAUDE_TMUX_BIN',
+  'CLAUDE_TMUX_ENABLED',
+  'CLAUDE_TMUX_POLL_MS',
+  'CLAUDE_TMUX_STARTUP_TIMEOUT_MS',
+  'CLAUDE_TMUX_TMUX_BIN',
+  'CLAUDE_TMUX_TURN_TIMEOUT_MS',
   'DB_PATH',
   'DISCORD_BOT_TOKEN',
   'HOME',
@@ -120,6 +126,40 @@ describe('config loading', () => {
     expect(resolveConfigPath()).toBe(defaultConfigPath);
     expect(config.dbPath).toBe('/default/gateway.db');
     expect(config.sessionsDir).toBe('/default/sessions');
+  });
+
+  it('loads the opt-in Claude tmux bridge settings with safe defaults', async () => {
+    const workDir = createTempDir();
+    process.chdir(workDir);
+    process.env.PIDG_CONFIG = resolve(workDir, 'missing.env');
+    process.env.CLAUDE_TMUX_ENABLED = 'true';
+    process.env.CLAUDE_TMUX_BIN = '/opt/claude';
+    process.env.CLAUDE_TMUX_TMUX_BIN = '/opt/tmux';
+    process.env.CLAUDE_TMUX_POLL_MS = '75';
+    process.env.CLAUDE_TMUX_STARTUP_TIMEOUT_MS = '12000';
+    process.env.CLAUDE_TMUX_TURN_TIMEOUT_MS = '900000';
+
+    const { config } = await loadConfigModule();
+
+    expect(config.claudeTmuxEnabled).toBe(true);
+    expect(config.claudeTmuxBin).toBe('/opt/claude');
+    expect(config.claudeTmuxTmuxBin).toBe('/opt/tmux');
+    expect(config.claudeTmuxPollMs).toBe(75);
+    expect(config.claudeTmuxStartupTimeoutMs).toBe(12000);
+    expect(config.claudeTmuxTurnTimeoutMs).toBe(900000);
+  });
+
+  it('keeps the Claude tmux bridge disabled unless explicitly enabled', async () => {
+    const workDir = createTempDir();
+    process.chdir(workDir);
+    process.env.PIDG_CONFIG = resolve(workDir, 'missing.env');
+    delete process.env.CLAUDE_TMUX_ENABLED;
+
+    const { config } = await loadConfigModule();
+
+    expect(config.claudeTmuxEnabled).toBe(false);
+    expect(config.claudeTmuxBin).toBe('claude');
+    expect(config.claudeTmuxTmuxBin).toBe('tmux');
   });
 
   it('uses the piscord platform data directory defaults when storage paths are unset', async () => {

@@ -140,6 +140,22 @@ export const config = {
   piBin: env('PI_BIN', 'pi'),
 
   /**
+   * Persistent interactive Claude Code bridge. Disabled by default so adding
+   * the adapter cannot alter an existing Pi/Agy deployment until explicitly
+   * enabled on the host worker.
+   */
+  claudeTmuxEnabled: envBool('CLAUDE_TMUX_ENABLED', false),
+  claudeTmuxBin: env('CLAUDE_TMUX_BIN', 'claude'),
+  claudeTmuxTmuxBin: env('CLAUDE_TMUX_TMUX_BIN', 'tmux'),
+  claudeTmuxPollMs: envInt('CLAUDE_TMUX_POLL_MS', 150, { min: 10 }),
+  claudeTmuxStartupTimeoutMs: envInt('CLAUDE_TMUX_STARTUP_TIMEOUT_MS', 30_000, {
+    min: 1_000,
+  }),
+  claudeTmuxTurnTimeoutMs: envInt('CLAUDE_TMUX_TURN_TIMEOUT_MS', 60 * 60 * 1_000, {
+    min: 10_000,
+  }),
+
+  /**
    * Google Antigravity (`agy`) bridge. When enabled, `agy models` are offered
    * as `agy/<id>` refs and every turn on such a model is delegated to the agy
    * CLI instead of pi.

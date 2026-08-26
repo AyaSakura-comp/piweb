@@ -38,6 +38,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ${PIWEB_DATA}:${PIWEB_DATA}
+      - ./public:/app/public:ro
     expose:
       - '8099'
 

@@ -50,6 +50,7 @@ import {
 } from '../agent/channel-settings.js';
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { closeRpcSession } from '../agent/rpc-session.js';
+import { closeClaudeTmuxSession } from '../agent/claude-tmux.js';
 import { computeNextRun } from '../agent/scheduler.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
@@ -139,10 +140,17 @@ function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): 
   // alive across the rename makes the next prompt fail with ENOENT on a .jsonl
   // that now lives in the archive. The next message simply spawns a fresh one.
   const closedRpc = closeRpcSession(channel.folder);
+  const closedClaudeTmux = closeClaudeTmuxSession(channel.folder);
   const archivedSession = rotateChannelSessionDir(channel.folder);
 
   logger.info(
-    { jid: channel.jid, cleared, archived: Boolean(archivedSession), closedRpc },
+    {
+      jid: channel.jid,
+      cleared,
+      archived: Boolean(archivedSession),
+      closedRpc,
+      closedClaudeTmux,
+    },
     'Channel session reset',
   );
 

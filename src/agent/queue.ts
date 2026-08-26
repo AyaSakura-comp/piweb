@@ -23,7 +23,8 @@ import {
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
 import { invokeAgy, isAgyModelRef } from './agy.js';
-import { abortRpcSession, getRpcSession, closeAllRpcSessions } from './rpc-session.js';
+import { invokeClaudeTmux, isClaudeTmuxModelRef } from './claude-tmux.js';
+import { abortRpcSession, getRpcSession, closeAllRpcSessions, closeRpcSession } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
@@ -322,8 +323,35 @@ async function processMessage(
     // Antigravity CLI, which owns its own tools and conversation store. It has
     // no RPC/steer mode, so this branch precedes the RPC one.
     const useAgy = isAgyModelRef(effective.rawModelRef);
+    const useClaudeTmux = isClaudeTmuxModelRef(effective.rawModelRef);
+    // `/pi stop` prefers a live Pi RPC process over the queue AbortController.
+    // Retire any stale warm Pi process before Claude starts, or Stop could hit
+    // that inactive process while the tmux turn kept running.
+    if (useClaudeTmux && config.claudeTmuxEnabled) closeRpcSession(channel.folder);
 
-    const result = useAgy
+    // Claude Code is another complete agent, like agy, and owns its own
+    // persistent conversation. Route it before Pi's RPC path; its interactive
+    // process remains warm inside tmux between Piweb turns.
+    const result = useClaudeTmux
+      ? config.claudeTmuxEnabled
+        ? await invokeClaudeTmux(channel.folder, prompt, {
+            channelJid: channel.jid,
+            turnId: rowid,
+            model: effective.rawModelRef,
+            thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+            cwd: effective.effectiveCwd,
+            signal,
+            attachments,
+            onEvent,
+          })
+        : {
+            ok: false,
+            text: '',
+            error:
+              `Claude Code is disabled on this worker (CLAUDE_TMUX_ENABLED=false). ` +
+              `Switch models with /pi model, or enable the Claude tmux bridge in config.env.`,
+          }
+      : useAgy
       ? await invokeAgy(channel.folder, prompt, {
           channelJid: channel.jid,
           model: effective.rawModelRef,

@@ -477,7 +477,7 @@ svg {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   -webkit-touch-callout: none;
-  padding: 12px 0 4px;
+  padding: 12px 0 12px;
 }
 
 .msg {
@@ -917,34 +917,53 @@ svg {
 @keyframes popInSlideUp {
   0% {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(12px) scale(0.98);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.003);
   }
   100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes partialThinkingPulse {
+  0%, 100% {
+    border-left-color: rgba(167, 139, 250, 0.7);
+    background: rgba(167, 139, 250, 0.04);
+  }
+  50% {
+    border-left-color: rgba(167, 139, 250, 1);
+    background: rgba(167, 139, 250, 0.1);
   }
 }
 
 .event {
-  margin: 4px 14px;
+  margin: 5px 14px;
   border-radius: 8px;
   background: var(--bg-alt);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-left: 3px solid var(--border);
+  border-left: 3.5px solid var(--border);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.event.partial,
 .event.pop-in,
 .msg.pop-in {
-  animation: popInSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: popInSlideUp 0.28s cubic-bezier(0.2, 0.85, 0.28, 1.08) forwards;
   will-change: transform, opacity;
 }
 
 .event.thinking {
   border-left-color: var(--thinking);
   background: rgba(167, 139, 250, 0.05);
+}
+
+.event.thinking.partial {
+  animation: popInSlideUp 0.28s cubic-bezier(0.2, 0.85, 0.28, 1.08) forwards, partialThinkingPulse 2.5s ease-in-out infinite;
 }
 
 .event.tool {
@@ -1753,7 +1772,7 @@ svg {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 96px;
+  bottom: calc(72px + env(safe-area-inset-bottom));
   z-index: 50;
   padding: 8px 14px;
   background: var(--accent);
@@ -2467,6 +2486,14 @@ svg {
   color: #8ab4f8;
 }
 
+/* Claude's warm coral stays visually separate from the green local/GPT,
+   blue Gemini, and violet OpenRouter badges around it. */
+.provider-badge.claude {
+  background: rgb(217 119 87 / 0.2);
+  border-color: rgb(217 119 87 / 0.58);
+  color: #f0a58c;
+}
+
 .provider-badge.xai {
   background: rgb(255 255 255 / 0.1);
   border-color: rgb(255 255 255 / 0.28);
@@ -3164,6 +3191,12 @@ svg {
 
 :root[data-theme='light'] .provider-badge.gem {
   color: #245cb5;
+}
+
+:root[data-theme='light'] .provider-badge.claude {
+  background: #fff8f5;
+  border-color: #dba38f;
+  color: #93452e;
 }
 
 :root[data-theme='light'] .provider-badge.xai {

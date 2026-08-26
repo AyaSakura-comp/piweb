@@ -120,6 +120,8 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       return { label: 'LOCAL', kind: 'local' };
     case 'gemini':
       return { label: 'GEM', kind: 'gem' };
+    case 'claude-code':
+      return { label: 'CLAUDE', kind: 'claude' };
     case 'xai':
       return { label: 'XAI', kind: 'xai' };
     case 'openrouter':

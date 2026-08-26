@@ -1011,6 +1011,8 @@ async function jumpTo(id) {
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
 async function runQuickCommand(command, args = {}) {
   if (!state.activeJid || state.previewingDeleted) return;
+  const followLatest = shouldFollowTranscriptTail();
+  if (followLatest) scrollToBottom(true);
   await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
     method: 'POST',
     body: JSON.stringify({ command, args }),
@@ -1336,6 +1338,7 @@ function providerBadgeFor(provider, modelRef = '') {
     'ollama-lfm2': ['LOCAL', 'local'],
     ds4: ['LOCAL', 'local'],
     gemini: ['GEM', 'gem'],
+    'claude-code': ['CLAUDE', 'claude'],
     xai: ['XAI', 'xai'],
     openrouter: ['OR', 'or'],
     sakana: ['SAK', 'sak'],
@@ -1637,10 +1640,12 @@ function openStream() {
 }
 
 function setBusy(busy) {
+  const followLatest = shouldFollowTranscriptTail();
   $('typing').hidden = !busy;
   // Stop only exists while there is something to stop — it would be dead
   // weight in an already crowded header otherwise.
   $('btn-stop').hidden = !busy;
+  if (followLatest) scrollToBottom(true);
   const session = state.sessions.find((s) => s.jid === state.activeJid);
   if (session && session.busy !== busy) {
     session.busy = busy;

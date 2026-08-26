@@ -68,9 +68,9 @@ describe('transcript live scrolling', () => {
     expect(viewportSync).toContain('keepComposerBottomVisible()');
   });
 
-  it('does not treat a reader 50px above the tail as being at the bottom', () => {
+  it('does not treat a reader 120px above the tail as being at the bottom', () => {
     const scroller = setupScroller();
-    scroller.scrollTop = 750;
+    scroller.scrollTop = 680;
 
     expect(isTranscriptNearBottom(scroller)).toBe(false);
   });
@@ -109,5 +109,32 @@ describe('transcript live scrolling', () => {
 
     expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 1_000, behavior: 'smooth' });
     expect(button.classList.contains('visible')).toBe(false);
+  });
+
+  it('allows the reader to scroll down to the bottom and recognizes arrival at the tail', () => {
+    const scroller = setupScroller();
+    const button = { classList: new FakeClassList() };
+
+    // Reader starts scrolled up in history (scrollTop = 400 of 800 max)
+    scroller.scrollTop = 400;
+    expect(isTranscriptNearBottom(scroller)).toBe(false);
+
+    // Reader scrolls down to the bottom
+    scroller.scrollTop = 800; // scrollHeight (1000) - clientHeight (200)
+    expect(isTranscriptNearBottom(scroller)).toBe(true);
+
+    // Incoming output continues auto-scrolling to the new bottom
+    const wasNearBottom = isTranscriptNearBottom(scroller);
+    scroller.scrollHeight = 1_500;
+    settleTranscriptUpdate(scroller, button, wasNearBottom);
+    expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 1_500, behavior: 'auto' });
+    expect(button.classList.contains('visible')).toBe(false);
+  });
+
+  it('re-anchors the live tail when busy state or quick commands execute at the bottom', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+
+    expect(app).toMatch(/function setBusy\(busy\) \{[\s\S]*?if \(followLatest\) scrollToBottom\(true\)/);
+    expect(app).toMatch(/async function runQuickCommand\([\s\S]*?if \(followLatest\) scrollToBottom\(true\)/);
   });
 });

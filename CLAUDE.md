@@ -795,6 +795,58 @@ Consequences worth knowing:
 - Cloud vision models (Gemini, GPT/openai-codex) work regardless of what is on
   8001.
 
+## 7a. Claude Code tmux bridge
+
+The optional `claude-code/*` provider is a complete-agent bridge, parallel to
+Agy rather than a Pi model provider. It runs the normal interactive Claude Code
+OAuth client in a persistent tmux session and is feature-gated off by default.
+
+```text
+message_queue → queue.ts detects claude-code/* → invokeClaudeTmux()
+              → tmux buffer/paste → interactive claude
+              → ~/.claude/projects/**/<session-id>.jsonl
+              → pi-shaped thinking/tool/result events → web_events/SSE
+```
+
+Important invariants:
+
+- Do not replace this with `claude -p` or `--bare`. The persistent interactive
+  process is deliberate: it retains the normal subscription login and avoids a
+  cold CLI/session for every Piweb turn.
+- Tmux is process control, not the transcript parser. `capture-pane` is used only
+  to detect startup readiness and auto-accept the workspace trust screen; normal
+  output comes from Claude's JSONL because TUI redraws/wrapping are not a stable
+  protocol.
+- The launch always uses `--permission-mode bypassPermissions`, disallows
+  `AskUserQuestion`, and appends an autonomous system prompt. There is no Piweb
+  approval UI by design.
+- The bridge mapping is `claude-tmux-session.json` under the channel session
+  directory. `/pi new` closes the deterministic tmux session before rotating
+  that directory, so the next turn cannot inherit the old Claude conversation.
+- `/pi stop` reaches the queue AbortSignal and sends Ctrl-C to the pane; it does
+  not kill tmux, so the same Claude conversation remains available.
+- A model, thinking-effort, or cwd override change restarts the pane with
+  `--resume <id>` and the new launch options. Pi, Agy, and Claude histories
+  remain separate.
+- Uploaded files are staged by the existing attachment pipeline and inserted as
+  absolute paths. Local files in final markdown are converted to Piweb outbox
+  markers before the normal file delivery path.
+
+Host-only configuration:
+
+```env
+CLAUDE_TMUX_ENABLED=false
+CLAUDE_TMUX_BIN=/home/chihmin/.local/bin/claude
+CLAUDE_TMUX_TMUX_BIN=/usr/bin/tmux
+CLAUDE_TMUX_POLL_MS=150
+CLAUDE_TMUX_STARTUP_TIMEOUT_MS=30000
+CLAUDE_TMUX_TURN_TIMEOUT_MS=3600000
+```
+
+The web container never needs either binary. The focused production-shell visual
+workflow is `test/e2e/claude-tmux.spec.ts`; its fixture API/SSE lives in the
+existing `test/e2e/fixture-server.mjs`.
+
 ## 7b. The Antigravity (agy) bridge — Gemini models
 
 Gemini is served by bridging to Google's **Antigravity CLI (`agy`)**, not by adding a

@@ -153,6 +153,51 @@ node dist/cli/piweb.js web      # web only
 
 `WEB_EMBEDDED_WORKER=true` makes `web` mode run the worker in-process.
 
+## Claude Code through persistent tmux (optional)
+
+Piweb can expose `claude-code/haiku`, `claude-code/sonnet`, and
+`claude-code/opus` beside its existing Pi and Agy models. This bridge runs the
+normal interactive Claude Code OAuth client in one persistent tmux session per
+Piweb session; it does **not** use `claude -p` or `--bare`.
+
+The feature is disabled by default, so installing this version does not change
+an existing worker. Enable it only on the host:
+
+```bash
+# Log in once through Anthropic's own CLI flow first.
+/home/chihmin/.local/bin/claude auth status
+
+tmux -V
+
+# ~/.config/piweb/config.env
+CLAUDE_TMUX_ENABLED=true
+CLAUDE_TMUX_BIN=/home/chihmin/.local/bin/claude
+CLAUDE_TMUX_TMUX_BIN=/usr/bin/tmux
+```
+
+Restart the worker after changing the host config. The bridge starts Claude with
+`--permission-mode bypassPermissions`, removes `AskUserQuestion`, and adds an
+autonomous system instruction, so there is no approval/clarification UI. This
+is intentionally equivalent to granting Claude full command execution on the
+host; protect Piweb's authentication accordingly.
+
+Tmux owns process/input/interrupt lifecycle only. Piweb tails Claude's session
+JSONL for thinking, tool calls, tool results, and the final answer instead of
+scraping the redraw-heavy terminal screen. `/pi stop` sends Ctrl-C and keeps the
+conversation; `/pi new` kills that channel's tmux process and rotates its
+mapping so the next turn is fresh. Claude, Pi, and Agy keep separate memories
+even though the visible Piweb transcript is continuous.
+
+Focused mobile proof:
+
+```bash
+npx playwright test test/e2e/claude-tmux.spec.ts --project=chromium-mobile
+```
+
+The test uses deterministic API/SSE fixtures but the production HTML, CSS, and
+JavaScript. It covers the Claude model picker/badges, autonomous thinking and
+tool rows, final response, Stop, and the session drawer in one recorded flow.
+
 ## Browser E2E, video, and visual regression tests
 
 The Playwright suite runs end to end against deterministic local fixtures at the

@@ -3,14 +3,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { closeRpcSessionMock, rotateMock } = vi.hoisted(() => ({
+const { closeRpcSessionMock, closeClaudeTmuxMock, rotateMock } = vi.hoisted(() => ({
   closeRpcSessionMock: vi.fn(() => true),
+  closeClaudeTmuxMock: vi.fn(() => true),
   rotateMock: vi.fn(() => '/archived/path'),
 }));
 
 vi.mock('../src/agent/rpc-session.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/agent/rpc-session.js')>()),
   closeRpcSession: closeRpcSessionMock,
+}));
+
+vi.mock('../src/agent/claude-tmux.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/agent/claude-tmux.js')>()),
+  closeClaudeTmuxSession: closeClaudeTmuxMock,
 }));
 
 vi.mock('../src/session/path.js', async (importOriginal) => ({
@@ -42,6 +48,10 @@ describe('/pi new with a warm RPC session', () => {
       order.push('close');
       return true;
     });
+    closeClaudeTmuxMock.mockImplementation(() => {
+      order.push('close-claude');
+      return true;
+    });
     rotateMock.mockImplementation(() => {
       order.push('rotate');
       return '/archived/path';
@@ -52,7 +62,8 @@ describe('/pi new with a warm RPC session', () => {
 
     expect(result.ok).toBe(true);
     expect(closeRpcSessionMock).toHaveBeenCalledWith('ch_new');
-    expect(order).toEqual(['close', 'rotate']);
+    expect(closeClaudeTmuxMock).toHaveBeenCalledWith('ch_new');
+    expect(order).toEqual(['close', 'close-claude', 'rotate']);
   });
 
   it('still succeeds when there is no RPC session to close', async () => {
@@ -71,6 +82,7 @@ describe('/pi new with a warm RPC session', () => {
 
     expect(result.ok).toBe(false);
     expect(closeRpcSessionMock).not.toHaveBeenCalled();
+    expect(closeClaudeTmuxMock).not.toHaveBeenCalled();
     expect(rotateMock).not.toHaveBeenCalled();
   });
 });
