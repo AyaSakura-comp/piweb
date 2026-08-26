@@ -265,7 +265,6 @@ describe('conversation id persistence', () => {
 
   it('treats a corrupt store as no conversation rather than throwing', () => {
     writeAgyConversationId('web_abc', 'x');
-    const { writeFileSync } = require('node:fs');
     writeFileSync(join(dir, 'agy-conversation.json'), 'not json', 'utf8');
     expect(readAgyConversationId('web_abc')).toBeUndefined();
   });

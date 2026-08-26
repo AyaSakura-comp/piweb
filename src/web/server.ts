@@ -71,7 +71,7 @@ import {
   tokenMatches,
 } from './auth.js';
 
-const PUBLIC_DIR = resolve(fileURLToPath(new URL('../../public', import.meta.url)));
+export const PUBLIC_DIR = resolve(fileURLToPath(new URL('../../public', import.meta.url)));
 
 /** Body cap. Phone photos arrive base64-inflated, so allow generous headroom. */
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
@@ -141,17 +141,54 @@ export function serveStatic(
   root: string,
   relPath: string,
 ): boolean {
-  const target = join(root, normalize(relPath).replace(/^(\.\.[/\\])+/, ''));
+  const normalizedRel = normalize(relPath).replace(/^(\.\.[/\\])+/, '');
+  const cleanRel = normalizedRel.replace(/^[/\\]+/, '');
+  const target = join(root, cleanRel);
   if (!target.startsWith(root)) return false;
   if (!existsSync(target)) return false;
   const stat = statSync(target);
   if (!stat.isFile()) return false;
 
+  const isImmutable =
+    root !== PUBLIC_DIR ||
+    cleanRel.startsWith('vendor/') ||
+    cleanRel.startsWith('icons/') ||
+    cleanRel.startsWith('favicon');
+
+  const cacheControl = isImmutable
+    ? 'public, max-age=31536000, immutable'
+    : 'no-cache';
+
+  const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+  const lastModified = stat.mtime.toUTCString();
+
   const headers: Record<string, string | number> = {
     'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream',
-    'cache-control': root === PUBLIC_DIR ? 'no-cache' : 'public, max-age=31536000',
+    'cache-control': cacheControl,
     'accept-ranges': 'bytes',
+    etag,
+    'last-modified': lastModified,
   };
+
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch) {
+    if (ifNoneMatch === etag || ifNoneMatch === etag.replace(/^W\//, '') || ifNoneMatch === '*') {
+      res.writeHead(304, headers);
+      res.end();
+      return true;
+    }
+  } else if (req.headers['if-modified-since']) {
+    const ifModifiedSince = new Date(req.headers['if-modified-since']).getTime();
+    if (
+      Number.isFinite(ifModifiedSince) &&
+      Math.floor(stat.mtimeMs / 1000) <= Math.floor(ifModifiedSince / 1000)
+    ) {
+      res.writeHead(304, headers);
+      res.end();
+      return true;
+    }
+  }
+
   const range = req.headers.range?.match(/^bytes=(\d*)-(\d*)$/);
   if (range && (range[1] || range[2])) {
     const suffixLength = range[1] ? undefined : Number(range[2]);
@@ -354,13 +391,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // The login screen is part of the SPA, so the shell itself stays public;
   // every route that touches data is gated below.
-  if (method === 'GET' && (path === '/' || path === '/index.html')) {
+  if ((method === 'GET' || method === 'HEAD') && (path === '/' || path === '/index.html')) {
     if (serveStatic(req, res, PUBLIC_DIR, 'index.html')) return;
     sendJson(res, 500, { error: 'UI not built' });
     return;
   }
 
-  if (method === 'GET' && !path.startsWith('/api/') && !path.startsWith('/media/')) {
+  if ((method === 'GET' || method === 'HEAD') && !path.startsWith('/api/') && !path.startsWith('/media/')) {
     if (serveStatic(req, res, PUBLIC_DIR, path)) return;
   }
 

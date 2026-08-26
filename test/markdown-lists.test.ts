@@ -11,7 +11,7 @@ describe('markdown list rendering', () => {
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
-      let filePath = path.join('/home/chihmin/src/piweb/public', req.url || '/');
+      const filePath = path.join('/home/chihmin/src/piweb/public', req.url || '/');
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<!DOCTYPE html><html><body><div id="c"></div><script type="module">

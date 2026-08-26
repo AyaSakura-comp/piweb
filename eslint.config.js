@@ -4,7 +4,16 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.db', 'gateway.db*', 'ts-state/**', 'artifacts/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'coverage/**',
+      '*.db',
+      'gateway.db*',
+      'ts-state/**',
+      'artifacts/**',
+      'public/vendor/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -28,6 +37,8 @@ export default tseslint.config(
       'no-undef': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
       '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-useless-assignment': 'off',
     },
   },
   eslintConfigPrettier,

@@ -236,14 +236,39 @@ export function getMermaidConfig() {
 }
 
 let mermaidInitDone = false;
-function ensureMermaid() {
-  if (mermaidInitDone || !window.mermaid) return;
-  try {
-    window.mermaid.initialize(getMermaidConfig());
-    mermaidInitDone = true;
-  } catch (err) {
-    console.error('Failed to init mermaid', err);
+let mermaidLoadingPromise = null;
+export function ensureMermaid() {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (window.mermaid) {
+    if (!mermaidInitDone) {
+      window.mermaid.initialize(getMermaidConfig());
+      mermaidInitDone = true;
+    }
+    return Promise.resolve(window.mermaid);
   }
+  if (mermaidLoadingPromise) return mermaidLoadingPromise;
+  mermaidLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/mermaid/mermaid.min.js';
+    s.onload = () => {
+      try {
+        if (window.mermaid) {
+          window.mermaid.initialize(getMermaidConfig());
+          mermaidInitDone = true;
+        }
+        resolve(window.mermaid);
+      } catch (err) {
+        console.error('Failed to init mermaid', err);
+        reject(err);
+      }
+    };
+    s.onerror = (err) => {
+      mermaidLoadingPromise = null;
+      reject(err);
+    };
+    document.head.append(s);
+  });
+  return mermaidLoadingPromise;
 }
 
 function attachMermaidGesture(scrollEl, chartEl) {
@@ -624,8 +649,7 @@ export function applySyntaxHighlighting(element, code, language = '', highlighte
 }
 
 function renderCode(item) {
-  if (item.lang === 'mermaid' && window.mermaid) {
-    ensureMermaid();
+  if (item.lang === 'mermaid') {
     const wrap = document.createElement('div');
     wrap.className = 'mermaid-wrap';
 
@@ -682,9 +706,14 @@ function renderCode(item) {
     });
 
     const id = `mm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    window.mermaid
-      .render(id, item.code)
-      .then(({ svg, bindFunctions }) => {
+    ensureMermaid()
+      .then((mermaid) => {
+        if (!mermaid) return;
+        return mermaid.render(id, item.code);
+      })
+      .then((res) => {
+        if (!res) return;
+        const { svg, bindFunctions } = res;
         renderedSvg = svg;
         chart.innerHTML = svg;
         const svgEl = chart.querySelector('svg');
