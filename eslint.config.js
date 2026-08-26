@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.db', 'gateway.db*'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.db', 'gateway.db*', 'ts-state/**', 'artifacts/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

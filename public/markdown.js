@@ -1001,28 +1001,105 @@ function buildList(lines, start, container, inline) {
   const baseIndent = first[1].length;
   const ordered = ORDERED_RE.test(lines[start]);
   const list = document.createElement(ordered ? 'ol' : 'ul');
+  if (ordered && first[2]) {
+    const startNum = parseInt(first[2], 10);
+    if (Number.isFinite(startNum) && startNum !== 1) {
+      list.start = startNum;
+    }
+  }
 
   let i = start;
   while (i < lines.length) {
+    const line = lines[i];
+
+    // Blank line lookahead: a loose list can have empty lines between items
+    if (!line.trim()) {
+      let next = i + 1;
+      while (next < lines.length && !lines[next].trim()) next++;
+      if (next >= lines.length) {
+        i = next;
+        break;
+      }
+      // If the next non-blank line starts another block element, the list ends
+      if (
+        /^\s*>/.test(lines[next]) ||
+        /^(#{1,6})\s+/.test(lines[next]) ||
+        HR_RE.test(lines[next]) ||
+        isTableStart(lines, next)
+      ) {
+        break;
+      }
+      const nextBullet = lines[next].match(BULLET_RE);
+      const nextNumbered = lines[next].match(ORDERED_RE);
+      const nextMatch = nextBullet || nextNumbered;
+      if (nextMatch) {
+        const nextIndent = nextMatch[1].length;
+        const nextOrdered = Boolean(nextNumbered);
+        // Dedented: belongs to outer list level
+        if (nextIndent < baseIndent) break;
+        // Same level but changed list type (e.g. ol to ul): list ends
+        if (nextIndent === baseIndent && nextOrdered !== ordered) break;
+        // Valid continuation of the same list or deeper level
+        i = next;
+        continue;
+      } else {
+        // Non-list line after blank line: if indented > baseIndent, continuation
+        const nextIndent = (lines[next].match(/^(\s*)/)?.[1] || '').length;
+        if (nextIndent > baseIndent && list.lastElementChild) {
+          i = next;
+          continue;
+        }
+        break;
+      }
+    }
+
     const bullet = lines[i].match(BULLET_RE);
     const numbered = lines[i].match(ORDERED_RE);
     const match = bullet || numbered;
-    if (!match) break;
 
-    const indent = match[1].length;
-    if (indent < baseIndent) break;
+    if (match) {
+      const indent = match[1].length;
+      if (indent < baseIndent) break;
 
-    if (indent > baseIndent) {
-      // deeper level: recurse into the last item
-      const host = list.lastElementChild ?? list.appendChild(document.createElement('li'));
-      i = buildList(lines, i, host, inline);
+      if (indent > baseIndent) {
+        // deeper level: recurse into the last item
+        const host = list.lastElementChild ?? list.appendChild(document.createElement('li'));
+        i = buildList(lines, i, host, inline);
+        continue;
+      }
+
+      const itemOrdered = Boolean(numbered);
+      if (itemOrdered !== ordered) {
+        break;
+      }
+
+      const li = document.createElement('li');
+      inline(li, bullet ? match[2] : match[3]);
+      list.append(li);
+      i += 1;
       continue;
     }
 
-    const li = document.createElement('li');
-    inline(li, bullet ? match[2] : match[3]);
-    list.append(li);
-    i += 1;
+    // Not a bullet/number: check if it starts a different block
+    if (
+      /^\s*>/.test(line) ||
+      /^(#{1,6})\s+/.test(line) ||
+      HR_RE.test(line) ||
+      isTableStart(lines, i)
+    ) {
+      break;
+    }
+
+    // Indented continuation line under the current item
+    const indent = (line.match(/^(\s*)/)?.[1] || '').length;
+    if (indent > baseIndent && list.lastElementChild) {
+      list.lastElementChild.append(document.createElement('br'));
+      inline(list.lastElementChild, line.trim());
+      i += 1;
+      continue;
+    }
+
+    break;
   }
 
   container.append(list);
