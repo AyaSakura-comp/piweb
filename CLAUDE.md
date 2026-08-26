@@ -171,7 +171,7 @@ origin check.
 
 | feature | where |
 |---|---|
-| markdown + LaTeX + syntax highlighting | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; unlabeled/unknown fences use language auto-detection |
+| markdown + LaTeX + syntax highlighting | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; loose/nested lists across blank lines, `<ol start="N">` offsets, indented continuations; unlabeled/unknown fences use language auto-detection |
 | Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
@@ -595,7 +595,7 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Layout**: drawer overlays below 768px and becomes a fixed sidebar above it.
   Long content (code, tool output) scrolls inside `overflow-x: auto`; the page
   body never scrolls horizontally.
-- **Message rendering**: minimal markdown (fenced code, inline code, bold) built
+- **Message rendering**: minimal markdown (fenced code, inline code, bold, loose/nested lists, `<ol start="N">` numbering offsets, indented item continuations, blockquotes, tables) built
   from **text nodes only**. Never assign model-authored HTML to `innerHTML`;
   KaTeX and highlight.js may assign only the escaped markup they generate from
   math/code source.
