@@ -8,9 +8,9 @@ const tempDirs: string[] = [];
 const CONFIG_ENV_KEYS = [
   'DB_PATH',
   'PIDG_CONFIG',
-  'PI_BIN',
-  'PI_CWD',
   'SESSIONS_DIR',
+  'SESSION_TITLE_BIN',
+  'SESSION_TITLE_MODEL_PATH',
   'SESSION_TITLE_TIMEOUT_MS',
 ];
 
@@ -56,7 +56,7 @@ describe('session title worker shutdown', () => {
   it('does not resolve stop until the active title child has exited', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'piweb-title-shutdown-'));
     tempDirs.push(dir);
-    const bin = join(dir, 'fake-pi.mjs');
+    const bin = join(dir, 'fake-llama-simple.mjs');
     const pidFile = join(dir, 'pid');
     writeFileSync(
       bin,
@@ -71,9 +71,9 @@ setTimeout(() => process.exit(0), 10000);
 
     process.env.DB_PATH = ':memory:';
     process.env.PIDG_CONFIG = join(dir, 'missing.env');
-    process.env.PI_BIN = bin;
-    process.env.PI_CWD = dir;
     process.env.SESSIONS_DIR = resolve(dir, 'sessions');
+    process.env.SESSION_TITLE_BIN = bin;
+    process.env.SESSION_TITLE_MODEL_PATH = join(dir, 'tiny.gguf');
     process.env.SESSION_TITLE_TIMEOUT_MS = '5000';
 
     vi.resetModules();

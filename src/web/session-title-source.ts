@@ -2,6 +2,19 @@ export const MAX_SESSION_TITLE_SOURCE_LENGTH = 8_000;
 
 const PART_SEPARATOR = '\n\n';
 
+function sliceWithoutSplittingSurrogate(value: string, maxCodeUnits: number): string {
+  let end = Math.min(value.length, maxCodeUnits);
+  if (
+    end > 0 &&
+    end < value.length &&
+    /[\uD800-\uDBFF]/u.test(value[end - 1]) &&
+    /[\uDC00-\uDFFF]/u.test(value[end])
+  ) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** Preserve an API-supplied title; only unnamed UI creation gets an auto-title job. */
 export function resolveSessionCreationTitle(name: unknown): {
   name: string;
@@ -42,7 +55,9 @@ function fitSourceParts(parts: string[]): string {
     active = active.filter((index) => !completedSet.has(index));
   }
 
-  return parts.map((part, index) => part.slice(0, budgets[index])).join(PART_SEPARATOR);
+  return parts
+    .map((part, index) => sliceWithoutSplittingSurrogate(part, budgets[index]))
+    .join(PART_SEPARATOR);
 }
 
 /** Build the bounded, dependency-free summary input for a session's first normal turn. */

@@ -224,8 +224,11 @@ export const config = {
   /** Extra pi flags (space-separated) */
   piExtraFlags: env('PI_EXTRA_FLAGS'),
 
-  /** Optional model override for ephemeral first-prompt session titles. */
-  sessionTitleModel: env('SESSION_TITLE_MODEL'),
+  /** CPU-only llama.cpp binary used for ephemeral first-prompt session titles. */
+  sessionTitleBin: env('SESSION_TITLE_BIN'),
+
+  /** Small GGUF model loaded by the one-shot CPU title process. */
+  sessionTitleModelPath: env('SESSION_TITLE_MODEL_PATH'),
 
   /** Hard timeout for the one-shot title summary process. */
   sessionTitleTimeoutMs: envInt('SESSION_TITLE_TIMEOUT_MS', 60_000, { min: 1_000 }),

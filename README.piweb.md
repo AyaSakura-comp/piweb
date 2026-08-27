@@ -56,9 +56,9 @@ node dist/cli/gpt-usage.js --json   # machine-readable output
 ```
 
 Sessions are created instantly from the drawer—there is no naming dialog. After
-the first normal prompt finishes, a separate ephemeral `pi --no-session` request
-replaces **New session** with a summary of at most 10 visible characters; that
-summary request has no tools/project context and is never retained. Sessions are
+the first normal prompt finishes, a separate CPU-only `llama-simple` process
+replaces **New session** with a summary of at most 10 visible characters; it
+loads a dedicated tiny GGUF, exits after one title, and retains no context. Sessions are
 deleted from the drawer. The 🗑 button in the header is **clean session**: it
 clears the transcript _and_ rotates pi's session directory, so the agent's
 context is genuinely reset rather than just visually cleared.
@@ -122,7 +122,36 @@ systemctl --user daemon-reload
 systemctl --user enable --now piweb-worker
 ```
 
-### 3. Web tier (Docker)
+### 3. CPU-only session-title model
+
+Automatic names never call the conversation model. The host worker starts a
+fresh CPU-only `llama-simple` process for each first-prompt title and then lets
+it exit, freeing that process's private KV cache. The process is forced to
+`-ngl 0`, receives no provider credentials, and calls no network API or Pi session.
+
+The deployed model is the Apache-2.0 Qwen2.5 1.5B Instruct `Q4_K_M` GGUF. Build
+`llama-simple` from llama.cpp with every GPU backend disabled, download
+`qwen2.5-1.5b-instruct-q4_k_m.gguf` from
+`Qwen/Qwen2.5-1.5B-Instruct-GGUF`, and set absolute paths in the worker config:
+
+```bash
+cmake -S ~/llama.cpp -B ~/llama.cpp/build-piweb-title \
+  -DGGML_HIP=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+  -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/llama.cpp/build-piweb-title --target llama-simple -j
+
+SESSION_TITLE_BIN=/opt/piweb-title-llama/bin/llama-simple
+SESSION_TITLE_MODEL_PATH=/opt/piweb-title-model/qwen2.5-1.5b-instruct-q4_k_m.gguf
+SESSION_TITLE_TIMEOUT_MS=60000
+```
+
+Verify `ldd "$SESSION_TITLE_BIN"` contains no HIP, ROCm, CUDA, or Vulkan
+library. The dedicated process does not share or mutate Qwen MTP or the
+UI-selected model's KV state. It still uses transient host CPU and RAM, so the
+title worker runs only one job at a time.
+
+### 4. Web tier (Docker)
 
 ```bash
 # .env next to docker-compose.yml

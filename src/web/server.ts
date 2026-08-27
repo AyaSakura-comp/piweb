@@ -713,7 +713,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // Capture exactly the first normal prompt for an independent title job.
       // The message and title source commit together, so a crash cannot let a
       // later turn take this first-turn slot. The worker erases its copy after
-      // the ephemeral pi --no-session summary finishes.
+      // the isolated CPU-only summary process exits.
       const titleSource = buildSessionTitleSource(
         text,
         quote,

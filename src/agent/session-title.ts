@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { resolvePiSpawn } from './invoke.js';
 
 export const MAX_SESSION_TITLE_GRAPHEMES = 10;
 
 const TITLE_SYSTEM_PROMPT =
-  'You create short conversation titles. Return only the title: no label, quotes, markdown, ' +
-  'explanation, or final punctuation. Keep the user language and use at most 10 visible characters.';
+  'You create short conversation titles in the user language. Summarize the user message as a ' +
+  'noun phrase with at most 10 visible characters. Keep the user language and writing system. ' +
+  'Return only the title: no label, quotes, markdown, explanation, or final punctuation. ' +
+  'Example: 如何部署網站？ → 網站部署';
 const SESSION_TITLE_KILL_GRACE_MS = 250;
 
 function graphemes(value: string): string[] {
@@ -41,66 +42,58 @@ export function normalizeSessionTitle(output: string, firstPrompt: string): stri
     .join('');
 }
 
+function escapeChatMl(value: string): string {
+  return value.replace(/<\|/gu, '＜|');
+}
+
 function titlePrompt(firstPrompt: string): string {
   return (
-    'Summarize this first user prompt as the session title. Output only the title.\n\n' +
-    `<first_prompt>\n${firstPrompt.trim()}\n</first_prompt>`
+    `<|im_start|>system\n${TITLE_SYSTEM_PROMPT}<|im_end|>\n` +
+    `<|im_start|>user\n${escapeChatMl(firstPrompt.trim())}<|im_end|>\n` +
+    '<|im_start|>assistant\n'
   );
 }
 
 export interface GenerateSessionTitleOptions {
   bin?: string;
-  cwd?: string;
-  model?: string;
+  modelPath?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
 
 /**
- * Generate a title in an ephemeral pi process.
+ * Generate a title in an ephemeral CPU-only llama.cpp process.
  *
- * --no-session is the key invariant: this auxiliary request never enters the
- * conversation being named and pi writes no reusable summary session. Project
- * context, extensions, skills, prompt templates, and tools are also disabled.
+ * The helper loads a dedicated tiny GGUF with GPU offload disabled, receives no
+ * provider credentials or network tools, and exits after one generation. Its
+ * private KV cache is freed without sharing the conversation model's KV state.
  */
 export async function generateSessionTitle(
   firstPrompt: string,
   opts: GenerateSessionTitleOptions = {},
 ): Promise<string> {
-  const args = [
-    '--no-session',
-    '--no-tools',
-    '--no-extensions',
-    '--no-skills',
-    '--no-prompt-templates',
-    '--no-themes',
-    '--no-context-files',
-    '--thinking',
-    'off',
-    '--system-prompt',
-    TITLE_SYSTEM_PROMPT,
-    // Supplying an explicit empty append list prevents automatic discovery of
-    // global or project .pi/APPEND_SYSTEM.md files.
-    '--append-system-prompt',
-    '',
-  ];
-  // PI_MODEL may be a gateway-only ref such as agy/..., which the pi CLI
-  // cannot resolve. Use only the dedicated title override; otherwise let pi
-  // select its own configured default.
-  const model = opts.model ?? config.sessionTitleModel;
-  if (model) args.push('--model', model);
-  args.push('-p', titlePrompt(firstPrompt));
+  const bin = opts.bin ?? config.sessionTitleBin;
+  const modelPath = opts.modelPath ?? config.sessionTitleModelPath;
+  if (!bin) throw new Error('SESSION_TITLE_BIN is required for CPU session titles');
+  if (!modelPath) throw new Error('SESSION_TITLE_MODEL_PATH is required for CPU session titles');
 
-  const { bin, args: spawnArgs } = resolvePiSpawn(opts.bin ?? config.piBin, args);
-  const cwd = opts.cwd ?? config.piCwd;
+  // Node replaces unpaired UTF-16 surrogates while encoding argv. Compare
+  // against that exact canonical UTF-8 form rather than an unspawnable string.
+  const prompt = Buffer.from(titlePrompt(firstPrompt), 'utf8').toString('utf8');
+  const spawnArgs = ['-m', modelPath, '-n', '32', '-ngl', '0', prompt];
   const timeoutMs = opts.timeoutMs ?? config.sessionTitleTimeoutMs;
 
-  logger.debug({ bin, cwd, promptLength: firstPrompt.length }, 'Generating one-shot session title');
+  logger.debug(
+    { bin, modelPath, promptLength: firstPrompt.length },
+    'Generating one-shot CPU session title',
+  );
 
   return new Promise<string>((resolve, reject) => {
     const proc = spawn(bin, spawnArgs, {
-      cwd,
-      env: process.env,
+      env: {
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        LC_ALL: process.env.LC_ALL ?? 'C.UTF-8',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];
@@ -153,12 +146,14 @@ export async function generateSessionTitle(
         finish(terminationError);
       } else if (code !== 0) {
         const detail = Buffer.concat(stderr).toString('utf8').trim();
-        finish(new Error(detail || `pi title process exited with code ${code}`));
+        finish(new Error(detail || `CPU title process exited with code ${code}`));
       } else {
-        finish(
-          undefined,
-          normalizeSessionTitle(Buffer.concat(stdout).toString('utf8'), firstPrompt),
-        );
+        const output = Buffer.concat(stdout).toString('utf8');
+        if (!output.startsWith(prompt)) {
+          finish(new Error('CPU title process did not echo the expected prompt'));
+        } else {
+          finish(undefined, normalizeSessionTitle(output.slice(prompt.length), firstPrompt));
+        }
       }
     };
 

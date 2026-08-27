@@ -25,8 +25,8 @@ export async function processNextSessionTitle(
 
   try {
     const title = await generateSessionTitle(job.prompt, {
-      cwd: config.piCwd,
-      model: config.sessionTitleModel || undefined,
+      bin: config.sessionTitleBin || undefined,
+      modelPath: config.sessionTitleModelPath || undefined,
       signal,
       timeoutMs: config.sessionTitleTimeoutMs,
     });

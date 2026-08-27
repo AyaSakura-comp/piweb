@@ -6,10 +6,11 @@ import { generateSessionTitle } from '../src/agent/session-title.js';
 
 const tempDirs: string[] = [];
 
-function makeSigtermIgnoringChild(): { bin: string; cwd: string; pidFile: string } {
+function makeSigtermIgnoringChild(): { bin: string; modelPath: string; pidFile: string } {
   const cwd = mkdtempSync(join(tmpdir(), 'piweb-title-deadline-'));
   tempDirs.push(cwd);
-  const bin = join(cwd, 'fake-pi.mjs');
+  const bin = join(cwd, 'fake-llama-simple.mjs');
+  const modelPath = join(cwd, 'tiny.gguf');
   const pidFile = join(cwd, 'pid');
   writeFileSync(
     bin,
@@ -21,7 +22,7 @@ setTimeout(() => process.exit(0), 1500);
 `,
   );
   chmodSync(bin, 0o755);
-  return { bin, cwd, pidFile };
+  return { bin, modelPath, pidFile };
 }
 
 function processIsAlive(pid: number): boolean {

@@ -44,6 +44,17 @@ describe('session title source', () => {
     expect(source).toContain('trace.log');
   });
 
+  it('never splits a Unicode surrogate pair at the source limit', () => {
+    const source = buildSessionTitleSource(
+      `${'x'.repeat(MAX_SESSION_TITLE_SOURCE_LENGTH - 1)}😀`,
+      '',
+      [],
+    );
+
+    expect(Buffer.from(source, 'utf8').toString('utf8')).toBe(source);
+    expect(source).toBe('x'.repeat(MAX_SESSION_TITLE_SOURCE_LENGTH - 1));
+  });
+
   it('consumes an attachment-only first turn even when its filename is blank', () => {
     const source = buildSessionTitleSource('', '', ['   ']);
 

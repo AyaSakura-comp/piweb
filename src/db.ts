@@ -167,8 +167,8 @@ export function initDb(): void {
 
     -- One auxiliary, ephemeral summary per newly created web session. A row is
     -- prepared at creation, captures exactly the first normal prompt, and is
-    -- erased after the title is generated. The model invocation itself uses
-    -- pi --no-session; this table only makes the cross-process job crash-safe.
+    -- erased after the title is generated. The model invocation is a one-shot
+    -- CPU-only process; this table only makes the cross-process job crash-safe.
     create table if not exists session_title_jobs (
       channel_jid   text primary key,
       prompt        text not null default '',
