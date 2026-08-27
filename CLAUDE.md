@@ -133,6 +133,7 @@ between the two processes use an autoincrement `rowid` as a cursor.
 | `message_queue` | pending user messages for the worker | web | worker |
 | `control_queue` | command intents the web tier can't run itself | web | worker |
 | `channel_state` | transient `busy` flag per session (typing/spinner) | worker | web |
+| `session_title_jobs` | crash-safe first-prompt title job (`waiting` → `pending` → `done`); the copied prompt is erased on completion/cancel | web | worker |
 | `meta` | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor` | worker (models), web (auth/push) | web |
 | `push_subscriptions` | one row per opted-in device | web | push |
 | `message_log`, `scheduled_tasks` | inherited from piscord; `message_log` duplicates web_events (gap) | worker | — |
@@ -155,7 +156,7 @@ origin check.
 | `/api/push/key` `/subscribe` `/unsubscribe` | GET/POST/POST | VAPID public key; save/drop a subscription |
 | `/api/commands` | GET | the `COMMANDS` catalog for autocomplete |
 | `/api/models` | GET | pi's model list (from `meta`, published by the worker) |
-| `/api/sessions` | GET/POST | list live sessions (with badge, busy, `lastReplyId`); create |
+| `/api/sessions` | GET/POST | list live sessions (with badge, busy, `lastReplyId`); create immediately as `New session` |
 | `/api/sessions/deleted` | GET | the trash (must precede the `:jid` matcher) |
 | `/api/sessions/:jid` | PATCH/DELETE | rename; soft-delete (or `?permanent=1`) |
 | `/api/sessions/:jid/restore` | POST | un-trash |
@@ -183,6 +184,7 @@ origin check.
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
 | session ordering & boot default | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default) |
+| automatic first-prompt title | `src/agent/session-title.ts` (ephemeral ≤10-grapheme summary), `src/worker/session-title.ts` (job loop), `session_title_jobs` in `src/db.ts` |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
@@ -407,6 +409,7 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `WEB_SESSION_TTL_SEC` | web | cookie lifetime |
 | `WEB_EMBEDDED_WORKER` | web | run the worker in-process (all-in-one) |
 | `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING` | worker | pi invocation |
+| `SESSION_TITLE_MODEL`, `SESSION_TITLE_TIMEOUT_MS` | worker | optional model override and timeout for ephemeral first-prompt titles |
 | `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed |
 | `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE` | worker | mid-run steering / pre-emption |
 | `MAX_CONCURRENCY`, `POLL_INTERVAL_MS` | worker | queue behaviour |
@@ -574,7 +577,13 @@ journalctl --user -u piweb-worker -f
 ```
 
 The local Playwright fixture server is `test/e2e/fixture-server.mjs`; it serves
-production files from `public/` without auth or account state. Tests in
+production files from `public/` without auth or account state. The maintained
+first-prompt naming workflow is `test/e2e/session-auto-title.spec.ts` (`npx
+playwright test test/e2e/session-auto-title.spec.ts`); it covers no-dialog
+creation, first prompt, ≤10-character rename, polling, reload durability,
+pointer reachability, viewport containment, and horizontal overflow. Evidence
+lands under `artifacts/playwright/test-results/`; update its reviewed baseline
+only after pixel inspection with `--update-snapshots=all`. Tests in
 `live-scroll.spec.ts` are skipped unless `PIWEB_E2E_LIVE_URL` is set, and token
 login reads `PIWEB_E2E_TOKEN` — never embed a deployed URL or credential in a
 test.
@@ -944,7 +953,13 @@ Consequences that surprise people:
   re-injected — verified: a codeword remembered before `/pi new` returns "NONE"
   after. It does **not** clear `web_events`, so the on-screen transcript stays
   while pi's memory resets. The 🗑 header button does both (clear + `pi new`).
-- **New session** auto-issues a silent `pi new` with `keepQueue` (invariant 5).
+- **New session** opens immediately as `New session` (no native naming prompt)
+  and auto-issues a silent `pi new` with `keepQueue` (invariant 5). Its first
+  normal prompt is captured once in `session_title_jobs`; only after that real
+  turn leaves the active queue does the title worker run `pi --no-session` with
+  tools, extensions, skills, prompt templates, themes and context files disabled. The
+  normalized title is at most 10 graphemes, the job's prompt copy is erased,
+  and a manual rename cancels any in-flight result so it cannot be overwritten.
 - **Delete** is soft (`deleted_at`); the pi session dir survives until the trash
   is purged. See "Deleting is soft".
 - pi holds the context itself via `--session-dir <dir> --continue`; piweb never

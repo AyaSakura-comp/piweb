@@ -28,7 +28,7 @@ export default defineConfig({
     colorScheme: 'dark',
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
-    video: 'on',
+    video: { mode: 'on', size: { width: 390, height: 844 } },
   },
   projects: [
     {

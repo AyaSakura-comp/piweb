@@ -164,6 +164,25 @@ export function initDb(): void {
       busy        integer not null default 0,
       updated_at  text not null default (datetime('now'))
     );
+
+    -- One auxiliary, ephemeral summary per newly created web session. A row is
+    -- prepared at creation, captures exactly the first normal prompt, and is
+    -- erased after the title is generated. The model invocation itself uses
+    -- pi --no-session; this table only makes the cross-process job crash-safe.
+    create table if not exists session_title_jobs (
+      channel_jid   text primary key,
+      prompt        text not null default '',
+      message_rowid integer,
+      status        text not null default 'waiting'
+                    check(status in ('waiting', 'pending', 'processing', 'done', 'cancelled', 'failed')),
+      attempts      integer not null default 0,
+      last_error    text not null default '',
+      created_at    text not null default (datetime('now')),
+      updated_at    text not null default (datetime('now'))
+    );
+
+    create index if not exists idx_session_title_pending
+      on session_title_jobs(status, updated_at);
   `);
 
   ensureTableColumn('channels', 'model_override', "text not null default ''");
@@ -206,31 +225,37 @@ function normalizeTimestamp(timestamp: string | null): string | null {
 
 // ── Channel registration ──
 
-export function registerChannel(ch: RegisteredChannel): void {
-  db.prepare(
-    `
-    insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override)
-    values (?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(jid) do update set
-      name = excluded.name,
-      folder = excluded.folder,
-      requires_trigger = excluded.requires_trigger,
-      is_main = excluded.is_main,
-      cwd_override = case
-        when excluded.cwd_override != '' then excluded.cwd_override
-        else channels.cwd_override
-      end
-  `,
-  ).run(
-    ch.jid,
-    ch.name,
-    ch.folder,
-    ch.requiresTrigger ? 1 : 0,
-    ch.isMain ? 1 : 0,
-    ch.modelOverride || '',
-    ch.thinkingOverride || '',
-    ch.cwdOverride.trim(),
-  );
+export function registerChannel(
+  ch: RegisteredChannel,
+  options: { prepareSessionTitle?: boolean } = {},
+): void {
+  db.transaction(() => {
+    db.prepare(
+      `
+      insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override)
+      values (?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict(jid) do update set
+        name = excluded.name,
+        folder = excluded.folder,
+        requires_trigger = excluded.requires_trigger,
+        is_main = excluded.is_main,
+        cwd_override = case
+          when excluded.cwd_override != '' then excluded.cwd_override
+          else channels.cwd_override
+        end
+    `,
+    ).run(
+      ch.jid,
+      ch.name,
+      ch.folder,
+      ch.requiresTrigger ? 1 : 0,
+      ch.isMain ? 1 : 0,
+      ch.modelOverride || '',
+      ch.thinkingOverride || '',
+      ch.cwdOverride.trim(),
+    );
+    if (options.prepareSessionTitle) prepareSessionTitle(ch.jid);
+  })();
   logger.info({ jid: ch.jid, name: ch.name }, 'Channel registered');
 }
 
@@ -325,22 +350,32 @@ export function enqueueMessage(msg: {
   timestamp: string;
   attachments?: string | null;
   interruptActive?: boolean;
-}): void {
-  db.prepare(
-    `
-    insert into message_queue
-      (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active)
-    values (?, ?, ?, ?, ?, ?, ?)
-  `,
-  ).run(
-    msg.channelJid,
-    msg.sender,
-    msg.senderName,
-    msg.content,
-    msg.timestamp,
-    msg.attachments ?? null,
-    msg.interruptActive === false ? 0 : 1,
-  );
+  sessionTitlePrompt?: string;
+}): number {
+  return db.transaction(() => {
+    const result = db
+      .prepare(
+        `
+      insert into message_queue
+        (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active)
+      values (?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        msg.channelJid,
+        msg.sender,
+        msg.senderName,
+        msg.content,
+        msg.timestamp,
+        msg.attachments ?? null,
+        msg.interruptActive === false ? 0 : 1,
+      );
+    const rowid = Number(result.lastInsertRowid);
+    if (msg.sessionTitlePrompt !== undefined) {
+      queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
+    }
+    return rowid;
+  })();
 }
 
 export function claimNextMessage(channelJid: string): QueuedMessage | undefined {
@@ -398,10 +433,24 @@ export function requeueMessage(rowid: number): void {
 }
 
 export function clearPendingMessages(channelJid: string): number {
-  const result = db
-    .prepare("delete from message_queue where channel_jid = ? and status = 'pending'")
-    .run(channelJid);
-  return result.changes;
+  return db.transaction(() => {
+    // If an explicit reset discards the first unprocessed turn, release the
+    // one-shot title slot so the next real turn can become the first prompt.
+    db.prepare(
+      `update session_title_jobs
+          set prompt = '', message_rowid = null, status = 'waiting', last_error = '',
+              updated_at = datetime('now')
+        where channel_jid = ? and status = 'pending'
+          and message_rowid in (
+            select rowid from message_queue
+             where channel_jid = ? and status = 'pending'
+          )`,
+    ).run(channelJid, channelJid);
+
+    return db
+      .prepare("delete from message_queue where channel_jid = ? and status = 'pending'")
+      .run(channelJid).changes;
+  })();
 }
 
 export function recoverStuckMessages(): number {
@@ -878,6 +927,160 @@ export function getControl(rowid: number): ControlRow | undefined {
     | undefined;
 }
 
+// ── piweb: automatic session titles ──
+
+export type SessionTitleJobStatus =
+  | 'waiting'
+  | 'pending'
+  | 'processing'
+  | 'done'
+  | 'cancelled'
+  | 'failed';
+
+export interface SessionTitleJobRow {
+  channel_jid: string;
+  prompt: string;
+  message_rowid: number | null;
+  status: SessionTitleJobStatus;
+  attempts: number;
+  last_error: string;
+}
+
+/** Mark only newly created web sessions as eligible for first-prompt naming. */
+export function prepareSessionTitle(channelJid: string): void {
+  db.prepare(
+    `insert into session_title_jobs (channel_jid, status)
+     values (?, 'waiting')
+     on conflict(channel_jid) do nothing`,
+  ).run(channelJid);
+}
+
+/** Capture exactly the first normal prompt; later calls cannot replace it. */
+export function queuePreparedSessionTitle(
+  channelJid: string,
+  prompt: string,
+  messageRowid: number,
+): boolean {
+  const firstPrompt = prompt.trim().slice(0, 8_000);
+  if (!firstPrompt) return false;
+  return (
+    db
+      .prepare(
+        `update session_title_jobs
+            set prompt = ?, message_rowid = ?, status = 'pending', updated_at = datetime('now')
+          where channel_jid = ? and status = 'waiting'`,
+      )
+      .run(firstPrompt, messageRowid, channelJid).changes > 0
+  );
+}
+
+/**
+ * Claim one title only after the associated user message has left the active
+ * queue. This keeps the tiny summary request from contending with the real turn.
+ */
+export function claimPendingSessionTitle(): SessionTitleJobRow | undefined {
+  return db
+    .prepare(
+      `with next_job as (
+         select j.channel_jid
+           from session_title_jobs j
+           join channels c on c.jid = j.channel_jid
+           left join message_queue m on m.rowid = j.message_rowid
+          where j.status = 'pending'
+            and c.deleted_at is null
+            and (j.message_rowid is null or m.status in ('done', 'failed', 'aborted'))
+          order by j.updated_at, j.created_at
+          limit 1
+       )
+       update session_title_jobs
+          set status = 'processing', updated_at = datetime('now')
+        where channel_jid = (select channel_jid from next_job)
+          and status = 'pending'
+       returning channel_jid, prompt, message_rowid, status, attempts, last_error`,
+    )
+    .get() as SessionTitleJobRow | undefined;
+}
+
+/** Apply a title only if the job was not cancelled by a manual rename. */
+export function completeSessionTitle(channelJid: string, title: string): boolean {
+  const clean = title.trim().slice(0, 80);
+  if (!clean) return false;
+
+  return db.transaction(() => {
+    const job = getSessionTitleJob(channelJid);
+    if (job?.status !== 'processing') return false;
+
+    const applied =
+      db
+        .prepare('update channels set name = ? where jid = ? and deleted_at is null')
+        .run(clean, channelJid).changes > 0;
+    db.prepare(
+      `update session_title_jobs
+          set prompt = '', status = ?, last_error = '', updated_at = datetime('now')
+        where channel_jid = ? and status = 'processing'`,
+    ).run(applied ? 'done' : 'cancelled', channelJid);
+    return applied;
+  })();
+}
+
+/** Retry transient failures, then forget the auxiliary prompt copy. */
+export function failSessionTitle(
+  channelJid: string,
+  error: string,
+  maxAttempts = 3,
+): SessionTitleJobStatus | undefined {
+  const job = getSessionTitleJob(channelJid);
+  if (job?.status !== 'processing') return job?.status;
+  const attempts = job.attempts + 1;
+  const status: SessionTitleJobStatus = attempts >= maxAttempts ? 'failed' : 'pending';
+  db.prepare(
+    `update session_title_jobs
+        set prompt = case when ? = 'failed' then '' else prompt end,
+            status = ?, attempts = ?, last_error = ?, updated_at = datetime('now')
+      where channel_jid = ? and status = 'processing'`,
+  ).run(status, status, attempts, error.slice(0, 500), channelJid);
+  return status;
+}
+
+export function cancelSessionTitle(channelJid: string): void {
+  db.prepare(
+    `update session_title_jobs
+        set prompt = '', status = 'cancelled', updated_at = datetime('now')
+      where channel_jid = ? and status in ('waiting', 'pending', 'processing')`,
+  ).run(channelJid);
+}
+
+export function requeueInterruptedSessionTitle(channelJid: string, error = ''): boolean {
+  return (
+    db
+      .prepare(
+        `update session_title_jobs
+            set status = 'pending', last_error = ?, updated_at = datetime('now')
+          where channel_jid = ? and status = 'processing'`,
+      )
+      .run(error.slice(0, 500), channelJid).changes > 0
+  );
+}
+
+export function recoverSessionTitleJobs(): number {
+  return db
+    .prepare(
+      `update session_title_jobs
+          set status = 'pending', updated_at = datetime('now')
+        where status = 'processing'`,
+    )
+    .run().changes;
+}
+
+export function getSessionTitleJob(channelJid: string): SessionTitleJobRow | undefined {
+  return db
+    .prepare(
+      `select channel_jid, prompt, message_rowid, status, attempts, last_error
+         from session_title_jobs where channel_jid = ?`,
+    )
+    .get(channelJid) as SessionTitleJobRow | undefined;
+}
+
 // ── piweb: per-channel busy flag (typing indicator) ──
 
 export function setChannelBusy(channelJid: string, busy: boolean): void {
@@ -1029,15 +1232,25 @@ export function getMeta(key: string): string | undefined {
  * restore brings the session back exactly as it was.
  */
 export function softDeleteChannel(jid: string): void {
-  db.prepare("update channels set deleted_at = datetime('now') where jid = ?").run(jid);
-  db.prepare("delete from message_queue where channel_jid = ? and status = 'pending'").run(jid);
-  db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(jid);
+  db.transaction(() => {
+    db.prepare("update channels set deleted_at = datetime('now') where jid = ?").run(jid);
+    db.prepare("delete from message_queue where channel_jid = ? and status = 'pending'").run(jid);
+    db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(jid);
+    // Keep queue deletion and title cancellation atomic: otherwise a crash
+    // between them leaves a restored session with an orphaned prompt copy.
+    cancelSessionTitle(jid);
+  })();
 }
 
 export function renameChannel(jid: string, name: string): boolean {
   const trimmed = name.trim().slice(0, 80);
   if (!trimmed) return false;
-  return db.prepare('update channels set name = ? where jid = ?').run(trimmed, jid).changes > 0;
+  return db.transaction(() => {
+    // An explicit user title always wins, even if the one-shot summary is
+    // currently running in the worker.
+    cancelSessionTitle(jid);
+    return db.prepare('update channels set name = ? where jid = ?').run(trimmed, jid).changes > 0;
+  })();
 }
 
 export function restoreChannel(jid: string): boolean {
@@ -1051,6 +1264,7 @@ export function purgeChannel(jid: string): void {
   db.prepare('delete from message_log where channel_jid = ?').run(jid);
   db.prepare('delete from control_queue where channel_jid = ?').run(jid);
   db.prepare('delete from channel_state where channel_jid = ?').run(jid);
+  db.prepare('delete from session_title_jobs where channel_jid = ?').run(jid);
   db.prepare('delete from channels where jid = ?').run(jid);
 }
 

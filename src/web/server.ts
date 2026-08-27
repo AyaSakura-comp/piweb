@@ -60,6 +60,10 @@ import {
 } from '../session/model-info.js';
 import { getPushPublicKey, startPush } from './push.js';
 import {
+  buildSessionTitleSource,
+  resolveSessionCreationTitle,
+} from './session-title-source.js';
+import {
   buildSetCookie,
   COOKIE_NAME,
   cookieIsValid,
@@ -520,21 +524,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (path === '/api/sessions' && method === 'POST') {
     const body = await readJson<{ name?: string }>(req);
-    const name = (body.name ?? '').trim() || 'New session';
+    const { name, prepareSessionTitle } = resolveSessionCreationTitle(body.name);
     const id = randomUUID().slice(0, 8);
     const jid = webJid(id);
 
-    registerChannel({
-      jid,
-      name,
-      // Session files are keyed by folder; keep it filesystem-safe and unique.
-      folder: `web_${id}`,
-      requiresTrigger: false,
-      isMain: false,
-      modelOverride: '',
-      thinkingOverride: '',
-      cwdOverride: '',
-    });
+    // Existing and explicitly named API sessions are deliberately not auto-renamed.
+    // Preparing the row in the same transaction makes only unnamed UI sessions eligible.
+    registerChannel(
+      {
+        jid,
+        name,
+        // Session files are keyed by folder; keep it filesystem-safe and unique.
+        folder: `web_${id}`,
+        requiresTrigger: false,
+        isMain: false,
+        modelOverride: '',
+        thinkingOverride: '',
+        cwdOverride: '',
+      },
+      { prepareSessionTitle },
+    );
 
     // Guarantee a clean pi context for every new session. A freshly minted
     // folder has nothing to rotate, so this is usually a no-op — it is here so
@@ -701,6 +710,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         files: savedPaths.urls,
       });
 
+      // Capture exactly the first normal prompt for an independent title job.
+      // The message and title source commit together, so a crash cannot let a
+      // later turn take this first-turn slot. The worker erases its copy after
+      // the ephemeral pi --no-session summary finishes.
+      const titleSource = buildSessionTitleSource(
+        text,
+        quote,
+        attachments.map((file) => file.name),
+      );
       enqueueMessage({
         channelJid: jid,
         sender: 'web',
@@ -722,6 +740,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
                 })),
               )
             : null,
+        sessionTitlePrompt: titleSource,
       });
 
       sendJson(res, 200, { ok: true });

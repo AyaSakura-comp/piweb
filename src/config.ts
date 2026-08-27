@@ -224,6 +224,12 @@ export const config = {
   /** Extra pi flags (space-separated) */
   piExtraFlags: env('PI_EXTRA_FLAGS'),
 
+  /** Optional model override for ephemeral first-prompt session titles. */
+  sessionTitleModel: env('SESSION_TITLE_MODEL'),
+
+  /** Hard timeout for the one-shot title summary process. */
+  sessionTitleTimeoutMs: envInt('SESSION_TITLE_TIMEOUT_MS', 60_000, { min: 1_000 }),
+
   /**
    * When a triggering message lands in a top-level guild text channel, spin up
    * a thread off that message and route the conversation into it. Follow-ups

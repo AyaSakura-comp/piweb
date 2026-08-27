@@ -26,6 +26,7 @@ import { setTransport } from '../transport/index.js';
 import { webTransport } from '../transport/web.js';
 import { startProcessingLoop, stopProcessingLoop } from '../agent/queue.js';
 import { startControlLoop, stopControlLoop } from './control.js';
+import { startSessionTitleLoop, stopSessionTitleLoop } from './session-title.js';
 import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
 
@@ -84,6 +85,7 @@ export async function startWorker(): Promise<void> {
 
   startProcessingLoop();
   startControlLoop();
+  startSessionTitleLoop();
   stopScheduler = startScheduler();
   stopArchiveCleanup = startArchiveCleanup();
   // agy's catalog comes from a separate CLI and merges in from cache, so wait
@@ -107,6 +109,7 @@ export async function stopWorker(): Promise<void> {
   stopControlLoop();
   stopScheduler();
   stopArchiveCleanup();
+  await stopSessionTitleLoop();
   await stopProcessingLoop();
   closeDb();
   logger.info('piweb worker stopped');

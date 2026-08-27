@@ -109,6 +109,25 @@ describe('bindLongPress', () => {
   });
 });
 
+describe('new session creation', () => {
+  it('opens a session immediately without a native name prompt', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+    const createSession =
+      source.match(/async function createSession\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+
+    expect(createSession).toContain("api('/api/sessions'");
+    expect(createSession).not.toMatch(/\bprompt\s*\(/);
+    expect(createSession).not.toContain('Session name');
+  });
+
+  it('keeps the active header in sync when an automatic title arrives on polling', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+    const loadSessions = source.match(/async function loadSessions\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+
+    expect(loadSessions).toContain("$('session-name').textContent");
+  });
+});
+
 describe('session name touch styles', () => {
   it('uses Safari-prefixed selection blocking so native text selection cannot beat the long press', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../public/app.css'), 'utf8');

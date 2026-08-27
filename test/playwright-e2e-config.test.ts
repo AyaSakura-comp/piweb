@@ -16,8 +16,11 @@ describe('Playwright end-to-end test setup', () => {
     expect(packageJson.scripts['test:e2e:update']).toBe('playwright test --update-snapshots=all');
   });
 
-  it('records every E2E run as video under the ignored artifacts directory', () => {
-    expect(playwrightConfig.use?.video).toBe('on');
+  it('records every E2E run at the exact mobile viewport under the ignored artifacts directory', () => {
+    expect(playwrightConfig.use?.video).toEqual({
+      mode: 'on',
+      size: { width: 390, height: 844 },
+    });
     expect(playwrightConfig.outputDir).toBe(resolve(root, 'artifacts/playwright/test-results'));
   });
 

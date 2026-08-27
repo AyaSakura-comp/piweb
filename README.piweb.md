@@ -55,9 +55,13 @@ node dist/cli/gpt-usage.js          # Traditional Chinese report
 node dist/cli/gpt-usage.js --json   # machine-readable output
 ```
 
-Sessions are created and deleted from the drawer. The 🗑 button in the header is
-**clean session**: it clears the transcript _and_ rotates pi's session directory,
-so the agent's context is genuinely reset rather than just visually cleared.
+Sessions are created instantly from the drawer—there is no naming dialog. After
+the first normal prompt finishes, a separate ephemeral `pi --no-session` request
+replaces **New session** with a summary of at most 10 visible characters; that
+summary request has no tools/project context and is never retained. Sessions are
+deleted from the drawer. The 🗑 button in the header is **clean session**: it
+clears the transcript _and_ rotates pi's session directory, so the agent's
+context is genuinely reset rather than just visually cleared.
 
 ## Appearance
 

@@ -527,6 +527,20 @@ function isUnread(session) {
 async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   state.sessions = sessions;
+
+  // Automatic first-prompt titles arrive from the worker, not this tab. Keep
+  // the active header in sync on the regular session poll, but never overwrite
+  // an inline or drawer rename while the user is typing it.
+  const active = state.sessions.find((session) => session.jid === state.activeJid);
+  if (
+    active &&
+    !state.previewingDeleted &&
+    $('session-name-input').hidden &&
+    state.renamingJid !== state.activeJid
+  ) {
+    $('session-name').textContent = active.name;
+  }
+
   renderSessions();
   renderHeaderBadge();
   renderThinkingButton();
@@ -670,14 +684,12 @@ function renderSessions(force = false) {
 }
 
 async function createSession() {
-  const name = prompt('Session name', 'New session');
-  if (name === null) return;
-  const session = await api('/api/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ name: name.trim() || 'New session' }),
-  });
+  // Open immediately. The worker replaces "New session" with a <=10-character
+  // one-shot summary of the first prompt; no naming dialog and no chat context
+  // is consumed by that auxiliary request.
+  const session = await api('/api/sessions', { method: 'POST' });
   await loadSessions();
-  selectSession(session.jid);
+  await selectSession(session.jid);
   closeDrawer();
 }
 
