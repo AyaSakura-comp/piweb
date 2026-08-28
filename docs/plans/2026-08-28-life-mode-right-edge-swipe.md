@@ -4,7 +4,7 @@
 
 **Goal:** Add a persistent singleton Life chat that always follows Pi's default model and opens by swiping left from the phone's right edge.
 
-**Architecture:** Add an explicit `channels.kind` discriminator (`standard | life`) and an idempotent authenticated `POST /api/life-session`. Standard session lists/trash exclude the Life channel. The frontend stores only the presentation mode (`piweb.mode`), uses the existing transcript/composer and integration pipeline for the Life channel, renders simplified Life chrome with a Search/Media-only overflow, and recognizes a right-edge horizontal swipe without stealing vertical scrolling. A return or rollback with no standard destination must clear all Life selection/stream/search ownership and render an empty standard shell.
+**Architecture:** Add an explicit `channels.kind` discriminator (`standard | life`) and an idempotent authenticated `POST /api/life-session`. Standard session lists/trash exclude the Life channel. The frontend stores only the presentation mode (`piweb.mode`), uses the existing transcript/composer and integration pipeline for the Life channel, renders simplified Life chrome with a Search/New-pi-session/Media overflow, and recognizes a velocity-aware right-edge horizontal swipe without stealing vertical scrolling. `pi new` rotates the internal Pi context but preserves the protected Life channel/transcript. A return or rollback with no standard destination must clear all Life selection/stream/search ownership and render an empty standard shell.
 
 **Tech Stack:** TypeScript, SQLite/better-sqlite3, Node HTTP server, framework-free browser JavaScript/CSS, Vitest, Playwright mobile Chromium.
 
@@ -43,7 +43,7 @@ Expected: FAIL because `kind` and `getOrCreateLifeChannel` do not exist.
 - Modify: `src/web/server.ts`
 - Test: `test/life-session-api.test.ts`
 
-**Step 1 — RED:** Add a route-level contract test proving `POST /api/life-session` exists before the ordinary session matcher, returns `kind: 'life'`, creates the singleton in a unique empty folder without enqueueing an asynchronous `pi new`, and blocks rename/delete/model/thinking management for Life.
+**Step 1 — RED:** Add a route-level contract test proving `POST /api/life-session` exists before the ordinary session matcher, returns `kind: 'life'`, creates the singleton in a unique empty folder without enqueueing an asynchronous `pi new`, blocks rename/delete/clear/model/thinking/cwd management for Life, and permits an explicit `pi new` to start a fresh internal Pi context.
 
 **Step 2 — Verify RED:**
 
@@ -53,7 +53,7 @@ npm test -- --run test/life-session-api.test.ts
 
 Expected: FAIL because the endpoint is missing.
 
-**Step 3 — GREEN:** Call `getOrCreateLifeChannel()`, rely on its unique empty folder for a race-free first context, serialize the Life channel, and reject management mutations with HTTP 409. Leave messages/events/search/stream available.
+**Step 3 — GREEN:** Call `getOrCreateLifeChannel()`, rely on its unique empty folder for a race-free first context, serialize the Life channel, and reject management mutations with HTTP 409. Leave messages/events/search/stream and the deliberate `pi new` context rotation available.
 
 **Step 4 — Verify GREEN:** Run focused API and DB tests.
 
@@ -69,7 +69,7 @@ Expected: FAIL because the endpoint is missing.
 - Modify: `test/session-ui.test.ts`
 - Create: `test/e2e/life-mode.spec.ts`
 
-**Step 1 — RED:** Add source/UI tests and a Playwright mobile test that starts a touch within 36 px of the right edge, drags left past one-third of the viewport, observes one `POST /api/life-session`, and lands in Life mode. Assert a vertical edge gesture does nothing; normal sessions remain unchanged below threshold.
+**Step 1 — RED:** Add source/UI tests and Playwright mobile tests that start within 56 px of the right edge, prove a slow shallow drag cancels, prove a shorter fast flick commits through projected velocity, observe the preview continue moving after release, and land in Life mode after one `POST /api/life-session`. Assert a vertical edge gesture does nothing and the Life overflow can issue `pi new` to `web:life`.
 
 **Step 2 — Verify RED:**
 
@@ -80,9 +80,9 @@ npx playwright test test/e2e/life-mode.spec.ts
 
 Expected: FAIL because Life chrome/gesture/API call are absent.
 
-**Step 3 — GREEN:** Add a non-interactive right-edge leaf affordance and full-height swipe preview that follows the finger. Axis-lock after 8 px; claim only horizontal motion; commit after one-third. On entry, remember `piweb.mode=life`, open the singleton Life channel, and render `Sessions / Life / DEFAULT` chrome while hiding drawer, rename, new/delete, model, thinking, status, and usage controls. Keep a Life-safe overflow containing Search and Media only, plus the composer and attachment integrations. Add a `Sessions` back action and remember the last standard session. If no standard target exists on return or failed entry, invalidate selection/search generations, close SSE, clear Life transcript/partial/busy state and active JID, and render the empty standard shell.
+**Step 3 — GREEN:** Add a non-interactive right-edge leaf affordance and full-height swipe preview that follows the finger. Axis-lock after 8 px; claim only horizontal motion; commit after 22% or a velocity-projected short flick, require the release direction to remain leftward, then animate the remaining travel with a release-speed-scaled ease. During post-release settlement, make the underlying main/drawer inert, block competing drawer gestures, and expose Cancel; cancellation or any newer navigation invalidates preview ownership even if Life API/history remains delayed. Fade only after Life is ready. On entry, remember `piweb.mode=life`, open the singleton Life channel, and render `Sessions / Life / DEFAULT` chrome while hiding drawer, rename/delete/clear, model, thinking, status, and usage controls. Keep a Life-safe overflow containing Search, New pi session, and Media, plus the composer and attachment integrations. Add a `Sessions` back action and remember the last standard session. If no standard target exists on return or failed entry, invalidate selection/search generations, close SSE, clear Life transcript/partial/busy state and active JID, and render the empty standard shell.
 
-**Step 4 — Verify GREEN:** Assert default badge, hidden management rows, working Search/Media overflow actions, persistent reload entry, back navigation with and without standard sessions, failed-history rollback with no standard sessions, no horizontal overflow, visual viewport containment, pointer reachability, and message POST isolation from the Life JID after empty fallback.
+**Step 4 — Verify GREEN:** Assert default badge, hidden management rows, working Search/New-pi-session/Media overflow actions, slow-drag cancellation, short-flick inertia, persistent reload entry, back navigation with and without standard sessions, failed-history rollback with no standard sessions, no horizontal overflow, visual viewport containment, pointer reachability, and message POST isolation from the Life JID after empty fallback.
 
 ---
 

@@ -231,7 +231,13 @@ svg {
   border-left: 1px solid color-mix(in srgb, var(--tool) 55%, transparent);
   box-shadow: -18px 0 42px rgb(0 0 0 / 0.28);
   pointer-events: none;
-  will-change: transform;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  contain: paint;
+}
+
+.life-swipe-preview.settling {
+  pointer-events: auto;
 }
 
 .life-swipe-mark {
@@ -257,6 +263,23 @@ svg {
   font-size: 13px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.life-swipe-cancel {
+  min-width: 88px;
+  min-height: 44px;
+  margin-top: 16px;
+  padding: 0 18px;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-input) 88%, transparent);
+  color: var(--text-2);
+  font: inherit;
+}
+
+.life-swipe-cancel:active {
+  background: var(--bg-hover);
+  color: var(--text-bright);
 }
 
 .app.life-mode .drawer,

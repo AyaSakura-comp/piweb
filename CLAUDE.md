@@ -742,21 +742,28 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   The SSE stream carries only the OPEN session, so the drawer polls
   `/api/sessions` every 5s or every other session's state freezes at page load.
 - **Edge swipes have paired meanings**: a drag from the left edge opens the
-  standard session drawer; a drag starting within 36px of the right edge and
-  moving left opens Life. Both track the finger, commit after one-third, lock
-  their axis after 8px, and abandon a vertical lock before calling
-  `preventDefault`, so transcript scrolling is never stolen. They are disabled
-  above 768px and while a lightbox/sheet owns the foreground. **Never recover a
-  drag position with `getComputedStyle`** — a style flush can return stale CSS
-  during a fast event burst. Keep offsets in drag state.
+  standard session drawer; a drag starting within 56px of the right edge and
+  moving left opens Life. Life commits after 22% or when a shorter fast flick's
+  velocity projection crosses that boundary, then settles the preview inward
+  with a velocity-scaled ease instead of hiding it at release. Both gestures
+  track the finger, lock their axis after 8px, and abandon a vertical lock before
+  calling `preventDefault`, so transcript scrolling is never stolen. They are
+  disabled above 768px and while a lightbox/sheet owns the foreground. **Never
+  recover a drag position with `getComputedStyle`** — a style flush can return
+  stale CSS during a fast event burst. Keep offsets and signed velocity in drag
+  state. Post-release settlement makes the underlying main/drawer inert, owns
+  pointer hit-testing, blocks drawer gestures, and exposes an overlay Cancel
+  action; any newer navigation must invalidate that preview ownership immediately.
 - **Life is not a managed session.** It is one protected `channels.kind='life'`
   row, omitted from standard/trash lists and restored on every idempotent entry.
   Every turn probes `PI_BIN --mode rpc --no-session` for Pi's exact runtime
   model/effective thinking, explicitly applies both to the persistent Life
   conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
   escalates to SIGKILL after a bounded grace, and waits for child exit.
-  Management is rejected server-side; `pi stop` remains available, while Life's
-  ⋯ menu exposes only Search and Media. Returning or rolling back with no
+  Channel/settings management is rejected server-side; `pi stop` and `pi new`
+  remain available. Life's ⋯ menu exposes Search, New pi session, and Media.
+  `pi new` rotates only the internal Pi context while preserving the protected
+  Life row and its web transcript. Returning or rolling back with no
   standard session must clear the active Life JID, stream, transcript, partial,
   busy, and search ownership before showing `no session`, so the composer cannot
   submit to hidden Life state. See [`docs/life-mode.md`](docs/life-mode.md) for

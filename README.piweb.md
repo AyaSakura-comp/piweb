@@ -66,12 +66,17 @@ just visually cleared.
 
 ### Life mode
 
-On a phone, start at the **right edge** and swipe left. The preview follows the
-finger and opens after crossing one-third of the viewport. Life reuses one
-persistent conversation, resolves Pi's exact runtime-default model and effective
-thinking level before every turn, and hides session/model management. Its header
-shows **Sessions / Life / DEFAULT** with a ⋯ menu limited to **Search** and
-**Media**; tap **Sessions** to return to the last standard session. If there is
+On a phone, start within 56 px of the **right edge** and swipe left. The preview
+follows the finger, uses release velocity to settle with the flick, and opens
+after 22% of the viewport or a shorter projected fast flick. During settlement
+it blocks the underlying session and offers **Cancel**, so a delayed load cannot
+receive accidental input. Life reuses one
+protected channel, resolves Pi's exact runtime-default model and effective
+thinking level before every turn, and hides channel/model management. Its header
+shows **Sessions / Life / DEFAULT** with a ⋯ menu containing **Search**, **New pi
+session**, and **Media**. New pi session archives the current Pi context and starts
+fresh without replacing the Life channel; tap **Sessions** to return to the last
+standard session. If there is
 no standard session, returning or rolling back a failed Life load clears the Life
 stream and composer destination and shows `no session`. The selected presentation
 mode survives reloads on that device.

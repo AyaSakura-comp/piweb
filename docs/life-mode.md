@@ -2,15 +2,19 @@
 
 Life is a deliberately small, persistent chat surface for the current Pi default.
 It is not a shortcut that creates an ordinary session: Piweb stores one protected
-`channels.kind='life'` channel, reuses its conversation forever, and removes
-session/model management from its UI.
+`channels.kind='life'` channel, reuses its channel and transcript across entries,
+and removes channel/model management from its UI. The user may explicitly start
+a fresh Pi context inside that protected channel with **New pi session**.
 
 ## Product contract
 
-- On a phone, start within 36 px of the **right edge** and swipe left past
-  one-third of the visual viewport to enter Life.
+- On a phone, start within 56 px of the **right edge** and swipe left. A drag
+  commits after 22% of the visual viewport, while a shorter fast flick commits
+  when its projected velocity crosses the same boundary.
 - Vertical motion wins after the 8 px axis lock, so the gesture does not steal
-  transcript scrolling.
+  transcript scrolling. After release, the settling preview owns pointer and
+  keyboard input, blocks the underlying drawer/composer, and exposes **Cancel**
+  until Life entry succeeds or fails.
 - Life has the stable JID `web:life` and one randomly named, persistent Pi
   session folder. The partial unique database index permits only one Life row.
 - Re-entry restores the same row and transcript while clearing model, thinking,
@@ -20,11 +24,12 @@ session/model management from its UI.
   persistent Life conversation. It never trusts stale values from
   `pi --continue`.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
-- Rename, delete, clear, restore, new-session, model, thinking, cwd, and
-  reset-cwd operations are rejected server-side. Emergency `pi stop` remains
-  available. Life's overflow contains only transcript-safe **Search** and
-  **Media** actions; Sessions, new/clean session actions, and their separator are
-  hidden there.
+- Rename, delete, clear, restore, model, thinking, cwd, and reset-cwd operations
+  are rejected server-side. Emergency `pi stop` and **New pi session** (`/pi new`)
+  remain available. `/pi new` archives the previous Pi context and starts fresh
+  without replacing or exposing the protected Life channel. Life's overflow
+  contains **Search**, **New pi session**, and **Media**; Sessions, clean session,
+  and their separator remain hidden there.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.
 - Returning from Life, or rolling back a failed Life history load, restores the
@@ -39,14 +44,14 @@ session/model management from its UI.
 
 ```mermaid
 flowchart TD
-    A[Standard Sessions mode] --> B{Touch starts within<br/>36 px of right edge?}
+    A[Standard Sessions mode] --> B{Touch starts within<br/>56 px of right edge?}
     B -- No --> A
     B -- Yes --> C[Track drag and preview]
     C --> D{8 px axis lock}
     D -- Vertical --> E[Release gesture;<br/>allow normal page scrolling]
-    D -- Horizontal left --> F{Crossed one-third<br/>of viewport width?}
-    F -- No --> G[Cancel preview and<br/>stay in Sessions]
-    F -- Yes --> H[POST /api/life-session]
+    D -- Horizontal left --> F{Crossed 22% or will<br/>flick inertia project across it?}
+    F -- No --> G[Animate preview back out<br/>and stay in Sessions]
+    F -- Yes --> H[Settle preview inward with velocity<br/>and POST /api/life-session]
     H --> I{Singleton exists?}
     I -- No --> J[Create web:life with a<br/>new empty session folder]
     I -- Yes --> K[Restore web:life and clear<br/>model/thinking/cwd overrides]
@@ -57,6 +62,8 @@ flowchart TD
     N --> O{Next action}
     O -- Send message --> P[Run one Life turn using<br/>fresh Pi runtime defaults]
     P --> N
+    O -- New pi session --> S[Archive the current Pi context<br/>and start fresh in web:life]
+    S --> N
     O -- Reload or notification --> H
     O -- Tap Sessions --> Q[Invalidate pending Life navigation,<br/>restore last standard session]
     Q --> A
@@ -65,8 +72,10 @@ flowchart TD
 ```
 
 The right-edge leaf is a non-interactive hint. The gesture is disabled above
-768 px, while Life is already active, and while a sheet/lightbox owns the
-foreground.
+768 px, while Life is already active or settling, and while a menu, sheet, or
+lightbox owns the foreground. Cancelling settlement—or crossing the desktop
+breakpoint while it is pending—invalidates navigation and preview ownership,
+restores standard mode, and ignores any delayed Life response.
 
 ## Software architecture
 
@@ -219,7 +228,9 @@ Database and API rules:
 4. Every authenticated `POST /api/life-session` restores the singleton and
    clears all overrides before returning it.
 5. API guards enforce the simplified contract even when an old or hand-written
-   client calls hidden management routes.
+   client calls hidden management routes. `pi new` is the deliberate exception:
+   it rotates the internal Pi context while leaving the Life row and web transcript
+   protected and persistent.
 
 ## Frontend ownership and race protection
 
@@ -274,7 +285,7 @@ flowchart LR
     Unit[Vitest Life DB/API/default/UI tests] --> Types[TypeScript typecheck]
     Types --> Lint[ESLint and formatting]
     Lint --> E2E[Playwright 390x844 mobile E2E]
-    E2E --> Vision[Inspect edge hint, partial swipe,<br/>Life, reload, and return screenshots]
+    E2E --> Vision[Inspect edge hint, partial/flick inertia,<br/>Life, new context, reload, and return screenshots]
     Vision --> Build[Production build]
     Build --> Deploy[Restart-service Piweb deployment]
     Deploy --> Live[Public HTTP + live mobile verification]

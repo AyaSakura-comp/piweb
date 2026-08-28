@@ -146,6 +146,21 @@ describe('Life session API', () => {
       deleted: true,
     });
 
+    // First creation gets a unique empty session folder, so there is no async
+    // pi-new bootstrap that could race the first user message.
+    let sqlite = new Database(dbPath, { readonly: true });
+    try {
+      expect(
+        sqlite
+          .prepare(
+            "select count(*) as count from control_queue where channel_jid = ? and command = 'pi new'",
+          )
+          .get(first.jid),
+      ).toEqual({ count: 0 });
+    } finally {
+      sqlite.close();
+    }
+
     for (const [path, method, body] of [
       [`/api/sessions/${encodeURIComponent(first.jid)}`, 'PATCH', { name: 'Renamed' }],
       [`/api/sessions/${encodeURIComponent(first.jid)}`, 'DELETE', undefined],
@@ -166,11 +181,31 @@ describe('Life session API', () => {
         'POST',
         { command: 'pi reset-cwd' },
       ],
-      [`/api/sessions/${encodeURIComponent(first.jid)}/commands`, 'POST', { command: 'pi new' }],
       [`/api/sessions/${encodeURIComponent(first.jid)}/clear`, 'POST', undefined],
     ] as const) {
       const response = await request(path, method, body);
       expect(response.status, `${method} ${path}`).toBe(409);
+    }
+
+    // Starting a fresh Pi context is available without making Life itself
+    // renameable, deletable, clearable, or configurable.
+    const fresh = await request(
+      `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
+      'POST',
+      { command: 'pi new' },
+    );
+    expect(fresh.status).toBe(200);
+    sqlite = new Database(dbPath, { readonly: true });
+    try {
+      expect(
+        sqlite
+          .prepare(
+            "select count(*) as count from control_queue where channel_jid = ? and command = 'pi new'",
+          )
+          .get(first.jid),
+      ).toEqual({ count: 1 });
+    } finally {
+      sqlite.close();
     }
 
     // Emergency task control remains available even though model/session
@@ -179,20 +214,5 @@ describe('Life session API', () => {
       command: 'pi stop',
     });
     expect(stop.status).toBe(200);
-
-    // First creation gets a unique empty session folder, so there is no async
-    // pi-new bootstrap that could race the first user message.
-    const sqlite = new Database(dbPath, { readonly: true });
-    try {
-      expect(
-        sqlite
-          .prepare(
-            "select count(*) as count from control_queue where channel_jid = ? and command = 'pi new'",
-          )
-          .get(first.jid),
-      ).toEqual({ count: 0 });
-    } finally {
-      sqlite.close();
-    }
   });
 });

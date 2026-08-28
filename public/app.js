@@ -624,6 +624,7 @@ function clearStandardSelection() {
 }
 
 function beginStandardNavigation() {
+  cancelLifePreview();
   const navigation = ++lifeNavigationGeneration;
   setPresentationMode('sessions');
   closeTrash();
@@ -663,7 +664,8 @@ async function restoreStandardAfterLifeFailure(navigation) {
   );
 }
 
-async function enterLifeMode() {
+async function enterLifeMode({ preserveSwipePreview = false } = {}) {
+  if (!preserveSwipePreview) cancelLifePreview();
   const navigation = ++lifeNavigationGeneration;
   const fallback = state.activeJid && state.activeJid !== LIFE_JID ? state.activeJid : null;
   if (fallback && state.sessions.some((s) => s.jid === fallback)) state.lastStandardJid = fallback;
@@ -1411,15 +1413,15 @@ function openMoreMenu() {
   $('more-menu').hidden = false;
   $('menu-scrim').hidden = false;
   $('btn-more').setAttribute('aria-expanded', 'true');
-  // Life keeps transcript browsing (Search/Media), but never exposes session
-  // management. A trashed session is frozen: only Search still makes sense.
-  for (const id of ['mi-sessions', 'mi-new-chat', 'mi-clean']) {
-    $(id).hidden = life;
-  }
+  // Life keeps transcript browsing and may rotate to a fresh Pi context, but
+  // never exposes channel-list, delete, clear, model, thinking, or cwd controls.
+  // A trashed session is frozen: only Search still makes sense.
+  $('mi-sessions').hidden = life;
+  $('mi-new-chat').hidden = false;
+  $('mi-clean').hidden = life;
   $('mi-management-separator').hidden = life;
-  for (const id of ['mi-new-chat', 'mi-clean']) {
-    $(id).disabled = state.previewingDeleted || life;
-  }
+  $('mi-new-chat').disabled = state.previewingDeleted;
+  $('mi-clean').disabled = state.previewingDeleted || life;
 }
 
 function closeMoreMenu() {
@@ -3723,7 +3725,13 @@ function drawerWidth() {
 
 function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
-  if (window.matchMedia('(min-width: 768px)').matches || state.mode === 'life') return false;
+  if (
+    window.matchMedia('(min-width: 768px)').matches ||
+    state.mode === 'life' ||
+    lifeTransitioning
+  ) {
+    return false;
+  }
   if (!$('login').hidden) return false;
   return (
     $('lightbox').hidden &&
@@ -3816,11 +3824,25 @@ document.addEventListener('touchcancel', endDrawerDrag, { passive: true });
 
 // ── right-edge Life swipe ─────────────────────────────────────────────────
 
+const LIFE_EDGE_ZONE_PX = 56;
+const LIFE_DISTANCE_RATIO = 0.22;
+const LIFE_FLICK_MIN_DISTANCE_PX = 28;
+const LIFE_FLICK_MIN_VELOCITY = 0.18;
+const LIFE_VELOCITY_PROJECTION_MS = 180;
 let lifeDrag = null;
+let lifeTransitioning = false;
+let lifePreviewGeneration = 0;
 
 function isLifeGestureAllowed() {
-  if (wideDrawer.matches || state.mode === 'life' || !$('login').hidden) return false;
-  if ($('drawer').classList.contains('open')) return false;
+  if (
+    wideDrawer.matches ||
+    state.mode === 'life' ||
+    lifeTransitioning ||
+    !$('login').hidden
+  ) {
+    return false;
+  }
+  if ($('drawer').classList.contains('open') || isMenuOpen()) return false;
   return (
     $('lightbox').hidden &&
     mediaViewer.element.hidden &&
@@ -3828,11 +3850,59 @@ function isLifeGestureAllowed() {
   );
 }
 
-function resetLifePreview() {
+function setLifeSettlementBlocking(blocked) {
+  document.querySelector('.main').inert = blocked;
+  $('drawer').inert = blocked;
+  const preview = $('life-swipe-preview');
+  preview.classList.toggle('settling', blocked);
+  preview.setAttribute('aria-hidden', String(!blocked));
+  $('life-swipe-cancel').hidden = !blocked;
+}
+
+function resetLifePreview(generation = lifePreviewGeneration) {
+  if (generation !== lifePreviewGeneration) return;
+  setLifeSettlementBlocking(false);
   const preview = $('life-swipe-preview');
   preview.style.transition = '';
   preview.style.transform = '';
+  preview.style.opacity = '';
   preview.hidden = true;
+  lifeTransitioning = false;
+}
+
+function cancelLifePreview() {
+  const preview = $('life-swipe-preview');
+  if (!lifeDrag && !lifeTransitioning && preview.hidden) return;
+  ++lifePreviewGeneration;
+  lifeDrag = null;
+  setLifeSettlementBlocking(false);
+  preview.style.transition = '';
+  preview.style.transform = '';
+  preview.style.opacity = '';
+  preview.hidden = true;
+  lifeTransitioning = false;
+}
+
+function animateLifePreview({ x, opacity = 1, duration, generation }) {
+  if (generation !== lifePreviewGeneration) return Promise.resolve();
+  const preview = $('life-swipe-preview');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animationMs = reducedMotion ? 0 : Math.max(0, Math.round(duration));
+  preview.hidden = false;
+  preview.getBoundingClientRect();
+  preview.style.transition =
+    animationMs === 0
+      ? 'none'
+      : `transform ${animationMs}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${animationMs}ms ease-out`;
+  preview.style.transform = `translate3d(${x}px, 0, 0)`;
+  preview.style.opacity = String(opacity);
+  if (animationMs === 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, animationMs + 24));
+}
+
+function lifeSettleDuration(distance, velocity, entering) {
+  const speed = Math.max(entering ? 0.7 : 0.5, velocity);
+  return Math.max(150, Math.min(320, distance / speed));
 }
 
 document.addEventListener(
@@ -3840,8 +3910,22 @@ document.addEventListener(
   (e) => {
     if (!isLifeGestureAllowed() || e.touches.length !== 1) return;
     const touch = e.touches[0];
-    if (touch.clientX < window.innerWidth - EDGE_ZONE_PX) return;
-    lifeDrag = { x: touch.clientX, y: touch.clientY, axis: null, distance: 0 };
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    if (touch.clientX < viewportWidth - LIFE_EDGE_ZONE_PX) return;
+    const now = performance.now();
+    lifeDrag = {
+      x: touch.clientX,
+      y: touch.clientY,
+      axis: null,
+      distance: 0,
+      lastDistance: 0,
+      startedAt: now,
+      lastTime: now,
+      lastDirection: 0,
+      reversed: false,
+      forwardDistanceSinceReverse: 0,
+      velocity: 0,
+    };
   },
   { passive: true },
 );
@@ -3865,26 +3949,102 @@ document.addEventListener(
 
     const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
     lifeDrag.distance = Math.max(0, Math.min(viewportWidth, -dx));
+    const now = performance.now();
+    const elapsed = now - lifeDrag.lastTime;
+    if (elapsed > 0) {
+      const distanceDelta = lifeDrag.distance - lifeDrag.lastDistance;
+      const instantaneous = Math.max(-3, Math.min(3, distanceDelta / elapsed));
+      lifeDrag.velocity = lifeDrag.velocity * 0.35 + instantaneous * 0.65;
+      if (distanceDelta < 0) {
+        lifeDrag.reversed = true;
+        lifeDrag.forwardDistanceSinceReverse = 0;
+      } else if (distanceDelta > 0) {
+        lifeDrag.forwardDistanceSinceReverse += distanceDelta;
+      }
+      if (distanceDelta !== 0) lifeDrag.lastDirection = Math.sign(distanceDelta);
+      lifeDrag.lastDistance = lifeDrag.distance;
+      lifeDrag.lastTime = now;
+    }
     const preview = $('life-swipe-preview');
     preview.hidden = false;
+    preview.style.opacity = '1';
     preview.style.transition = 'none';
-    preview.style.transform = `translateX(${viewportWidth - lifeDrag.distance}px)`;
+    preview.style.transform = `translate3d(${viewportWidth - lifeDrag.distance}px, 0, 0)`;
   },
   { passive: false },
 );
+
+async function settleLifeDrag(drag, shouldEnter, viewportWidth) {
+  const generation = ++lifePreviewGeneration;
+  lifeTransitioning = true;
+  setLifeSettlementBlocking(true);
+  const remaining = shouldEnter ? viewportWidth - drag.distance : drag.distance;
+  const duration = lifeSettleDuration(remaining, drag.velocity, shouldEnter);
+
+  if (!shouldEnter) {
+    await animateLifePreview({ x: viewportWidth, duration, generation });
+    resetLifePreview(generation);
+    return;
+  }
+
+  const enterPromise = enterLifeMode({ preserveSwipePreview: true });
+  await animateLifePreview({ x: 0, duration, generation });
+  const entered = await enterPromise;
+  if (generation !== lifePreviewGeneration) return;
+  if (!entered) {
+    await animateLifePreview({ x: viewportWidth, duration: 220, generation });
+    resetLifePreview(generation);
+    return;
+  }
+
+  await animateLifePreview({ x: 0, opacity: 0, duration: 120, generation });
+  resetLifePreview(generation);
+}
 
 function endLifeDrag(commit = true) {
   if (!lifeDrag) return;
   const drag = lifeDrag;
   lifeDrag = null;
+  if (drag.axis !== 'x') {
+    resetLifePreview();
+    return;
+  }
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-  const shouldEnter = commit && drag.axis === 'x' && drag.distance >= viewportWidth / 3;
-  resetLifePreview();
-  if (shouldEnter) void enterLifeMode();
+  const releasedAt = performance.now();
+  const releaseAge = releasedAt - drag.lastTime;
+  const averageVelocity = drag.distance / Math.max(1, releasedAt - drag.startedAt);
+  const renewedFlickAfterReverse =
+    !drag.reversed || drag.forwardDistanceSinceReverse >= LIFE_FLICK_MIN_DISTANCE_PX;
+  const velocity =
+    releaseAge <= 90 && drag.lastDirection > 0 && renewedFlickAfterReverse
+      ? drag.reversed
+        ? Math.max(0, drag.velocity)
+        : Math.max(0, drag.velocity, averageVelocity)
+      : 0;
+  const projectedDistance = drag.distance + velocity * LIFE_VELOCITY_PROJECTION_MS;
+  const enoughDistance = drag.distance >= viewportWidth * LIFE_DISTANCE_RATIO;
+  const enoughVelocity =
+    drag.distance >= LIFE_FLICK_MIN_DISTANCE_PX &&
+    velocity >= LIFE_FLICK_MIN_VELOCITY &&
+    projectedDistance >= viewportWidth * LIFE_DISTANCE_RATIO;
+  const shouldEnter =
+    commit && drag.lastDirection > 0 && (enoughDistance || enoughVelocity);
+  drag.velocity = velocity;
+  void settleLifeDrag(drag, shouldEnter, viewportWidth);
 }
 
 document.addEventListener('touchend', () => endLifeDrag(true), { passive: true });
 document.addEventListener('touchcancel', () => endLifeDrag(false), { passive: true });
+$('life-swipe-cancel').addEventListener('click', () => {
+  if (lifeTransitioning) void exitLifeMode();
+});
+wideDrawer.addEventListener('change', (event) => {
+  // CSS hides the mobile preview above this breakpoint. Cancel first so its
+  // inert input shield can never outlive the only visible Cancel control.
+  if (!event.matches) return;
+  if (lifeTransitioning) void exitLifeMode();
+  else if (lifeDrag) cancelLifePreview();
+});
 
 // ── boot ─────────────────────────────────────────────────────────────────
 

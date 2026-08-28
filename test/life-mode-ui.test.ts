@@ -21,12 +21,16 @@ describe('Life mode UI contract', () => {
     const app = readPublic('app.js');
 
     expect(app).toContain("const MODE_KEY = 'piweb.mode'");
-    expect(app).toContain('async function enterLifeMode()');
+    expect(app).toContain('async function enterLifeMode({ preserveSwipePreview = false } = {})');
     expect(app).toContain('async function exitLifeMode()');
     expect(app).toContain("api('/api/life-session', { method: 'POST' })");
-    expect(app).toContain('window.innerWidth - EDGE_ZONE_PX');
+    expect(app).toContain('viewportWidth - LIFE_EDGE_ZONE_PX');
+    expect(app).toContain('const LIFE_EDGE_ZONE_PX = 56');
+    expect(app).toContain('const LIFE_VELOCITY_PROJECTION_MS = 180');
+    expect(app).toContain('async function settleLifeDrag');
     expect(app).toContain("$('app').classList.toggle('life-mode'");
     expect(app).toContain('const destinationJid = state.activeJid');
     expect(app).toContain('encodeURIComponent(destinationJid)');
+    expect(app).toContain("runQuickCommand('pi new')");
   });
 });
