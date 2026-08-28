@@ -400,12 +400,20 @@ turn under `event["message"]` and its `content` is a list of typed parts
    primed yet, serve the last catalog rather than throwing, so the model list can
    never take the message path down with it.
 
-12. **`@earendil-works/pi-*` is an unpinned peer dep (`"*"`).** Every install
-   takes whatever pi published last, so a pi release can break piweb at rest,
-   with no piweb change involved — invariant 11 is exactly that, 0.74 → 0.84.1.
-   When the worker breaks right after an install or a deploy and nothing in
-   `git log` explains it, diff the installed pi version first:
-   `node -p "require('@earendil-works/pi-coding-agent/package.json').version"`.
+12. **pi's version is what pins piweb's behaviour — check it first.** A pi
+   release can break piweb at rest, with no piweb change involved; invariant 11
+   is exactly that, 0.74 → 0.84.1. When the worker breaks right after an install
+   or a deploy and nothing in `git log` explains it, check the installed version
+   before reading any piweb code:
+
+   ```bash
+   npm ls @earendil-works/pi-coding-agent @earendil-works/pi-ai
+   ```
+
+   Do **not** reach for `node -p "require('…/package.json').version"` — pi's
+   `exports` map has no `./package.json` entry, so that throws
+   `ERR_PACKAGE_PATH_NOT_EXPORTED` and looks like a broken install. See
+   "Pinning pi" in §3 for which version belongs there.
 
 ---
 
@@ -439,6 +447,43 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
 from piscord and unused by the web transport.
+
+### Pinning pi
+
+piweb builds against pi's **internal** API (`ModelRegistry`, `ModelRuntime`,
+`AuthStorage`), not a stable public surface. Those move between minor releases,
+so the pi version is part of this deployment's configuration — pin it to the
+version the code was actually written and verified against, and treat a bump as
+a code change with testing, never as routine dependency maintenance.
+
+Currently verified: **0.84.1** (both packages, kept in lockstep — pi-coding-agent
+depends on the matching pi-ai and npm will dedupe them anyway).
+
+```jsonc
+// package.json — devDependencies AND peerDependencies must agree
+"@earendil-works/pi-ai": "0.84.1",
+"@earendil-works/pi-coding-agent": "0.84.1"
+```
+
+Pin **exactly**, not `^0.84.0`. pi is pre-1.0, so semver gives a caret no real
+protection: the break behind invariant 11 arrived in a minor bump, and the next
+one can arrive in a patch.
+
+Today the peer deps say `"*"` and the dev deps still say `^0.74.0` while 0.84.1
+is installed — so every install silently takes pi's latest, and the two fields
+disagree about what is even expected. `npm ls` has been reporting this the whole
+time and it is easy to scroll past:
+
+```
+├── @earendil-works/pi-ai@0.84.1 invalid: "^0.74.0" from the root project
+└─┬ @earendil-works/pi-coding-agent@0.84.1 invalid: "^0.74.0" from the root project
+```
+
+`invalid:` there is not noise — it is the warning that the tree no longer matches
+what the code expects. When bumping pi deliberately: change both fields to the
+new exact version, `npm install`, `npm run build`, then exercise a real message
+end to end (`listAvailableModels()` is on the message path — a clean `tsc` proves
+nothing, since the 0.84 break type-checked fine and failed only at runtime).
 
 ### Host worker
 
