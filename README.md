@@ -24,9 +24,9 @@ That's it. The setup wizard checks prerequisites, asks for your Discord bot toke
 
 ## Prerequisites
 
-- **Node.js** ≥ 20
+- **Node.js** ≥ 22.19.0
 - **Linux, macOS, or Windows**
-- **[pi](https://github.com/badlogic/pi-mono)** ≥ 0.74.0 installed and on `PATH`, with login completed (`~/.pi/agent/auth.json`)
+- **[pi](https://github.com/badlogic/pi-mono)** 0.84.1 installed and on `PATH`, with login completed (`~/.pi/agent/auth.json`)
 - **Discord bot token** — [create one here](https://discord.com/developers/applications)
   - Enable **Message Content Intent** under Privileged Gateway Intents
   - Bot permissions: `Send Messages`, `Read Message History`, `View Channels`, `Attach Files`

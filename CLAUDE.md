@@ -456,8 +456,12 @@ so the pi version is part of this deployment's configuration — pin it to the
 version the code was actually written and verified against, and treat a bump as
 a code change with testing, never as routine dependency maintenance.
 
-Currently verified: **0.84.1** (both packages, kept in lockstep — pi-coding-agent
-depends on the matching pi-ai and npm will dedupe them anyway).
+Piweb uses two pi surfaces: `PI_BIN` runs the customized fork for agent turns,
+while piweb imports its internal model APIs from the npm packages below. Keep the
+npm packages on the customized fork's exact base version.
+
+Currently verified: **0.84.1** (both packages kept in lockstep;
+pi-coding-agent's shrinkwrap may install its own matching pi-ai copy).
 
 ```jsonc
 // package.json — devDependencies AND peerDependencies must agree
@@ -469,10 +473,10 @@ Pin **exactly**, not `^0.84.0`. pi is pre-1.0, so semver gives a caret no real
 protection: the break behind invariant 11 arrived in a minor bump, and the next
 one can arrive in a patch.
 
-Today the peer deps say `"*"` and the dev deps still say `^0.74.0` while 0.84.1
-is installed — so every install silently takes pi's latest, and the two fields
-disagree about what is even expected. `npm ls` has been reporting this the whole
-time and it is easy to scroll past:
+Before this fix, the peer deps said `"*"`, the dev deps said `^0.74.0`, and the
+lockfile resolved 0.74.0 while an out-of-band install had put 0.84.1 on disk.
+That made the next clean deployment reinstall the stale API. `npm ls` reported
+the mismatch as `invalid`, which was easy to scroll past:
 
 ```
 ├── @earendil-works/pi-ai@0.84.1 invalid: "^0.74.0" from the root project
