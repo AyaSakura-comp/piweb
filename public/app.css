@@ -193,6 +193,158 @@ svg {
   overflow: hidden;
 }
 
+/* Life is a protected presentation of one persistent default-model channel. */
+.life-edge-hint {
+  position: fixed;
+  z-index: 30;
+  top: 42%;
+  right: max(0px, env(safe-area-inset-right));
+  width: 18px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--tool) 42%, transparent);
+  border-right: 0;
+  border-radius: 18px 0 0 18px;
+  background: color-mix(in srgb, var(--bg-alt) 90%, transparent);
+  color: color-mix(in srgb, var(--tool) 80%, var(--text));
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.life-edge-hint svg {
+  width: 14px;
+  height: 14px;
+}
+
+.life-swipe-preview {
+  position: fixed;
+  z-index: 53;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  height: 100dvh;
+  background:
+    radial-gradient(circle at 70% 34%, rgb(81 137 91 / 0.22), transparent 36%),
+    var(--bg-alt);
+  border-left: 1px solid color-mix(in srgb, var(--tool) 55%, transparent);
+  box-shadow: -18px 0 42px rgb(0 0 0 / 0.28);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.life-swipe-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-bright);
+}
+
+.life-swipe-mark svg {
+  width: 48px;
+  height: 48px;
+  color: var(--tool);
+}
+
+.life-swipe-mark strong {
+  font-size: 22px;
+}
+
+.life-swipe-mark span {
+  color: var(--text-dim);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app.life-mode .drawer,
+.app.life-mode #btn-menu,
+.app.life-mode #btn-status,
+.app.life-mode #btn-gpt-usage,
+.app.life-mode #btn-model,
+.app.life-mode #btn-thinking,
+.app.life-mode .topbar-title > .hash,
+.app.life-mode .life-edge-hint {
+  display: none;
+}
+
+.app.life-mode .topbar {
+  position: relative;
+}
+
+/* Keep the Life-safe overflow (and emergency Stop while busy) on the right;
+   the absolutely centered title must never cover either hit target. */
+.app.life-mode #btn-more,
+.app.life-mode #btn-stop:not([hidden]) {
+  margin-left: auto;
+}
+
+.app.life-mode #btn-stop:not([hidden]) ~ #btn-more {
+  margin-left: 0;
+}
+
+.app.life-mode .topbar-title {
+  position: absolute;
+  left: 50%;
+  max-width: min(54vw, 240px);
+  transform: translateX(-50%);
+  justify-content: center;
+}
+
+.app.life-mode #session-name {
+  cursor: default;
+  margin-left: 0;
+}
+
+.app.life-mode #session-name:hover,
+.app.life-mode #session-name:focus-visible {
+  background: transparent;
+}
+
+.life-back {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 7px 0 2px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.life-back:active {
+  background: var(--bg-input);
+  color: var(--text-bright);
+}
+
+.life-back svg,
+.life-title-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.life-title-mark {
+  display: inline-grid;
+  place-items: center;
+  color: var(--tool);
+}
+
+.provider-badge.life-default {
+  background: rgb(81 137 91 / 0.15);
+  border-color: rgb(81 137 91 / 0.45);
+  color: #9ad4a3;
+}
+
+@media (min-width: 768px) {
+  .life-edge-hint,
+  .life-swipe-preview {
+    display: none;
+  }
+}
+
 .main {
   position: relative; /* containing block for .jump-live */
   flex: 1;
@@ -2328,12 +2480,14 @@ svg {
 
 #btn-thinking[data-level='medium'],
 #btn-thinking[data-level='high'],
-#btn-thinking[data-level='xhigh'] {
+#btn-thinking[data-level='xhigh'],
+#btn-thinking[data-level='max'] {
   color: var(--thinking);
 }
 
 #btn-thinking[data-level='high']::after,
-#btn-thinking[data-level='xhigh']::after {
+#btn-thinking[data-level='xhigh']::after,
+#btn-thinking[data-level='max']::after {
   content: '';
   position: absolute;
   right: 5px;

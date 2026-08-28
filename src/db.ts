@@ -1,9 +1,16 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, rmdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { type RegisteredChannel, type QueuedMessage, type ThinkingLevel } from './types.js';
+import { resolveChannelSessionDir } from './session/path.js';
+import {
+  type ChannelKind,
+  type RegisteredChannel,
+  type QueuedMessage,
+  type ThinkingLevel,
+} from './types.js';
 
 let db!: Database.Database;
 let dbOpen = false;
@@ -43,6 +50,7 @@ export function initDb(): void {
       model_override   text not null default '',
       thinking_override text not null default '',
       cwd_override     text not null default '',
+      kind             text not null default 'standard' check(kind in ('standard', 'life')),
       created_at       text not null default (datetime('now'))
     );
 
@@ -187,6 +195,16 @@ export function initDb(): void {
   ensureTableColumn('channels', 'model_override', "text not null default ''");
   ensureTableColumn('channels', 'thinking_override', "text not null default ''");
   ensureTableColumn('channels', 'cwd_override', "text not null default ''");
+  ensureTableColumn(
+    'channels',
+    'kind',
+    "text not null default 'standard' check(kind in ('standard', 'life'))",
+  );
+  // Standard sessions remain unlimited, while even concurrent first-entry
+  // requests can create at most one Life row.
+  db.exec(
+    "create unique index if not exists idx_channels_single_life on channels(kind) where kind = 'life'",
+  );
   // Soft delete: deleting a session moves it to a trash it can be restored
   // from. Nothing is destroyed until it is purged, which also means a deleted
   // session no longer strands its pi session directory on disk.
@@ -231,8 +249,8 @@ export function registerChannel(
   db.transaction(() => {
     db.prepare(
       `
-      insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override)
-      values (?, ?, ?, ?, ?, ?, ?, ?)
+      insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override, kind)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(jid) do update set
         name = excluded.name,
         folder = excluded.folder,
@@ -252,6 +270,7 @@ export function registerChannel(
       ch.modelOverride || '',
       ch.thinkingOverride || '',
       ch.cwdOverride.trim(),
+      ch.kind ?? 'standard',
     );
     if (options.prepareSessionTitle) prepareSessionTitle(ch.jid);
   })();
@@ -336,6 +355,7 @@ function rowToChannel(row: any): RegisteredChannel {
     modelOverride: row.model_override || '',
     thinkingOverride: (row.thinking_override || '') as ThinkingLevel | '',
     cwdOverride: row.cwd_override || '',
+    kind: (row.kind || 'standard') as ChannelKind,
   };
 }
 
@@ -1133,6 +1153,7 @@ export function listWebSessions(): Array<{
   jid: string;
   name: string;
   folder: string;
+  kind: ChannelKind;
   busy: boolean;
   modelOverride: string;
   thinkingOverride: string;
@@ -1142,7 +1163,7 @@ export function listWebSessions(): Array<{
 }> {
   const rows = db
     .prepare(
-      `select c.jid, c.name, c.folder, c.model_override, c.thinking_override, c.cwd_override,
+      `select c.jid, c.name, c.folder, c.kind, c.model_override, c.thinking_override, c.cwd_override,
               coalesce(s.busy, 0) as busy,
               (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity,
               -- Newest event that is something to READ: an assistant reply or
@@ -1154,7 +1175,7 @@ export function listWebSessions(): Array<{
                   and e.role <> 'user') as last_reply_id
          from channels c
          left join channel_state s on s.channel_jid = c.jid
-        where c.jid like 'web:%' and c.deleted_at is null
+        where c.jid like 'web:%' and c.kind = 'standard' and c.deleted_at is null
         order by coalesce((select max(created_at) from web_events e where e.channel_jid = c.jid), c.created_at) desc, c.created_at desc`,
     )
     .all() as any[];
@@ -1163,6 +1184,7 @@ export function listWebSessions(): Array<{
     jid: r.jid,
     name: r.name,
     folder: r.folder,
+    kind: (r.kind || 'standard') as ChannelKind,
     busy: Boolean(r.busy),
     modelOverride: r.model_override,
     thinkingOverride: r.thinking_override,
@@ -1170,6 +1192,87 @@ export function listWebSessions(): Array<{
     lastActivity: r.last_activity,
     lastReplyId: Number(r.last_reply_id ?? 0),
   }));
+}
+
+/**
+ * Restore or create the protected singleton Life conversation.
+ *
+ * Its first folder is random and therefore empty, so unlike standard session
+ * creation this must not enqueue `pi new`: there is no inherited context to
+ * rotate, and an asynchronous reset could race the first Life message.
+ */
+export function getOrCreateLifeChannel(): {
+  channel: RegisteredChannel;
+  created: boolean;
+} {
+  return db.transaction(() => {
+    const existing = db.prepare("select * from channels where kind = 'life' limit 1").get() as
+      | any
+      | undefined;
+
+    if (existing) {
+      db.prepare(
+        `update channels
+            set jid = 'web:life', name = 'Life', model_override = '',
+                thinking_override = '', cwd_override = '', deleted_at = null
+          where jid = ?`,
+      ).run(existing.jid);
+      return {
+        channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
+        created: false,
+      };
+    }
+
+    // Never reinterpret an ordinary conversation as Life: its folder may hold
+    // unrelated Pi history. A reserved-JID collision must be resolved
+    // explicitly instead of silently inheriting that context.
+    const reserved = db.prepare("select kind from channels where jid = 'web:life'").get() as
+      | { kind: ChannelKind }
+      | undefined;
+    if (reserved) {
+      throw new Error('Cannot create Life: reserved web:life JID belongs to a standard session');
+    }
+
+    mkdirSync(config.sessionsDir, { recursive: true });
+    let folder = '';
+    let folderPath = '';
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const candidate = `web_life_${randomUUID().slice(0, 8)}`;
+      const candidatePath = resolveChannelSessionDir(candidate);
+      try {
+        // mkdir without recursive is an atomic absent-path reservation. An
+        // orphan from a prior run is never reused, even when it is non-empty.
+        mkdirSync(candidatePath);
+        folder = candidate;
+        folderPath = candidatePath;
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+    }
+    if (!folder) throw new Error('Could not reserve an empty Life session folder');
+
+    try {
+      db.prepare(
+        `insert into channels
+          (jid, name, folder, requires_trigger, is_main, model_override,
+           thinking_override, cwd_override, kind)
+         values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life')`,
+      ).run(folder);
+    } catch (error) {
+      try {
+        rmdirSync(folderPath);
+      } catch {
+        // Preserve the original database error; a non-empty directory is never
+        // safe to remove and will simply be skipped on the next attempt.
+      }
+      throw error;
+    }
+    return {
+      channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
+      created: true,
+    };
+  })();
 }
 
 export function isChannelBusy(channelJid: string): boolean {
@@ -1323,7 +1426,7 @@ export function listDeletedWebSessions(): DeletedSession[] {
                   and e.kind in ('message', 'system', 'error')
                   and e.role <> 'user') as last_reply_id
          from channels c
-        where c.jid like 'web:%' and c.deleted_at is not null
+        where c.jid like 'web:%' and c.kind = 'standard' and c.deleted_at is not null
         order by c.deleted_at desc`,
     )
     .all() as any[];

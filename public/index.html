@@ -71,6 +71,22 @@
     <div id="app" class="app" hidden>
       <div class="scrim" id="scrim" hidden></div>
 
+      <!-- Quiet, non-interactive affordance for the physical right-edge swipe. -->
+      <div class="life-edge-hint" id="life-edge-hint" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" />
+        </svg>
+      </div>
+      <div class="life-swipe-preview" id="life-swipe-preview" aria-hidden="true" hidden>
+        <div class="life-swipe-mark">
+          <svg viewBox="0 0 24 24">
+            <path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" />
+          </svg>
+          <strong>Life</strong>
+          <span>Default model</span>
+        </div>
+      </div>
+
       <aside class="drawer" id="drawer" aria-label="Sessions">
         <header class="drawer-head">
           <span class="drawer-title">Sessions</span>
@@ -142,8 +158,23 @@
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
+          <button
+            class="life-back"
+            id="btn-life-back"
+            type="button"
+            aria-label="Return to sessions"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+            <span>Sessions</span>
+          </button>
           <div class="topbar-title">
             <span class="hash">#</span>
+            <span class="life-title-mark" id="life-title-mark" aria-hidden="true" hidden>
+              <svg viewBox="0 0 24 24">
+                <path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" />
+              </svg>
+            </span>
             <span id="session-name" role="button" tabindex="0" title="Tap to rename"
               >no session</span
             >
@@ -249,7 +280,7 @@
             </svg>
             <span class="mi-label">Media</span>
           </button>
-          <div class="menu-sep" role="separator"></div>
+          <div class="menu-sep" id="mi-management-separator" role="separator"></div>
           <button type="button" class="menu-item danger" id="mi-clean" role="menuitem">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />

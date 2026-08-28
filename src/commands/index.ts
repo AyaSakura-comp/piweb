@@ -81,9 +81,9 @@ export async function runCommand(
       case 'pi model':
         return cmdModelSet(channel, args.model ?? '');
       case 'pi reset-model':
-        return cmdModelReset(channel);
+        return await cmdModelReset(channel);
       case 'pi thinking':
-        return cmdThinkingSet(channel, args.level ?? '');
+        return await cmdThinkingSet(channel, args.level ?? '');
       case 'pi new':
         return cmdNew(channel, args);
       case 'pi stop':
@@ -291,11 +291,11 @@ function cmdModelSet(channel: RegisteredChannel, selectedRef: string): CommandRe
   return { ok: true, text: notes.join('\n') };
 }
 
-function cmdModelReset(channel: RegisteredChannel): CommandResult {
+async function cmdModelReset(channel: RegisteredChannel): Promise<CommandResult> {
   clearChannelModelOverride(channel.jid);
 
   const updated = getChannel(channel.jid)!;
-  const effective = computeEffectiveChannelSettings(updated, { forceRefresh: true });
+  const effective = await computeEffectiveChannelSettings(updated, { forceRefresh: true });
   const notes = ['Model reset to the gateway default.'];
 
   if (updated.thinkingOverride && effective.thinkingAdjusted) {
@@ -314,12 +314,15 @@ function cmdModelReset(channel: RegisteredChannel): CommandResult {
   return { ok: true, text: notes.join('\n') };
 }
 
-function cmdThinkingSet(channel: RegisteredChannel, rawLevel: string): CommandResult {
+async function cmdThinkingSet(
+  channel: RegisteredChannel,
+  rawLevel: string,
+): Promise<CommandResult> {
   if (!isThinkingLevel(rawLevel)) {
     return { ok: false, text: `Invalid thinking level: ${rawLevel}` };
   }
 
-  const effective = computeEffectiveChannelSettings(channel, { forceRefresh: true });
+  const effective = await computeEffectiveChannelSettings(channel, { forceRefresh: true });
   const resolution = resolveThinkingForModel(effective.modelInfo, rawLevel);
 
   setChannelThinkingOverride(channel.jid, resolution.effective);
@@ -381,7 +384,7 @@ export function cmdThinkingReset(channel: RegisteredChannel): CommandResult {
 // ── status ──
 
 async function cmdStatus(channel: RegisteredChannel): Promise<CommandResult> {
-  const effective = computeEffectiveChannelSettings(channel);
+  const effective = await computeEffectiveChannelSettings(channel);
   const sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
   return { ok: true, text: buildStatusMessage(effective, sessionStatus) };
 }

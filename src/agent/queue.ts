@@ -23,7 +23,12 @@ import {
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
 import { invokeAgy, isAgyModelRef } from './agy.js';
-import { abortRpcSession, getRpcSession, closeAllRpcSessions } from './rpc-session.js';
+import {
+  abortRpcSession,
+  getRpcSession,
+  closeAllRpcSessions,
+  closeRpcSession,
+} from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
@@ -305,7 +310,16 @@ async function processMessage(
 
     logMessage(jid, 'user', content);
 
-    const effective = computeEffectiveChannelSettings(channel);
+    const effective = await computeEffectiveChannelSettings(channel, { signal });
+
+    // Settings resolution can finish concurrently with cancellation (notably
+    // while the Life defaults probe is closing). Never start a stale turn once
+    // ownership of this queued message has been aborted.
+    if (signal.aborted) {
+      markMessageFailed(rowid);
+      logger.info({ jid, rowid }, 'Message abandoned: shutdown interrupted processing');
+      return;
+    }
 
     // Stream pi's intermediate thinking/tool events into the channel live so
     // the user can watch what the agent is doing instead of staring at a
@@ -322,6 +336,11 @@ async function processMessage(
     // Antigravity CLI, which owns its own tools and conversation store. It has
     // no RPC/steer mode, so this branch precedes the RPC one.
     const useAgy = isAgyModelRef(effective.rawModelRef);
+
+    // Attachments and until-done use the one-shot process, which writes the
+    // same history files as RPC. Retire an idle warm session first so the next
+    // text turn reloads those additions instead of following a stale branch.
+    if (!useAgy && !useRpc) closeRpcSession(channel.folder);
 
     const result = useAgy
       ? await invokeAgy(channel.folder, prompt, {

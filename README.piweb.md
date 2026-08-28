@@ -64,6 +64,22 @@ button in the header is **clean session**: it clears the transcript _and_ rotate
 pi's session directory, so the agent's context is genuinely reset rather than
 just visually cleared.
 
+### Life mode
+
+On a phone, start at the **right edge** and swipe left. The preview follows the
+finger and opens after crossing one-third of the viewport. Life reuses one
+persistent conversation, resolves Pi's exact runtime-default model and effective
+thinking level before every turn, and hides session/model management. Its header
+shows **Sessions / Life / DEFAULT** with a ⋯ menu limited to **Search** and
+**Media**; tap **Sessions** to return to the last standard session. If there is
+no standard session, returning or rolling back a failed Life load clears the Life
+stream and composer destination and shows `no session`. The selected presentation
+mode survives reloads on that device.
+
+See [`docs/life-mode.md`](docs/life-mode.md) for the user workflow, software
+architecture, per-turn sequence, persistence model, race guards, and verification
+graph.
+
 ## Appearance
 
 Piweb starts in dark mode. Open **Sessions** and use the appearance action below

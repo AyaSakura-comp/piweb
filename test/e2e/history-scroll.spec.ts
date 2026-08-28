@@ -69,6 +69,12 @@ async function installHistoryApi(page: Page, responseDelayMs?: number) {
             busy: false,
             hasMore: true,
             partial: null,
+            session: {
+              jid: SESSION_ID,
+              name: '500-message history stress',
+              kind: 'standard',
+              deleted: false,
+            },
           },
         });
       }
@@ -91,6 +97,12 @@ async function installHistoryApi(page: Page, responseDelayMs?: number) {
           busy: false,
           hasMore: pageStart > 1,
           partial: null,
+          session: {
+            jid: SESSION_ID,
+            name: '500-message history stress',
+            kind: 'standard',
+            deleted: false,
+          },
         },
       });
     }

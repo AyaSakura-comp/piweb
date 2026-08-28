@@ -156,7 +156,8 @@ origin check.
 | `/api/push/key` `/subscribe` `/unsubscribe` | GET/POST/POST | VAPID public key; save/drop a subscription |
 | `/api/commands` | GET | the `COMMANDS` catalog for autocomplete |
 | `/api/models` | GET | pi's model list (from `meta`, published by the worker) |
-| `/api/sessions` | GET/POST | list live sessions (with badge, busy, `lastReplyId`); create immediately as `New session` |
+| `/api/life-session` | POST | idempotently create/restore the singleton Life channel and clear its overrides |
+| `/api/sessions` | GET/POST | list standard live sessions (with badge, busy, `lastReplyId`); create immediately as `New session` |
 | `/api/sessions/deleted` | GET | the trash (must precede the `:jid` matcher) |
 | `/api/sessions/:jid` | PATCH/DELETE | rename; soft-delete (or `?permanent=1`) |
 | `/api/sessions/:jid/restore` | POST | un-trash |
@@ -178,6 +179,7 @@ origin check.
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
 | image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]` |
 | multimedia paste | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents) |
+| Life mode | singleton `channels.kind='life'` + `/api/life-session`; right-edge UI in `public/app.js`; full diagrams in [`docs/life-mode.md`](docs/life-mode.md) |
 | thinking & tool physics | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia) |
 | Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
@@ -739,15 +741,26 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   never the user's own turns or streamed thinking/tool chatter.
   The SSE stream carries only the OPEN session, so the drawer polls
   `/api/sessions` every 5s or every other session's state freezes at page load.
-- **Edge swipe opens the drawer**: a drag starting within 28px of the left edge
-  pulls the session drawer out, tracking the finger so it is reversible; a
-  leftward drag anywhere puts it back. The axis is locked after 8px and a
-  vertical lock abandons the gesture entirely, so scrolling is never stolen —
-  `preventDefault` is only called once horizontal has won. Disabled above 768px
-  (permanent sidebar) and while the lightbox or a sheet is open.
-  **Never recover a drag position with `getComputedStyle`** — it depends on a
-  style flush, so a fast burst of events reads the stale CSS value and silently
-  drops the gesture. Keep the offset in the drag state.
+- **Edge swipes have paired meanings**: a drag from the left edge opens the
+  standard session drawer; a drag starting within 36px of the right edge and
+  moving left opens Life. Both track the finger, commit after one-third, lock
+  their axis after 8px, and abandon a vertical lock before calling
+  `preventDefault`, so transcript scrolling is never stolen. They are disabled
+  above 768px and while a lightbox/sheet owns the foreground. **Never recover a
+  drag position with `getComputedStyle`** — a style flush can return stale CSS
+  during a fast event burst. Keep offsets in drag state.
+- **Life is not a managed session.** It is one protected `channels.kind='life'`
+  row, omitted from standard/trash lists and restored on every idempotent entry.
+  Every turn probes `PI_BIN --mode rpc --no-session` for Pi's exact runtime
+  model/effective thinking, explicitly applies both to the persistent Life
+  conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
+  escalates to SIGKILL after a bounded grace, and waits for child exit.
+  Management is rejected server-side; `pi stop` remains available, while Life's
+  ⋯ menu exposes only Search and Media. Returning or rolling back with no
+  standard session must clear the active Life JID, stream, transcript, partial,
+  busy, and search ownership before showing `no session`, so the composer cannot
+  submit to hidden Life state. See [`docs/life-mode.md`](docs/life-mode.md) for
+  the workflow, software architecture, persistence, and race-ownership diagrams.
 - **Image lightbox (Swipe, Pinch-to-zoom & Pan)**: tapping an image opens an in-app viewer (`openLightbox`)
   rather than a new tab, collecting every image in the transcript so swiping
   pages through them. The overlay sets `touch-action: none` and handles its own

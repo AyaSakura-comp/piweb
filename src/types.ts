@@ -1,6 +1,17 @@
 /** Supported pi thinking levels */
-export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+export const THINKING_LEVELS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** Explicit web-channel role; Life is a singleton outside session management. */
+export type ChannelKind = 'standard' | 'life';
 
 /** A registered channel the gateway will respond in */
 export interface RegisteredChannel {
@@ -12,6 +23,8 @@ export interface RegisteredChannel {
   modelOverride: string;
   thinkingOverride: ThinkingLevel | '';
   cwdOverride: string;
+  /** Existing non-web transports may omit this; persistence defaults to standard. */
+  kind?: ChannelKind;
 }
 
 /** Queued message row from SQLite */

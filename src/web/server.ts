@@ -28,6 +28,7 @@ import {
   enqueueMessage,
   getChannel,
   getMeta,
+  getOrCreateLifeChannel,
   getRecentWebEvents,
   getSessionTitleJob,
   getWebEventsAround,
@@ -483,6 +484,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   // ── sessions ──
+  // Life is created separately from ordinary sessions: its unique empty folder
+  // needs no asynchronous `pi new`, so the first message cannot race a reset.
+  if (path === '/api/life-session' && method === 'POST') {
+    const { channel, created } = getOrCreateLifeChannel();
+    sendJson(res, 200, {
+      jid: channel.jid,
+      name: channel.name,
+      kind: 'life',
+      model: '',
+      thinking: '',
+      created,
+    });
+    return;
+  }
+
   if (path === '/api/sessions' && method === 'GET') {
     const sessions = listWebSessions().map((s) => {
       // The badge must track the model the session is *set to*, so picking a
@@ -503,6 +519,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return {
         jid: s.jid,
         name: s.name,
+        kind: s.kind,
         busy: s.busy,
         model: s.modelOverride,
         thinking: s.thinkingOverride,
@@ -576,6 +593,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    // Life exposes transcript/message/search/stream routes, but is not a
+    // manageable session. Enforce this here as well as hiding the controls.
+    if (
+      channel.kind === 'life' &&
+      ((!sub && (method === 'PATCH' || method === 'DELETE')) ||
+        (method === 'POST' && ['clear', 'restore'].includes(sub ?? '')))
+    ) {
+      sendJson(res, 409, { error: 'Life always uses default settings and cannot be managed' });
+      return;
+    }
+
     // Default DELETE is a soft delete into the trash. ?permanent=1 destroys
     // the transcript AND pi's session directory, and cannot be undone.
     if (!sub && method === 'DELETE') {
@@ -637,6 +665,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // Lets the client stop asking once it has reached either end.
         hasMore: oldest > 0 ? hasWebEventsBefore(jid, oldest) : false,
         hasMoreNewer: newest > 0 ? hasWebEventsAfter(jid, newest) : false,
+        // Navigation may arrive from a notification before the browser's
+        // session-list cache refreshes. Let that event request prove whether
+        // the target is a live standard session, Life, or a frozen trash item.
+        session: {
+          jid: channel.jid,
+          name: channel.name,
+          kind: channel.kind ?? 'standard',
+          deleted: isChannelDeleted(jid),
+        },
       });
       return;
     }
@@ -765,6 +802,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (sub === 'commands' && method === 'POST') {
       const body = await readJson<{ command?: string; args?: Record<string, string> }>(req);
       const command = (body.command ?? '').trim();
+      if (
+        channel.kind === 'life' &&
+        ['pi model', 'pi reset-model', 'pi thinking', 'pi cwd', 'pi reset-cwd', 'pi new'].includes(
+          command,
+        )
+      ) {
+        sendJson(res, 409, { error: 'Life always uses default settings' });
+        return;
+      }
       if (!COMMANDS.some((c) => c.name === command)) {
         sendJson(res, 400, { error: `Unknown command: ${command}` });
         return;

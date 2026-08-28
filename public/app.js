@@ -39,14 +39,26 @@ const $ = (id) => document.getElementById(id);
 const mediaViewer = createMediaViewer(document);
 document.body.append(mediaViewer.element);
 
+const MODE_KEY = 'piweb.mode';
+const LIFE_JID = 'web:life';
+let lifeNavigationGeneration = 0;
+let sessionsLoadGeneration = 0;
+let sessionSelectionGeneration = 0;
+let searchOwnershipGeneration = 0;
+let mediaOwnershipGeneration = 0;
+
 const state = {
   sessions: [],
   activeJid: null,
+  mode: 'sessions',
+  lifeSession: null,
+  lastStandardJid: null,
   cursor: 0,
   source: null,
   attachments: [],
   pendingQuote: '',
   uploading: false,
+  selectionPending: false,
   commands: [],
   models: [],
   previewingDeleted: false,
@@ -478,10 +490,10 @@ $('btn-notify').addEventListener('click', () => {
 // Tapping a notification asks the open window to switch sessions.
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data?.type === 'open-session' && e.data.jid) {
-      selectSession(e.data.jid);
-      closeDrawer();
-    }
+    if (e.data?.type !== 'open-session' || !e.data.jid) return;
+    if (e.data.jid === LIFE_JID) enterLifeMode();
+    else openStandardSession(e.data.jid);
+    closeDrawer();
   });
 }
 
@@ -524,7 +536,198 @@ function isUnread(session) {
 
 // ── sessions ─────────────────────────────────────────────────────────────
 
+function storedMode() {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'life' ? 'life' : 'sessions';
+  } catch {
+    return 'sessions';
+  }
+}
+
+function saveMode(mode) {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // Presentation persistence is optional in private/quota-limited contexts.
+  }
+}
+
+function setPresentationMode(mode, { persist = true } = {}) {
+  state.mode = mode;
+  if (persist) saveMode(mode);
+  const life = mode === 'life';
+  $('app').classList.toggle('life-mode', life);
+  $('btn-life-back').hidden = !life;
+  $('life-title-mark').hidden = !life;
+  if (life) {
+    closeDrawer();
+    closeTrash();
+    closeModelSheet();
+    closeThinkingSheet();
+    closeMoreMenu();
+    closeMediaSheet();
+    mediaViewer.close();
+  }
+  renderHeaderBadge();
+}
+
+function standardFallbackJid() {
+  // A notification can successfully open a session before the background
+  // session-list cache sees it. The successful event load, not list presence,
+  // owns the return target; a failed later selection is handled by its caller.
+  if (state.lastStandardJid) return state.lastStandardJid;
+  return sessionsForDisplay()[0]?.jid ?? null;
+}
+
+/** Render the same truthful standard-mode shell boot shows when no session exists. */
+function clearStandardSelection() {
+  ++sessionSelectionGeneration;
+  closeStream();
+  closeSearch();
+  state.activeJid = null;
+  state.selectionPending = false;
+  state.lifeSession = null;
+  state.lastStandardJid = null;
+  state.previewingDeleted = false;
+  state.cursor = 0;
+  state.oldest = 0;
+  state.hasMore = false;
+  state.loadingOlder = false;
+  state.newest = 0;
+  state.hasMoreNewer = false;
+  state.loadingNewer = false;
+  state.atLive = true;
+  state.pendingQuote = '';
+  $('btn-new-session').disabled = false;
+  $('btn-trash').disabled = false;
+
+  closeModelSheet();
+  closeThinkingSheet();
+  closeMoreMenu();
+  closeMediaSheet();
+  mediaViewer.close();
+  $('session-name').textContent = 'no session';
+  $('session-name').tabIndex = 0;
+  $('messages').textContent = '';
+  renderPartial('');
+  renderQuotePreview();
+  setJumpLive(false);
+  setBusy(false);
+  $('deleted-banner').hidden = true;
+  $('composer-wrap').hidden = false;
+  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
+    $(id).hidden = false;
+  }
+  syncUsageButton();
+  renderHeaderBadge();
+  renderSessions();
+}
+
+function beginStandardNavigation() {
+  const navigation = ++lifeNavigationGeneration;
+  setPresentationMode('sessions');
+  closeTrash();
+  return navigation;
+}
+
+async function selectStandardCandidates(candidates, navigation) {
+  const attempted = new Set();
+  for (const jid of candidates) {
+    if (!jid || attempted.has(jid)) continue;
+    attempted.add(jid);
+    if (navigation !== lifeNavigationGeneration) return false;
+    try {
+      const selected = await selectSession(jid, { navigation });
+      if (navigation !== lifeNavigationGeneration) return false;
+      if (selected) return true;
+    } catch {
+      // A remembered notification target may since have been deleted. Continue
+      // through the current standard list before settling on an empty shell.
+    }
+  }
+  if (navigation !== lifeNavigationGeneration) return false;
+  clearStandardSelection();
+  return false;
+}
+
+function standardSelectionCandidates(preferred) {
+  return [preferred, ...sessionsForDisplay().map((session) => session.jid)];
+}
+
+async function restoreStandardAfterLifeFailure(navigation) {
+  if (navigation !== lifeNavigationGeneration) return false;
+  setPresentationMode('sessions');
+  return selectStandardCandidates(
+    standardSelectionCandidates(standardFallbackJid()),
+    navigation,
+  );
+}
+
+async function enterLifeMode() {
+  const navigation = ++lifeNavigationGeneration;
+  const fallback = state.activeJid && state.activeJid !== LIFE_JID ? state.activeJid : null;
+  if (fallback && state.sessions.some((s) => s.jid === fallback)) state.lastStandardJid = fallback;
+
+  try {
+    const life = await api('/api/life-session', { method: 'POST' });
+    if (navigation !== lifeNavigationGeneration) return false;
+    if (life?.jid !== LIFE_JID || life?.kind !== 'life') {
+      throw new Error('Life endpoint returned an invalid singleton identity');
+    }
+    state.lifeSession = life;
+    setPresentationMode('life', { persist: false });
+    const selected = await selectSession(life.jid, {
+      name: life.name,
+      life: true,
+      navigation,
+    });
+    if (!selected || navigation !== lifeNavigationGeneration) return false;
+    saveMode('life');
+    return true;
+  } catch (err) {
+    if (navigation !== lifeNavigationGeneration) return false;
+    await restoreStandardAfterLifeFailure(navigation);
+    return false;
+  }
+}
+
+async function exitLifeMode() {
+  const navigation = beginStandardNavigation();
+  return selectStandardCandidates(
+    standardSelectionCandidates(standardFallbackJid()),
+    navigation,
+  );
+}
+
+async function openStandardSession(jid, ownedNavigation = null) {
+  const navigation = ownedNavigation ?? beginStandardNavigation();
+  if (navigation !== lifeNavigationGeneration) return false;
+  setPresentationMode('sessions');
+  // Notification targets can be newer than a background tab's cached list.
+  // Try the exact JID, then the remembered/current standard candidates.
+  return selectStandardCandidates(
+    [jid, ...standardSelectionCandidates(standardFallbackJid())],
+    navigation,
+  );
+}
+
+async function openDeletedSession(jid, name) {
+  const navigation = beginStandardNavigation();
+  try {
+    const selected = await selectSession(jid, { deleted: true, name, navigation });
+    if (navigation !== lifeNavigationGeneration) return false;
+    return selected;
+  } catch {
+    if (navigation !== lifeNavigationGeneration) return false;
+    return selectStandardCandidates(
+      standardSelectionCandidates(standardFallbackJid()),
+      navigation,
+    );
+  }
+}
+
 function syncSessionTitle(session) {
+  if (state.selectionPending) return;
   if (
     session &&
     !state.previewingDeleted &&
@@ -546,23 +749,35 @@ function applyImmediateSessionTitle(jid, name) {
 }
 
 async function loadSessions() {
+  const generation = ++sessionsLoadGeneration;
   const { sessions } = await api('/api/sessions');
+  if (generation !== sessionsLoadGeneration) return false;
   state.sessions = sessions;
 
   // The message response updates the active title immediately. Polling remains
   // the fallback for another tab and crash-recovered worker jobs, but never
   // overwrites an inline or drawer rename while the user is typing it.
-  syncSessionTitle(state.sessions.find((session) => session.jid === state.activeJid));
+  if (state.mode !== 'life' && !state.selectionPending) {
+    syncSessionTitle(state.sessions.find((session) => session.jid === state.activeJid));
+  }
 
   renderSessions();
   renderHeaderBadge();
   renderThinkingButton();
+  return true;
 }
 
 /** Mirror the provider badge next to the title, so it is visible without opening the drawer. */
 function renderHeaderBadge() {
   const host = $('header-badge');
   host.textContent = '';
+  if (state.mode === 'life') {
+    host.hidden = false;
+    host.className = 'provider-badge life-default';
+    host.textContent = 'DEFAULT';
+    host.title = 'Fresh Pi runtime default for every turn';
+    return;
+  }
   const session = state.sessions.find((s) => s.jid === state.activeJid);
   if (!session || !session.badge || state.previewingDeleted) {
     host.hidden = true;
@@ -665,14 +880,18 @@ function renderSessions(force = false) {
     }
 
     const del = el('button', 'icon-btn del');
+    del.disabled = state.selectionPending;
     del.setAttribute('aria-label', `Delete ${session.name}`);
     del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
+      if (state.selectionPending) return;
       // Soft delete: it goes to "Recently deleted" and can be restored.
       if (!confirm(`Move "${session.name}" to Recently deleted?`)) return;
+      const navigation = beginStandardNavigation();
       await api(`/api/sessions/${encodeURIComponent(session.jid)}`, { method: 'DELETE' });
-      refreshTrashCount();
+      if (navigation !== lifeNavigationGeneration) return;
+      void refreshTrashCount({ navigation });
       if (state.activeJid === session.jid) {
         state.activeJid = null;
         $('messages').textContent = '';
@@ -680,16 +899,19 @@ function renderSessions(force = false) {
         closeStream();
       }
       await loadSessions();
+      if (navigation !== lifeNavigationGeneration) return;
       if (!state.activeJid) {
-        const nextTarget = sessionsForDisplay()[0]?.jid;
-        if (nextTarget) selectSession(nextTarget);
+        await selectStandardCandidates(
+          standardSelectionCandidates(standardFallbackJid()),
+          navigation,
+        );
       }
     });
     item.append(del);
 
     item.addEventListener('click', (e) => {
-      if (e.defaultPrevented || state.renamingJid === session.jid) return;
-      selectSession(session.jid);
+      if (state.selectionPending || e.defaultPrevented || state.renamingJid === session.jid) return;
+      openStandardSession(session.jid);
       closeDrawer();
     });
     list.append(item);
@@ -697,71 +919,119 @@ function renderSessions(force = false) {
 }
 
 async function createSession() {
+  if (state.selectionPending) return;
   // Open immediately. The worker replaces "New session" with a <=10-character
   // one-shot summary of the first prompt; no naming dialog and no chat context
   // is consumed by that auxiliary request.
+  const navigation = beginStandardNavigation();
   const session = await api('/api/sessions', { method: 'POST' });
+  if (navigation !== lifeNavigationGeneration) return;
   await loadSessions();
-  await selectSession(session.jid);
-  closeDrawer();
+  if (navigation !== lifeNavigationGeneration) return;
+  await openStandardSession(session.jid, navigation);
+  if (navigation === lifeNavigationGeneration) closeDrawer();
 }
 
 async function selectSession(jid, opts = {}) {
-  state.activeJid = jid;
-  state.previewingDeleted = Boolean(opts.deleted);
+  const selection = ++sessionSelectionGeneration;
+  const navigation = opts.navigation ?? lifeNavigationGeneration;
+  const previewingDeleted = Boolean(opts.deleted);
+  closeStream();
+  state.selectionPending = true;
+  state.renamingJid = null;
+  state.renameDraft = '';
+  $('btn-new-session').disabled = true;
+  $('btn-trash').disabled = true;
   state.cursor = 0;
   state.oldest = 0;
   state.hasMore = false;
   state.loadingOlder = false;
   state.newest = 0;
   state.hasMoreNewer = false;
+  state.loadingNewer = false;
   state.atLive = true;
   closeSearch();
-  // A trashed session is not in state.sessions, so its name has to be passed in
-  // by the trash sheet — otherwise the header falls back to the raw jid.
+  // A trashed or Life channel is not in the standard session list, so its name
+  // is supplied by the owner that selected it.
   const session = state.sessions.find((s) => s.jid === jid);
+  const lifeName = jid === LIFE_JID ? state.lifeSession?.name || 'Life' : null;
   commitRename(false);
-  $('session-name').textContent = opts.name || (session ? session.name : jid);
+  $('session-name').textContent = opts.name || session?.name || lifeName || jid;
+  $('session-name').tabIndex = -1;
   $('messages').textContent = '';
   state.pendingQuote = '';
   renderQuotePreview();
-  renderSessions();
-
-  // A trashed session is previewable but frozen: hide the composer so there is
-  // no way to type into something that would be rejected by the server anyway.
-  renderHeaderBadge();
-  $('deleted-banner').hidden = !state.previewingDeleted;
-  $('composer-wrap').hidden = state.previewingDeleted;
-  // btn-more stays: Search still works on a trashed session (the other rows are
-  // disabled in openMoreMenu). The rest act on a live session, so they go.
+  $('deleted-banner').hidden = true;
+  $('composer-wrap').hidden = true;
   for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
-    $(id).hidden = state.previewingDeleted;
+    $(id).hidden = true;
   }
-  syncUsageButton();
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
-  // The gallery and player belong to the session that was open; switching must
-  // not leave the previous session's media on screen.
   mediaViewer.close();
   closeMediaSheet();
-  // Same for a half-written reply from the session being left.
   renderPartial('');
+  renderSessions();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
-  const { events, busy, hasMore, partial } = await api(
+  const { events, busy, hasMore, partial, session: sessionMeta } = await api(
     `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
   );
+  if (
+    selection !== sessionSelectionGeneration ||
+    navigation !== lifeNavigationGeneration
+  ) return false;
+
+  const exactMetadata = sessionMeta?.jid === jid;
+  const confirmedDestination = opts.life
+    ? jid === LIFE_JID &&
+      exactMetadata &&
+      sessionMeta.kind === 'life' &&
+      sessionMeta.deleted === false
+    : previewingDeleted
+      ? jid !== LIFE_JID &&
+        exactMetadata &&
+        sessionMeta.kind === 'standard' &&
+        sessionMeta.deleted === true
+      : jid !== LIFE_JID &&
+        exactMetadata &&
+        sessionMeta.kind === 'standard' &&
+        sessionMeta.deleted === false;
+  if (!confirmedDestination) {
+    throw new Error('Session metadata does not match the requested destination');
+  }
+
+  state.activeJid = jid;
+  state.selectionPending = false;
+  $('btn-new-session').disabled = false;
+  $('btn-trash').disabled = false;
+  state.previewingDeleted = previewingDeleted;
+  $('session-name').textContent = sessionMeta.name || opts.name || session?.name || jid;
+  $('session-name').tabIndex = state.mode === 'life' ? -1 : 0;
+  renderHeaderBadge();
+  $('deleted-banner').hidden = !previewingDeleted;
+  $('composer-wrap').hidden = previewingDeleted;
+  const settingsHidden = previewingDeleted || state.mode === 'life';
+  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
+    $(id).hidden = settingsHidden;
+  }
+  syncUsageButton();
+
   for (const event of events) appendEvent(event, false);
-  // Opening a session while pi is mid-reply should show the text so far.
   renderPartial(partial?.content ?? '');
   const openedSession = state.sessions.find((s) => s.jid === jid);
-  if (openedSession) {
-    markSeen(jid, openedSession.lastReplyId);
-    // renderSessions() already ran above, before the events were fetched, so
-    // re-render or the dot lingers until the next poll.
-    renderSessions();
+  if (jid !== LIFE_JID && !previewingDeleted) {
+    // The events endpoint can succeed before polling refreshes state.sessions
+    // (for example, a notification for a newly restored session). Preserve
+    // that confirmed standard destination and mark the loaded tail as read.
+    state.lastStandardJid = jid;
+    markSeen(
+      jid,
+      Math.max(openedSession?.lastReplyId ?? 0, events[events.length - 1]?.id ?? 0),
+    );
   }
+  renderSessions();
   state.oldest = events.length > 0 ? events[0].id : 0;
   state.newest = events.length > 0 ? events[events.length - 1].id : 0;
   state.hasMore = Boolean(hasMore);
@@ -771,7 +1041,8 @@ async function selectSession(jid, opts = {}) {
   renderTopSentinel();
   setBusy(busy);
   scrollToBottom(true);
-  openStream();
+  openStream(selection, jid);
+  return true;
 }
 
 const PAGE_SIZE = 50;
@@ -785,14 +1056,24 @@ const PAGE_SIZE = 50;
  * before and after the DOM insert.
  */
 async function loadOlder() {
-  if (state.loadingOlder || !state.hasMore || !state.activeJid || !state.oldest) return;
+  if (
+    state.selectionPending ||
+    state.loadingOlder ||
+    !state.hasMore ||
+    !state.activeJid ||
+    !state.oldest
+  ) return;
+  const selection = sessionSelectionGeneration;
+  const jid = state.activeJid;
+  const oldest = state.oldest;
   state.loadingOlder = true;
   setTopSentinel('loading');
 
   try {
     const { events, hasMore } = await api(
-      `/api/sessions/${encodeURIComponent(state.activeJid)}/events?before=${state.oldest}&limit=${PAGE_SIZE}`,
+      `/api/sessions/${encodeURIComponent(jid)}/events?before=${oldest}&limit=${PAGE_SIZE}`,
     );
+    if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
 
     const messages = $('messages');
     const heightBefore = messages.scrollHeight;
@@ -827,8 +1108,10 @@ async function loadOlder() {
       messages.scrollTop = topBefore + (messages.scrollHeight - heightBefore);
     }
   } finally {
-    state.loadingOlder = false;
-    renderTopSentinel();
+    if (selection === sessionSelectionGeneration && state.activeJid === jid) {
+      state.loadingOlder = false;
+      renderTopSentinel();
+    }
   }
 }
 
@@ -860,13 +1143,17 @@ function setTopSentinel(mode) {
 /** Page forward — only needed after a jump has detached the view from the tail. */
 async function loadNewer() {
   // Only relevant while detached: at the live tail, SSE already appends.
-  if (state.atLive || state.loadingNewer || !state.hasMoreNewer) return;
+  if (state.selectionPending || state.atLive || state.loadingNewer || !state.hasMoreNewer) return;
   if (!state.activeJid || !state.newest) return;
+  const selection = sessionSelectionGeneration;
+  const jid = state.activeJid;
+  const newest = state.newest;
   state.loadingNewer = true;
   try {
     const { events, hasMoreNewer } = await api(
-      `/api/sessions/${encodeURIComponent(state.activeJid)}/events?after=${state.newest}&limit=${PAGE_SIZE}`,
+      `/api/sessions/${encodeURIComponent(jid)}/events?after=${newest}&limit=${PAGE_SIZE}`,
     );
+    if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
     const messages = $('messages');
     const frag = document.createDocumentFragment();
     for (const event of events) frag.append(buildEventNode(event));
@@ -880,7 +1167,9 @@ async function loadNewer() {
       setJumpLive(false);
     }
   } finally {
-    state.loadingNewer = false;
+    if (selection === sessionSelectionGeneration && state.activeJid === jid) {
+      state.loadingNewer = false;
+    }
   }
 }
 
@@ -903,9 +1192,33 @@ function setJumpLive(show) {
   $('jump-live').classList.toggle('visible', !!show);
 }
 
+async function reopenActiveTail() {
+  const jid = state.activeJid;
+  if (state.selectionPending || !jid) return false;
+  if (state.mode !== 'life') {
+    return state.previewingDeleted
+      ? openDeletedSession(jid, $('session-name').textContent || jid)
+      : openStandardSession(jid);
+  }
+
+  const navigation = ++lifeNavigationGeneration;
+  try {
+    const selected = await selectSession(jid, {
+      name: state.lifeSession?.name || 'Life',
+      life: true,
+      navigation,
+    });
+    if (navigation !== lifeNavigationGeneration) return false;
+    return selected;
+  } catch {
+    if (navigation !== lifeNavigationGeneration) return false;
+    return restoreStandardAfterLifeFailure(navigation);
+  }
+}
+
 $('jump-live').addEventListener('click', () => {
   if (!state.atLive && state.activeJid) {
-    selectSession(state.activeJid);
+    void reopenActiveTail();
     return;
   }
   jumpToLatest($('messages'), $('jump-live'));
@@ -916,11 +1229,13 @@ $('jump-live').addEventListener('click', () => {
 let searchTimer;
 
 function openSearch() {
+  if (state.selectionPending) return;
   $('search-panel').hidden = false;
   $('search-input').focus();
 }
 
 function closeSearch() {
+  searchOwnershipGeneration += 1;
   $('search-panel').hidden = true;
   $('search-input').value = '';
   $('search-results').textContent = '';
@@ -930,22 +1245,32 @@ function closeSearch() {
 $('btn-search-close').addEventListener('click', closeSearch);
 
 $('search-input').addEventListener('input', () => {
+  searchOwnershipGeneration += 1;
   clearTimeout(searchTimer);
   // Debounced: every keystroke would otherwise scan the session's rows.
   searchTimer = setTimeout(runSearch, 250);
 });
 
 async function runSearch() {
+  if (state.selectionPending) return;
   const q = $('search-input').value.trim();
   const results = $('search-results');
   if (!state.activeJid || q.length < 2) {
     results.textContent = '';
     return;
   }
+  const search = ++searchOwnershipGeneration;
+  const selection = sessionSelectionGeneration;
+  const jid = state.activeJid;
 
   const { hits } = await api(
-    `/api/sessions/${encodeURIComponent(state.activeJid)}/search?q=${encodeURIComponent(q)}`,
+    `/api/sessions/${encodeURIComponent(jid)}/search?q=${encodeURIComponent(q)}`,
   );
+  if (
+    search !== searchOwnershipGeneration ||
+    selection !== sessionSelectionGeneration ||
+    state.activeJid !== jid
+  ) return;
 
   results.textContent = '';
   if (hits.length === 0) {
@@ -997,11 +1322,14 @@ function highlight(container, text, q) {
 
 /** Load a window centred on an event, scroll to it and flash it. */
 async function jumpTo(id) {
-  if (!state.activeJid) return;
+  if (state.selectionPending || !state.activeJid) return;
+  const selection = sessionSelectionGeneration;
+  const jid = state.activeJid;
 
   const { events, hasMore, hasMoreNewer, busy } = await api(
-    `/api/sessions/${encodeURIComponent(state.activeJid)}/events?around=${id}&limit=${PAGE_SIZE}`,
+    `/api/sessions/${encodeURIComponent(jid)}/events?around=${id}&limit=${PAGE_SIZE}`,
   );
+  if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
 
   const messages = $('messages');
   messages.textContent = '';
@@ -1035,7 +1363,7 @@ async function jumpTo(id) {
 
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
 async function runQuickCommand(command, args = {}) {
-  if (!state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
   await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
     method: 'POST',
     body: JSON.stringify({ command, args }),
@@ -1079,12 +1407,18 @@ function isMenuOpen() {
 }
 
 function openMoreMenu() {
+  const life = state.mode === 'life';
   $('more-menu').hidden = false;
   $('menu-scrim').hidden = false;
   $('btn-more').setAttribute('aria-expanded', 'true');
-  // A trashed session is frozen: only Search still makes sense there.
+  // Life keeps transcript browsing (Search/Media), but never exposes session
+  // management. A trashed session is frozen: only Search still makes sense.
+  for (const id of ['mi-sessions', 'mi-new-chat', 'mi-clean']) {
+    $(id).hidden = life;
+  }
+  $('mi-management-separator').hidden = life;
   for (const id of ['mi-new-chat', 'mi-clean']) {
-    $(id).disabled = state.previewingDeleted;
+    $(id).disabled = state.previewingDeleted || life;
   }
 }
 
@@ -1123,11 +1457,14 @@ function onMenuItem(id, action) {
 // mid-conversation, and the transcript only ever holds the pages scrolled in.
 
 function closeMediaSheet() {
+  ++mediaOwnershipGeneration;
   $('media-sheet').hidden = true;
 }
 
 async function openMediaSheet() {
-  if (!state.activeJid) return;
+  if (state.selectionPending || !state.activeJid) return;
+  const jid = state.activeJid;
+  const ownership = ++mediaOwnershipGeneration;
 
   const grid = $('media-grid');
   const note = $('media-note');
@@ -1137,9 +1474,23 @@ async function openMediaSheet() {
 
   let items = [];
   try {
-    ({ items } = await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/media`));
+    ({ items } = await api(`/api/sessions/${encodeURIComponent(jid)}/media`));
   } catch {
-    note.textContent = 'Could not load media for this session.';
+    if (
+      ownership === mediaOwnershipGeneration &&
+      state.activeJid === jid &&
+      !$('media-sheet').hidden
+    ) {
+      note.textContent = 'Could not load media for this session.';
+    }
+    return;
+  }
+
+  if (
+    ownership !== mediaOwnershipGeneration ||
+    state.activeJid !== jid ||
+    $('media-sheet').hidden
+  ) {
     return;
   }
 
@@ -1223,7 +1574,7 @@ function currentModelRef() {
 }
 
 async function openModelSheet() {
-  if (!state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
   closeThinkingSheet();
   $('model-sheet').hidden = false;
   syncSheetHeight();
@@ -1402,14 +1753,15 @@ $('model-sheet').addEventListener('click', (e) => {
 
 // ── thinking level sheet ─────────────────────────────────────────────────
 
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const THINKING_DESCRIPTIONS = {
   off: 'No extended thinking',
   minimal: 'Fastest, for simple requests',
   low: 'Light reasoning',
   medium: 'Balanced speed and depth',
   high: 'Deep reasoning for harder work',
-  xhigh: 'Maximum model-supported effort',
+  xhigh: 'Extended high reasoning',
+  max: 'Maximum model-supported effort',
 };
 
 function currentThinkingLevel() {
@@ -1427,7 +1779,7 @@ function renderThinkingButton() {
 }
 
 function openThinkingSheet() {
-  if (!state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
   closeModelSheet();
   $('thinking-sheet').hidden = false;
   syncSheetHeight();
@@ -1484,6 +1836,7 @@ $('thinking-sheet').addEventListener('click', (e) => {
 // ── rename ───────────────────────────────────────────────────────────────
 
 function startListRename(session) {
+  if (state.selectionPending) return;
   state.renamingJid = session.jid;
   state.renameDraft = session.name;
   renderSessions(true);
@@ -1496,6 +1849,13 @@ function startListRename(session) {
 
 async function commitListRename(jid, save) {
   if (state.renamingJid !== jid) return;
+  const selection = sessionSelectionGeneration;
+  if (state.selectionPending) {
+    state.renamingJid = null;
+    state.renameDraft = '';
+    renderSessions(true);
+    return;
+  }
 
   const session = state.sessions.find((s) => s.jid === jid);
   const name = state.renameDraft.trim();
@@ -1525,13 +1885,19 @@ async function commitListRename(jid, save) {
   }
 
   const saved = state.sessions.find((s) => s.jid === jid);
-  if (saved && state.activeJid === jid && !state.previewingDeleted) {
+  if (
+    !state.selectionPending &&
+    selection === sessionSelectionGeneration &&
+    saved &&
+    state.activeJid === jid &&
+    !state.previewingDeleted
+  ) {
     $('session-name').textContent = saved.name;
   }
 }
 
 function startRename() {
-  if (!state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted || state.mode === 'life') return;
   const label = $('session-name');
   const input = $('session-name-input');
   input.value = label.textContent;
@@ -1565,7 +1931,9 @@ async function commitRename(save) {
     alert(err.message);
     await loadSessions();
     const session = state.sessions.find((s) => s.jid === jid);
-    if (session && state.activeJid === jid) label.textContent = session.name;
+    if (!state.selectionPending && session && state.activeJid === jid) {
+      label.textContent = session.name;
+    }
   }
 }
 
@@ -1591,14 +1959,25 @@ $('session-name-input').addEventListener('keydown', (e) => {
 $('session-name-input').addEventListener('blur', () => commitRename(true));
 
 $('btn-new-session').addEventListener('click', createSession);
+$('btn-life-back').addEventListener('click', exitLifeMode);
 
 async function cleanSession() {
-  if (!state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted || state.mode === 'life') return;
   if (!confirm('Clean this session? Clears the transcript and starts a fresh pi session.')) return;
-  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/clear`, { method: 'POST' });
+  const jid = state.activeJid;
+  const navigation = beginStandardNavigation();
+  const selection = sessionSelectionGeneration;
+  await api(`/api/sessions/${encodeURIComponent(jid)}/clear`, { method: 'POST' });
+  if (
+    navigation !== lifeNavigationGeneration ||
+    selection !== sessionSelectionGeneration ||
+    state.activeJid !== jid
+  ) {
+    return;
+  }
   $('messages').textContent = '';
   state.cursor = 0;
-  openStream();
+  openStream(selection, jid);
 }
 
 // ── streaming ────────────────────────────────────────────────────────────
@@ -1610,21 +1989,28 @@ function closeStream() {
   }
 }
 
-function openStream() {
+function openStream(selection = sessionSelectionGeneration, jid = state.activeJid) {
   closeStream();
-  if (!state.activeJid) return;
+  if (
+    state.selectionPending ||
+    !jid ||
+    selection !== sessionSelectionGeneration ||
+    state.activeJid !== jid
+  ) return;
 
-  const url = `/api/sessions/${encodeURIComponent(state.activeJid)}/stream?after=${state.cursor}`;
+  const url = `/api/sessions/${encodeURIComponent(jid)}/stream?after=${state.cursor}`;
   const source = new EventSource(url);
   state.source = source;
+  const ownsStream = () =>
+    state.source === source &&
+    selection === sessionSelectionGeneration &&
+    state.activeJid === jid;
 
   source.addEventListener('event', (e) => {
+    if (!ownsStream()) return;
     const event = JSON.parse(e.data);
-    // Guard against a late frame from a previous session's stream.
     if (event.id <= state.cursor) return;
     if (!state.atLive) {
-      // Viewing older history after a jump — appending here would splice new
-      // messages directly after unrelated ones. Offer to return instead.
       state.cursor = Math.max(state.cursor, event.id);
       state.hasMoreNewer = true;
       setJumpLive(true);
@@ -1632,19 +2018,18 @@ function openStream() {
     }
     appendEvent(event, true);
     if (event.kind !== 'thinking' && event.kind !== 'tool' && event.kind !== 'tool_result' && event.role !== 'user') {
-      markSeen(state.activeJid, event.id);
-      // Keep the cached row in step so the next render does not resurrect the
-      // dot for the session currently on screen.
-      const open = state.sessions.find((s) => s.jid === state.activeJid);
+      markSeen(jid, event.id);
+      const open = state.sessions.find((s) => s.jid === jid);
       if (open) open.lastReplyId = Math.max(open.lastReplyId ?? 0, event.id);
     }
   });
 
-  source.addEventListener('busy', (e) => setBusy(JSON.parse(e.data).busy));
+  source.addEventListener('busy', (e) => {
+    if (ownsStream()) setBusy(JSON.parse(e.data).busy);
+  });
 
-  // The reply as it is being written. Null means the turn ended and the real
-  // message row is arriving, so the preview must go.
   source.addEventListener('partial', (e) => {
+    if (!ownsStream()) return;
     const data = JSON.parse(e.data);
     const live = data && state.atLive ? data : null;
     renderPartial(live?.content ?? '', live?.thinking ?? '');
@@ -1654,9 +2039,14 @@ function openStream() {
   // `after` value in the URL and duplicate everything, so reopen with the
   // current cursor instead.
   source.addEventListener('error', () => {
+    if (!ownsStream()) return;
     closeStream();
     setTimeout(() => {
-      if (state.activeJid) openStream();
+      if (
+        selection === sessionSelectionGeneration &&
+        state.activeJid === jid &&
+        !state.source
+      ) openStream(selection, jid);
     }, 2000);
   });
 }
@@ -2388,7 +2778,7 @@ function fileToBase64(file) {
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   const followAfterSend = consumeComposerSendIntent();
-  if (state.uploading) {
+  if (state.uploading || state.selectionPending) {
     abandonComposerSend();
     return;
   }
@@ -2397,6 +2787,11 @@ $('composer').addEventListener('submit', async (e) => {
     alert('Create or pick a session first.');
     return;
   }
+  // Navigation may change while FileReader converts attachments. The send
+  // belongs to the transcript visible when submit started, never whichever
+  // session happens to be active after that asynchronous work finishes.
+  const destinationJid = state.activeJid;
+  const destinationSelection = sessionSelectionGeneration;
 
   const text = input.value.trim();
   const quote = state.pendingQuote;
@@ -2409,16 +2804,40 @@ $('composer').addEventListener('submit', async (e) => {
   // A slash line is a command, not a prompt. A quoted selection always makes
   // the turn a normal prompt, even when the reply itself begins with a slash.
   if (!quote && text.startsWith('/') && state.attachments.length === 0) {
-    const sent = await trySendCommand(text);
-    if (sent) {
-      input.value = '';
-      autoGrow();
-      hideAutocomplete();
+    // A validated command belongs to this destination immediately. Detach the
+    // shared textarea before awaiting its request so navigation cannot carry
+    // the command into a second conversation.
+    input.value = '';
+    autoGrow();
+    hideAutocomplete();
+    const sent = await trySendCommand(text, destinationJid);
+    if (sent) return;
+    if (
+      destinationSelection !== sessionSelectionGeneration ||
+      state.activeJid !== destinationJid ||
+      input.value !== ''
+    ) {
       return;
     }
+    // Unknown slash lines retain the existing behavior of falling through as
+    // ordinary text, but only while the original draft still owns the composer.
+    input.value = text;
   }
 
-  const hasAttachments = state.attachments.length > 0;
+  // Detach the submitted draft synchronously. FileReader can yield for a long
+  // time on phone-sized media; later pastes and a newer destination must own a
+  // separate attachment array and composer state.
+  const submittedAttachments = state.attachments;
+  state.attachments = [];
+  input.value = '';
+  state.pendingQuote = '';
+  renderQuotePreview();
+  hideSelectionActions(true);
+  renderAttachments();
+  autoGrow();
+  hideAutocomplete();
+
+  const hasAttachments = submittedAttachments.length > 0;
   if (hasAttachments) {
     setUploading(true);
     showUploadProgress(uploadProgress, 0);
@@ -2426,21 +2845,10 @@ $('composer').addEventListener('submit', async (e) => {
 
   try {
     const attachments = [];
-    for (const attachment of state.attachments) {
+    for (const attachment of submittedAttachments) {
       attachments.push({ name: attachment.name, dataBase64: await fileToBase64(attachment.file) });
     }
 
-    input.value = '';
-    state.pendingQuote = '';
-    renderQuotePreview();
-    hideSelectionActions(true);
-    for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
-    state.attachments = [];
-    renderAttachments();
-    autoGrow();
-    hideAutocomplete();
-
-    const destinationJid = state.activeJid;
     const path = `/api/sessions/${encodeURIComponent(destinationJid)}/messages`;
     const payload = { text, quote, attachments };
     const result = hasAttachments
@@ -2453,12 +2861,15 @@ $('composer').addEventListener('submit', async (e) => {
     if (err.status === 401) showLogin();
     alert(err.message);
   } finally {
+    for (const attachment of submittedAttachments) {
+      if (attachment.url) URL.revokeObjectURL(attachment.url);
+    }
     if (hasAttachments) setUploading(false);
   }
 });
 
 /** Parse "/pi model gpt-5" into a command + its single argument. */
-async function trySendCommand(line) {
+async function trySendCommand(line, destinationJid = state.activeJid) {
   const raw = line.slice(1).trim();
   const match = state.commands
     .filter((c) => raw === c.name || raw.startsWith(`${c.name} `))
@@ -2480,7 +2891,7 @@ async function trySendCommand(line) {
     if (rest) args[match.arg.name] = rest;
   }
 
-  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
+  await api(`/api/sessions/${encodeURIComponent(destinationJid)}/commands`, {
     method: 'POST',
     body: JSON.stringify({ command: match.name, args }),
   }).catch((err) => alert(err.message));
@@ -3052,9 +3463,10 @@ lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
 
 // ── recently deleted ─────────────────────────────────────────────────────
 
-async function refreshTrashCount() {
+async function refreshTrashCount({ navigation = null } = {}) {
   try {
     const { sessions } = await api('/api/sessions/deleted');
+    if (navigation !== null && navigation !== lifeNavigationGeneration) return null;
     const badge = $('trash-count');
     badge.textContent = String(sessions.length);
     badge.hidden = sessions.length === 0;
@@ -3074,12 +3486,21 @@ function fmtDate(iso) {
 }
 
 async function openTrash() {
+  if (state.selectionPending) return;
+  const navigation = beginStandardNavigation();
   $('trash-sheet').hidden = false;
   const list = $('trash-list');
   list.textContent = '';
   $('trash-note').textContent = 'Loading…';
 
-  const sessions = await refreshTrashCount();
+  const sessions = await refreshTrashCount({ navigation });
+  if (
+    !sessions ||
+    navigation !== lifeNavigationGeneration ||
+    $('trash-sheet').hidden
+  ) {
+    return;
+  }
   if (sessions.length === 0) {
     $('trash-note').textContent = 'Nothing here. Deleted sessions appear for 30 days.';
     return;
@@ -3099,23 +3520,28 @@ async function openTrash() {
     preview.addEventListener('click', () => {
       closeTrash();
       closeDrawer();
-      selectSession(s.jid, { deleted: true, name: s.name });
+      void openDeletedSession(s.jid, s.name);
     });
 
     const restore = el('button', 'primary', 'Restore');
     restore.addEventListener('click', async () => {
+      const navigation = beginStandardNavigation();
       await api(`/api/sessions/${encodeURIComponent(s.jid)}/restore`, { method: 'POST' });
+      if (navigation !== lifeNavigationGeneration) return;
       await loadSessions();
-      await refreshTrashCount();
+      await refreshTrashCount({ navigation });
+      if (navigation !== lifeNavigationGeneration) return;
       closeTrash();
-      selectSession(s.jid);
       closeDrawer();
+      await openStandardSession(s.jid, navigation);
     });
 
     const forever = el('button', 'danger', 'Delete forever');
     forever.addEventListener('click', async () => {
       if (!confirm(`Permanently delete "${s.name}"? This also removes pi's session files and cannot be undone.`)) return;
+      const navigation = beginStandardNavigation();
       await api(`/api/sessions/${encodeURIComponent(s.jid)}?permanent=1`, { method: 'DELETE' });
+      if (navigation !== lifeNavigationGeneration) return;
       openTrash();
     });
 
@@ -3137,10 +3563,14 @@ $('trash-sheet').addEventListener('click', (e) => {
 
 $('btn-restore-inline').addEventListener('click', async () => {
   if (!state.activeJid) return;
-  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/restore`, { method: 'POST' });
+  const jid = state.activeJid;
+  const navigation = beginStandardNavigation();
+  await api(`/api/sessions/${encodeURIComponent(jid)}/restore`, { method: 'POST' });
+  if (navigation !== lifeNavigationGeneration) return;
   await loadSessions();
-  await refreshTrashCount();
-  selectSession(state.activeJid);
+  await refreshTrashCount({ navigation });
+  if (navigation !== lifeNavigationGeneration) return;
+  await openStandardSession(jid, navigation);
 });
 
 // ── keyboard-aware sizing ────────────────────────────────────────────────
@@ -3293,14 +3723,12 @@ function drawerWidth() {
 
 function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
-  if (window.matchMedia('(min-width: 768px)').matches) return false;
+  if (window.matchMedia('(min-width: 768px)').matches || state.mode === 'life') return false;
   if (!$('login').hidden) return false;
   return (
     $('lightbox').hidden &&
     mediaViewer.element.hidden &&
-    $('trash-sheet').hidden &&
-    $('model-sheet').hidden &&
-    $('thinking-sheet').hidden
+    !document.querySelector('.sheet:not([hidden])')
   );
 }
 
@@ -3386,9 +3814,94 @@ function endDrawerDrag() {
 document.addEventListener('touchend', endDrawerDrag, { passive: true });
 document.addEventListener('touchcancel', endDrawerDrag, { passive: true });
 
+// ── right-edge Life swipe ─────────────────────────────────────────────────
+
+let lifeDrag = null;
+
+function isLifeGestureAllowed() {
+  if (wideDrawer.matches || state.mode === 'life' || !$('login').hidden) return false;
+  if ($('drawer').classList.contains('open')) return false;
+  return (
+    $('lightbox').hidden &&
+    mediaViewer.element.hidden &&
+    !document.querySelector('.sheet:not([hidden])')
+  );
+}
+
+function resetLifePreview() {
+  const preview = $('life-swipe-preview');
+  preview.style.transition = '';
+  preview.style.transform = '';
+  preview.hidden = true;
+}
+
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    if (!isLifeGestureAllowed() || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    if (touch.clientX < window.innerWidth - EDGE_ZONE_PX) return;
+    lifeDrag = { x: touch.clientX, y: touch.clientY, axis: null, distance: 0 };
+  },
+  { passive: true },
+);
+
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (!lifeDrag || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - lifeDrag.x;
+    const dy = touch.clientY - lifeDrag.y;
+    if (!lifeDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
+      lifeDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (lifeDrag.axis === 'y') {
+        lifeDrag = null;
+        return;
+      }
+    }
+    if (!lifeDrag || lifeDrag.axis !== 'x') return;
+    if (e.cancelable) e.preventDefault();
+
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    lifeDrag.distance = Math.max(0, Math.min(viewportWidth, -dx));
+    const preview = $('life-swipe-preview');
+    preview.hidden = false;
+    preview.style.transition = 'none';
+    preview.style.transform = `translateX(${viewportWidth - lifeDrag.distance}px)`;
+  },
+  { passive: false },
+);
+
+function endLifeDrag(commit = true) {
+  if (!lifeDrag) return;
+  const drag = lifeDrag;
+  lifeDrag = null;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const shouldEnter = commit && drag.axis === 'x' && drag.distance >= viewportWidth / 3;
+  resetLifePreview();
+  if (shouldEnter) void enterLifeMode();
+}
+
+document.addEventListener('touchend', () => endLifeDrag(true), { passive: true });
+document.addEventListener('touchcancel', () => endLifeDrag(false), { passive: true });
+
 // ── boot ─────────────────────────────────────────────────────────────────
 
+function consumeSessionTarget() {
+  const url = new URL(location.href);
+  const wanted = url.searchParams.get('session');
+  if (!wanted) return null;
+  url.searchParams.delete('session');
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  return wanted;
+}
+
 async function boot() {
+  const navigation = lifeNavigationGeneration;
+  // Notification routing is one-shot even if a newer user action supersedes
+  // this boot while its initial API requests are still pending.
+  const wanted = consumeSessionTarget();
   const [{ commands }, { models }] = await Promise.all([
     api('/api/commands'),
     api('/api/models').catch(() => ({ models: [] })),
@@ -3399,12 +3912,29 @@ async function boot() {
   await loadSessions();
   await refreshTrashCount();
   refreshNotifyState().catch(() => {});
+  if (navigation !== lifeNavigationGeneration) return;
 
-  // A notification tap can hand us a session to open.
-  const wanted = new URLSearchParams(location.search).get('session');
-  const sorted = sessionsForDisplay();
-  const target = wanted && state.sessions.some((s) => s.jid === wanted) ? wanted : sorted[0]?.jid;
-  if (target) selectSession(target);
+  // Notification navigation is one-shot. An explicit standard target wins over
+  // a persisted Life presentation, while web:life always re-runs its endpoint.
+  if (wanted === LIFE_JID) {
+    await enterLifeMode();
+    return;
+  }
+  if (wanted) {
+    await openStandardSession(wanted);
+    return;
+  }
+  if (storedMode() === 'life') {
+    await enterLifeMode();
+    return;
+  }
+
+  const target = standardFallbackJid();
+  if (target) await openStandardSession(target);
+  else {
+    setPresentationMode('sessions');
+    clearStandardSelection();
+  }
 }
 
 // The SSE stream only carries the OPEN session, so every other session's busy

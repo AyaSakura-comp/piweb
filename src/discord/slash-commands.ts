@@ -88,6 +88,7 @@ const PI_COMMAND = new SlashCommandBuilder()
             { name: 'medium', value: 'medium' },
             { name: 'high', value: 'high' },
             { name: 'xhigh', value: 'xhigh' },
+            { name: 'max', value: 'max' },
           ),
       ),
   )
@@ -368,7 +369,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : undefined,
   );
 
-  const effective = computeEffectiveChannelSettings(channel);
+  const effective = await computeEffectiveChannelSettings(channel);
   const sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
   await interaction.editReply({ content: buildStatusMessage(effective, sessionStatus) });
 }
@@ -424,7 +425,7 @@ async function handleModelReset(interaction: ChatInputCommandInteraction): Promi
   clearChannelModelOverride(channel.jid);
 
   const updated = getChannel(channel.jid)!;
-  const effective = computeEffectiveChannelSettings(updated, { forceRefresh: true });
+  const effective = await computeEffectiveChannelSettings(updated, { forceRefresh: true });
   const notes = ['Model reset for this channel.'];
 
   if (updated.thinkingOverride && effective.thinkingAdjusted) {
@@ -456,7 +457,7 @@ async function handleThinkingSet(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
-  const effective = computeEffectiveChannelSettings(channel, { forceRefresh: true });
+  const effective = await computeEffectiveChannelSettings(channel, { forceRefresh: true });
   const resolution = resolveThinkingForModel(effective.modelInfo, rawLevel);
 
   setChannelThinkingOverride(channel.jid, resolution.effective);

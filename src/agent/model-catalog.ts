@@ -1,7 +1,7 @@
 import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
-import { supportsModelXhigh } from './pi-ai-compat.js';
+import { getModelSupportedThinkingLevels } from './pi-ai-compat.js';
 import { cachedAgyModels, listAgyModels } from './agy.js';
 
 const CACHE_TTL_MS = 30_000;
@@ -13,6 +13,7 @@ export interface AvailableModelInfo {
   name: string;
   reasoning: boolean;
   supportsXhigh: boolean;
+  supportedThinkingLevels?: ThinkingLevel[];
 }
 
 interface ModelCache {
@@ -155,7 +156,7 @@ export interface ThinkingResolution {
   requested: ThinkingLevel;
   effective: ThinkingLevel;
   adjusted: boolean;
-  reason?: 'non_reasoning' | 'xhigh_to_high';
+  reason?: 'non_reasoning' | 'unsupported_level';
 }
 
 export function resolveThinkingForModel(
@@ -175,12 +176,31 @@ export function resolveThinkingForModel(
     };
   }
 
-  if (desired === 'xhigh' && !model.supportsXhigh) {
+  const supported =
+    model.supportedThinkingLevels ??
+    ([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      ...(model.supportsXhigh ? ['xhigh'] : []),
+    ] as ThinkingLevel[]);
+  if (!supported.includes(desired)) {
+    const requestedIndex = THINKING_LEVELS.indexOf(desired);
+    // Match Pi's nearest-level behavior: prefer the next higher capability,
+    // then fall back downward. Thus xhigh becomes max when max is available.
+    const higher = THINKING_LEVELS.slice(requestedIndex).find((level) =>
+      supported.includes(level),
+    );
+    const lower = [...THINKING_LEVELS.slice(0, requestedIndex)]
+      .reverse()
+      .find((level) => supported.includes(level));
     return {
       requested: desired,
-      effective: 'high',
+      effective: higher ?? lower ?? 'off',
       adjusted: true,
-      reason: 'xhigh_to_high',
+      reason: 'unsupported_level',
     };
   }
 
@@ -193,13 +213,15 @@ export function toModelChoiceName(model: AvailableModelInfo): string {
 }
 
 function toAvailableModelInfo(model: Model<any>): AvailableModelInfo {
+  const supportedThinkingLevels = getModelSupportedThinkingLevels(model).filter(isThinkingLevel);
   return {
     ref: `${model.provider}/${model.id}`,
     provider: model.provider,
     id: model.id,
     name: model.name || model.id,
     reasoning: Boolean(model.reasoning),
-    supportsXhigh: supportsModelXhigh(model),
+    supportsXhigh: supportedThinkingLevels.includes('xhigh'),
+    supportedThinkingLevels,
   };
 }
 

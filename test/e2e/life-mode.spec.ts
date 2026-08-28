@@ -1,0 +1,1467 @@
+import { expect, test, type Page, type Route } from 'playwright/test';
+
+const STANDARD_SESSION = {
+  jid: 'web:ordinary',
+  name: 'Ordinary session',
+  kind: 'standard',
+  busy: false,
+  lastActivity: '2026-08-28 00:00:00',
+  lastReplyId: 0,
+  model: 'openai-codex/gpt-5.6-sol',
+  thinking: 'xhigh',
+  badge: { label: 'SOL', kind: 'sol' },
+};
+
+const OTHER_STANDARD_SESSION = {
+  ...STANDARD_SESSION,
+  jid: 'web:other',
+  name: 'Other session',
+  lastActivity: '2026-08-27 00:00:00',
+};
+
+const DELETED_SESSION = {
+  jid: 'web:deleted',
+  name: 'Deleted session',
+  deletedAt: '2026-08-28 00:00:00',
+  events: 3,
+};
+
+const LIFE_SESSION = {
+  jid: 'web:life',
+  name: 'Life',
+  kind: 'life',
+  model: '',
+  thinking: '',
+};
+
+async function installLifeApi(
+  page: Page,
+  options: {
+    failLife?: boolean;
+    failLifeEvents?: boolean;
+    delayLife?: boolean;
+    delayLifeEvents?: boolean;
+    delayLifeMedia?: boolean;
+    unknownReplyEvent?: boolean;
+    delayRestore?: boolean;
+    delayDelete?: boolean;
+    delayCreate?: boolean;
+    delayClear?: boolean;
+    delayTrashLoad?: boolean;
+    delayCommand?: boolean;
+    delayMessage?: boolean;
+    messageSessionTitle?: string;
+    corruptLifeMetadata?: boolean;
+    corruptLifeEndpoint?: boolean;
+    corruptDeletedMetadata?: boolean;
+    oldStreamEventDuringPending?: boolean;
+    delayUnknownEvents?: boolean;
+    omitOrdinaryMetadata?: boolean;
+    omitOrdinaryDeletedState?: boolean;
+    unknownMetadataName?: string;
+    delayBoot?: boolean;
+    commandCatalog?: Array<{ name: string }>;
+    standardSessions?: (typeof STANDARD_SESSION)[];
+    deletedSessions?: (typeof DELETED_SESSION)[];
+    lifeEventState?: boolean;
+  } = {},
+) {
+  let lifeRequests = 0;
+  let deletedRequests = 0;
+  let ordinaryStreamRequests = 0;
+  let standardSessions = options.standardSessions ?? [STANDARD_SESSION];
+  let deletedSessions = options.deletedSessions ?? [];
+  let failUnknownEvents = false;
+  let unknownDeleted = false;
+  let releaseLifeResponse: (() => void) | undefined;
+  const lifeResponseGate = options.delayLife
+    ? new Promise<void>((resolve) => {
+        releaseLifeResponse = resolve;
+      })
+    : null;
+  let releaseLifeEvents: (() => void) | undefined;
+  const lifeEventsGate = options.delayLifeEvents
+    ? new Promise<void>((resolve) => {
+        releaseLifeEvents = resolve;
+      })
+    : null;
+  let releaseLifeMedia: (() => void) | undefined;
+  const lifeMediaGate = options.delayLifeMedia
+    ? new Promise<void>((resolve) => {
+        releaseLifeMedia = resolve;
+      })
+    : null;
+  let releaseRestore: (() => void) | undefined;
+  const restoreGate = options.delayRestore
+    ? new Promise<void>((resolve) => {
+        releaseRestore = resolve;
+      })
+    : null;
+  let releaseDelete: (() => void) | undefined;
+  const deleteGate = options.delayDelete
+    ? new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      })
+    : null;
+  let releaseCreate: (() => void) | undefined;
+  const createGate = options.delayCreate
+    ? new Promise<void>((resolve) => {
+        releaseCreate = resolve;
+      })
+    : null;
+  let releaseClear: (() => void) | undefined;
+  const clearGate = options.delayClear
+    ? new Promise<void>((resolve) => {
+        releaseClear = resolve;
+      })
+    : null;
+  let releaseTrashLoad: (() => void) | undefined;
+  const trashLoadGate = options.delayTrashLoad
+    ? new Promise<void>((resolve) => {
+        releaseTrashLoad = resolve;
+      })
+    : null;
+  let releaseCommand: (() => void) | undefined;
+  const commandGate = options.delayCommand
+    ? new Promise<void>((resolve) => {
+        releaseCommand = resolve;
+      })
+    : null;
+  let releaseUnknownEvents: (() => void) | undefined;
+  const unknownEventsGate = options.delayUnknownEvents
+    ? new Promise<void>((resolve) => {
+        releaseUnknownEvents = resolve;
+      })
+    : null;
+  let releaseBoot: (() => void) | undefined;
+  const bootGate = options.delayBoot
+    ? new Promise<void>((resolve) => {
+        releaseBoot = resolve;
+      })
+    : null;
+  let releaseMessage: (() => void) | undefined;
+  const messageGate = options.delayMessage
+    ? new Promise<void>((resolve) => {
+        releaseMessage = resolve;
+      })
+    : null;
+  const messagePaths: string[] = [];
+  const messageBodies: unknown[] = [];
+
+  await page.route('**/api/**', async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === '/api/me') return route.fulfill({ json: { authed: true } });
+    if (path === '/api/commands') {
+      if (bootGate) await bootGate;
+      return route.fulfill({ json: { commands: options.commandCatalog ?? [] } });
+    }
+    if (path === '/api/models') return route.fulfill({ json: { models: [] } });
+    if (path === '/api/push/key') return route.fulfill({ json: { key: '' } });
+    if (path === '/api/sessions/deleted') {
+      deletedRequests += 1;
+      if (trashLoadGate && deletedRequests > 1) await trashLoadGate;
+      return route.fulfill({ json: { sessions: deletedSessions } });
+    }
+    if (path === '/api/sessions' && request.method() === 'GET') {
+      return route.fulfill({
+        json: { sessions: standardSessions },
+      });
+    }
+    if (path === '/api/sessions' && request.method() === 'POST') {
+      if (createGate) await createGate;
+      const created = {
+        ...STANDARD_SESSION,
+        jid: 'web:created',
+        name: 'New session',
+        lastActivity: '2026-08-29 00:00:00',
+      };
+      standardSessions = [created, ...standardSessions];
+      return route.fulfill({ json: { jid: created.jid, name: created.name } });
+    }
+    if (path === '/api/life-session' && request.method() === 'POST') {
+      lifeRequests += 1;
+      if (options.failLife) {
+        return route.fulfill({ status: 503, json: { error: 'Life unavailable' } });
+      }
+      if (lifeResponseGate) await lifeResponseGate;
+      return route.fulfill({
+        json: options.corruptLifeEndpoint
+          ? { ...STANDARD_SESSION, created: false }
+          : { ...LIFE_SESSION, created: lifeRequests === 1 },
+      });
+    }
+    if (path.endsWith('/clear') && request.method() === 'POST') {
+      if (clearGate) await clearGate;
+      return route.fulfill({ json: { ok: true, removed: 1 } });
+    }
+    if (path.endsWith('/restore') && request.method() === 'POST') {
+      if (restoreGate) await restoreGate;
+      const jid = decodeURIComponent(path.split('/')[3]);
+      const restored = deletedSessions.find((session) => session.jid === jid);
+      deletedSessions = deletedSessions.filter((session) => session.jid !== jid);
+      if (restored) {
+        standardSessions = [
+          ...standardSessions,
+          { ...STANDARD_SESSION, jid: restored.jid, name: restored.name },
+        ];
+      }
+      return route.fulfill({ json: { ok: true } });
+    }
+    if (/^\/api\/sessions\/[^/]+$/.test(path) && request.method() === 'DELETE') {
+      if (deleteGate) await deleteGate;
+      const jid = decodeURIComponent(path.split('/')[3]);
+      const removed = standardSessions.find((session) => session.jid === jid);
+      standardSessions = standardSessions.filter((session) => session.jid !== jid);
+      if (removed) {
+        deletedSessions = [
+          ...deletedSessions,
+          { ...DELETED_SESSION, jid: removed.jid, name: removed.name },
+        ];
+      }
+      return route.fulfill({ json: { ok: true, permanent: false } });
+    }
+    if (path.endsWith('/media')) {
+      const isLifeMedia = path.includes(encodeURIComponent(LIFE_SESSION.jid));
+      if (isLifeMedia && lifeMediaGate) await lifeMediaGate;
+      if (options.delayLifeMedia) {
+        const name = isLifeMedia ? 'Life image' : 'Standard image';
+        return route.fulfill({
+          json: { items: [{ type: 'image', name, url: `/${name.replace(' ', '-').toLowerCase()}.png` }] },
+        });
+      }
+      return route.fulfill({ json: { items: [] } });
+    }
+    if (path.endsWith('/events')) {
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      const isLifeEvents = requestedJid === LIFE_SESSION.jid;
+      const standardMetadata = standardSessions.find((session) => session.jid === requestedJid);
+      const deletedMetadata = deletedSessions.find((session) => session.jid === requestedJid);
+      const isUnknownEvents = !isLifeEvents && !standardMetadata && !deletedMetadata;
+      const unknownReplyEvent = options.unknownReplyEvent && isUnknownEvents;
+      if (isUnknownEvents && unknownEventsGate) await unknownEventsGate;
+      if (failUnknownEvents && isUnknownEvents) {
+        return route.fulfill({ status: 404, json: { error: 'Session not found' } });
+      }
+      if (options.failLifeEvents && isLifeEvents) {
+        return route.fulfill({ status: 503, json: { error: 'Life events unavailable' } });
+      }
+      if (isLifeEvents && lifeEventsGate) await lifeEventsGate;
+      const lifeEventState = isLifeEvents && options.lifeEventState;
+      return route.fulfill({
+        json: {
+          events: unknownReplyEvent
+            ? [
+                {
+                  id: 77,
+                  kind: 'message',
+                  role: 'assistant',
+                  content: 'Notification target reply',
+                },
+              ]
+            : isLifeEvents && (options.delayLifeEvents || lifeEventState)
+              ? [
+                  {
+                    id: 101,
+                    kind: 'message',
+                    role: 'assistant',
+                    content: lifeEventState ? 'Life-only history' : 'late Life transcript',
+                  },
+                ]
+              : [],
+          busy: lifeEventState,
+          hasMore: false,
+          partial: lifeEventState ? { content: 'unfinished Life response' } : null,
+          session:
+            options.omitOrdinaryMetadata && requestedJid === STANDARD_SESSION.jid
+              ? undefined
+              : {
+                  jid:
+                    (isLifeEvents && options.corruptLifeMetadata) ||
+                    (deletedMetadata && options.corruptDeletedMetadata)
+                      ? 'web:wrong-target'
+                      : requestedJid,
+                  name: isLifeEvents
+                    ? LIFE_SESSION.name
+                    : standardMetadata?.name ||
+                      deletedMetadata?.name ||
+                      options.unknownMetadataName ||
+                      requestedJid,
+                  kind:
+                    (isLifeEvents && options.corruptLifeMetadata) ||
+                    (deletedMetadata && options.corruptDeletedMetadata)
+                      ? 'life'
+                      : isLifeEvents
+                        ? 'life'
+                        : 'standard',
+                  deleted:
+                    options.omitOrdinaryDeletedState && requestedJid === STANDARD_SESSION.jid
+                      ? undefined
+                      : deletedMetadata && options.corruptDeletedMetadata
+                        ? false
+                        : Boolean(deletedMetadata) || (isUnknownEvents && unknownDeleted),
+                },
+        },
+      });
+    }
+    if (path.endsWith('/stream')) {
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      if (requestedJid === STANDARD_SESSION.jid) ordinaryStreamRequests += 1;
+      const oldEvent =
+        options.oldStreamEventDuringPending &&
+        requestedJid === STANDARD_SESSION.jid &&
+        ordinaryStreamRequests > 1
+          ? 'id: 909\nevent: event\ndata: {"id":909,"kind":"message","role":"assistant","content":"old pending stream event","files":[]}\n\n'
+          : '';
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'cache-control': 'no-store' },
+        body: `${oldEvent}retry: 60000\n\n`,
+      });
+    }
+    if (path.endsWith('/commands') && request.method() === 'POST') {
+      if (commandGate) await commandGate;
+      return route.fulfill({ status: 200, json: { ok: true } });
+    }
+    if (path.endsWith('/messages') && request.method() === 'POST') {
+      messagePaths.push(path);
+      messageBodies.push(request.postDataJSON());
+      if (messageGate) await messageGate;
+      return route.fulfill({
+        status: 200,
+        json: { ok: true, ...(options.messageSessionTitle ? { sessionTitle: options.messageSessionTitle } : {}) },
+      });
+    }
+
+    return route.fulfill({ status: 404, json: { error: `Unhandled fixture route: ${path}` } });
+  });
+
+  return {
+    lifeRequests: () => lifeRequests,
+    releaseLifeResponse: () => releaseLifeResponse?.(),
+    releaseLifeEvents: () => releaseLifeEvents?.(),
+    releaseLifeMedia: () => releaseLifeMedia?.(),
+    releaseRestore: () => releaseRestore?.(),
+    releaseDelete: () => releaseDelete?.(),
+    releaseCreate: () => releaseCreate?.(),
+    releaseClear: () => releaseClear?.(),
+    releaseTrashLoad: () => releaseTrashLoad?.(),
+    releaseCommand: () => releaseCommand?.(),
+    releaseMessage: () => releaseMessage?.(),
+    releaseUnknownEvents: () => releaseUnknownEvents?.(),
+    releaseBoot: () => releaseBoot?.(),
+    setStandardSessions: (sessions: (typeof STANDARD_SESSION)[]) => {
+      standardSessions = sessions;
+    },
+    failUnknownEvents: () => {
+      failUnknownEvents = true;
+    },
+    markUnknownDeleted: () => {
+      unknownDeleted = true;
+    },
+    messagePaths,
+    messageBodies,
+  };
+}
+
+async function touchDrag(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: { hold?: boolean } = {},
+) {
+  const session = await page.context().newCDPSession(page);
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [from],
+  });
+  const steps = 6;
+  for (let step = 1; step <= steps; step += 1) {
+    await session.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [
+        {
+          x: Math.round(from.x + ((to.x - from.x) * step) / steps),
+          y: Math.round(from.y + ((to.y - from.y) * step) / steps),
+        },
+      ],
+    });
+  }
+  if (options.hold) return session;
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await session.detach();
+}
+
+test('right-edge swipe enters persistent default-model Life mode', async ({ page }, testInfo) => {
+  const api = await installLifeApi(page);
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#life-edge-hint')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('00-life-edge-hint.png') });
+
+  // A foreground sheet owns edge gestures until it closes.
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.locator('#media-sheet')).toBeVisible();
+  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  expect(api.lifeRequests()).toBe(0);
+  await page.locator('#btn-media-close').click();
+
+  // A vertical gesture at the edge remains an ordinary page scroll gesture.
+  await touchDrag(page, { x: 388, y: 220 }, { x: 380, y: 430 });
+  expect(api.lifeRequests()).toBe(0);
+
+  // A horizontal drag below the one-third commit threshold snaps back.
+  await touchDrag(page, { x: 388, y: 430 }, { x: 300, y: 432 });
+  expect(api.lifeRequests()).toBe(0);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+
+  // Hold a committed drag long enough to inspect the panel following the finger.
+  const touch = await touchDrag(page, { x: 388, y: 430 }, { x: 180, y: 432 }, { hold: true });
+  const preview = page.locator('#life-swipe-preview');
+  await expect(preview).toBeVisible();
+  const previewRect = await preview.boundingBox();
+  expect(previewRect).not.toBeNull();
+  expect(previewRect!.x).toBeGreaterThan(0);
+  expect(previewRect!.x).toBeLessThan(390);
+  await page.screenshot({ path: testInfo.outputPath('01-life-swipe-progress.png') });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('Life');
+  await expect(page.locator('#header-badge')).toHaveText('DEFAULT');
+  await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeVisible();
+  for (const selector of [
+    '#btn-menu',
+    '#btn-status',
+    '#btn-gpt-usage',
+    '#btn-model',
+    '#btn-thinking',
+  ]) {
+    await expect(page.locator(selector)).toBeHidden();
+  }
+  await expect(page.locator('#btn-more')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(page.getByRole('menuitem', { name: 'Search' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
+  await expect(page.locator('#mi-sessions')).toBeHidden();
+  await expect(page.locator('#mi-new-chat')).toBeHidden();
+  await expect(page.locator('#mi-clean')).toBeHidden();
+  await expect(page.locator('#mi-management-separator')).toBeHidden();
+  await page.getByRole('menuitem', { name: 'Search' }).click();
+  await expect(page.locator('#search-panel')).toBeVisible();
+  await page.locator('#btn-search-close').click();
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.locator('#media-sheet')).toBeVisible();
+  await page.locator('#btn-media-close').click();
+  await expect(page.locator('#composer-wrap')).toBeVisible();
+  const lifeTitleCenterDelta = await page.locator('.topbar-title').evaluate((title) => {
+    const rect = title.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    return Math.abs(rect.left + rect.width / 2 - viewportWidth / 2);
+  });
+  expect(lifeTitleCenterDelta).toBeLessThanOrEqual(8);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('life');
+  await page.screenshot({ path: testInfo.outputPath('02-life-mode.png') });
+
+  await page.locator('#input').fill('Life mode hello');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => api.messagePaths.length).toBe(1);
+  expect(api.messagePaths[0]).toBe(
+    `/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/messages`,
+  );
+
+  await page.reload();
+  await expect.poll(api.lifeRequests).toBe(2);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('Life');
+  await page.screenshot({ path: testInfo.outputPath('03-life-mode-reloaded.png') });
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
+  await expect(page.locator('#life-edge-hint')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('04-returned-to-sessions.png') });
+
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a trash preview started after Life entry keeps navigation ownership', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayLife: true,
+    deletedSessions: [DELETED_SESSION],
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+  await expect(page.locator('#deleted-banner')).toBeVisible();
+
+  const lifeResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/life-session'),
+  );
+  api.releaseLifeResponse();
+  await lifeResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('a trash restore started after Life entry wins even when its API finishes later', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, {
+    delayLife: true,
+    delayRestore: true,
+    deletedSessions: [DELETED_SESSION],
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  const restoreRequest = page.waitForRequest((request) => request.url().endsWith('/restore'));
+  await page.getByRole('button', { name: 'Restore' }).click();
+  await restoreRequest;
+
+  const lifeResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/life-session'),
+  );
+  api.releaseLifeResponse();
+  await lifeResponse;
+  const restoreResponse = page.waitForResponse((response) => response.url().endsWith('/restore'));
+  api.releaseRestore();
+  await restoreResponse;
+
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('a session delete started after Life entry owns the eventual fallback selection', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, {
+    delayLife: true,
+    delayDelete: true,
+    standardSessions: [STANDARD_SESSION, OTHER_STANDARD_SESSION],
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#btn-menu').click();
+  const deleteRequest = page.waitForRequest(
+    (request) =>
+      request.method() === 'DELETE' && request.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
+  );
+  await page.getByRole('button', { name: `Delete ${STANDARD_SESSION.name}` }).click();
+  await deleteRequest;
+
+  const lifeResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/life-session'),
+  );
+  api.releaseLifeResponse();
+  await lifeResponse;
+  const deleteResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      response.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
+  );
+  api.releaseDelete();
+  await deleteResponse;
+
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('a delayed new-session response cannot override newer Life navigation', async ({ page }) => {
+  const api = await installLifeApi(page, { delayCreate: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.locator('#btn-menu').click();
+  const createRequest = page.waitForRequest(
+    (request) => request.url().endsWith('/api/sessions') && request.method() === 'POST',
+  );
+  await page.locator('#btn-new-session').click();
+  await createRequest;
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+
+  const createResponse = page.waitForResponse(
+    (response) => response.url().endsWith('/api/sessions') && response.request().method() === 'POST',
+  );
+  api.releaseCreate();
+  await createResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+});
+
+test('a delayed clean response cannot clear a newer Life transcript', async ({ page }) => {
+  const api = await installLifeApi(page, { delayClear: true, lifeEventState: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#btn-more').click();
+  const clearRequest = page.waitForRequest((request) => request.url().endsWith('/clear'));
+  await page.getByRole('menuitem', { name: 'Clean session' }).click();
+  await clearRequest;
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#messages')).toContainText('Life-only history');
+
+  const clearResponse = page.waitForResponse((response) => response.url().endsWith('/clear'));
+  api.releaseClear();
+  await clearResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#messages')).toContainText('Life-only history');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+});
+
+test('a delayed trash load is closed and ignored after Life navigation', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayTrashLoad: true,
+    deletedSessions: [DELETED_SESSION],
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.locator('#btn-menu').click();
+  const trashRequest = page.waitForRequest((request) =>
+    request.url().endsWith('/api/sessions/deleted'),
+  );
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await trashRequest;
+  await expect(page.locator('#trash-note')).toHaveText('Loading…');
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+
+  const trashResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/sessions/deleted'),
+  );
+  api.releaseTrashLoad();
+  await trashResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#trash-sheet')).toBeHidden();
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+});
+
+test('a pending unvalidated destination blocks all prior-session interactions', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayUnknownEvents: true,
+    oldStreamEventDuringPending: true,
+  });
+  api.markUnknownDeleted();
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const pendingEvents = page.waitForRequest((request) =>
+    request.url().includes(encodeURIComponent('web:newly-restored')),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await pendingEvents;
+  await expect(page.locator('#composer-wrap')).toBeHidden();
+  await page.locator('#input').evaluate((textarea: HTMLTextAreaElement) => {
+    textarea.value = 'must not reach an unvalidated target';
+  });
+  await page.locator('#composer').evaluate((form: HTMLFormElement) => form.requestSubmit());
+  await page.waitForTimeout(50);
+  expect(api.messagePaths).toEqual([]);
+
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Search' }).click();
+  await expect(page.locator('#search-panel')).toBeHidden();
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.locator('#media-sheet')).toBeHidden();
+  await page.locator('#session-name').click();
+  await expect(page.locator('#session-name-input')).toBeHidden();
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(100);
+  await expect(page.locator('#messages')).not.toContainText('old pending stream event');
+
+  api.releaseUnknownEvents();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+});
+
+test('a newer Life navigation invalidates a pending standard selection before commit', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { delayUnknownEvents: true, delayLife: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const pendingEvents = page.waitForRequest((request) =>
+    request.url().includes(encodeURIComponent('web:newly-restored')),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await pendingEvents;
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+  api.releaseUnknownEvents();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#composer-wrap')).toBeHidden();
+
+  api.releaseLifeResponse();
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+});
+
+test('validated metadata name wins over a stale poll during pending selection', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayUnknownEvents: true,
+    unknownMetadataName: 'Confirmed notification target',
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const pendingEvents = page.waitForRequest((request) =>
+    request.url().includes(encodeURIComponent('web:newly-restored')),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await pendingEvents;
+  api.setStandardSessions([{ ...STANDARD_SESSION, name: 'Stale old-session title' }]);
+  await page.waitForTimeout(5_200);
+  api.releaseUnknownEvents();
+
+  await expect(page.locator('#session-name')).toHaveText('Confirmed notification target');
+});
+
+test('pending selection cancels an existing drawer rename and disables deletion', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { delayUnknownEvents: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await page.locator('#btn-menu').click();
+  const listName = page.locator('#session-list .session-name-edit, #session-list .name').first();
+  await listName.dispatchEvent('pointerdown', {
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    clientX: 100,
+    clientY: 100,
+  });
+  await page.waitForTimeout(600);
+  await expect(page.locator('#session-list .session-name-edit')).toBeVisible();
+
+  const pendingEvents = page.waitForRequest((request) =>
+    request.url().includes(encodeURIComponent('web:newly-restored')),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await pendingEvents;
+
+  await expect(page.locator('#session-list .session-name-edit')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: `Delete ${STANDARD_SESSION.name}` }),
+  ).toBeDisabled();
+  api.releaseUnknownEvents();
+});
+
+test('a delayed immediate title cannot overwrite pending destination chrome', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayMessage: true,
+    messageSessionTitle: 'Old session generated title',
+    delayUnknownEvents: true,
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await page.locator('#input').fill('title the old session');
+  const messageRequest = page.waitForRequest((request) => request.url().endsWith('/messages'));
+  await page.locator('#btn-send').click();
+  await messageRequest;
+
+  const pendingEvents = page.waitForRequest((request) =>
+    request.url().includes(encodeURIComponent('web:newly-restored')),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await pendingEvents;
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+
+  const messageResponse = page.waitForResponse((response) => response.url().endsWith('/messages'));
+  api.releaseMessage();
+  await messageResponse;
+  await page.waitForTimeout(50);
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+
+  api.releaseUnknownEvents();
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+});
+
+test('malformed live deletion state fails closed', async ({ page }) => {
+  await installLifeApi(page, { omitOrdinaryDeletedState: true });
+  const eventsResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(encodeURIComponent(STANDARD_SESSION.jid)) &&
+      response.url().includes('/events'),
+  );
+  await page.goto('/');
+  await eventsResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#session-name')).toHaveText('no session');
+});
+
+test('missing metadata cannot be bypassed by a cached standard-session row', async ({ page }) => {
+  await installLifeApi(page, { omitOrdinaryMetadata: true });
+  const eventsResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(encodeURIComponent(STANDARD_SESSION.jid)) &&
+      response.url().includes('/events'),
+  );
+  await page.goto('/');
+  await eventsResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#session-name')).toHaveText('no session');
+  await expect(page.locator('#messages')).toBeEmpty();
+});
+
+test('boot routing cannot override a newer trash preview', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayBoot: true,
+    deletedSessions: [DELETED_SESSION],
+  });
+  await page.goto(`/?session=${encodeURIComponent('web:newly-restored')}`);
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page).toHaveURL('/');
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+
+  const commandsResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/commands'),
+  );
+  api.releaseBoot();
+  await commandsResponse;
+  await page.waitForTimeout(100);
+
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+  await expect(page.locator('#deleted-banner')).toBeVisible();
+});
+
+test('attachment conversion snapshots the original draft and cannot consume a later Life paste', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const original = FileReader.prototype.readAsDataURL;
+    const pending: Array<() => void> = [];
+    let autoRelease = false;
+    FileReader.prototype.readAsDataURL = function delayedRead(blob: Blob) {
+      if (autoRelease) return original.call(this, blob);
+      pending.push(() => original.call(this, blob));
+    };
+    (window as any).__pendingFileReaders = () => pending.length;
+    (window as any).__releaseFileReaders = () => {
+      autoRelease = true;
+      for (const release of pending.splice(0)) release();
+    };
+  });
+  const api = await installLifeApi(page);
+  await page.goto('/');
+  await page.locator('#file-input').setInputFiles({
+    name: 'first.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('first attachment'),
+  });
+  await page.locator('#input').fill('standard destination');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__pendingFileReaders())).toBe(1);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(['second attachment'], 'second.txt', { type: 'text/plain' }));
+    document.querySelector('#input')!.dispatchEvent(
+      new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }),
+    );
+  });
+  await expect(page.getByRole('button', { name: 'Remove second.txt' })).toBeVisible();
+
+  await page.evaluate(() => (window as any).__releaseFileReaders());
+  await expect.poll(() => api.messageBodies.length).toBe(1);
+  const sent = api.messageBodies[0] as { attachments: Array<{ name: string }> };
+  expect(sent.attachments.map((attachment) => attachment.name)).toEqual(['first.txt']);
+  expect(api.messagePaths[0]).toBe(
+    `/api/sessions/${encodeURIComponent(STANDARD_SESSION.jid)}/messages`,
+  );
+  await expect(page.getByRole('button', { name: 'Remove second.txt' })).toBeVisible();
+});
+
+test('a delayed slash command cannot clear a newer Life draft', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayCommand: true,
+    commandCatalog: [{ name: 'pi stop' }],
+  });
+  await page.goto('/');
+  await page.locator('#input').fill('/pi stop');
+  const commandRequest = page.waitForRequest((request) => request.url().endsWith('/commands'));
+  await page.locator('#btn-send').click();
+  await commandRequest;
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await expect(page.locator('#input')).toHaveValue('');
+  await page.locator('#input').fill('Life draft must survive');
+
+  const commandResponse = page.waitForResponse((response) => response.url().endsWith('/commands'));
+  api.releaseCommand();
+  await commandResponse;
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#input')).toHaveValue('Life draft must survive');
+});
+
+test('a Life endpoint response cannot substitute a standard-session JID', async ({ page }) => {
+  const api = await installLifeApi(page, { corruptLifeEndpoint: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+  await page.waitForTimeout(100);
+
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#header-badge')).not.toHaveText('DEFAULT');
+});
+
+test('corrupt Life event metadata fails back to the standard destination', async ({ page }) => {
+  const api = await installLifeApi(page, { corruptLifeMetadata: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  const lifeEventsResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(encodeURIComponent(LIFE_SESSION.jid)) &&
+      response.url().includes('/events'),
+  );
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+  const lifeEvents = await lifeEventsResponse;
+  expect((await lifeEvents.json()).session).toMatchObject({
+    jid: 'web:wrong-target',
+    kind: 'life',
+  });
+  await page.waitForTimeout(500);
+
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('corrupt deleted-preview metadata falls back without enabling the trash target', async ({
+  page,
+}) => {
+  await installLifeApi(page, {
+    corruptDeletedMetadata: true,
+    deletedSessions: [DELETED_SESSION],
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#deleted-banner')).toBeHidden();
+});
+
+test('a delayed Life media response cannot overwrite a standard session gallery', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { delayLifeMedia: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.locator('#media-note')).toHaveText('Loading…');
+  await page.locator('#btn-media-close').click();
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.getByRole('button', { name: 'image: Standard image' })).toBeVisible();
+
+  api.releaseLifeMedia();
+  await expect(page.getByRole('button', { name: 'image: Standard image' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'image: Life image' })).toHaveCount(0);
+  await expect(page.locator('#media-note')).toHaveText('1 item');
+});
+
+test('a live standard notification opens its JID when the session cache is stale', async ({
+  page,
+}) => {
+  await installLifeApi(page, { unknownReplyEvent: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('piweb.seen') || '{}')['web:newly-restored']),
+    )
+    .toBe(77);
+});
+
+test('a stale-cache standard notification remains the Life return target', async ({ page }) => {
+  await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+});
+
+test('a failed remembered notification target falls back to the newest standard session', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+  api.failUnknownEvents();
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+});
+
+test('a failed remembered notification target clears to empty when no standard exists', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { standardSessions: [] });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('no session');
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+  api.failUnknownEvents();
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+
+  await expect(page.locator('#session-name')).toHaveText('no session');
+  await expect(page.locator('#messages')).toBeEmpty();
+});
+
+test('a deleted absent-list notification target falls back instead of enabling its composer', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page);
+  api.markUnknownDeleted();
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'open-session', jid: 'web:newly-restored' },
+      }),
+    );
+  });
+
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await page.locator('#input').fill('must stay on the live session');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => api.messagePaths.length).toBe(1);
+  expect(api.messagePaths[0]).toBe(
+    `/api/sessions/${encodeURIComponent(STANDARD_SESSION.jid)}/messages`,
+  );
+});
+
+test('a boot standard notification opens its JID when the session cache is stale', async ({
+  page,
+}) => {
+  await installLifeApi(page);
+  await page.goto(`/?session=${encodeURIComponent('web:newly-restored')}`);
+
+  await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
+  await expect(page).toHaveURL('/');
+});
+
+test('Life notification navigation enters the singleton in existing and new windows', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('Life');
+
+  // Re-opening the already active Life destination must re-run the endpoint and
+  // event selection; a same-page logout/login has the same retained JS state.
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(2);
+
+  await page.evaluate(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto(`/?session=${encodeURIComponent(LIFE_SESSION.jid)}`);
+  await expect.poll(api.lifeRequests).toBe(3);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('Life');
+  await expect(page).toHaveURL(/\/$/);
+
+  // The notification target is one-shot: leaving Life and reloading must not
+  // replay the stale query parameter.
+  await page.locator('#btn-life-back').click();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await page.reload();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  // An explicit standard-session notification wins over a persisted Life mode.
+  await page.evaluate(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto(`/?session=${encodeURIComponent(STANDARD_SESSION.jid)}`);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+});
+
+test('a late Life endpoint response cannot override newer standard navigation', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { delayLife: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  await expect.poll(api.lifeRequests).toBe(1);
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:ordinary' } }),
+    );
+  });
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  api.releaseLifeResponse();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+});
+
+test('a late Life event response cannot overwrite a newer return to Sessions', async ({ page }) => {
+  const api = await installLifeApi(page, { delayLifeEvents: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await page.locator('#btn-life-back').click();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  api.releaseLifeEvents();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#messages')).not.toContainText('late Life transcript');
+});
+
+test('a Life event-load failure after a successful endpoint restores the standard session', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { failLifeEvents: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
+});
+
+test('leaving Life with no standard sessions clears Life ownership and renders an empty standard state', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const stats = { opened: 0, closed: 0 };
+    (window as any).__lifeStreamStats = stats;
+    (window as any).EventSource = class {
+      constructor() {
+        stats.opened += 1;
+      }
+      addEventListener() {}
+      close() {
+        stats.closed += 1;
+      }
+    };
+  });
+  const api = await installLifeApi(page, { standardSessions: [], lifeEventState: true });
+
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('no session');
+  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#messages')).toContainText('Life-only history');
+  await expect(page.locator('#partial-msg')).toContainText('unfinished Life response');
+  await expect(page.locator('#typing')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__lifeStreamStats.opened)).toBe(1);
+
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Search' }).click();
+  await expect(page.locator('#search-panel')).toBeVisible();
+  await page.locator('#btn-life-back').click();
+
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('no session');
+  await expect(page.locator('#messages')).toBeEmpty();
+  await expect(page.locator('#partial-msg')).toHaveCount(0);
+  await expect(page.locator('#typing')).toBeHidden();
+  await expect(page.locator('#btn-stop')).toBeHidden();
+  await expect(page.locator('#header-badge')).toBeHidden();
+  await expect(page.locator('#search-panel')).toBeHidden();
+  await expect(page.locator('#composer-wrap')).toBeVisible();
+  await expect(page.locator('#btn-model')).toBeVisible();
+  await expect(page.locator('#btn-more')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__lifeStreamStats.closed)).toBe(1);
+
+  let alertMessage = '';
+  page.once('dialog', async (dialog) => {
+    alertMessage = dialog.message();
+    await dialog.dismiss();
+  });
+  await page.locator('#input').fill('must not go to Life');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => alertMessage).toBe('Create or pick a session first.');
+  expect(api.messagePaths).toEqual([]);
+});
+
+test('a failed Life history load with no standard sessions clears the selected Life channel', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, {
+    failLifeEvents: true,
+    standardSessions: [],
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+
+  await page.goto('/');
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText('no session');
+  await expect(page.locator('#messages')).toBeEmpty();
+  await expect(page.locator('#typing')).toBeHidden();
+  await expect(page.locator('#header-badge')).toBeHidden();
+  await expect(page.locator('#btn-model')).toBeVisible();
+  await expect(page.locator('#composer-wrap')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
+
+  let alertMessage = '';
+  page.once('dialog', async (dialog) => {
+    alertMessage = dialog.message();
+    await dialog.dismiss();
+  });
+  await page.locator('#input').fill('must still not go to Life');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => alertMessage).toBe('Create or pick a session first.');
+  expect(api.messagePaths).toEqual([]);
+});
+
+test('Life edge affordance and gesture are disabled with the permanent desktop drawer', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page);
+  await page.setViewportSize({ width: 800, height: 844 });
+  await page.goto('/');
+
+  await expect(page.locator('#life-edge-hint')).toBeHidden();
+  await touchDrag(page, { x: 798, y: 430 }, { x: 500, y: 432 });
+  expect(api.lifeRequests()).toBe(0);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('a failed persisted Life entry falls back to the most recent standard session', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { failLife: true });
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+
+  await page.goto('/');
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
+  expect(pageErrors).toEqual([]);
+});

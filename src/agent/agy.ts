@@ -70,6 +70,7 @@ const EFFORT_BY_THINKING: Record<ThinkingLevel, 'low' | 'medium' | 'high' | unde
   medium: 'medium',
   high: 'high',
   xhigh: 'high',
+  max: 'high',
 };
 
 /**
@@ -123,7 +124,7 @@ export function parseAgyModels(stdout: string): AvailableModelInfo[] {
       // agy runs every model as a reasoning agent and accepts --effort for all
       // of them, so thinking stays user-selectable rather than being forced off.
       reasoning: true,
-      // agy caps reasoning at "high"; resolveThinkingForModel folds xhigh down.
+      // agy caps reasoning at "high"; extended Pi levels fold down.
       supportsXhigh: false,
     });
   }

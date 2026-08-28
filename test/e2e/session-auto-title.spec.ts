@@ -80,6 +80,7 @@ async function installSessionApi(page: Page) {
     }
     if (path.endsWith('/events')) {
       const isNew = path.includes(encodeURIComponent(NEW_SESSION.jid));
+      const selected = isNew ? NEW_SESSION : EXISTING_SESSION;
       return route.fulfill({
         json: {
           events:
@@ -98,6 +99,12 @@ async function installSessionApi(page: Page) {
           busy: false,
           hasMore: false,
           partial: null,
+          session: {
+            jid: selected.jid,
+            name: isNew && generatedTitle ? '台南兩日遊' : selected.name,
+            kind: 'standard',
+            deleted: false,
+          },
         },
       });
     }
