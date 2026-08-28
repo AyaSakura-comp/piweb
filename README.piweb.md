@@ -56,12 +56,13 @@ node dist/cli/gpt-usage.js --json   # machine-readable output
 ```
 
 Sessions are created instantly from the drawer—there is no naming dialog. After
-the first normal prompt finishes, a separate CPU-only `llama-simple` process
-replaces **New session** with a summary of at most 10 visible characters; it
-loads a dedicated tiny GGUF, exits after one title, and retains no context. Sessions are
-deleted from the drawer. The 🗑 button in the header is **clean session**: it
-clears the transcript _and_ rotates pi's session directory, so the agent's
-context is genuinely reset rather than just visually cleared.
+the first normal prompt finishes, an in-process statistical ranker replaces
+**New session** with an extractive title of at most 10 visible characters. It
+preserves the prompt's original writing system and uses no language model,
+network call, or model context. Sessions are deleted from the drawer. The 🗑
+button in the header is **clean session**: it clears the transcript _and_ rotates
+pi's session directory, so the agent's context is genuinely reset rather than
+just visually cleared.
 
 ## Appearance
 
@@ -122,34 +123,18 @@ systemctl --user daemon-reload
 systemctl --user enable --now piweb-worker
 ```
 
-### 3. CPU-only session-title model
+### 3. Lightweight session-title ranker
 
-Automatic names never call the conversation model. The host worker starts a
-fresh CPU-only `llama-simple` process for each first-prompt title and then lets
-it exit, freeing that process's private KV cache. The process is forced to
-`-ngl 0`, receives no provider credentials, and calls no network API or Pi session.
+Automatic names never call the conversation model. The host worker segments the
+first prompt with built-in `Intl.Segmenter`, generates short candidate spans,
+and scores them with a tiny interpretable linear ranker. Features cover content,
+request/stop words, position, length, skipped words, technical identifiers, and
+filenames. Generic text can fall back to quoted context or an attachment name.
 
-The deployed model is the Apache-2.0 Qwen2.5 1.5B Instruct `Q4_K_M` GGUF. Build
-`llama-simple` from llama.cpp with every GPU backend disabled, download
-`qwen2.5-1.5b-instruct-q4_k_m.gguf` from
-`Qwen/Qwen2.5-1.5B-Instruct-GGUF`, and set absolute paths in the worker config:
-
-```bash
-cmake -S ~/llama.cpp -B ~/llama.cpp/build-piweb-title \
-  -DGGML_HIP=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
-  -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TESTS=OFF \
-  -DLLAMA_BUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build ~/llama.cpp/build-piweb-title --target llama-simple -j
-
-SESSION_TITLE_BIN=/opt/piweb-title-llama/bin/llama-simple
-SESSION_TITLE_MODEL_PATH=/opt/piweb-title-model/qwen2.5-1.5b-instruct-q4_k_m.gguf
-SESSION_TITLE_TIMEOUT_MS=60000
-```
-
-Verify `ldd "$SESSION_TITLE_BIN"` contains no HIP, ROCm, CUDA, or Vulkan
-library. The dedicated process does not share or mutate Qwen MTP or the
-UI-selected model's KV state. It still uses transient host CPU and RAM, so the
-title worker runs only one job at a time.
+The ranker runs in-process without a model file, native binary, provider
+credential, network request, GPU allocation, or KV cache. It does not translate
+or run OpenCC: Traditional Chinese, Simplified Chinese, Japanese, and English
+characters remain as typed. No title-specific environment variables are needed.
 
 ### 4. Web tier (Docker)
 

@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe('session title worker', () => {
-  it('summarizes the first completed prompt once and renames the session', async () => {
+  it('extracts the first completed prompt once and renames the session', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'piweb-title-worker-'));
     tempDirs.push(dir);
     process.env.DB_PATH = ':memory:';
@@ -64,10 +64,9 @@ describe('session title worker', () => {
 
       expect(await worker.processNextSessionTitle()).toBe(true);
       expect(generateSessionTitleMock).toHaveBeenCalledTimes(1);
-      expect(generateSessionTitleMock).toHaveBeenCalledWith(
-        '幫我規劃台南旅行',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
+      expect(generateSessionTitleMock).toHaveBeenCalledWith('幫我規劃台南旅行', {
+        signal: expect.any(AbortSignal),
+      });
       expect(db.getChannel('web:title1')?.name).toBe('台南兩日遊');
       expect(await worker.processNextSessionTitle()).toBe(false);
     } finally {
@@ -80,7 +79,7 @@ describe('session title worker', () => {
     tempDirs.push(dir);
     process.env.DB_PATH = ':memory:';
     process.env.SESSIONS_DIR = resolve(dir, 'sessions');
-    generateSessionTitleMock.mockRejectedValueOnce(new Error('temporary model failure'));
+    generateSessionTitleMock.mockRejectedValueOnce(new Error('temporary extraction failure'));
 
     vi.resetModules();
     const db = await import('../src/db.js');

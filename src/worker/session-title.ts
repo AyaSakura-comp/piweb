@@ -1,5 +1,4 @@
 import { generateSessionTitle } from '../agent/session-title.js';
-import { config } from '../config.js';
 import {
   claimPendingSessionTitle,
   completeSessionTitle,
@@ -24,18 +23,13 @@ export async function processNextSessionTitle(
   if (!job) return false;
 
   try {
-    const title = await generateSessionTitle(job.prompt, {
-      bin: config.sessionTitleBin || undefined,
-      modelPath: config.sessionTitleModelPath || undefined,
-      signal,
-      timeoutMs: config.sessionTitleTimeoutMs,
-    });
+    const title = await generateSessionTitle(job.prompt, { signal });
     const applied = completeSessionTitle(job.channel_jid, title);
-    logger.info({ jid: job.channel_jid, title, applied }, 'Generated one-shot session title');
+    logger.info({ jid: job.channel_jid, title, applied }, 'Extracted one-shot session title');
   } catch (error: any) {
     const message = error?.message || String(error);
     if (signal.aborted) {
-      // Graceful shutdown is not a model failure. Keep the prompt and retry
+      // Graceful shutdown is not an extraction failure. Keep the prompt and retry
       // budget intact so repeated deploys cannot permanently consume the job.
       requeueInterruptedSessionTitle(job.channel_jid, message);
       logger.info({ jid: job.channel_jid }, 'Deferred session title during worker shutdown');
@@ -43,7 +37,7 @@ export async function processNextSessionTitle(
       const status = failSessionTitle(job.channel_jid, message);
       logger.warn(
         { jid: job.channel_jid, status, error: error?.message },
-        'One-shot session title generation failed',
+        'One-shot session title extraction failed',
       );
     }
   }

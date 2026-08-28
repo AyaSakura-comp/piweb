@@ -184,7 +184,7 @@ origin check.
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
 | session ordering & boot default | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default) |
-| automatic first-prompt title | `src/agent/session-title.ts` (one-shot CPU-only tiny GGUF, private KV freed on exit, ≤10-grapheme summary), `src/worker/session-title.ts` (job loop), `session_title_jobs` in `src/db.ts` |
+| automatic first-prompt title | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/agent/session-title.ts` (public wrapper), `src/worker/session-title.ts` (job loop), `session_title_jobs` in `src/db.ts` |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
@@ -409,7 +409,6 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `WEB_SESSION_TTL_SEC` | web | cookie lifetime |
 | `WEB_EMBEDDED_WORKER` | web | run the worker in-process (all-in-one) |
 | `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING` | worker | pi invocation |
-| `SESSION_TITLE_BIN`, `SESSION_TITLE_MODEL_PATH`, `SESSION_TITLE_TIMEOUT_MS` | worker | CPU-only `llama-simple`, dedicated tiny GGUF, and hard timeout for ephemeral first-prompt titles |
 | `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed |
 | `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE` | worker | mid-run steering / pre-emption |
 | `MAX_CONCURRENCY`, `POLL_INTERVAL_MS` | worker | queue behaviour |
@@ -582,10 +581,10 @@ first-prompt naming workflow is `test/e2e/session-auto-title.spec.ts` (`npx
 playwright test test/e2e/session-auto-title.spec.ts`); it covers no-dialog
 creation, first prompt, ≤10-character rename, polling, reload durability,
 pointer reachability, viewport containment, and horizontal overflow. The title
-worker must use the dedicated CPU-only `llama-simple` binary and GGUF: it never
-invokes pi, receives no provider credentials, forces `-ngl 0`, and exits after
-one generation. It does not share the conversation model's KV state, although
-it still consumes transient host CPU and RAM.
+worker uses the in-process linear candidate ranker in
+`src/agent/session-title-ranker.ts`; it must never invoke pi, a model binary, a
+network API, or OpenCC. It preserves the source writing system and has no model
+or KV state.
 Evidence
 lands under `artifacts/playwright/test-results/`; update its reviewed baseline
 only after pixel inspection with `--update-snapshots=all`. Tests in
@@ -961,11 +960,11 @@ Consequences that surprise people:
 - **New session** opens immediately as `New session` (no native naming prompt)
   and auto-issues a silent `pi new` with `keepQueue` (invariant 5). Its first
   normal prompt is captured once in `session_title_jobs`; only after that real
-  turn leaves the active queue does the title worker run a dedicated CPU-only
-  `llama-simple` process with `-ngl 0` and no provider credentials. The process
-  exits after one generation, freeing its private KV cache. The normalized
-  title is at most 10 graphemes, the job's prompt copy is erased,
-  and a manual rename cancels any in-flight result so it cannot be overwritten.
+  turn leaves the active queue does the title worker run the in-process linear
+  candidate ranker. It uses no language model, network call, translation, or KV
+  state. The extractive title preserves the prompt's writing system, is at most
+  10 graphemes, the job's prompt copy is erased, and a manual rename cancels any
+  pending result so it cannot be overwritten.
 - **Delete** is soft (`deleted_at`); the pi session dir survives until the trash
   is purged. See "Deleting is soft".
 - pi holds the context itself via `--session-dir <dir> --continue`; piweb never
