@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Restore all message handling under pi 0.84, which replaced the synchronous model registry with an async `ModelRuntime` — the stale construction left every inbound message failing with `Internal error: this.runtime.refresh is not a function`
 - Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile
 - Render fenced code and command output on a warm, light syntax surface in the Japanese-minimal daytime appearance
 - Open Media gallery videos and audio in a responsive in-app player with a top download action instead of navigating to the raw file

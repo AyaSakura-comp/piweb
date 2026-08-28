@@ -385,6 +385,28 @@ turn under `event["message"]` and its `content` is a list of typed parts
    `url` empty). `session/media.ts` copies instead of fetching, so uploads still
    get PNG transcoding and Breeze ASR voice transcription.
 
+11. **The model registry must be built from an awaited `ModelRuntime`, never
+   from `AuthStorage`.** pi 0.84 replaced the synchronous
+   `new ModelRegistry(authStorage)` construction with an async
+   `ModelRuntime.create()`. The old call still *constructs* — it just returns a
+   facade whose every method throws `this.runtime.refresh is not a function`.
+   Because `listAvailableModels()` sits on the message path
+   (`processMessage` → `computeEffectiveChannelSettings`), that is not a
+   degraded model picker: **every message fails**, and the only symptom the user
+   sees is `Internal error: this.runtime.refresh is not a function`. The worker
+   stays `active (running)` throughout, so restarting fixes nothing. Prime the
+   runtime once at worker startup (`primeModelRegistry()`) and keep
+   `listAvailableModels()` synchronous by reading its snapshot; when it is not
+   primed yet, serve the last catalog rather than throwing, so the model list can
+   never take the message path down with it.
+
+12. **`@earendil-works/pi-*` is an unpinned peer dep (`"*"`).** Every install
+   takes whatever pi published last, so a pi release can break piweb at rest,
+   with no piweb change involved — invariant 11 is exactly that, 0.74 → 0.84.1.
+   When the worker breaks right after an install or a deploy and nothing in
+   `git log` explains it, diff the installed pi version first:
+   `node -p "require('@earendil-works/pi-coding-agent/package.json').version"`.
+
 ---
 
 ## 3. Deployment
@@ -1056,3 +1078,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 # worker (src/agent, src/db, …) — check nothing is in flight first
 npm run build && systemctl --user restart piweb-worker
 ```
+
+**Commit before deploying.** The deploy flow on this host runs `git reset --hard`
+(visible in `git reflog` as `reset: moving to HEAD` before the fast-forward), so
+uncommitted working-tree changes are destroyed and the rebuild silently restores
+the old behaviour. A fix that was verified working can therefore come back broken
+after a deploy, looking like the fix was wrong. It was not — it was never in a
+commit. Committed work survives; pushing matters too if the deploy pulls.
