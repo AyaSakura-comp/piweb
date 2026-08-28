@@ -133,7 +133,7 @@ between the two processes use an autoincrement `rowid` as a cursor.
 | `message_queue` | pending user messages for the worker | web | worker |
 | `control_queue` | command intents the web tier can't run itself | web | worker |
 | `channel_state` | transient `busy` flag per session (typing/spinner) | worker | web |
-| `session_title_jobs` | crash-safe first-prompt title job (`waiting` → `pending` → `done`); the copied prompt is erased on completion/cancel | web | worker |
+| `session_title_jobs` | crash-safe first-prompt title job (normally `waiting` → `done` during enqueue; worker fallback uses `pending` → `processing`); the copied prompt is erased on completion/cancel | web | both |
 | `meta` | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor` | worker (models), web (auth/push) | web |
 | `push_subscriptions` | one row per opted-in device | web | push |
 | `message_log`, `scheduled_tasks` | inherited from piscord; `message_log` duplicates web_events (gap) | worker | — |
@@ -184,7 +184,7 @@ origin check.
 | provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
 | unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
 | session ordering & boot default | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default) |
-| automatic first-prompt title | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/agent/session-title.ts` (public wrapper), `src/worker/session-title.ts` (job loop), `session_title_jobs` in `src/db.ts` |
+| automatic first-prompt title | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/web/server.ts` (apply on message enqueue), `src/worker/session-title.ts` (recovery fallback), `session_title_jobs` in `src/db.ts` |
 | rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill |
 | stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |

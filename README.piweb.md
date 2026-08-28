@@ -55,9 +55,9 @@ node dist/cli/gpt-usage.js          # Traditional Chinese report
 node dist/cli/gpt-usage.js --json   # machine-readable output
 ```
 
-Sessions are created instantly from the drawer—there is no naming dialog. After
-the first normal prompt finishes, an in-process statistical ranker replaces
-**New session** with an extractive title of at most 10 visible characters. It
+Sessions are created instantly from the drawer—there is no naming dialog. As
+soon as the first normal prompt is accepted, an in-process statistical ranker
+replaces **New session** with an extractive title of at most 10 visible characters. It
 preserves the prompt's original writing system and uses no language model,
 network call, or model context. Sessions are deleted from the drawer. The 🗑
 button in the header is **clean session**: it clears the transcript _and_ rotates
@@ -125,9 +125,10 @@ systemctl --user enable --now piweb-worker
 
 ### 3. Lightweight session-title ranker
 
-Automatic names never call the conversation model. The host worker segments the
+Automatic names never call the conversation model. The web tier segments the
 first prompt with built-in `Intl.Segmenter`, generates short candidate spans,
-and scores them with a tiny interpretable linear ranker. Features cover content,
+and scores them before the message response returns. The worker retains the same
+path only as a crash-recovery fallback. Features cover content,
 request/stop words, position, length, skipped words, technical identifiers, and
 filenames. Generic text can fall back to quoted context or an attachment name.
 

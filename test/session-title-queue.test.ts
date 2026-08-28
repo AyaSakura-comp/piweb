@@ -73,6 +73,45 @@ describe('atomic session title DB APIs', () => {
     }
   });
 
+  it('applies the first extracted title in the same transaction as message enqueue', async () => {
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    db.initDb();
+    try {
+      db.registerChannel(
+        {
+          jid: 'web:immediate-title',
+          name: 'New session',
+          folder: 'web_immediate_title',
+          requiresTrigger: false,
+          isMain: false,
+          modelOverride: '',
+          thinkingOverride: '',
+          cwdOverride: '',
+        },
+        { prepareSessionTitle: true },
+      );
+
+      db.enqueueMessage({
+        channelJid: 'web:immediate-title',
+        sender: 'web',
+        senderName: 'web',
+        content: '幫我規劃台南兩日旅行',
+        timestamp: new Date().toISOString(),
+        sessionTitlePrompt: '幫我規劃台南兩日旅行',
+        immediateSessionTitle: '台南兩日旅行',
+      });
+
+      expect(db.getChannel('web:immediate-title')?.name).toBe('台南兩日旅行');
+      expect(db.getSessionTitleJob('web:immediate-title')).toMatchObject({
+        prompt: '',
+        status: 'done',
+      });
+    } finally {
+      db.closeDb();
+    }
+  });
+
   it('enqueues a message and captures only its title source in one public operation', async () => {
     vi.resetModules();
     const db = await import('../src/db.js');

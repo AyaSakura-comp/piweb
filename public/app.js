@@ -524,22 +524,35 @@ function isUnread(session) {
 
 // ── sessions ─────────────────────────────────────────────────────────────
 
+function syncSessionTitle(session) {
+  if (
+    session &&
+    !state.previewingDeleted &&
+    $('session-name-input').hidden &&
+    state.renamingJid !== session.jid &&
+    state.activeJid === session.jid
+  ) {
+    $('session-name').textContent = session.name;
+  }
+}
+
+function applyImmediateSessionTitle(jid, name) {
+  if (!name) return;
+  const session = state.sessions.find((candidate) => candidate.jid === jid);
+  if (!session) return;
+  session.name = name;
+  syncSessionTitle(session);
+  renderSessions();
+}
+
 async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   state.sessions = sessions;
 
-  // Automatic first-prompt titles arrive from the worker, not this tab. Keep
-  // the active header in sync on the regular session poll, but never overwrite
-  // an inline or drawer rename while the user is typing it.
-  const active = state.sessions.find((session) => session.jid === state.activeJid);
-  if (
-    active &&
-    !state.previewingDeleted &&
-    $('session-name-input').hidden &&
-    state.renamingJid !== state.activeJid
-  ) {
-    $('session-name').textContent = active.name;
-  }
+  // The message response updates the active title immediately. Polling remains
+  // the fallback for another tab and crash-recovered worker jobs, but never
+  // overwrites an inline or drawer rename while the user is typing it.
+  syncSessionTitle(state.sessions.find((session) => session.jid === state.activeJid));
 
   renderSessions();
   renderHeaderBadge();
@@ -2427,15 +2440,15 @@ $('composer').addEventListener('submit', async (e) => {
     autoGrow();
     hideAutocomplete();
 
-    const path = `/api/sessions/${encodeURIComponent(state.activeJid)}/messages`;
+    const destinationJid = state.activeJid;
+    const path = `/api/sessions/${encodeURIComponent(destinationJid)}/messages`;
     const payload = { text, quote, attachments };
-    if (hasAttachments) {
-      await sendJsonWithUploadProgress(path, payload, {
-        onProgress: (percent) => showUploadProgress(uploadProgress, percent),
-      });
-    } else {
-      await api(path, { method: 'POST', body: JSON.stringify(payload) });
-    }
+    const result = hasAttachments
+      ? await sendJsonWithUploadProgress(path, payload, {
+          onProgress: (percent) => showUploadProgress(uploadProgress, percent),
+        })
+      : await api(path, { method: 'POST', body: JSON.stringify(payload) });
+    applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
   } catch (err) {
     if (err.status === 401) showLogin();
     alert(err.message);

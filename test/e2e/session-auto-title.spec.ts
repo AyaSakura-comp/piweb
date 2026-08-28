@@ -108,7 +108,7 @@ async function installSessionApi(page: Page) {
       }
       messageSent = true;
       generatedTitle = true;
-      return route.fulfill({ json: { ok: true } });
+      return route.fulfill({ json: { ok: true, sessionTitle: '台南兩日遊' } });
     }
 
     return route.fulfill({ status: 404, json: { error: `Unhandled fixture route: ${path}` } });
@@ -191,9 +191,9 @@ test('new session opens without naming dialog and adopts a one-shot first-prompt
   if (sendBox) targetSizes.push({ name: 'Send', minimum: 38, ...sendBox });
   await send.click();
 
-  // Production learns about the worker-side rename through the regular session
-  // poll. The fixture exposes the generated title as soon as the first prompt is accepted.
-  await expect(page.locator('#session-name')).toHaveText('台南兩日遊', { timeout: 8_000 });
+  // The message response carries the committed in-process title; do not wait
+  // for the 5s cross-tab and crash-recovery fallback poll.
+  await expect(page.locator('#session-name')).toHaveText('台南兩日遊', { timeout: 1_000 });
   await page.screenshot({ path: testInfo.outputPath('04-auto-title.png') });
 
   // Reload proves the generated name and first prompt are durable server state,

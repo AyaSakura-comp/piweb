@@ -124,7 +124,7 @@ describe('new session creation', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
     const loadSessions = source.match(/async function loadSessions\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
 
-    expect(loadSessions).toContain("$('session-name').textContent");
+    expect(loadSessions).toContain('syncSessionTitle');
   });
 });
 

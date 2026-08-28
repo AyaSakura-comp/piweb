@@ -350,6 +350,7 @@ export function enqueueMessage(msg: {
   attachments?: string | null;
   interruptActive?: boolean;
   sessionTitlePrompt?: string;
+  immediateSessionTitle?: string;
 }): number {
   return db.transaction(() => {
     const result = db
@@ -371,7 +372,10 @@ export function enqueueMessage(msg: {
       );
     const rowid = Number(result.lastInsertRowid);
     if (msg.sessionTitlePrompt !== undefined) {
-      queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
+      const captured = queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
+      if (captured && msg.immediateSessionTitle) {
+        completePendingSessionTitle(msg.channelJid, rowid, msg.immediateSessionTitle);
+      }
     }
     return rowid;
   })();
@@ -973,9 +977,38 @@ export function queuePreparedSessionTitle(
   );
 }
 
+/** Commit an already extracted first-prompt title with its enqueue transaction. */
+export function completePendingSessionTitle(
+  channelJid: string,
+  messageRowid: number,
+  title: string,
+): boolean {
+  const clean = title.trim().slice(0, 80);
+  if (!clean) return false;
+
+  return db.transaction(() => {
+    const job = getSessionTitleJob(channelJid);
+    if (job?.status !== 'pending' || job.message_rowid !== messageRowid) return false;
+
+    const applied =
+      db
+        .prepare('update channels set name = ? where jid = ? and deleted_at is null')
+        .run(clean, channelJid).changes > 0;
+    if (!applied) return false;
+
+    db.prepare(
+      `update session_title_jobs
+          set prompt = '', status = 'done', last_error = '', updated_at = datetime('now')
+        where channel_jid = ? and status = 'pending' and message_rowid = ?`,
+    ).run(channelJid, messageRowid);
+    return true;
+  })();
+}
+
 /**
- * Claim one title only after the associated user message has left the active
- * queue. This keeps the tiny summary request from contending with the real turn.
+ * Claim a fallback title only after the associated user message has left the
+ * active queue. Normally the web tier completes the in-process title while
+ * enqueueing; this worker path recovers interrupted or failed web requests.
  */
 export function claimPendingSessionTitle(): SessionTitleJobRow | undefined {
   return db

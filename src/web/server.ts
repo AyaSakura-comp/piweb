@@ -16,6 +16,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { extractSessionTitle } from '../agent/session-title.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
@@ -28,6 +29,7 @@ import {
   getChannel,
   getMeta,
   getRecentWebEvents,
+  getSessionTitleJob,
   getWebEventsAround,
   getWebEventsBefore,
   getWebEventsSince,
@@ -719,7 +721,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         quote,
         attachments.map((file) => file.name),
       );
-      enqueueMessage({
+      const immediateSessionTitle = titleSource ? extractSessionTitle(titleSource) : undefined;
+      const messageRowid = enqueueMessage({
         channelJid: jid,
         sender: 'web',
         senderName: 'web',
@@ -741,9 +744,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
               )
             : null,
         sessionTitlePrompt: titleSource,
+        immediateSessionTitle,
       });
 
-      sendJson(res, 200, { ok: true });
+      const titleJob = getSessionTitleJob(jid);
+      const appliedSessionTitle =
+        immediateSessionTitle &&
+        titleJob?.status === 'done' &&
+        titleJob.message_rowid === messageRowid &&
+        getChannel(jid)?.name === immediateSessionTitle
+          ? immediateSessionTitle
+          : undefined;
+      sendJson(res, 200, {
+        ok: true,
+        ...(appliedSessionTitle ? { sessionTitle: appliedSessionTitle } : {}),
+      });
       return;
     }
 
