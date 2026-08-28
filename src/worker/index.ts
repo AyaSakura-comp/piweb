@@ -18,7 +18,7 @@ import {
 } from '../db.js';
 import { mediaDirName } from '../media-path.js';
 import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
-import { listAvailableModels } from '../agent/model-catalog.js';
+import { listAvailableModels, primeModelRegistry } from '../agent/model-catalog.js';
 import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -92,6 +92,11 @@ export async function startWorker(): Promise<void> {
   // for the first fetch before publishing or the picker's first render after a
   // worker restart would be missing every Gemini model.
   await listAgyModels({ forceRefresh: true });
+  // pi's model runtime is created asynchronously; without this the first
+  // catalog publish (and any message handled before it settles) sees no models.
+  await primeModelRegistry().catch((err: any) => {
+    logger.warn({ err: err.message }, 'Failed to initialize pi model runtime');
+  });
   publishModelCatalog();
   modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
   void sweepTrash();

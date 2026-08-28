@@ -1,4 +1,4 @@
-import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
 import { supportsModelXhigh } from './pi-ai-compat.js';
@@ -22,6 +22,30 @@ interface ModelCache {
 
 let cache: ModelCache | undefined;
 
+// pi >= 0.84 replaced the synchronous AuthStorage-backed registry with an
+// async ModelRuntime: `new ModelRegistry(authStorage)` builds a facade whose
+// every method throws (`this.runtime.refresh is not a function`). The runtime
+// has to be created once, asynchronously, and then read synchronously from its
+// snapshot — so prime it at worker startup and reuse it here.
+let registryPromise: Promise<ModelRegistry> | undefined;
+let registryInstance: ModelRegistry | undefined;
+
+export async function primeModelRegistry(): Promise<ModelRegistry> {
+  if (!registryPromise) {
+    registryPromise = ModelRuntime.create({ allowModelNetwork: true })
+      .then((runtime) => {
+        registryInstance = new ModelRegistry(runtime);
+        return registryInstance;
+      })
+      .catch((err) => {
+        // Let a later call retry rather than caching the failure forever.
+        registryPromise = undefined;
+        throw err;
+      });
+  }
+  return registryPromise;
+}
+
 export function listAvailableModels(options?: { forceRefresh?: boolean }): AvailableModelInfo[] {
   const forceRefresh = options?.forceRefresh ?? false;
   const now = Date.now();
@@ -30,11 +54,13 @@ export function listAvailableModels(options?: { forceRefresh?: boolean }): Avail
     return cache.models;
   }
 
-  const authStorage = AuthStorage.create();
-  authStorage.reload();
-
-  const registry = createModelRegistry(authStorage);
-  registry.refresh();
+  const registry = registryInstance;
+  if (!registry) {
+    // Not primed yet (or priming failed): kick it off and serve whatever we
+    // have instead of throwing, so message processing is never blocked on it.
+    void primeModelRegistry().catch(() => undefined);
+    return cache?.models ?? cachedAgyModels();
+  }
 
   // agy is a separate CLI, so its catalog is fetched out of band and merged
   // from cache. Kick off a refresh here and use whatever the last one produced;
@@ -164,19 +190,6 @@ export function resolveThinkingForModel(
 export function toModelChoiceName(model: AvailableModelInfo): string {
   const label = model.name && model.name !== model.id ? `${model.ref} — ${model.name}` : model.ref;
   return label.length > 100 ? `${label.slice(0, 97)}...` : label;
-}
-
-function createModelRegistry(authStorage: AuthStorage): ModelRegistry {
-  const registryClass = ModelRegistry as unknown as {
-    create?: (authStorage: AuthStorage) => ModelRegistry;
-    new (authStorage: AuthStorage): ModelRegistry;
-  };
-
-  if (typeof registryClass.create === 'function') {
-    return registryClass.create(authStorage);
-  }
-
-  return new registryClass(authStorage);
 }
 
 function toAvailableModelInfo(model: Model<any>): AvailableModelInfo {
