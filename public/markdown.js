@@ -17,6 +17,40 @@ const PLACEHOLDER = '\u0000';
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const SAFE_LINK = /^(https?:|mailto:)/i;
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+  'youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'youtube-nocookie.com',
+]);
+let youtubePlayerSequence = 0;
+const youtubePlayerSources = new WeakMap();
+
+export function getYouTubeVideoId(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  let videoId = null;
+  if (host === 'youtu.be') {
+    videoId = url.pathname.split('/').filter(Boolean)[0] ?? null;
+  } else if (YOUTUBE_HOSTS.has(host)) {
+    if (url.pathname === '/watch') {
+      videoId = url.searchParams.get('v');
+    } else {
+      const [kind, candidate] = url.pathname.split('/').filter(Boolean);
+      if (['embed', 'shorts', 'live', 'v'].includes(kind)) videoId = candidate ?? null;
+    }
+  }
+
+  return videoId && YOUTUBE_VIDEO_ID.test(videoId) ? videoId : null;
+}
 
 function makePlaceholder(kind, index) {
   return `${PLACEHOLDER}${kind}${index}${PLACEHOLDER}`;
@@ -846,7 +880,103 @@ function link(text, url) {
   a.textContent = text;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
+
+  const videoId = getYouTubeVideoId(url);
+  if (videoId) bindInlineYouTube(a, videoId);
   return a;
+}
+
+function bindInlineYouTube(sourceLink, videoId) {
+  sourceLink.classList.add('youtube-inline-link');
+  sourceLink.setAttribute('aria-label', `Play YouTube video: ${sourceLink.textContent.trim()}`);
+  sourceLink.setAttribute('aria-expanded', 'false');
+  sourceLink.title = 'Play video here';
+  sourceLink.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      // Preserve the browser's external-navigation default while preventing the
+      // app's delegated copy-link handler from cancelling modified clicks.
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleInlineYouTube(sourceLink, videoId);
+  });
+  sourceLink.addEventListener('auxclick', (event) => {
+    if (event.button === 1) event.stopPropagation();
+  });
+}
+
+function removeInlineYouTube(player, focusSource = false) {
+  const sourceLink = youtubePlayerSources.get(player);
+  if (sourceLink) {
+    sourceLink.setAttribute('aria-expanded', 'false');
+    sourceLink.removeAttribute('aria-controls');
+  }
+  player.remove();
+  if (focusSource) sourceLink?.focus({ preventScroll: true });
+}
+
+function toggleInlineYouTube(sourceLink, videoId) {
+  const scope = sourceLink.closest('.msg-text, .event-body') ?? sourceLink.parentElement;
+  if (!scope) return;
+
+  const existing = scope.querySelector('.youtube-inline-player');
+  if (existing) {
+    const existingSource = youtubePlayerSources.get(existing);
+    removeInlineYouTube(existing);
+    if (existingSource === sourceLink) return;
+  }
+
+  const playerId = `youtube-inline-player-${++youtubePlayerSequence}`;
+  const player = document.createElement('section');
+  player.id = playerId;
+  player.className = 'youtube-inline-player';
+  player.setAttribute('role', 'region');
+  player.setAttribute('aria-label', `YouTube video: ${sourceLink.textContent.trim()}`);
+  youtubePlayerSources.set(player, sourceLink);
+
+  const frameWrap = document.createElement('div');
+  frameWrap.className = 'youtube-inline-frame';
+  const frame = document.createElement('iframe');
+  frame.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`;
+  frame.title = `YouTube video player: ${sourceLink.textContent.trim()}`;
+  frame.loading = 'eager';
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.allow =
+    'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+  frame.setAttribute('allowfullscreen', '');
+  frameWrap.append(frame);
+  player.append(frameWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'youtube-inline-actions';
+  const external = document.createElement('a');
+  external.className = 'youtube-inline-open';
+  external.href = sourceLink.href;
+  external.target = '_blank';
+  external.rel = 'noopener noreferrer';
+  external.textContent = 'Open in YouTube';
+  external.addEventListener('click', (event) => event.stopPropagation());
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'youtube-inline-close';
+  close.setAttribute('aria-label', 'Close video');
+  close.textContent = 'Close';
+  close.addEventListener('click', () => removeInlineYouTube(player, true));
+  actions.append(external, close);
+  player.append(actions);
+
+  let placement = sourceLink.closest('.table-wrap, p, li, blockquote');
+  while (placement?.parentElement && placement.parentElement !== scope) {
+    placement = placement.parentElement;
+  }
+  if (placement?.parentElement === scope) placement.after(player);
+  else scope.append(player);
+
+  sourceLink.setAttribute('aria-expanded', 'true');
+  sourceLink.setAttribute('aria-controls', playerId);
+  player.scrollIntoView({ block: 'nearest' });
 }
 
 const BULLET_RE = /^(\s*)[-*+]\s+(.*)$/;

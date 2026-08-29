@@ -5,17 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Embedded markdown links</title>
     <link rel="stylesheet" href="/app.css" />
-    <style>
-      body { margin: 0; background: var(--bg); color: var(--text); }
-      .markdown-links-fixture { min-height: 100dvh; padding: 18px 0; }
-    </style>
   </head>
   <body>
-    <main class="markdown-links-fixture">
-      <article class="msg">
-        <div class="msg-body"><div class="msg-text" id="content"></div></div>
-      </article>
-    </main>
+    <div class="app">
+      <main class="main">
+        <header class="topbar"><div class="topbar-title"># YouTube links</div></header>
+        <div class="messages">
+          <article class="msg">
+            <div class="msg-body"><div class="msg-text" id="content"></div></div>
+          </article>
+          <article class="msg msg-user">
+            <div class="avatar">U</div>
+            <div class="msg-body"><div class="msg-text" id="user-content"></div></div>
+          </article>
+          <details class="event tool" open>
+            <summary><span class="event-chevron">›</span><span class="label">🔧 tool result</span></summary>
+            <div class="event-body-wrap"><div class="event-body" id="event-content"></div></div>
+          </details>
+        </div>
+      </main>
+    </div>
     <script type="module">
       import { renderRich } from '/markdown.js';
       const markdown = `## 🪢 圖6-3：登山者繩盤（Mountaineer's Coil）
@@ -28,8 +37,27 @@
 
 | 影片 | 說明 |
 |---|---|
-| **[【蝴蝶收繩法 Part 1】](https://www.youtube.com/watch?v=3eCNZafONJo)** | 山川頻道的蝴蝶盤法 |`;
+| **[【蝴蝶收繩法 Part 1】](https://youtu.be/3eCNZafONJo)** | 山川頻道的蝴蝶盤法 |
+
+[與繩同行 YouTube 頻道](https://www.youtube.com/channel/UCRdOI3XNQFJiCtMoalKpivQ)`;
       renderRich(document.getElementById('content'), markdown);
+      renderRich(
+        document.getElementById('user-content'),
+        '- Nested list\n  - **[User video](https://youtu.be/aqz-KE-bpKQ)**',
+      );
+      renderRich(
+        document.getElementById('event-content'),
+        '> **[Event video](https://www.youtube.com/live/jNQXAC9IVRw)**',
+      );
+      window.__documentLinkIntercepts = 0;
+      const interceptDelegatedLink = (event) => {
+        const link = event.target.closest('.msg-text a, .event-body a');
+        if (!link) return;
+        window.__documentLinkIntercepts += 1;
+        event.preventDefault();
+      };
+      document.addEventListener('click', interceptDelegatedLink);
+      document.addEventListener('auxclick', interceptDelegatedLink);
       document.documentElement.dataset.ready = 'true';
     </script>
   </body>

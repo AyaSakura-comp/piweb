@@ -252,7 +252,7 @@ bindCodeCopy(document, {
 
 document.addEventListener('click', async (e) => {
   const link = e.target.closest('#messages .msg-text a, #messages .event-body a');
-  if (!link) return;
+  if (!link || link.classList.contains('youtube-inline-link')) return;
 
   const url = link.href;
   e.preventDefault();

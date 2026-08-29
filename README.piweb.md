@@ -203,14 +203,16 @@ The Playwright suite runs end to end against deterministic local fixtures at the
 production phone viewport (390×844). Every test records a WebM video; visual tests
 also compare rendered pixels with reviewed PNG baselines. Current coverage includes
 syntax highlighting, persisted light/dark switching, the Japanese-minimal light
-palette, drawer/sheet foreground layering, the in-app video/audio player with real
-download actions, touch transcript selection without Safari's document-wide
+palette, drawer/sheet foreground layering, click-to-expand YouTube embeds with
+external fallback, the in-app video/audio player with real download actions,
+touch transcript selection without Safari's document-wide
 native selection, and a 500-message continuous upward history stress run across
 all nine older-page boundaries without a jump:
 
 ```bash
 npm run test:e2e                                      # full behavior + visual suite
 npx playwright test test/e2e/media-player.spec.ts    # video/audio player + downloads
+npx playwright test test/e2e/markdown-links.spec.ts  # inline YouTube open/replace/close workflow
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
 npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine delayed, partially loaded touch boundaries
 npm run test:e2e:update                               # accept pixels only after review
@@ -255,7 +257,7 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   Voice notes and audio files receive automatic Breeze ASR transcription. Media gallery video and audio tiles open in a
   responsive in-app player instead of navigating to the raw file; its top bar provides a 44px download icon and close action.
   The image lightbox features numbered placeholder thumbnails and dynamic +/-2 sliding-window background prefetching.
-- **Markdown & List Rendering**: Rich typography supporting secure clickable links nested inside bold/italic/strike text, loose ordered and unordered lists (preserving continuous numbering across blank lines and custom `<ol start="N">` offsets), indented multi-line item continuations, and deeply nested sub-bullets, rendered safely from text nodes without raw HTML injection.
+- **Markdown & List Rendering**: Rich typography supporting secure clickable links nested inside bold/italic/strike text, loose ordered and unordered lists (preserving continuous numbering across blank lines and custom `<ol start="N">` offsets), indented multi-line item continuations, and deeply nested sub-bullets, rendered safely from text nodes without raw HTML injection. YouTube watch, short, Shorts, live, and embed links get a 44px play affordance; a normal click lazily opens one privacy-enhanced inline player per message with `playsinline=1`, **Open in YouTube**, and **Close** controls. The standard assistant card is 16:9; narrower user/event columns keep YouTube's 200px minimum player height instead of clipping controls. Modified clicks keep normal external navigation, channel/lookalike URLs never embed, and replacing or closing a player destroys its iframe so playback stops.
 - **Syntax-highlighted Code Blocks**: Fenced code uses the declared language when available and highlight.js auto-detection when the language tag is omitted or unknown. The browser build is vendored, so highlighting works without a CDN.
 - **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `pie`, `sequenceDiagram`, `stateDiagram`, `classDiagram`, `gantt`, `gitGraph`, `mindmap`, etc.)
   automatically render into crisp vector SVG diagrams using one restrained 12-color Japanese palette (moss, blue-grey, rust, tea, pine, muted violet, celadon, walnut, olive, indigo, adzuki, and warm slate) across every chart type. Wide Gantt charts use a readable 1000px canvas with expanded label spacing and horizontal scrolling instead of compressing labels into the phone viewport. Includes two-finger pinch-to-zoom (0.2x–5x), single-finger pan, double-tap zoom toggle, fullscreen zoom modal, diagram-type labels, and one-click code copying.

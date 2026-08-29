@@ -2092,6 +2092,101 @@ svg {
 
 .msg-text strong { color: var(--text-bright); }
 
+/* A YouTube video link is a 44px touch target. The external player is loaded
+   only after a real click, then stays inside the message at a mobile-safe size.
+   Standard-width cards remain 16:9; min-height protects YouTube's 200px player
+   requirement when user/event columns are narrower than 356px. */
+.msg-text .youtube-inline-link,
+.event-body .youtube-inline-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 6px;
+  border-radius: 7px;
+  line-height: 1.25;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.youtube-inline-link::before {
+  content: '▶';
+  flex: none;
+  color: #ff3355;
+  font-size: 12px;
+}
+
+.youtube-inline-link:active,
+.youtube-inline-link[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.youtube-inline-player {
+  width: min(100%, 640px);
+  margin: 10px 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #101010;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
+}
+
+.youtube-inline-frame {
+  width: 100%;
+  min-height: 200px;
+  aspect-ratio: 16 / 9;
+  background: #101010;
+}
+
+.youtube-inline-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.youtube-inline-actions {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 6px;
+  border-top: 1px solid rgb(255 255 255 / 0.12);
+  background: color-mix(in srgb, var(--bg-alt) 94%, #101010);
+}
+
+.msg-text .youtube-inline-open,
+.event-body .youtube-inline-open,
+.youtube-inline-close {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.msg-text .youtube-inline-open,
+.event-body .youtube-inline-open {
+  color: var(--accent-light);
+}
+
+.youtube-inline-open:active,
+.youtube-inline-close:active {
+  background: rgb(255 255 255 / 0.1);
+}
+
 /* Tables scroll inside their own box — the page must never scroll sideways. */
 .table-wrap {
   overflow-x: auto;
