@@ -174,7 +174,7 @@ origin check.
 | feature | where |
 |---|---|
 | markdown + LaTeX + syntax highlighting | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; loose/nested lists across blank lines, `<ol start="N">` offsets, indented continuations; unlabeled/unknown fences use language auto-detection |
-| inline YouTube player | `public/markdown.js` exact-host/video-ID parsing + lazy privacy-enhanced iframe; `public/app.css` 44px play/open/close targets, 16:9 standard card, and adaptive 200px minimum in narrow user/event columns; `test/e2e/markdown-links.spec.ts` modified-click/open/replace/nested/event/close video workflow |
+| inline YouTube player | `public/markdown.js` exact-host/video-ID parsing + lazy privacy-enhanced iframe; `public/app.css` 44px play/open/close targets, 16:9 standard card, and adaptive 200px minimum in narrow user/event columns; `test/e2e/markdown-links.spec.ts` modified-click/open/replace/nested/event/close video workflow; full contract in [`docs/youtube-inline-player.md`](docs/youtube-inline-player.md) |
 | Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
 | search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
@@ -689,7 +689,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   share `INLINE_RE.lastIndex` across nested parsing. Exact YouTube video URLs are
   enhanced only after safe anchor creation: validate the host and 11-character
   ID, lazy-load one `youtube-nocookie.com` iframe per message on an unmodified
-  click, and retain the external link. Never assign model-authored HTML to `innerHTML`;
+  click, and retain the external link. Keep the complete URL, lifecycle, layout,
+  accessibility, and test contract aligned with [`docs/youtube-inline-player.md`](docs/youtube-inline-player.md).
+  Never assign model-authored HTML to `innerHTML`;
   KaTeX and highlight.js may assign only the escaped markup they generate from
   math/code source.
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a
