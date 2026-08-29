@@ -760,12 +760,21 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   rounded body stays within the page and its point meets the right edge, so one
   shared page transform carries both left with a velocity-scaled ease. This
   reveals the stationary Life preview underneath instead of sliding an overlay
-  above the page. Both gestures
-  track the finger, lock their axis after 8px, and abandon a vertical lock before
+  above the page. Post-release travel uses a balanced `cubic-bezier(0.4,0,0.2,1)`
+  over 150–320ms, then keeps the destination underlay above the newly rendered
+  transcript for a 180ms opacity handoff; never clear the transform and hide the
+  underlay in the same frame. Start entry/exit destination navigation only after
+  the source page is fully covered; otherwise a fast response can mutate the
+  still-visible `.main`. If exit cancellation or the desktop breakpoint arrives
+  after standard selection began, re-enter Life with a newer navigation generation
+  before handoff—hiding the preview alone does not cancel that standard request.
+  Both gestures track the finger, lock their axis after 8px, and abandon a vertical lock before
   calling `preventDefault`, so transcript scrolling is never stolen. Life's
   left-edge back drag follows the finger, commits after 22%, and requires the
-  release direction to remain rightward; shallow drags, reversals, touchcancel,
-  foreground menus, newer navigation, and desktop breakpoint changes cancel it.
+  release direction to remain rightward; shallow drags ease home, while committed
+  drags and the Sessions button settle right over a Sessions underlay before the
+  same crossfade. Reversals, touchcancel, foreground menus, newer navigation, and
+  desktop breakpoint changes cancel it.
   The fixed edge button is outside `.messages`' scroll ancestry, so a vertical lock that
   starts on the button explicitly forwards `dy` to the transcript; test real
   `scrollTop`, not merely the absence of a Life request. They are disabled above

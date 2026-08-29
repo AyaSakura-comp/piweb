@@ -71,16 +71,21 @@ On a phone, start within 56 px of the **right edge** and swipe left, or tap the
 `.main` while its pointed tip meets the page's right edge, so the drop inherits
 one page transform instead of being animated separately. They follow the finger,
 progressively revealing Life underneath, then use release velocity to settle
-after 22% of the viewport or a shorter projected fast flick. During settlement
-it blocks the underlying session and offers **Cancel**, so a delayed load cannot
-receive accidental input. Life reuses one
+after 22% of the viewport or a shorter projected fast flick. A balanced 150–320ms
+page ease keeps part of the source page visible during travel. Destination
+navigation starts only after the source is fully covered, so a fast response
+cannot replace it mid-motion; once ready, the underlay crossfades into the real
+transcript instead of cutting.
+During settlement it blocks the underlying session and offers **Cancel**, so a
+delayed load cannot receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective
 thinking level before every turn, and hides channel/model management. Its header
 shows **Sessions / Life / DEFAULT**, places a dedicated **New pi session** pencil
 button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New pi
 session archives the current Pi context and starts fresh without replacing the
 Life channel. Tap **Sessions**, or swipe right from the phone's left edge, to
-return to the last standard session. If there is
+settle the Life page right over a Sessions underlay, crossfade, and return to the
+last standard session. If there is
 no standard session, returning or rolling back a failed Life load clears the Life
 stream and composer destination and shows `no session`. The selected presentation
 mode survives reloads on that device.

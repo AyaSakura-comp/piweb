@@ -624,8 +624,8 @@ function clearStandardSelection() {
   renderSessions();
 }
 
-function beginStandardNavigation() {
-  cancelLifePreview();
+function beginStandardNavigation({ preserveSwipePreview = false } = {}) {
+  if (!preserveSwipePreview) cancelLifePreview();
   cancelDrawerDrag();
   const navigation = ++lifeNavigationGeneration;
   setPresentationMode('sessions');
@@ -697,8 +697,8 @@ async function enterLifeMode({ preserveSwipePreview = false } = {}) {
   }
 }
 
-async function exitLifeMode() {
-  const navigation = beginStandardNavigation();
+async function exitLifeMode({ preserveSwipePreview = false } = {}) {
+  const navigation = beginStandardNavigation({ preserveSwipePreview });
   return selectStandardCandidates(
     standardSelectionCandidates(standardFallbackJid()),
     navigation,
@@ -1967,7 +1967,7 @@ $('session-name-input').addEventListener('keydown', (e) => {
 $('session-name-input').addEventListener('blur', () => commitRename(true));
 
 $('btn-new-session').addEventListener('click', createSession);
-$('btn-life-back').addEventListener('click', exitLifeMode);
+$('btn-life-back').addEventListener('click', openSessionsFromLife);
 
 async function cleanSession() {
   if (state.selectionPending || !state.activeJid || state.previewingDeleted || state.mode === 'life') return;
@@ -3738,9 +3738,7 @@ function cancelDrawerDrag() {
   const wasOpen = drawerDrag.open;
   drawerDrag = null;
   if (life) {
-    const main = document.querySelector('.main');
-    main.style.transition = '';
-    main.style.transform = '';
+    cancelLifePreview();
     return;
   }
   const drawer = $('drawer');
@@ -3849,9 +3847,8 @@ function updateLifeBackDrag(clientX) {
   if (distanceDelta !== 0) drawerDrag.lastDirection = Math.sign(distanceDelta);
   drawerDrag.lastDistance = distance;
   drawerDrag.distance = distance;
-  const main = document.querySelector('.main');
-  main.style.transition = 'none';
-  main.style.transform = `translate3d(${distance}px, 0, 0)`;
+  showLifeUnderlay('sessions');
+  setLifePageOffset(distance);
 }
 
 function endDrawerDrag(commit = true) {
@@ -3865,18 +3862,16 @@ function endDrawerDrag(commit = true) {
   drawerDrag = null;
 
   if (life) {
-    const main = document.querySelector('.main');
-    main.style.transition = '';
-    main.style.transform = '';
-    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-    if (
-      commit &&
-      axis === 'x' &&
-      lastDirection > 0 &&
-      distance >= viewportWidth * LIFE_BACK_DISTANCE_RATIO
-    ) {
-      void exitLifeMode();
+    if (axis !== 'x') {
+      resetLifePreview();
+      return;
     }
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const shouldExit =
+      commit &&
+      lastDirection > 0 &&
+      distance >= viewportWidth * LIFE_BACK_DISTANCE_RATIO;
+    void settleLifeBackDrag({ distance, velocity: 0.75 }, shouldExit, viewportWidth);
     return;
   }
 
@@ -3934,6 +3929,7 @@ const LIFE_FLICK_MIN_VELOCITY = 0.18;
 const LIFE_VELOCITY_PROJECTION_MS = 180;
 let lifeDrag = null;
 let lifeTransitioning = false;
+let lifeTransitionDirection = null;
 let lifePreviewGeneration = 0;
 
 function isLifeGestureAllowed() {
@@ -3965,24 +3961,35 @@ function setLifeSettlementBlocking(blocked) {
   preview.setAttribute('aria-hidden', String(!blocked));
   cancel.hidden = !blocked;
   if (blocked) {
+    cancel.setAttribute(
+      'aria-label',
+      lifeTransitionDirection === 'exit' ? 'Cancel Life exit' : 'Cancel Life entry',
+    );
     cancel.focus({ preventScroll: true });
   } else if (cancelOwnedFocus) {
     queueMicrotask(() => {
-      if (state.mode !== 'life' && getComputedStyle(edgeHint).display !== 'none') {
+      if (state.mode === 'life') {
+        $('btn-life-back').focus({ preventScroll: true });
+      } else if (getComputedStyle(edgeHint).display !== 'none') {
         edgeHint.focus({ preventScroll: true });
       }
     });
   }
 }
 
-function setLifePageOffset(distance, transition = 'none') {
+function setLifePageOffset(offset, transition = 'none') {
   const main = document.querySelector('.main');
   main.style.transition = transition;
-  main.style.transform = `translate3d(${-Math.max(0, distance)}px, 0, 0)`;
+  main.style.transform = `translate3d(${offset}px, 0, 0)`;
 }
 
-function showLifeUnderlay() {
+function showLifeUnderlay(destination = 'life') {
   const preview = $('life-swipe-preview');
+  const mark = preview.querySelector('.life-swipe-mark');
+  preview.dataset.destination = destination;
+  mark.querySelector('strong').textContent = destination === 'life' ? 'Life' : 'Sessions';
+  mark.querySelector('span').textContent =
+    destination === 'life' ? 'Default model' : 'Previous session';
   $('app').classList.add('life-page-dragging');
   preview.hidden = false;
   preview.style.transition = 'none';
@@ -4007,6 +4014,7 @@ function resetLifePreview(generation = lifePreviewGeneration) {
   preview.style.opacity = '';
   preview.hidden = true;
   lifeTransitioning = false;
+  lifeTransitionDirection = null;
 }
 
 function cancelLifePreview() {
@@ -4021,25 +4029,44 @@ function cancelLifePreview() {
   preview.style.opacity = '';
   preview.hidden = true;
   lifeTransitioning = false;
+  lifeTransitionDirection = null;
 }
 
-function animateLifePage({ distance, duration, generation }) {
+function animateLifePage({ offset, duration, generation, destination = 'life' }) {
   if (generation !== lifePreviewGeneration) return Promise.resolve();
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const animationMs = reducedMotion ? 0 : Math.max(0, Math.round(duration));
-  showLifeUnderlay();
+  showLifeUnderlay(destination);
   document.querySelector('.main').getBoundingClientRect();
+  // Keep enough of the departing page visible throughout the travel. The old
+  // front-loaded curve covered ~80% in the first 80ms and looked like a cut.
   const transition =
     animationMs === 0
       ? 'none'
-      : `transform ${animationMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-  setLifePageOffset(distance, transition);
+      : `transform ${animationMs}ms cubic-bezier(0.4, 0, 0.2, 1)`;
+  setLifePageOffset(offset, transition);
   if (animationMs === 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, animationMs + 24));
 }
 
-function lifeSettleDuration(distance, velocity, entering) {
-  const speed = Math.max(entering ? 0.7 : 0.5, velocity);
+async function handoffLifePage(generation) {
+  if (generation !== lifePreviewGeneration) return;
+  const preview = $('life-swipe-preview');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const duration = reducedMotion ? 0 : 180;
+  // The fixed underlay remains above the freshly rendered destination while
+  // the real page resets underneath it, then yields by opacity. Resetting and
+  // hiding in one frame is the hard cut this handoff deliberately avoids.
+  clearLifePageOffset();
+  preview.getBoundingClientRect();
+  preview.style.transition =
+    duration === 0 ? 'none' : `opacity ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
+  preview.style.opacity = '0';
+  if (duration > 0) await new Promise((resolve) => setTimeout(resolve, duration + 24));
+}
+
+function lifeSettleDuration(distance, velocity, committing) {
+  const speed = Math.max(committing ? 0.7 : 0.5, velocity);
   return Math.max(150, Math.min(320, distance / speed));
 }
 
@@ -4114,8 +4141,8 @@ document.addEventListener(
       lifeDrag.lastDistance = lifeDrag.distance;
       lifeDrag.lastTime = now;
     }
-    showLifeUnderlay();
-    setLifePageOffset(lifeDrag.distance);
+    showLifeUnderlay('life');
+    setLifePageOffset(-lifeDrag.distance);
   },
   { passive: false },
 );
@@ -4123,33 +4150,117 @@ document.addEventListener(
 async function settleLifeDrag(drag, shouldEnter, viewportWidth) {
   const generation = ++lifePreviewGeneration;
   lifeTransitioning = true;
+  lifeTransitionDirection = 'enter';
   setLifeSettlementBlocking(true);
   const remaining = shouldEnter ? viewportWidth - drag.distance : drag.distance;
   const duration = lifeSettleDuration(remaining, drag.velocity, shouldEnter);
 
   if (!shouldEnter) {
-    await animateLifePage({ distance: 0, duration, generation });
+    await animateLifePage({ offset: 0, duration, generation });
     resetLifePreview(generation);
     return;
   }
 
-  const enterPromise = enterLifeMode({ preserveSwipePreview: true });
-  await animateLifePage({ distance: viewportWidth, duration, generation });
-  const entered = await enterPromise;
+  await animateLifePage({ offset: -viewportWidth, duration, generation });
+  if (generation !== lifePreviewGeneration) return;
+  // Do not let a fast endpoint mutate the still-visible source page. Navigation
+  // starts only after travel has fully covered it with the fixed underlay.
+  const entered = await enterLifeMode({ preserveSwipePreview: true });
   if (generation !== lifePreviewGeneration) return;
   if (!entered) {
-    await animateLifePage({ distance: 0, duration: 220, generation });
+    await animateLifePage({ offset: 0, duration: 220, generation });
     resetLifePreview(generation);
     return;
   }
 
+  await handoffLifePage(generation);
   resetLifePreview(generation);
+}
+
+async function settleLifeBackDrag(drag, shouldExit, viewportWidth) {
+  const generation = ++lifePreviewGeneration;
+  lifeTransitioning = true;
+  lifeTransitionDirection = 'exit';
+  setLifeSettlementBlocking(true);
+  const remaining = shouldExit ? viewportWidth - drag.distance : drag.distance;
+  const duration = lifeSettleDuration(remaining, drag.velocity, shouldExit);
+
+  if (!shouldExit) {
+    await animateLifePage({
+      offset: 0,
+      duration,
+      generation,
+      destination: 'sessions',
+    });
+    resetLifePreview(generation);
+    return;
+  }
+
+  await animateLifePage({
+    offset: viewportWidth,
+    duration,
+    generation,
+    destination: 'sessions',
+  });
+  if (generation !== lifePreviewGeneration) return;
+  await exitLifeMode({ preserveSwipePreview: true });
+  if (generation !== lifePreviewGeneration) return;
+  await handoffLifePage(generation);
+  resetLifePreview(generation);
+}
+
+async function cancelLifeExit() {
+  if (!lifeTransitioning || lifeTransitionDirection !== 'exit') return;
+  if (state.mode === 'life') {
+    cancelLifePreview();
+    return;
+  }
+
+  // Standard selection has already begun behind the underlay. Give this cancel
+  // a newer visual generation and re-enter Life, which also increments the
+  // navigation generation so the pending standard result cannot commit later.
+  const generation = ++lifePreviewGeneration;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const animateReturn = !wideDrawer.matches;
+  lifeTransitionDirection = 'return';
+  lifeTransitioning = true;
+  if (animateReturn) {
+    showLifeUnderlay('life');
+    setLifePageOffset(viewportWidth);
+    setLifeSettlementBlocking(true);
+  } else {
+    // The fixed underlay is CSS-hidden at the permanent-drawer breakpoint.
+    // Reveal the current page and release inertness while Life re-entry owns
+    // navigation; otherwise a delayed endpoint leaves a blank blocked screen.
+    setLifeSettlementBlocking(false);
+    clearLifePageOffset();
+    const preview = $('life-swipe-preview');
+    preview.style.transition = '';
+    preview.style.opacity = '';
+    preview.hidden = true;
+  }
+
+  const entered = await enterLifeMode({ preserveSwipePreview: true });
+  if (generation !== lifePreviewGeneration) return;
+  if (animateReturn) {
+    showLifeUnderlay(entered ? 'life' : 'sessions');
+    await handoffLifePage(generation);
+  }
+  resetLifePreview(generation);
+}
+
+function openSessionsFromLife() {
+  if (state.mode !== 'life' || lifeTransitioning) return;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  showLifeUnderlay('sessions');
+  setLifePageOffset(0);
+  void settleLifeBackDrag({ distance: 0, velocity: 1.2 }, true, viewportWidth);
 }
 
 function openLifeFromEdgeHint() {
   if (!isLifeGestureAllowed()) return;
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-  showLifeUnderlay();
+  showLifeUnderlay('life');
   setLifePageOffset(0);
   void settleLifeDrag({ distance: 0, velocity: 1.2 }, true, viewportWidth);
 }
@@ -4190,14 +4301,18 @@ document.addEventListener('touchend', () => endLifeDrag(true), { passive: true }
 document.addEventListener('touchcancel', () => endLifeDrag(false), { passive: true });
 $('life-edge-hint').addEventListener('click', openLifeFromEdgeHint);
 $('life-swipe-cancel').addEventListener('click', () => {
-  if (lifeTransitioning) void exitLifeMode();
+  if (!lifeTransitioning) return;
+  if (lifeTransitionDirection === 'exit') void cancelLifeExit();
+  else void exitLifeMode();
 });
 wideDrawer.addEventListener('change', (event) => {
   // CSS hides the mobile preview above this breakpoint. Cancel first so its
   // inert input shield can never outlive the only visible Cancel control.
   if (!event.matches) return;
-  if (lifeTransitioning) void exitLifeMode();
-  else if (lifeDrag) cancelLifePreview();
+  if (lifeTransitioning) {
+    if (lifeTransitionDirection === 'exit') void cancelLifeExit();
+    else void exitLifeMode();
+  } else if (lifeDrag) cancelLifePreview();
   if (drawerDrag) cancelDrawerDrag();
 });
 

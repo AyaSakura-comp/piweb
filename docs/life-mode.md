@@ -13,7 +13,11 @@ a fresh Pi context inside that protected channel with **New pi session**.
   when its projected velocity crosses the same boundary. The 48×64 px water-drop
   leaf is also a button: its rounded body is nested inside the current page, its
   pointed tip meets the right edge, and it inherits that page's transform. Tap
-  it to auto-settle the current page and reveal Life.
+  it to auto-settle the current page and reveal Life. Automatic settlement uses
+  a balanced 150–320 ms page ease rather than a front-loaded snap. Life API and
+  history navigation starts only after the source page is fully covered, so a
+  fast response cannot replace visible source content mid-travel; once Life is
+  ready, the stationary underlay crossfades into the real transcript for 180 ms.
 - Vertical motion wins after the 8 px axis lock, so the gesture does not steal
   transcript scrolling. Because the fixed button is outside the transcript's
   scroll ancestry, a vertical drag beginning on it forwards that locked motion
@@ -43,7 +47,12 @@ a fresh Pi context inside that protected channel with **New pi session**.
   edge returns from Life. The back swipe follows the finger, commits after 22%
   of the viewport, yields to vertical transcript scrolling and foreground
   overlays, and cancels on a shallow drag, leftward reversal, touch cancellation,
-  newer navigation, or the desktop breakpoint.
+  newer navigation, or the desktop breakpoint. A committed swipe and the
+  **Sessions** button both settle the Life page right over a Sessions underlay,
+  wait for the standard destination, then crossfade; a shallow swipe eases home.
+  Cancel before standard navigation begins restores the existing Life page.
+  Cancel—or the desktop breakpoint—after selection begins issues a newer Life
+  navigation, invalidating the pending standard result before fading back.
 - Returning from Life, or rolling back a failed Life history load, restores the
   last selected standard session when available, otherwise the newest standard
   session. If none exists, Piweb closes the Life stream, clears
@@ -63,22 +72,23 @@ flowchart TD
     C --> D{8 px axis lock}
     D -- Vertical --> E[Release gesture;<br/>allow normal page scrolling]
     D -- Horizontal left --> F{Crossed 22% or will<br/>flick inertia project across it?}
-    F -- No --> G[Animate current page back<br/>and stay in Sessions]
-    F -- Yes --> H[Settle current page left with velocity<br/>and POST /api/life-session]
-    H --> I{Singleton exists?}
+    F -- No --> G[Ease current page back<br/>and stay in Sessions]
+    F -- Yes --> H[Settle current page left with balanced easing]
+    H --> H2[Page fully covered;<br/>POST /api/life-session]
+    H2 --> I{Singleton exists?}
     I -- No --> J[Create web:life with a<br/>new empty session folder]
     I -- Yes --> K[Restore web:life and clear<br/>model/thinking/cwd overrides]
     J --> L[Load newest Life history]
     K --> L
     L --> M[Open Life SSE stream]
-    M --> N[Render Sessions / Life / DEFAULT<br/>and save piweb.mode=life]
+    M --> N[Crossfade underlay into<br/>Sessions / Life / DEFAULT<br/>and save piweb.mode=life]
     N --> O{Next action}
     O -- Send message --> P[Run one Life turn using<br/>fresh Pi runtime defaults]
     P --> N
     O -- New pi session --> S[Archive the current Pi context<br/>and start fresh in web:life]
     S --> N
     O -- Reload or notification --> H
-    O -- Tap Sessions --> Q[Invalidate pending Life navigation,<br/>restore last standard session]
+    O -- Tap Sessions or swipe back --> Q[Settle right over Sessions underlay,<br/>restore destination, then crossfade]
     Q --> A
     H -. API/history failure .-> R[Restore last standard or newest fallback,<br/>or truthful empty state]
     R --> A

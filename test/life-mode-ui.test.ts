@@ -30,12 +30,16 @@ describe('Life mode UI contract', () => {
 
     expect(app).toContain("const MODE_KEY = 'piweb.mode'");
     expect(app).toContain('async function enterLifeMode({ preserveSwipePreview = false } = {})');
-    expect(app).toContain('async function exitLifeMode()');
+    expect(app).toContain('async function exitLifeMode({ preserveSwipePreview = false } = {})');
     expect(app).toContain("api('/api/life-session', { method: 'POST' })");
     expect(app).toContain('viewportWidth - LIFE_EDGE_ZONE_PX');
     expect(app).toContain('const LIFE_EDGE_ZONE_PX = 56');
     expect(app).toContain('const LIFE_VELOCITY_PROJECTION_MS = 180');
     expect(app).toContain('async function settleLifeDrag');
+    expect(app).toContain('async function settleLifeBackDrag');
+    expect(app).toContain('async function cancelLifeExit');
+    expect(app).toContain('async function handoffLifePage');
+    expect(app).toContain('cubic-bezier(0.4, 0, 0.2, 1)');
     expect(app).toContain('function setLifePageOffset');
     const pageOffsetImplementation = app.match(
       /function setLifePageOffset[\s\S]*?\n}\n/,
@@ -48,7 +52,9 @@ describe('Life mode UI contract', () => {
     expect(clearPageOffsetImplementation).toBeDefined();
     expect(clearPageOffsetImplementation).not.toContain("$('life-edge-hint')");
     expect(app).toContain('function openLifeFromEdgeHint()');
+    expect(app).toContain('function openSessionsFromLife()');
     expect(app).toContain("$('life-edge-hint').addEventListener('click', openLifeFromEdgeHint)");
+    expect(app).toContain("$('btn-life-back').addEventListener('click', openSessionsFromLife)");
     expect(app).toContain("$('app').classList.toggle('life-mode'");
     expect(app).toContain('const destinationJid = state.activeJid');
     expect(app).toContain('encodeURIComponent(destinationJid)');

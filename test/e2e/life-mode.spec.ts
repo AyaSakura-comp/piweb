@@ -40,7 +40,9 @@ async function installLifeApi(
     failLife?: boolean;
     failLifeEvents?: boolean;
     delayLife?: boolean;
+    delaySecondLife?: boolean;
     delayLifeEvents?: boolean;
+    delayStandardEvents?: boolean;
     delayLifeMedia?: boolean;
     lifeMediaItem?: boolean;
     unknownReplyEvent?: boolean;
@@ -83,10 +85,22 @@ async function installLifeApi(
         releaseLifeResponse = resolve;
       })
     : null;
+  let releaseSecondLife: (() => void) | undefined;
+  const secondLifeGate = options.delaySecondLife
+    ? new Promise<void>((resolve) => {
+        releaseSecondLife = resolve;
+      })
+    : null;
   let releaseLifeEvents: (() => void) | undefined;
   const lifeEventsGate = options.delayLifeEvents
     ? new Promise<void>((resolve) => {
         releaseLifeEvents = resolve;
+      })
+    : null;
+  let releaseStandardEvents: (() => void) | undefined;
+  const standardEventsGate = options.delayStandardEvents
+    ? new Promise<void>((resolve) => {
+        releaseStandardEvents = resolve;
       })
     : null;
   let releaseLifeMedia: (() => void) | undefined;
@@ -190,6 +204,7 @@ async function installLifeApi(
         return route.fulfill({ status: 503, json: { error: 'Life unavailable' } });
       }
       if (lifeResponseGate) await lifeResponseGate;
+      if (secondLifeGate && lifeRequests > 1) await secondLifeGate;
       return route.fulfill({
         json: options.corruptLifeEndpoint
           ? { ...STANDARD_SESSION, created: false }
@@ -249,6 +264,9 @@ async function installLifeApi(
         return route.fulfill({ status: 404, json: { error: 'Session not found' } });
       }
       if (isLifeEvents && lifeEventsGate) await lifeEventsGate;
+      if (!isLifeEvents && standardMetadata && standardEventsGate) {
+        await standardEventsGate;
+      }
       if (options.failLifeEvents && isLifeEvents) {
         return route.fulfill({ status: 503, json: { error: 'Life events unavailable' } });
       }
@@ -388,7 +406,9 @@ async function installLifeApi(
   return {
     lifeRequests: () => lifeRequests,
     releaseLifeResponse: () => releaseLifeResponse?.(),
+    releaseSecondLife: () => releaseSecondLife?.(),
     releaseLifeEvents: () => releaseLifeEvents?.(),
+    releaseStandardEvents: () => releaseStandardEvents?.(),
     releaseLifeMedia: () => releaseLifeMedia?.(),
     releaseRestore: () => releaseRestore?.(),
     releaseDelete: () => releaseDelete?.(),
@@ -548,14 +568,13 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
     edgeTouch,
     { x: edgeTouch.x - 55, y: edgeTouch.y + 1 },
   );
-  await expect.poll(api.lifeRequests).toBe(1);
-  await page.waitForTimeout(120);
-  expect(api.lifeRequests()).toBe(1);
+  expect(api.lifeRequests()).toBe(0);
   await expect(preview).toBeVisible();
   const releasePageX = (await page.locator('.main').boundingBox())!.x;
   await page.waitForTimeout(60);
   expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(releasePageX);
   await page.screenshot({ path: testInfo.outputPath('02-life-swipe-inertia.png') });
+  await expect.poll(api.lifeRequests).toBe(1);
   await expect(preview).toBeHidden();
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
@@ -642,29 +661,36 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.screenshot({ path: testInfo.outputPath('05-life-back-swipe-progress.png') });
   await backSwipe.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await backSwipe.detach();
+  await page.waitForTimeout(60);
+  await page.screenshot({ path: testInfo.outputPath('06-life-back-settle.png') });
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
   expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
   await expect(page.locator('#life-edge-hint')).toBeVisible();
   await expect(page.getByRole('button', { name: 'New pi session' })).toBeHidden();
-  await page.screenshot({ path: testInfo.outputPath('06-returned-to-sessions.png') });
+  await expect(preview).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('07-returned-to-sessions.png') });
 
   // The water-drop affordance is also a real 48px touch target. Tapping it
   // auto-settles the page with the same protected transition as a flick.
   await page.getByRole('button', { name: 'Open Life' }).click();
-  await expect.poll(api.lifeRequests).toBe(3);
+  expect(api.lifeRequests()).toBe(2);
   await expect(preview).toBeVisible();
   await page.waitForTimeout(60);
   expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(0);
-  await page.screenshot({ path: testInfo.outputPath('07-edge-button-auto-settle.png') });
+  await page.screenshot({ path: testInfo.outputPath('08-edge-button-auto-settle.png') });
+  await expect.poll(api.lifeRequests).toBe(3);
   await expect(preview).toBeHidden();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await page.screenshot({ path: testInfo.outputPath('08-life-opened-by-button.png') });
+  await page.screenshot({ path: testInfo.outputPath('09-life-opened-by-button.png') });
   await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await page.waitForTimeout(60);
+  await page.screenshot({ path: testInfo.outputPath('10-sessions-button-settle.png') });
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
   await expect(page.locator('#btn-status')).toBeVisible();
   await expect(page.locator('#header-badge')).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('09-button-returned-to-sessions.png') });
+  await expect(preview).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('11-button-returned-to-sessions.png') });
 
   expect(
     await page.evaluate(
@@ -1105,9 +1131,8 @@ test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {
   });
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
-  await expect.poll(api.lifeRequests).toBe(1);
   await page.waitForTimeout(120);
-  expect(api.lifeRequests()).toBe(1);
+  expect(api.lifeRequests()).toBe(0);
   const preview = page.locator('#life-swipe-preview');
   await expect(preview).toBeVisible();
   expect(
@@ -1119,10 +1144,274 @@ test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {
   const startedPageX = (await page.locator('.main').boundingBox())!.x;
   await page.waitForTimeout(60);
   expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(startedPageX);
+  await expect.poll(api.lifeRequests).toBe(1);
 
   api.releaseLifeResponse();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(preview).toBeHidden();
+});
+
+test('edge-button entry keeps an old-page sliver visible during its settle', async ({ page }) => {
+  const api = await installLifeApi(page, { delayLife: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.getByRole('button', { name: 'Open Life' }).click();
+  await page.waitForTimeout(80);
+
+  expect(api.lifeRequests()).toBe(0);
+  const pageX = (await page.locator('.main').boundingBox())!.x;
+  expect(pageX).toBeLessThan(-20);
+  expect(pageX).toBeGreaterThan(-280);
+  await expect.poll(api.lifeRequests).toBe(1);
+  api.releaseLifeResponse();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+});
+
+test('fast Life readiness cannot replace the visible source during entry travel', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.getByRole('button', { name: 'Open Life' }).click();
+  await page.waitForTimeout(80);
+
+  expect(api.lifeRequests()).toBe(0);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  const pageX = (await page.locator('.main').boundingBox())!.x;
+  expect(pageX).toBeLessThan(-20);
+  expect(pageX).toBeGreaterThan(-280);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+});
+
+test('ready Life content crossfades through the entry underlay', async ({ page }, testInfo) => {
+  const api = await installLifeApi(page, { delayLife: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  await page.getByRole('button', { name: 'Open Life' }).click();
+  await expect.poll(api.lifeRequests).toBe(1);
+  await page.waitForTimeout(360);
+  api.releaseLifeResponse();
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+  const preview = page.locator('#life-swipe-preview');
+  await expect(preview).toBeVisible();
+  await page.waitForTimeout(60);
+  const opacity = Number(await preview.evaluate((element) => getComputedStyle(element).opacity));
+  expect(opacity).toBeGreaterThan(0);
+  expect(opacity).toBeLessThan(1);
+  await page.screenshot({ path: testInfo.outputPath('life-entry-crossfade.png') });
+  await expect(preview).toBeHidden();
+});
+
+test('committed Life back swipe settles offscreen before switching pages', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.waitForTimeout(60);
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  const pageX = (await page.locator('.main').boundingBox())!.x;
+  expect(pageX).toBeGreaterThan(150);
+  expect(pageX).toBeLessThan(390);
+  await expect(page.locator('#life-swipe-preview')).toBeVisible();
+  await expect(page.locator('#life-swipe-preview')).toHaveAttribute(
+    'data-destination',
+    'sessions',
+  );
+
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('Sessions button uses the same smooth Life exit transition', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await page.waitForTimeout(60);
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  const pageX = (await page.locator('.main').boundingBox())!.x;
+  expect(pageX).toBeGreaterThan(0);
+  expect(pageX).toBeLessThan(360);
+  await expect(page.locator('#life-swipe-preview')).toHaveAttribute(
+    'data-destination',
+    'sessions',
+  );
+
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('Cancel Life exit returns to the settled Life page', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  const cancel = page.getByRole('button', { name: 'Cancel Life exit' });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+  await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeFocused();
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('life');
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('Cancel Life exit re-enters Life after standard selection has started', async ({ page }) => {
+  const api = await installLifeApi(page, { delayStandardEvents: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const standardEvents = page.waitForRequest((request) =>
+    request.url().includes(`/api/sessions/${encodeURIComponent(STANDARD_SESSION.jid)}/events`),
+  );
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await standardEvents;
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  const cancel = page.getByRole('button', { name: 'Cancel Life exit' });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
+
+  await expect.poll(api.lifeRequests).toBe(2);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeFocused();
+  api.releaseStandardEvents();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+});
+
+test('desktop breakpoint re-enters Life after standard selection has started', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    delayStandardEvents: true,
+    delaySecondLife: true,
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const standardEvents = page.waitForRequest((request) =>
+    request.url().includes(`/api/sessions/${encodeURIComponent(STANDARD_SESSION.jid)}/events`),
+  );
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await standardEvents;
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await page.setViewportSize({ width: 800, height: 844 });
+
+  await expect.poll(api.lifeRequests).toBe(2);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  expect(await page.locator('.main').evaluate((element) => element.inert)).toBe(false);
+  expect(
+    await page.locator('.main').evaluate((element: HTMLElement) => ({
+      transform: element.style.transform,
+      transition: element.style.transition,
+    })),
+  ).toEqual({ transform: '', transition: '' });
+  api.releaseSecondLife();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  api.releaseStandardEvents();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
+});
+
+test('reduced motion finishes Life entry and exit without stale transition state', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open Life' }).click();
+
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  expect(await page.locator('.main').evaluate((element) => element.inert)).toBe(false);
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+});
+
+test('newer navigation cancels a committed Life back settlement', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    standardSessions: [STANDARD_SESSION, OTHER_STANDARD_SESSION],
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await page.waitForTimeout(60);
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(0);
+  await page.evaluate((jid) => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid } }),
+    );
+  }, OTHER_STANDARD_SESSION.jid);
+
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+  await page.waitForTimeout(400);
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('shallow Life back swipe eases home instead of snapping', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 60, y: 432 }, { hold: true });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.waitForTimeout(35);
+
+  const settlingX = (await page.locator('.main').boundingBox())!.x;
+  expect(settlingX).toBeGreaterThan(0);
+  expect(settlingX).toBeLessThan(58);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
+  await expect(page.locator('#life-swipe-preview')).toBeHidden();
+  expect(api.lifeRequests()).toBe(1);
 });
 
 test('a vertical drag on the edge button scrolls the underlying transcript', async ({ page }) => {
@@ -1158,7 +1447,7 @@ test('a short flick from the wider right edge settles into Life with inertia', a
   // Start 50px from the edge and move only 55px: distance alone is not enough,
   // but a quick release should project the panel forward using flick velocity.
   await touchDrag(page, { x: 340, y: 430 }, { x: 285, y: 431 });
-  await expect.poll(api.lifeRequests).toBe(1);
+  expect(api.lifeRequests()).toBe(0);
 
   const preview = page.locator('#life-swipe-preview');
   await expect(preview).toBeVisible();
@@ -1167,6 +1456,7 @@ test('a short flick from the wider right edge settles into Life with inertia', a
   const settlingPageX = (await page.locator('.main').boundingBox())!.x;
   expect(settlingPageX).toBeLessThan(releasePageX);
   expect(settlingPageX).toBeGreaterThanOrEqual(-390);
+  await expect.poll(api.lifeRequests).toBe(1);
 
   api.releaseLifeResponse();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
