@@ -11,6 +11,8 @@ describe('Life mode UI contract', () => {
     const css = readPublic('app.css');
 
     expect(html).toContain('id="btn-life-back"');
+    expect(html).toContain('id="btn-life-new-session"');
+    expect(html).toContain('aria-label="New pi session"');
     expect(html).toContain('id="life-edge-hint"');
     expect(html).toContain('aria-label="Open Life"');
     expect(html).toContain('id="life-swipe-preview"');

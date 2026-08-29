@@ -310,14 +310,15 @@ svg {
   position: relative;
 }
 
-/* Keep the Life-safe overflow (and emergency Stop while busy) on the right;
-   the absolutely centered title must never cover either hit target. */
-.app.life-mode #btn-more,
+/* Keep the Life reset shortcut, safe overflow, and emergency Stop on the right;
+   the absolutely centered title must never cover these hit targets. */
+.app.life-mode #btn-life-new-session,
 .app.life-mode #btn-stop:not([hidden]) {
   margin-left: auto;
 }
 
-.app.life-mode #btn-stop:not([hidden]) ~ #btn-more {
+.app.life-mode #btn-stop:not([hidden]) ~ #btn-life-new-session,
+.app.life-mode #btn-more {
   margin-left: 0;
 }
 
@@ -327,6 +328,30 @@ svg {
   max-width: min(54vw, 240px);
   transform: translateX(-50%);
   justify-content: center;
+}
+
+/* A 320px busy Life header has three mandatory right-side actions. Let the
+   title use the safe space between action groups, and compact only the labelled
+   back action at the narrowest size, rather than letting Stop cover DEFAULT. */
+@media (max-width: 374px) {
+  .app.life-mode.agent-busy .topbar-title {
+    position: static;
+    left: auto;
+    max-width: none;
+    transform: none;
+  }
+}
+
+@media (max-width: 340px) {
+  .app.life-mode.agent-busy .life-back {
+    width: 34px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .app.life-mode.agent-busy .life-back span {
+    display: none;
+  }
 }
 
 .app.life-mode #session-name {

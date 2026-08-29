@@ -31,9 +31,10 @@ a fresh Pi context inside that protected channel with **New pi session**.
 - Rename, delete, clear, restore, model, thinking, cwd, and reset-cwd operations
   are rejected server-side. Emergency `pi stop` and **New pi session** (`/pi new`)
   remain available. `/pi new` archives the previous Pi context and starts fresh
-  without replacing or exposing the protected Life channel. Life's overflow
-  contains **Search**, **New pi session**, and **Media**; Sessions, clean session,
-  and their separator remain hidden there.
+  without replacing or exposing the protected Life channel. Life exposes this
+  action as a dedicated pencil button in the header, immediately before ⋯. Its
+  overflow contains **Search** and **Media**; Sessions, New pi session, clean
+  session, and their separator remain hidden there.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.
 - Returning from Life, or rolling back a failed Life history load, restores the

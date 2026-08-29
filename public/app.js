@@ -558,6 +558,7 @@ function setPresentationMode(mode, { persist = true } = {}) {
   const life = mode === 'life';
   $('app').classList.toggle('life-mode', life);
   $('btn-life-back').hidden = !life;
+  $('btn-life-new-session').hidden = !life;
   $('life-title-mark').hidden = !life;
   if (life) {
     closeDrawer();
@@ -1380,6 +1381,7 @@ function newPiSession() {
 }
 
 $('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
+$('btn-life-new-session').addEventListener('click', newPiSession);
 
 $('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
 // The usage button reports the agent the session actually runs on: an agy model
@@ -1417,7 +1419,7 @@ function openMoreMenu() {
   // never exposes channel-list, delete, clear, model, thinking, or cwd controls.
   // A trashed session is frozen: only Search still makes sense.
   $('mi-sessions').hidden = life;
-  $('mi-new-chat').hidden = false;
+  $('mi-new-chat').hidden = life;
   $('mi-clean').hidden = life;
   $('mi-management-separator').hidden = life;
   $('mi-new-chat').disabled = state.previewingDeleted;
@@ -2054,6 +2056,7 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
 }
 
 function setBusy(busy) {
+  $('app').classList.toggle('agent-busy', busy);
   $('typing').hidden = !busy;
   // Stop only exists while there is something to stop — it would be dead
   // weight in an already crowded header otherwise.

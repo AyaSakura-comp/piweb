@@ -513,20 +513,36 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ]) {
     await expect(page.locator(selector)).toBeHidden();
   }
-  await expect(page.locator('#btn-more')).toBeVisible();
-  await page.locator('#btn-more').click();
-  await expect(page.getByRole('menuitem', { name: 'Search' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'New pi session' })).toBeVisible();
-  await expect(page.locator('#mi-sessions')).toBeHidden();
-  await expect(page.locator('#mi-clean')).toBeHidden();
-  await expect(page.locator('#mi-management-separator')).toBeHidden();
+  const lifeNewSession = page.getByRole('button', { name: 'New pi session' });
+  await expect(lifeNewSession).toBeVisible();
+  const lifeHeaderGeometry = await page.evaluate(() => {
+    const title = document.querySelector('.topbar-title').getBoundingClientRect();
+    const action = document.querySelector('#btn-life-new-session').getBoundingClientRect();
+    const more = document.querySelector('#btn-more').getBoundingClientRect();
+    return {
+      directTopbarChild:
+        document.querySelector('#btn-life-new-session').parentElement?.classList.contains('topbar'),
+      clearsCenteredTitle: action.left >= title.right,
+      precedesOverflow: action.right <= more.left,
+    };
+  });
+  expect(lifeHeaderGeometry).toEqual({
+    directTopbarChild: true,
+    clearsCenteredTitle: true,
+    precedesOverflow: true,
+  });
   const newLifeSessionRequest = page.waitForRequest((request) =>
     request.url().endsWith(`/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/commands`),
   );
-  await page.getByRole('menuitem', { name: 'New pi session' }).click();
+  await lifeNewSession.click();
   expect((await newLifeSessionRequest).postDataJSON()).toEqual({ command: 'pi new', args: {} });
   await page.locator('#btn-more').click();
+  await expect(page.getByRole('menuitem', { name: 'Search' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'New pi session' })).toBeHidden();
+  await expect(page.locator('#mi-sessions')).toBeHidden();
+  await expect(page.locator('#mi-clean')).toBeHidden();
+  await expect(page.locator('#mi-management-separator')).toBeHidden();
   await page.getByRole('menuitem', { name: 'Search' }).click();
   await expect(page.locator('#search-panel')).toBeVisible();
   await page.locator('#btn-search-close').click();
@@ -555,6 +571,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect.poll(api.lifeRequests).toBe(2);
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText('Life');
+  await expect(page.getByRole('button', { name: 'New pi session' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('04-life-mode-reloaded.png') });
 
   await page.getByRole('button', { name: 'Return to sessions' }).click();
@@ -562,6 +579,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
   expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
   await expect(page.locator('#life-edge-hint')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New pi session' })).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('05-returned-to-sessions.png') });
 
   // The same edge affordance is also a real 44px touch target. Tapping it
@@ -588,6 +606,44 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('busy Life header keeps every action clear at 320px', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await installLifeApi(page, { lifeEventState: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#btn-stop')).toBeVisible();
+  await expect(page.locator('#btn-life-new-session')).toBeVisible();
+  await expect(page.locator('#btn-more')).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+    const back = rect('#btn-life-back');
+    const title = rect('.topbar-title');
+    const stop = rect('#btn-stop');
+    const newSession = rect('#btn-life-new-session');
+    const more = rect('#btn-more');
+    return {
+      backClearsTitle: back.right <= title.left,
+      titleClearsStop: title.right <= stop.left,
+      stopClearsNewSession: stop.right <= newSession.left,
+      newSessionClearsMore: newSession.right <= more.left,
+      viewportWidth: document.documentElement.clientWidth,
+      headerRight: more.right,
+    };
+  });
+  expect(geometry).toMatchObject({
+    backClearsTitle: true,
+    titleClearsStop: true,
+    stopClearsNewSession: true,
+    newSessionClearsMore: true,
+    viewportWidth: 320,
+  });
+  expect(geometry.headerRight).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath('busy-life-header-320.png') });
 });
 
 test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {

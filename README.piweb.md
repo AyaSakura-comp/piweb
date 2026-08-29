@@ -74,9 +74,10 @@ it blocks the underlying session and offers **Cancel**, so a delayed load cannot
 receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective
 thinking level before every turn, and hides channel/model management. Its header
-shows **Sessions / Life / DEFAULT** with a ⋯ menu containing **Search**, **New pi
-session**, and **Media**. New pi session archives the current Pi context and starts
-fresh without replacing the Life channel; tap **Sessions** to return to the last
+shows **Sessions / Life / DEFAULT**, places a dedicated **New pi session** pencil
+button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New pi
+session archives the current Pi context and starts fresh without replacing the
+Life channel; tap **Sessions** to return to the last
 standard session. If there is
 no standard session, returning or rolling back a failed Life load clears the Life
 stream and composer destination and shows `no session`. The selected presentation

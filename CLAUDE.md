@@ -703,9 +703,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   - History: this replaced a state ranking (unread → busy → rest), which itself
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
-- **Topbar = frequent actions; ⋯ menu = the rest.** The topbar holds `/pi status`,
-  `/gpt-usage` and the model picker; search, `/pi new` and clean session live in
-  the ⋯ menu. The menu is a popover anchored under the button, not a bottom
+- **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
+  holds `/pi status`, `/gpt-usage` and the model picker; search, `/pi new` and
+  clean session live in the ⋯ menu. Life promotes `/pi new` to the pencil button
+  immediately before ⋯ because rotating its one protected context is a primary
+  action there. The menu is a popover anchored under the button, not a bottom
   sheet: these are quick actions and a sheet would feel as heavy as the model
   picker. Each row names the slash command it runs, so the menu also teaches
   the typed form. Dismissal is a
@@ -766,8 +768,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
   escalates to SIGKILL after a bounded grace, and waits for child exit.
   Channel/settings management is rejected server-side; `pi stop` and `pi new`
-  remain available. Life's ⋯ menu exposes Search, New pi session, and Media.
-  `pi new` rotates only the internal Pi context while preserving the protected
+  remain available. Life exposes New pi session as the header pencil button;
+  its ⋯ menu keeps Search and Media. `pi new` rotates only the internal Pi
+  context while preserving the protected
   Life row and its web transcript. Returning or rolling back with no
   standard session must clear the active Life JID, stream, transcript, partial,
   busy, and search ownership before showing `no session`, so the composer cannot
