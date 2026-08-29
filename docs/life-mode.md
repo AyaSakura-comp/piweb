@@ -37,6 +37,11 @@ a fresh Pi context inside that protected channel with **New pi session**.
   session, and their separator remain hidden there.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.
+- Tapping **Sessions** or swiping right from within 36 px of the phone's left
+  edge returns from Life. The back swipe follows the finger, commits after 22%
+  of the viewport, yields to vertical transcript scrolling and foreground
+  overlays, and cancels on a shallow drag, leftward reversal, touch cancellation,
+  newer navigation, or the desktop breakpoint.
 - Returning from Life, or rolling back a failed Life history load, restores the
   last selected standard session when available, otherwise the newest standard
   session. If none exists, Piweb closes the Life stream, clears

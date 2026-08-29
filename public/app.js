@@ -626,6 +626,7 @@ function clearStandardSelection() {
 
 function beginStandardNavigation() {
   cancelLifePreview();
+  cancelDrawerDrag();
   const navigation = ++lifeNavigationGeneration;
   setPresentationMode('sessions');
   closeTrash();
@@ -658,6 +659,7 @@ function standardSelectionCandidates(preferred) {
 
 async function restoreStandardAfterLifeFailure(navigation) {
   if (navigation !== lifeNavigationGeneration) return false;
+  cancelDrawerDrag();
   setPresentationMode('sessions');
   return selectStandardCandidates(
     standardSelectionCandidates(standardFallbackJid()),
@@ -667,6 +669,7 @@ async function restoreStandardAfterLifeFailure(navigation) {
 
 async function enterLifeMode({ preserveSwipePreview = false } = {}) {
   if (!preserveSwipePreview) cancelLifePreview();
+  cancelDrawerDrag();
   const navigation = ++lifeNavigationGeneration;
   const fallback = state.activeJid && state.activeJid !== LIFE_JID ? state.activeJid : null;
   if (fallback && state.sessions.some((s) => s.jid === fallback)) state.lastStandardJid = fallback;
@@ -1204,6 +1207,7 @@ async function reopenActiveTail() {
       : openStandardSession(jid);
   }
 
+  cancelDrawerDrag();
   const navigation = ++lifeNavigationGeneration;
   try {
     const selected = await selectSession(jid, {
@@ -3711,31 +3715,51 @@ $('scrim').addEventListener('click', closeDrawer);
 
 // ── edge swipe ───────────────────────────────────────────────────────────
 //
-// Dragging in from the left edge pulls the session drawer out, and dragging
-// left puts it back. The drawer tracks the finger rather than just toggling on
-// release, so the gesture is reversible mid-way.
+// In standard mode, dragging in from the left edge pulls the session drawer
+// out and dragging left puts it back. In Life, the same rightward edge gesture
+// pulls the current view with the finger and exits to Sessions after release.
+// Both gestures are reversible mid-way.
 //
 // Deliberately narrow and touch-only: anywhere else on screen a
 // horizontal drag belongs to a table, a code block or the image viewer.
 
 const EDGE_ZONE_PX = 36;
 const DRAWER_AXIS_LOCK_PX = 8;
+const LIFE_BACK_DISTANCE_RATIO = 0.22;
 let drawerDrag = null;
 
 function drawerWidth() {
   return $('drawer').offsetWidth || 280;
 }
 
+function cancelDrawerDrag() {
+  if (!drawerDrag) return;
+  const life = drawerDrag.life;
+  const wasOpen = drawerDrag.open;
+  drawerDrag = null;
+  if (life) {
+    const main = document.querySelector('.main');
+    main.style.transition = '';
+    main.style.transform = '';
+    return;
+  }
+  const drawer = $('drawer');
+  const scrim = $('scrim');
+  drawer.style.transition = '';
+  drawer.style.transform = '';
+  scrim.style.transition = '';
+  scrim.style.opacity = '';
+  drawer.classList.toggle('open', wasOpen);
+  scrim.hidden = !wasOpen;
+  $('btn-menu').setAttribute('aria-expanded', String(wasOpen));
+}
+
 function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
-  if (
-    window.matchMedia('(min-width: 768px)').matches ||
-    state.mode === 'life' ||
-    lifeTransitioning
-  ) {
+  if (window.matchMedia('(min-width: 768px)').matches || lifeTransitioning) {
     return false;
   }
-  if (!$('login').hidden) return false;
+  if (!$('login').hidden || isMenuOpen()) return false;
   return (
     $('lightbox').hidden &&
     mediaViewer.element.hidden &&
@@ -3746,13 +3770,27 @@ function isDrawerGestureAllowed() {
 document.addEventListener(
   'touchstart',
   (e) => {
+    if (drawerDrag) {
+      if (e.touches.length !== 1) cancelDrawerDrag();
+      return;
+    }
     if (!isDrawerGestureAllowed() || e.touches.length !== 1) return;
     const touch = e.touches[0];
-    const open = $('drawer').classList.contains('open');
-    // Closed: only the left edge starts it. Open: anywhere, so it can be
-    // pushed back from wherever the thumb happens to be.
+    const life = state.mode === 'life';
+    const open = !life && $('drawer').classList.contains('open');
+    // Closed or Life: only the left edge starts it. An open drawer starts
+    // anywhere, so it can be pushed back from wherever the thumb happens to be.
     if (!open && touch.clientX > EDGE_ZONE_PX) return;
-    drawerDrag = { x: touch.clientX, y: touch.clientY, open, axis: null };
+    drawerDrag = {
+      x: touch.clientX,
+      y: touch.clientY,
+      touchId: touch.identifier,
+      open,
+      life,
+      axis: null,
+      lastDistance: 0,
+      lastDirection: 0,
+    };
   },
   { passive: true },
 );
@@ -3760,7 +3798,11 @@ document.addEventListener(
 document.addEventListener(
   'touchmove',
   (e) => {
-    if (!drawerDrag || e.touches.length !== 1) return;
+    if (!drawerDrag) return;
+    if (e.touches.length !== 1 || e.touches[0].identifier !== drawerDrag.touchId) {
+      cancelDrawerDrag();
+      return;
+    }
     const touch = e.touches[0];
     const dx = touch.clientX - drawerDrag.x;
     const dy = touch.clientY - drawerDrag.y;
@@ -3774,6 +3816,11 @@ document.addEventListener(
 
     // Only now claim the gesture, so a vertical scroll was never blocked.
     if (e.cancelable) e.preventDefault();
+
+    if (drawerDrag.life) {
+      updateLifeBackDrag(touch.clientX);
+      return;
+    }
 
     const width = drawerWidth();
     const base = drawerDrag.open ? 0 : -width;
@@ -3794,12 +3841,44 @@ document.addEventListener(
   { passive: false },
 );
 
-function endDrawerDrag() {
+function updateLifeBackDrag(clientX) {
+  if (!drawerDrag?.life) return;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const distance = Math.max(0, Math.min(viewportWidth, clientX - drawerDrag.x));
+  const distanceDelta = distance - drawerDrag.lastDistance;
+  if (distanceDelta !== 0) drawerDrag.lastDirection = Math.sign(distanceDelta);
+  drawerDrag.lastDistance = distance;
+  drawerDrag.distance = distance;
+  const main = document.querySelector('.main');
+  main.style.transition = 'none';
+  main.style.transform = `translate3d(${distance}px, 0, 0)`;
+}
+
+function endDrawerDrag(commit = true) {
   if (!drawerDrag) return;
   const wasOpen = drawerDrag.open;
+  const life = drawerDrag.life;
   const axis = drawerDrag.axis;
   const offset = drawerDrag.offset;
+  const distance = drawerDrag.distance ?? 0;
+  const lastDirection = drawerDrag.lastDirection;
   drawerDrag = null;
+
+  if (life) {
+    const main = document.querySelector('.main');
+    main.style.transition = '';
+    main.style.transform = '';
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    if (
+      commit &&
+      axis === 'x' &&
+      lastDirection > 0 &&
+      distance >= viewportWidth * LIFE_BACK_DISTANCE_RATIO
+    ) {
+      void exitLifeMode();
+    }
+    return;
+  }
 
   const drawer = $('drawer');
   const scrim = $('scrim');
@@ -3822,8 +3901,29 @@ function endDrawerDrag() {
   else closeDrawer();
 }
 
-document.addEventListener('touchend', endDrawerDrag, { passive: true });
-document.addEventListener('touchcancel', endDrawerDrag, { passive: true });
+document.addEventListener(
+  'touchend',
+  (event) => {
+    if (!drawerDrag) return;
+    const changedTouch = Array.from(event.changedTouches).find(
+      (touch) => touch.identifier === drawerDrag.touchId,
+    );
+    if (!changedTouch) {
+      const gestureStillActive = Array.from(event.touches).some(
+        (touch) => touch.identifier === drawerDrag.touchId,
+      );
+      if (gestureStillActive) return;
+      cancelDrawerDrag();
+      return;
+    }
+    if (drawerDrag.life && drawerDrag.axis === 'x') {
+      updateLifeBackDrag(changedTouch.clientX);
+    }
+    endDrawerDrag(true);
+  },
+  { passive: true },
+);
+document.addEventListener('touchcancel', cancelDrawerDrag, { passive: true });
 
 // ── right-edge Life swipe ─────────────────────────────────────────────────
 
@@ -4101,6 +4201,7 @@ wideDrawer.addEventListener('change', (event) => {
   if (!event.matches) return;
   if (lifeTransitioning) void exitLifeMode();
   else if (lifeDrag) cancelLifePreview();
+  if (drawerDrag) cancelDrawerDrag();
 });
 
 // ── boot ─────────────────────────────────────────────────────────────────

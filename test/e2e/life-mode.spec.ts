@@ -42,6 +42,7 @@ async function installLifeApi(
     delayLife?: boolean;
     delayLifeEvents?: boolean;
     delayLifeMedia?: boolean;
+    lifeMediaItem?: boolean;
     unknownReplyEvent?: boolean;
     delayRestore?: boolean;
     delayDelete?: boolean;
@@ -64,6 +65,8 @@ async function installLifeApi(
     standardSessions?: (typeof STANDARD_SESSION)[];
     deletedSessions?: (typeof DELETED_SESSION)[];
     lifeEventState?: boolean;
+    lifeEventCount?: number;
+    lifeSearchResult?: boolean;
     standardEventCount?: number;
   } = {},
 ) {
@@ -226,7 +229,7 @@ async function installLifeApi(
     if (path.endsWith('/media')) {
       const isLifeMedia = path.includes(encodeURIComponent(LIFE_SESSION.jid));
       if (isLifeMedia && lifeMediaGate) await lifeMediaGate;
-      if (options.delayLifeMedia) {
+      if (options.delayLifeMedia || (isLifeMedia && options.lifeMediaItem)) {
         const name = isLifeMedia ? 'Life image' : 'Standard image';
         return route.fulfill({
           json: { items: [{ type: 'image', name, url: `/${name.replace(' ', '-').toLowerCase()}.png` }] },
@@ -245,11 +248,22 @@ async function installLifeApi(
       if (failUnknownEvents && isUnknownEvents) {
         return route.fulfill({ status: 404, json: { error: 'Session not found' } });
       }
+      if (isLifeEvents && lifeEventsGate) await lifeEventsGate;
       if (options.failLifeEvents && isLifeEvents) {
         return route.fulfill({ status: 503, json: { error: 'Life events unavailable' } });
       }
-      if (isLifeEvents && lifeEventsGate) await lifeEventsGate;
       const lifeEventState = isLifeEvents && options.lifeEventState;
+      const lifeEvents =
+        isLifeEvents && options.lifeEventCount
+          ? Array.from({ length: options.lifeEventCount }, (_, index) => ({
+              id: index + 1,
+              kind: 'message',
+              role: index % 2 === 0 ? 'user' : 'assistant',
+              content: `Scrollable Life message ${index + 1} ${'content '.repeat(12)}`,
+              createdAt: '2026-08-29T00:00:00.000Z',
+              files: [],
+            }))
+          : [];
       const standardEvents =
         standardMetadata && options.standardEventCount
           ? Array.from({ length: options.standardEventCount }, (_, index) => ({
@@ -272,18 +286,22 @@ async function installLifeApi(
                   content: 'Notification target reply',
                 },
               ]
-            : isLifeEvents && (options.delayLifeEvents || lifeEventState)
-              ? [
-                  {
-                    id: 101,
-                    kind: 'message',
-                    role: 'assistant',
-                    content: lifeEventState ? 'Life-only history' : 'late Life transcript',
-                  },
-                ]
-              : standardEvents,
+            : lifeEvents.length > 0
+              ? lifeEvents
+              : isLifeEvents && (options.delayLifeEvents || lifeEventState)
+                ? [
+                    {
+                      id: 101,
+                      kind: 'message',
+                      role: 'assistant',
+                      content: lifeEventState ? 'Life-only history' : 'late Life transcript',
+                    },
+                  ]
+                : standardEvents,
           busy: lifeEventState,
           hasMore: false,
+          hasMoreNewer:
+            isLifeEvents && options.lifeSearchResult && request.url().includes('around='),
           partial: lifeEventState ? { content: 'unfinished Life response' } : null,
           session:
             options.omitOrdinaryMetadata && requestedJid === STANDARD_SESSION.jid
@@ -314,6 +332,23 @@ async function installLifeApi(
                         ? false
                         : Boolean(deletedMetadata) || (isUnknownEvents && unknownDeleted),
                 },
+        },
+      });
+    }
+    if (path.endsWith('/search')) {
+      return route.fulfill({
+        json: {
+          hits: options.lifeSearchResult
+            ? [
+                {
+                  id: 1,
+                  kind: 'message',
+                  role: 'assistant',
+                  snippet: 'searchable Life result',
+                  createdAt: '2026-08-29T00:00:00.000Z',
+                },
+              ]
+            : [],
         },
       });
     }
@@ -591,13 +626,22 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.getByRole('button', { name: 'New pi session' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('04-life-mode-reloaded.png') });
 
-  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  const backSwipe = await touchDrag(
+    page,
+    { x: 2, y: 430 },
+    { x: 150, y: 432 },
+    { hold: true },
+  );
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await page.screenshot({ path: testInfo.outputPath('05-life-back-swipe-progress.png') });
+  await backSwipe.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await backSwipe.detach();
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
   expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
   await expect(page.locator('#life-edge-hint')).toBeVisible();
   await expect(page.getByRole('button', { name: 'New pi session' })).toBeHidden();
-  await page.screenshot({ path: testInfo.outputPath('05-returned-to-sessions.png') });
+  await page.screenshot({ path: testInfo.outputPath('06-returned-to-sessions.png') });
 
   // The water-drop affordance is also a real 48px touch target. Tapping it
   // auto-settles the page with the same protected transition as a flick.
@@ -606,15 +650,15 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(preview).toBeVisible();
   await page.waitForTimeout(60);
   expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(0);
-  await page.screenshot({ path: testInfo.outputPath('06-edge-button-auto-settle.png') });
+  await page.screenshot({ path: testInfo.outputPath('07-edge-button-auto-settle.png') });
   await expect(preview).toBeHidden();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await page.screenshot({ path: testInfo.outputPath('07-life-opened-by-button.png') });
+  await page.screenshot({ path: testInfo.outputPath('08-life-opened-by-button.png') });
   await page.getByRole('button', { name: 'Return to sessions' }).click();
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
   await expect(page.locator('#btn-status')).toBeVisible();
   await expect(page.locator('#header-badge')).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('08-button-returned-to-sessions.png') });
+  await page.screenshot({ path: testInfo.outputPath('09-button-returned-to-sessions.png') });
 
   expect(
     await page.evaluate(
@@ -661,6 +705,379 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
   });
   expect(geometry.headerRight).toBeLessThanOrEqual(320);
   await page.screenshot({ path: testInfo.outputPath('busy-life-header-320.png') });
+});
+
+test('a rightward left-edge back swipe exits Life mode', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('a shallow left-edge back drag returns to Life', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 60, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(40);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('a leftward reversal cancels a Life back swipe', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 2, y: 430 }],
+  });
+  for (const x of [170, 112]) {
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y: 432 }],
+    });
+  }
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('a cancelled Life back touch never exits', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+  await touch.detach();
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('Life foreground menu, sheet, and lightbox own the left-edge back gesture', async ({ page }) => {
+  const api = await installLifeApi(page, { lifeMediaItem: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await page.locator('#btn-more').click();
+  await expect(page.locator('#more-menu')).toBeVisible();
+
+  await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 });
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#more-menu')).toBeVisible();
+  expect((await page.locator('.main').boundingBox())!.x).toBe(0);
+
+  await page.getByRole('menuitem', { name: 'Media' }).click();
+  await expect(page.locator('#media-sheet')).toBeVisible();
+  await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 });
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  expect((await page.locator('.main').boundingBox())!.x).toBe(0);
+
+  await page.getByRole('button', { name: 'image: Life image' }).click();
+  await expect(page.locator('#lightbox')).toBeVisible();
+  await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 });
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  expect((await page.locator('.main').boundingBox())!.x).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('a vertical left-edge drag keeps scrolling the Life transcript', async ({ page }) => {
+  const api = await installLifeApi(page, { lifeEventCount: 40 });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  const before = await page.locator('#messages').evaluate((element) => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+
+  await touchDrag(page, { x: 2, y: 300 }, { x: 5, y: 650 }, { stepDelayMs: 12 });
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('#messages').evaluate((element) => element.scrollTop)).toBeLessThan(before);
+  expect((await page.locator('.main').boundingBox())!.x).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('a final leftward release movement cancels a Life back swipe', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  await page.evaluate(() => {
+    const target = document.body;
+    const touch = (identifier: number, clientX: number) =>
+      new Touch({
+        identifier,
+        target,
+        clientX,
+        clientY: 430,
+        pageX: clientX,
+        pageY: 430,
+        screenX: clientX,
+        screenY: 430,
+      });
+    const start = touch(41, 2);
+    document.dispatchEvent(
+      new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [start],
+        targetTouches: [start],
+        changedTouches: [start],
+      }),
+    );
+    const moved = touch(41, 150);
+    document.dispatchEvent(
+      new TouchEvent('touchmove', {
+        bubbles: true,
+        cancelable: true,
+        touches: [moved],
+        targetTouches: [moved],
+        changedTouches: [moved],
+      }),
+    );
+    const released = touch(41, 112);
+    document.dispatchEvent(
+      new TouchEvent('touchend', {
+        bubbles: true,
+        cancelable: true,
+        touches: [],
+        targetTouches: [],
+        changedTouches: [released],
+      }),
+    );
+  });
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('an unrelated touch release cannot commit a held Life back swipe', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  await page.evaluate(() => {
+    const target = document.body;
+    const touch = (identifier: number, clientX: number, clientY: number) =>
+      new Touch({
+        identifier,
+        target,
+        clientX,
+        clientY,
+        pageX: clientX,
+        pageY: clientY,
+        screenX: clientX,
+        screenY: clientY,
+      });
+    const primaryStart = touch(51, 2, 430);
+    document.dispatchEvent(
+      new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [primaryStart],
+        targetTouches: [primaryStart],
+        changedTouches: [primaryStart],
+      }),
+    );
+    const primaryMoved = touch(51, 150, 432);
+    document.dispatchEvent(
+      new TouchEvent('touchmove', {
+        bubbles: true,
+        cancelable: true,
+        touches: [primaryMoved],
+        targetTouches: [primaryMoved],
+        changedTouches: [primaryMoved],
+      }),
+    );
+    const secondary = touch(52, 300, 500);
+    document.dispatchEvent(
+      new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [primaryMoved, secondary],
+        targetTouches: [primaryMoved, secondary],
+        changedTouches: [secondary],
+      }),
+    );
+    document.dispatchEvent(
+      new TouchEvent('touchend', {
+        bubbles: true,
+        cancelable: true,
+        touches: [primaryMoved],
+        targetTouches: [primaryMoved],
+        changedTouches: [secondary],
+      }),
+    );
+    document.dispatchEvent(
+      new TouchEvent('touchcancel', {
+        bubbles: true,
+        cancelable: false,
+        touches: [],
+        targetTouches: [],
+        changedTouches: [primaryMoved],
+      }),
+    );
+  });
+
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('failed Life history rollback cancels a held back drag', async ({ page }) => {
+  const api = await installLifeApi(page, { delayLifeEvents: true, failLifeEvents: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  api.releaseLifeEvents();
+
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+});
+
+test('reopening the Life tail cancels a held back drag', async ({ page }) => {
+  const api = await installLifeApi(page, { lifeSearchResult: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Search' }).click();
+  await page.locator('#search-input').fill('searchable');
+  await expect(page.locator('.search-hit')).toBeVisible();
+  await page.locator('.search-hit').click();
+  await expect(page.locator('#jump-live')).toHaveClass(/visible/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await page.locator('#jump-live').evaluate((button: HTMLElement) => button.click());
+
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('newer standard navigation cancels a held Life back drag', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    standardSessions: [STANDARD_SESSION, OTHER_STANDARD_SESSION],
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await page.evaluate((jid) => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid } }),
+    );
+  }, OTHER_STANDARD_SESSION.jid);
+
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.waitForTimeout(50);
+
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('newer standard navigation cancels a held drawer drag without leaving its scrim', async ({ page }) => {
+  await installLifeApi(page, {
+    standardSessions: [STANDARD_SESSION, OTHER_STANDARD_SESSION],
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 100, y: 432 }, { hold: true });
+  await expect(page.locator('#scrim')).toBeVisible();
+  await page.evaluate((jid) => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid } }),
+    );
+  }, OTHER_STANDARD_SESSION.jid);
+
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+  await expect(page.locator('#scrim')).toBeHidden();
+  await expect(page.locator('#drawer')).not.toHaveClass(/open/);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.waitForTimeout(50);
+  await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
+});
+
+test('desktop breakpoint cancels a held Life back drag', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
+  expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
+  await page.setViewportSize({ width: 800, height: 844 });
+
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  expect(api.lifeRequests()).toBe(1);
+});
+
+test('desktop breakpoint cancels a standard drawer drag without reviving its scrim', async ({ page }) => {
+  await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const touch = await touchDrag(page, { x: 2, y: 430 }, { x: 100, y: 432 }, { hold: true });
+  await expect(page.locator('#scrim')).toBeVisible();
+  await page.setViewportSize({ width: 800, height: 844 });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await expect(page.locator('#scrim')).toBeHidden();
+  await expect(page.locator('#drawer')).not.toHaveClass(/open/);
 });
 
 test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {

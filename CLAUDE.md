@@ -743,17 +743,21 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   never the user's own turns or streamed thinking/tool chatter.
   The SSE stream carries only the OPEN session, so the drawer polls
   `/api/sessions` every 5s or every other session's state freezes at page load.
-- **Edge swipes have paired meanings**: a drag from the left edge opens the
-  standard session drawer; a drag starting within 56px of the right edge and
-  moving left opens Life. The visible 48×64px water-drop leaf is also an
+- **Edge swipes have paired meanings**: in standard mode a drag from the left
+  edge opens the session drawer; in Life the same rightward back gesture exits
+  to the last standard session. A drag starting within 56px of the right edge
+  and moving left opens Life. The visible 48×64px water-drop leaf is also an
   accessible button; tapping it auto-settles through the same protected
   transition. Life commits after 22% or when a shorter fast flick's velocity
   projection crosses that boundary. The current page and attached drop track
   left with a velocity-scaled ease, revealing the stationary Life preview
   underneath instead of sliding an overlay above the page. Both gestures
   track the finger, lock their axis after 8px, and abandon a vertical lock before
-  calling `preventDefault`, so transcript scrolling is never stolen. The fixed
-  edge button is outside `.messages`' scroll ancestry, so a vertical lock that
+  calling `preventDefault`, so transcript scrolling is never stolen. Life's
+  left-edge back drag follows the finger, commits after 22%, and requires the
+  release direction to remain rightward; shallow drags, reversals, touchcancel,
+  foreground menus, newer navigation, and desktop breakpoint changes cancel it.
+  The fixed edge button is outside `.messages`' scroll ancestry, so a vertical lock that
   starts on the button explicitly forwards `dy` to the transcript; test real
   `scrollTop`, not merely the absence of a Life request. They are disabled above
   768px and while a lightbox/sheet owns the foreground. **Never

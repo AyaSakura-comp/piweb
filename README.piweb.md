@@ -77,8 +77,8 @@ thinking level before every turn, and hides channel/model management. Its header
 shows **Sessions / Life / DEFAULT**, places a dedicated **New pi session** pencil
 button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New pi
 session archives the current Pi context and starts fresh without replacing the
-Life channel; tap **Sessions** to return to the last
-standard session. If there is
+Life channel. Tap **Sessions**, or swipe right from the phone's left edge, to
+return to the last standard session. If there is
 no standard session, returning or rolling back a failed Life load clears the Life
 stream and composer destination and shows `no session`. The selected presentation
 mode survives reloads on that device.
