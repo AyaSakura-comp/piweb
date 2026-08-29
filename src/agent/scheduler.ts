@@ -68,15 +68,20 @@ function stopScheduler(): void {
 
 function enqueueDueTasks(): void {
   const now = new Date().toISOString();
-  const dueTasks = getDueScheduledTasks().slice(0, config.maxScheduledConcurrency);
+  let enqueued = 0;
 
-  for (const task of dueTasks) {
-    enqueueDueTask(task, now);
+  // Deferred/quarantined tasks do not consume the per-tick budget. Otherwise
+  // one old Life task at the head of the due index can starve every unrelated
+  // task forever when maxScheduledConcurrency is 1.
+  for (const task of getDueScheduledTasks()) {
+    if (!enqueueDueTask(task, now)) continue;
+    enqueued += 1;
+    if (enqueued >= config.maxScheduledConcurrency) break;
   }
 }
 
-function enqueueDueTask(task: ScheduledTaskRow, now: string): void {
-  enqueueScheduledTask(
+function enqueueDueTask(task: ScheduledTaskRow, now: string): boolean {
+  return enqueueScheduledTask(
     task.id,
     {
       channelJid: task.channel_jid,

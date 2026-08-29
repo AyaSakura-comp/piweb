@@ -19,8 +19,16 @@ import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
 import { logger } from '../logger.js';
-import { appendWebEvent, clearLiveOutput, setChannelBusy, setLiveOutput } from '../db.js';
-import type { Transport } from './index.js';
+import {
+  appendWebEvent,
+  clearLiveOutput,
+  isChannelGenerationCurrent,
+  isChannelQuarantinedForLifeArchive,
+  setChannelBusy,
+  setLiveOutput,
+  type WebEventKind,
+} from '../db.js';
+import type { ChannelWriteFence, Transport } from './index.js';
 
 function truncate(s: string, cap: number): string {
   if (s.length <= cap) return s;
@@ -62,8 +70,18 @@ function summarizeToolArgs(args: unknown): string {
  * it likes); the web server only serves this one directory, so the file has to
  * be copied in rather than linked to.
  */
-async function publishFile(jid: string, filePath: string): Promise<string | undefined> {
+async function publishFile(
+  jid: string,
+  filePath: string,
+  fence?: ChannelWriteFence,
+): Promise<string | undefined> {
   try {
+    // A stale worker must not create the archived destination while recovery
+    // still needs to rename the old Life media directory into that path.
+    if (
+      isChannelQuarantinedForLifeArchive(jid) ||
+      (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder))
+    ) return undefined;
     const channelDir = join(config.webMediaDir, mediaDirName(jid));
     await mkdir(channelDir, { recursive: true });
     // Keep the extension (the browser sniffs images by it) but prefix a UUID so
@@ -71,6 +89,9 @@ async function publishFile(jid: string, filePath: string): Promise<string | unde
     const safeName =
       mediaFileName(randomUUID().slice(0, 8), basename(filePath)) || `file${extname(filePath)}`;
     await copyFile(filePath, join(channelDir, safeName));
+    if (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder)) {
+      return undefined;
+    }
     return mediaUrl(jid, safeName);
   } catch (err: any) {
     logger.warn({ err: err.message, filePath, jid }, 'web transport: failed to publish file');
@@ -94,6 +115,7 @@ interface LiveBuffer {
   /** The reasoning being written before it, its own lane. */
   thinking: string;
   written: string;
+  fence?: ChannelWriteFence;
   timer?: NodeJS.Timeout;
 }
 
@@ -103,13 +125,37 @@ function snapshot(buf: LiveBuffer): string {
 
 const liveBuffers = new Map<string, LiveBuffer>();
 
-function flushLive(jid: string, done = false): void {
-  const buf = liveBuffers.get(jid);
+function liveBufferKey(jid: string, fence?: ChannelWriteFence): string {
+  return `${jid}\u0000${fence?.expectedFolder ?? ''}`;
+}
+
+function writeEvent(
+  event: {
+    channelJid: string;
+    kind: WebEventKind;
+    role?: string;
+    content?: string;
+    files?: string[];
+  },
+  fence?: ChannelWriteFence,
+): boolean {
+  try {
+    appendWebEvent(event, fence);
+    return true;
+  } catch (err: any) {
+    logger.warn({ err: err.message, jid: event.channelJid }, 'Fenced web event was not written');
+    return false;
+  }
+}
+
+function flushLive(jid: string, done = false, fence?: ChannelWriteFence): void {
+  const key = liveBufferKey(jid, fence);
+  const buf = liveBuffers.get(key);
   if (!buf) {
     // `done` with no buffer still has to clear a row left by an aborted turn.
     if (done) {
       try {
-        clearLiveOutput(jid);
+        clearLiveOutput(jid, fence);
       } catch (err: any) {
         logger.warn({ err: err.message, jid }, 'Failed to clear live output');
       }
@@ -118,36 +164,42 @@ function flushLive(jid: string, done = false): void {
   }
 
   if (buf.timer) clearTimeout(buf.timer);
-  liveBuffers.delete(jid);
+  liveBuffers.delete(key);
 
   try {
-    if (done) clearLiveOutput(jid);
+    if (done) clearLiveOutput(jid, fence);
     else if (snapshot(buf) !== buf.written) {
-      setLiveOutput(jid, { content: buf.text, thinking: buf.thinking });
+      setLiveOutput(jid, { content: buf.text, thinking: buf.thinking }, fence);
     }
   } catch (err: any) {
     logger.warn({ err: err.message, jid }, 'Failed to publish live output');
   }
 }
 
-function appendLive(jid: string, delta: string, lane: 'text' | 'thinking' = 'text'): void {
+function appendLive(
+  jid: string,
+  delta: string,
+  lane: 'text' | 'thinking' = 'text',
+  fence?: ChannelWriteFence,
+): void {
   if (!delta) return;
-  let buf = liveBuffers.get(jid);
+  const key = liveBufferKey(jid, fence);
+  let buf = liveBuffers.get(key);
   if (!buf) {
-    buf = { text: '', thinking: '', written: '' };
-    liveBuffers.set(jid, buf);
+    buf = { text: '', thinking: '', written: '', fence };
+    liveBuffers.set(key, buf);
   }
   buf[lane] += delta;
   if (buf.timer) return;
 
   buf.timer = setTimeout(() => {
-    const current = liveBuffers.get(jid);
+    const current = liveBuffers.get(key);
     if (!current) return;
     current.timer = undefined;
     const snap = snapshot(current);
     if (snap === current.written) return;
     try {
-      setLiveOutput(jid, { content: current.text, thinking: current.thinking });
+      setLiveOutput(jid, { content: current.text, thinking: current.thinking }, current.fence);
       current.written = snap;
     } catch (err: any) {
       logger.warn({ err: err.message, jid }, 'Failed to publish live output');
@@ -157,49 +209,82 @@ function appendLive(jid: string, delta: string, lane: 'text' | 'thinking' = 'tex
 }
 
 export const webTransport: Transport = {
-  async sendResponse(jid: string, text: string): Promise<boolean> {
+  async sendResponse(
+    jid: string,
+    text: string,
+    fence?: ChannelWriteFence,
+  ): Promise<boolean> {
     // The finished message replaces the streaming preview; clear it first so a
     // poll landing between the two can never show the reply twice.
-    flushLive(jid, true);
+    flushLive(jid, true, fence);
     const body = text?.trim();
     if (!body) return true;
-    appendWebEvent({ channelJid: jid, kind: 'message', role: 'assistant', content: body });
-    return true;
+    return writeEvent(
+      { channelJid: jid, kind: 'message', role: 'assistant', content: body },
+      fence,
+    );
   },
 
-  async sendFilesResponse(jid: string, text: string, files: string[]): Promise<boolean> {
-    flushLive(jid, true);
+  async sendFilesResponse(
+    jid: string,
+    text: string,
+    files: string[],
+    fence?: ChannelWriteFence,
+  ): Promise<boolean> {
+    flushLive(jid, true, fence);
     const urls: string[] = [];
     for (const file of files) {
-      const url = await publishFile(jid, file);
+      const url = await publishFile(jid, file, fence);
       if (url) urls.push(url);
     }
 
-    appendWebEvent({
-      channelJid: jid,
-      kind: 'message',
-      role: 'assistant',
-      content: text?.trim() ?? '',
-      files: urls,
-    });
-    return true;
+    return writeEvent(
+      {
+        channelJid: jid,
+        kind: 'message',
+        role: 'assistant',
+        content: text?.trim() ?? '',
+        files: urls,
+      },
+      fence,
+    );
   },
 
-  async sendNotice(jid: string, text: string): Promise<void> {
-    appendWebEvent({ channelJid: jid, kind: 'system', role: 'interrupt', content: text });
+  async sendNotice(
+    jid: string,
+    text: string,
+    fence?: ChannelWriteFence,
+  ): Promise<void> {
+    writeEvent({ channelJid: jid, kind: 'system', role: 'interrupt', content: text }, fence);
   },
 
-  async setTyping(jid: string): Promise<void> {
-    setChannelBusy(jid, true);
+  async setTyping(jid: string, fence?: ChannelWriteFence): Promise<void> {
+    try {
+      setChannelBusy(jid, true, fence);
+    } catch {
+      // A stale worker is fenced after Life rotates; the replacement owns busy.
+    }
   },
 
-  async clearTyping(jid: string): Promise<void> {
-    setChannelBusy(jid, false);
+  async clearTyping(jid: string, fence?: ChannelWriteFence): Promise<void> {
+    // Final worker cleanup owns the old channel generation until this returns.
+    // Cancel any throttled flush before clearing busy; otherwise its timer could
+    // recreate live_output after Life has been archived and replaced.
+    flushLive(jid, true, fence);
+    try {
+      setChannelBusy(jid, false, fence);
+    } catch {
+      // The old generation no longer owns this reused JID.
+    }
   },
 
-  createEventStreamer(jid: string): (event: any) => Promise<void> {
+  createEventStreamer(
+    jid: string,
+    fence?: ChannelWriteFence,
+  ): (event: any) => Promise<void> {
     return async (event: any) => {
       if (!event || typeof event !== 'object') return;
+      if (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder)) return;
 
       // Assistant text, token by token. Buffered and throttled by appendLive;
       // the finished message still arrives through sendResponse, which clears
@@ -209,7 +294,7 @@ export const webTransport: Transport = {
         event.type === 'message_update' &&
         event.assistantMessageEvent?.type === 'text_delta'
       ) {
-        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''));
+        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''), 'text', fence);
         return;
       }
 
@@ -222,14 +307,14 @@ export const webTransport: Transport = {
         event.type === 'message_update' &&
         event.assistantMessageEvent?.type === 'thinking_delta'
       ) {
-        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''), 'thinking');
+        appendLive(jid, String(event.assistantMessageEvent.delta ?? ''), 'thinking', fence);
         return;
       }
 
       // A turn that ends without a reply (aborted, error, empty) must not leave
       // half a sentence frozen on screen.
       if (event.type === 'turn_end' || event.type === 'agent_end') {
-        flushLive(jid, true);
+        flushLive(jid, true, fence);
         return;
       }
 
@@ -240,11 +325,11 @@ export const webTransport: Transport = {
         event.type === 'message_update' &&
         event.assistantMessageEvent?.type === 'thinking_end'
       ) {
-        const buf = liveBuffers.get(jid);
+        const buf = liveBuffers.get(liveBufferKey(jid, fence));
         if (buf) {
           buf.thinking = '';
           try {
-            setLiveOutput(jid, { content: buf.text, thinking: '' });
+            setLiveOutput(jid, { content: buf.text, thinking: '' }, fence);
             buf.written = snapshot(buf);
           } catch {
             /* the next flush will retry */
@@ -253,11 +338,14 @@ export const webTransport: Transport = {
 
         const text = String(event.assistantMessageEvent.content ?? '').trim();
         if (text) {
-          appendWebEvent({
-            channelJid: jid,
-            kind: 'thinking',
-            content: truncate(text, config.maxEventChars),
-          });
+          writeEvent(
+            {
+              channelJid: jid,
+              kind: 'thinking',
+              content: truncate(text, config.maxEventChars),
+            },
+            fence,
+          );
         }
         return;
       }
@@ -272,19 +360,22 @@ export const webTransport: Transport = {
         // answer. Fold it into thinking and clear the answer lane before the
         // tool row lands; otherwise it stays behind as a stray assistant bubble
         // throughout the rest of the tool loop.
-        const buf = liveBuffers.get(jid);
+        const buf = liveBuffers.get(liveBufferKey(jid, fence));
         const narration = buf?.text.trim() ?? '';
         if (buf && narration) {
           if (config.streamThinking) {
-            appendWebEvent({
-              channelJid: jid,
-              kind: 'thinking',
-              content: truncate(narration, config.maxEventChars),
-            });
+            writeEvent(
+              {
+                channelJid: jid,
+                kind: 'thinking',
+                content: truncate(narration, config.maxEventChars),
+              },
+              fence,
+            );
           }
           buf.text = '';
           try {
-            setLiveOutput(jid, { content: '', thinking: buf.thinking });
+            setLiveOutput(jid, { content: '', thinking: buf.thinking }, fence);
             buf.written = snapshot(buf);
           } catch {
             /* the next flush will retry */
@@ -292,12 +383,15 @@ export const webTransport: Transport = {
         }
 
         const tc = event.assistantMessageEvent.toolCall ?? {};
-        appendWebEvent({
-          channelJid: jid,
-          kind: 'tool',
-          role: tc.name || 'tool',
-          content: truncate(summarizeToolArgs(tc.arguments), config.maxEventChars),
-        });
+        writeEvent(
+          {
+            channelJid: jid,
+            kind: 'tool',
+            role: tc.name || 'tool',
+            content: truncate(summarizeToolArgs(tc.arguments), config.maxEventChars),
+          },
+          fence,
+        );
         return;
       }
 
@@ -310,17 +404,20 @@ export const webTransport: Transport = {
       if (event.type === 'compaction_end' && event.result && !event.aborted) {
         const before = Number(event.result.tokensBefore ?? 0);
         const reason = event.reason === 'overflow' ? 'context overflowed' : 'context threshold';
-        appendWebEvent({
-          channelJid: jid,
-          kind: 'system',
-          role: 'compacted',
-          // No leading emoji: the row already renders as "ⓘ compacted", and the
-          // obvious pick (🗜) has no glyph in the UI font and shows as tofu.
-          content:
-            `Compacted the context (${reason}) — ${before.toLocaleString('en-US')} tokens ` +
-            `summarised. Older turns are now a summary; recent ones were kept, and pi ` +
-            `continues in the same session.`,
-        });
+        writeEvent(
+          {
+            channelJid: jid,
+            kind: 'system',
+            role: 'compacted',
+            // No leading emoji: the row already renders as "ⓘ compacted", and the
+            // obvious pick (🗜) has no glyph in the UI font and shows as tofu.
+            content:
+              `Compacted the context (${reason}) — ${before.toLocaleString('en-US')} tokens ` +
+              `summarised. Older turns are now a summary; recent ones were kept, and pi ` +
+              `continues in the same session.`,
+          },
+          fence,
+        );
         return;
       }
 
@@ -336,11 +433,14 @@ export const webTransport: Transport = {
           .join('\n')
           .trim();
         if (text) {
-          appendWebEvent({
-            channelJid: jid,
-            kind: 'tool_result',
-            content: truncate(text, config.maxEventChars),
-          });
+          writeEvent(
+            {
+              channelJid: jid,
+              kind: 'tool_result',
+              content: truncate(text, config.maxEventChars),
+            },
+            fence,
+          );
         }
         return;
       }

@@ -167,8 +167,16 @@ describe('interrupt on new message', () => {
         interval: 5,
       });
 
+      const scheduledTaskId = db.addScheduledTask({
+        name: 'queued cron test',
+        type: 'once',
+        schedule: new Date().toISOString(),
+        channelJid: 'web:cron',
+        prompt: 'scheduled prompt',
+        nextRunAt: new Date().toISOString(),
+      });
       db.enqueueScheduledTask(
-        999,
+        scheduledTaskId,
         {
           channelJid: 'web:cron',
           sender: 'scheduler',

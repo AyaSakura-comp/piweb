@@ -12,7 +12,8 @@ describe('Life mode UI contract', () => {
 
     expect(html).toContain('id="btn-life-back"');
     expect(html).toContain('id="btn-life-new-session"');
-    expect(html).toContain('aria-label="New pi session"');
+    expect(html).toContain('aria-label="New Life session"');
+    expect(html).toContain('title="Archive current Life session and start new"');
     expect(html).toContain('id="life-edge-hint"');
     expect(html).toContain('aria-label="Open Life"');
     expect(html).toContain('class="life-edge-drop"');
@@ -58,6 +59,28 @@ describe('Life mode UI contract', () => {
     expect(app).toContain("$('app').classList.toggle('life-mode'");
     expect(app).toContain('const destinationJid = state.activeJid');
     expect(app).toContain('encodeURIComponent(destinationJid)');
-    expect(app).toContain("runQuickCommand('pi new')");
+    expect(app).toContain('async function newLifeSession()');
+    expect(app).toContain("api('/api/life-session/new', {");
+    expect(app).toContain('body: JSON.stringify({ generation })');
+    expect(app).toContain('destinationLifeGeneration');
+    expect(app).toContain('sessionMeta.generation === state.lifeSession?.generation');
+    expect(app).toContain("source.addEventListener('generation'");
+    expect(app).toContain('function withLifeGeneration(');
+    for (const lifeRead of [
+      '/events?limit=',
+      '/events?before=',
+      '/events?after=',
+      '/events?around=',
+      '/search?q=',
+      '/media`, jid',
+      '/stream?after=',
+    ]) {
+      expect(app).toContain(lifeRead);
+    }
+    expect(app.match(/withLifeGeneration\(/g)).toHaveLength(8);
+    expect(app).toContain('selectSession(LIFE_JID, {');
+    expect(app).toContain(
+      "$('btn-life-new-session').addEventListener('click', () => void newLifeSession())",
+    );
   });
 });

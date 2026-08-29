@@ -80,10 +80,11 @@ During settlement it blocks the underlying session and offers **Cancel**, so a
 delayed load cannot receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective
 thinking level before every turn, and hides channel/model management. Its header
-shows **Sessions / Life / DEFAULT**, places a dedicated **New pi session** pencil
-button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New pi
-session archives the current Pi context and starts fresh without replacing the
-Life channel. Tap **Sessions**, or swipe right from the phone's left edge, to
+shows **Sessions / Life / DEFAULT**, places a dedicated **New Life session** pencil
+button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New
+Life session promotes the current transcript, media, and Pi folder into the
+ordinary Sessions list under an extractive title, then opens a brand-new empty
+Life session. Tap **Sessions**, or swipe right from the phone's left edge, to
 settle the Life page right over a Sessions underlay, crossfade, and return to the
 last standard session. If there is
 no standard session, returning or rolling back a failed Life load clears the Life

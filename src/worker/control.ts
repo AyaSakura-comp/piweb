@@ -12,7 +12,14 @@
  */
 
 import { logger } from '../logger.js';
-import { appendWebEvent, claimPendingControls, finishControl, getChannel } from '../db.js';
+import {
+  appendWebEvent,
+  claimPendingControls,
+  finishControl,
+  getChannel,
+  recoverStuckControls,
+  touchControlProcessing,
+} from '../db.js';
 import { runCommand } from '../commands/index.js';
 
 const CONTROL_POLL_MS = 250;
@@ -22,6 +29,8 @@ let timer: NodeJS.Timeout | undefined;
 
 export function startControlLoop(): void {
   if (running) return;
+  const recovered = recoverStuckControls();
+  if (recovered > 0) logger.warn({ count: recovered }, 'Failed controls left by worker restart');
   running = true;
   schedule(0);
 }
@@ -48,22 +57,61 @@ async function tick(): Promise<void> {
   try {
     const rows = claimPendingControls();
     for (const row of rows) {
-      const channel = getChannel(row.channel_jid);
+      // A previously claimed row may have been re-keyed while waiting behind a
+      // long control. Refresh both its heartbeat and immutable session owner
+      // before execution instead of trusting the batch's stale web:life JID.
+      const owned = touchControlProcessing(row.rowid);
+      if (!owned) continue;
+      const channel = getChannel(owned.channel_jid);
       if (!channel) {
-        finishControl(row.rowid, false, 'Session no longer exists');
+        finishControl(owned.rowid, false, 'Session no longer exists');
         continue;
       }
 
       let args: Record<string, string> = {};
       try {
-        args = JSON.parse(row.args || '{}');
+        args = JSON.parse(owned.args || '{}');
       } catch {
         // A malformed args blob shouldn't wedge the queue — run with none and
         // let the command report its own missing-argument error.
-        logger.warn({ rowid: row.rowid, args: row.args }, 'control: bad args JSON');
+        logger.warn({ rowid: owned.rowid, args: owned.args }, 'control: bad args JSON');
       }
 
-      const result = await runCommand(channel, row.command, args);
+      let ownershipValid = true;
+      const renewOwnership = (): boolean => {
+        if (!ownershipValid) return false;
+        try {
+          const current = touchControlProcessing(
+            owned.rowid,
+            owned.channel_jid,
+            channel.folder,
+          );
+          if (current) return true;
+        } catch (err: any) {
+          logger.warn({ err: err.message, rowid: owned.rowid }, 'control: heartbeat failed');
+        }
+        ownershipValid = false;
+        logger.warn(
+          { rowid: owned.rowid, jid: owned.channel_jid },
+          'Control ownership expired; fencing stale result',
+        );
+        return false;
+      };
+
+      const heartbeat = setInterval(renewOwnership, 60_000);
+      heartbeat.unref?.();
+
+      let result;
+      try {
+        result = await runCommand(channel, owned.command, args, {
+          assertOwnership: () => {
+            if (!renewOwnership()) throw new Error('Control ownership expired');
+          },
+        });
+      } finally {
+        clearInterval(heartbeat);
+      }
+      if (!renewOwnership()) continue;
 
       // Auto-issued controls (e.g. the `pi new` fired when a session is created)
       // pass silent:true — the user did not type them, so echoing their output
@@ -71,16 +119,16 @@ async function tick(): Promise<void> {
       const silent = args.silent === 'true' && result.ok;
       if (!silent) {
         appendWebEvent({
-          channelJid: row.channel_jid,
+          channelJid: owned.channel_jid,
           kind: result.ok ? 'system' : 'error',
-          role: row.command,
+          role: owned.command,
           content: result.text,
         });
       }
-      finishControl(row.rowid, result.ok, result.text);
+      finishControl(owned.rowid, result.ok, result.text);
 
       logger.info(
-        { jid: row.channel_jid, command: row.command, ok: result.ok },
+        { jid: owned.channel_jid, command: owned.command, ok: result.ok },
         'Control command executed',
       );
     }

@@ -9,10 +9,12 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
+  beginChannelOperation,
   channelsWithPending,
   channelsWithInterruptingPending,
   claimNextMessage,
   clearPendingMessages,
+  finishChannelOperation,
   markMessageAborted,
   markMessageDone,
   markMessageFailed,
@@ -20,6 +22,7 @@ import {
   recoverStuckMessages,
   logMessage,
   getChannel,
+  touchChannelOperation,
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
 import { invokeAgy, isAgyModelRef } from './agy.js';
@@ -38,6 +41,8 @@ const activeChannels = new Set<string>();
 const activeTaskPromises = new Set<Promise<void>>();
 const activeTaskControllers = new Map<number, AbortController>();
 const activeChannelControllers = new Map<string, AbortController>();
+/** Folder generation owned by each active JID; web:life itself is reusable. */
+const activeChannelFolders = new Map<string, string>();
 /** Channels whose next queued user message explicitly replaces the aborted task. */
 const supersededChannels = new Set<string>();
 
@@ -167,7 +172,12 @@ function interruptSupersededRuns(): void {
     // them through Pi's RPC protocol; retain the controller path only for
     // attachment/until-done turns that still use the one-shot process.
     const channel = getChannel(jid);
-    const rpcAborted = Boolean(config.rpcSteer && channel && abortRpcSession(channel.folder));
+    const activeFolder = activeChannelFolders.get(jid);
+    // A terminal old-Life worker may still be cleaning up after its lease was
+    // expired and rotated. A fresh web:life message is a different generation,
+    // not an interruption or handoff for that archived turn.
+    if (!channel || !activeFolder || channel.folder !== activeFolder) continue;
+    const rpcAborted = Boolean(config.rpcSteer && abortRpcSession(channel.folder));
     const interrupted = rpcAborted || interruptChannelTask(jid);
     if (!interrupted) continue;
 
@@ -179,6 +189,7 @@ function interruptSupersededRuns(): void {
     void getTransport().sendNotice?.(
       jid,
       '⏹ Stopped the previous task — running your new message.',
+      { expectedFolder: activeFolder },
     );
   }
 }
@@ -207,21 +218,24 @@ function dispatch(): void {
     if (!msg) continue;
 
     const controller = new AbortController();
+    const activeFolder = getChannel(jid)?.folder;
     activeChannels.add(jid);
     activeTaskControllers.set(msg.rowid, controller);
     activeChannelControllers.set(jid, controller);
+    if (activeFolder) activeChannelFolders.set(jid, activeFolder);
 
     const taskPromise = processMessage(
       jid,
       msg.rowid,
       msg.sender_name,
       msg.content,
-      controller.signal,
+      controller,
       msg.attachments,
     ).finally(() => {
       activeChannels.delete(jid);
       activeTaskControllers.delete(msg.rowid);
       activeChannelControllers.delete(jid);
+      activeChannelFolders.delete(jid);
       activeTaskPromises.delete(taskPromise);
 
       if (running) {
@@ -287,9 +301,10 @@ async function processMessage(
   rowid: number,
   senderName: string,
   content: string,
-  signal: AbortSignal,
+  controller: AbortController,
   attachments?: string | null,
 ): Promise<void> {
+  const signal = controller.signal;
   const channel = getChannel(jid);
   if (!channel) {
     logger.warn({ jid }, 'Channel disappeared during processing');
@@ -297,9 +312,48 @@ async function processMessage(
     return;
   }
 
+  const workerOperationId =
+    channel.kind === 'life' ? beginChannelOperation(jid, channel.folder) : undefined;
+  if (channel.kind === 'life' && !workerOperationId) {
+    logger.warn({ jid, rowid }, 'Life generation changed before worker ownership began');
+    markMessageFailed(rowid);
+    return;
+  }
+
   logger.info({ jid, senderName, len: content.length }, 'Processing message');
 
-  const typingLoop = createTypingLoop(jid);
+  const writeFence = channel.kind === 'life' ? { expectedFolder: channel.folder } : undefined;
+  let workerLeaseValid = true;
+  let lastLeaseCheckAt = Date.now();
+  const loseWorkerLease = (reason: string): false => {
+    if (!workerLeaseValid) return false;
+    workerLeaseValid = false;
+    controller.abort();
+    abortRpcSession(channel.folder);
+    logger.warn({ jid, rowid, reason }, 'Life worker ownership was fenced');
+    return false;
+  };
+  const renewWorkerLease = (force = false): boolean => {
+    if (!workerOperationId) return true;
+    if (!workerLeaseValid) return false;
+    const now = Date.now();
+    // Event stream callbacks can fire per token. A monotonic-enough wall-clock
+    // check catches a resumed/suspended worker without writing SQLite per token.
+    if (!force && now - lastLeaseCheckAt < 30_000) return true;
+    try {
+      if (!touchChannelOperation(workerOperationId)) return loseWorkerLease('lease missing');
+      lastLeaseCheckAt = now;
+      return true;
+    } catch (err: any) {
+      return loseWorkerLease(`heartbeat failed: ${err.message}`);
+    }
+  };
+
+  const operationHeartbeat = workerOperationId
+    ? setInterval(() => renewWorkerLease(true), 60_000)
+    : undefined;
+  operationHeartbeat?.unref?.();
+  const typingLoop = createTypingLoop(jid, writeFence, renewWorkerLease);
 
   try {
     const supersedesPrevious = supersededChannels.delete(jid);
@@ -308,14 +362,14 @@ async function processMessage(
       : '';
     const prompt = `${handoff}[Web user: ${senderName}]\n${content}`;
 
-    logMessage(jid, 'user', content);
+    logMessage(jid, 'user', content, writeFence);
 
     const effective = await computeEffectiveChannelSettings(channel, { signal });
 
     // Settings resolution can finish concurrently with cancellation (notably
     // while the Life defaults probe is closing). Never start a stale turn once
     // ownership of this queued message has been aborted.
-    if (signal.aborted) {
+    if (!renewWorkerLease(true) || signal.aborted) {
       markMessageFailed(rowid);
       logger.info({ jid, rowid }, 'Message abandoned: shutdown interrupted processing');
       return;
@@ -325,7 +379,11 @@ async function processMessage(
     // the user can watch what the agent is doing instead of staring at a
     // typing indicator. Final assistant text still falls through to the
     // outbox/marker path below.
-    const onEvent = getTransport().createEventStreamer(jid);
+    const streamEvent = getTransport().createEventStreamer(jid, writeFence);
+    const onEvent = async (event: unknown): Promise<void> => {
+      if (!renewWorkerLease()) return;
+      await streamEvent(event);
+    };
 
     // Persistent RPC session path (steer-able). Falls back to the one-shot
     // print path for attachments and the until-done loop, which the RPC prompt
@@ -369,6 +427,11 @@ async function processMessage(
           onEvent,
         });
 
+    if (!renewWorkerLease(true)) {
+      markMessageFailed(rowid);
+      return;
+    }
+
     if (result.aborted) {
       markMessageAborted(rowid);
       logger.info({ jid, rowid }, 'Message processing aborted with session preserved');
@@ -386,15 +449,15 @@ async function processMessage(
       const { text: outText, files: outFiles } = parseOutboxMarkers(result.text);
       const sent =
         outFiles.length > 0
-          ? await getTransport().sendFilesResponse(jid, outText, outFiles)
-          : await getTransport().sendResponse(jid, outText);
+          ? await getTransport().sendFilesResponse(jid, outText, outFiles, writeFence)
+          : await getTransport().sendResponse(jid, outText, writeFence);
       if (!sent) {
         markMessageFailed(rowid);
         logger.warn({ jid }, 'Agent response generated but could not be delivered');
         return;
       }
 
-      logMessage(jid, 'assistant', result.text);
+      logMessage(jid, 'assistant', result.text, writeFence);
       sigtermRetries.delete(rowid);
       markMessageDone(rowid);
       logger.info({ jid, responseLen: result.text.length }, 'Message processed');
@@ -430,6 +493,7 @@ async function processMessage(
           isOom
             ? '⚠️ 系統記憶體不足 (OOM / SIGTERM 終止)。建議將任務拆解或稍後再試。'
             : '⚠️ 任務在完成前多次被系統終止。請嘗試重新發送您的訊息。',
+          writeFence,
         );
       }
       markMessageFailed(rowid);
@@ -444,7 +508,8 @@ async function processMessage(
         '\n\nℹ️ This model cannot see images. Tap the model icon and switch to a ' +
         'vision-capable one (e.g. Gemini or a GPT model) to send pictures.';
     }
-    await getTransport().sendResponse(jid, errMsg);
+    if (!renewWorkerLease(true)) return;
+    await getTransport().sendResponse(jid, errMsg, writeFence);
     markMessageFailed(rowid);
     logger.warn({ jid, error: result.error }, 'Agent returned error');
   } catch (err: any) {
@@ -457,22 +522,41 @@ async function processMessage(
     logger.error({ jid, err: err.message }, 'processMessage failed');
     markMessageFailed(rowid);
     try {
-      await getTransport().sendResponse(jid, `⚠️ Internal error: ${err.message?.slice(0, 200)}`);
+      if (renewWorkerLease(true)) {
+        await getTransport().sendResponse(
+          jid,
+          `⚠️ Internal error: ${err.message?.slice(0, 200)}`,
+          writeFence,
+        );
+      }
     } catch {
       // Nothing else to do here.
     }
   } finally {
-    await typingLoop.stop();
+    try {
+      // The message row may already be terminal. Keep the persisted Life lease
+      // until all stream timers and the busy mirror have been cleared so those
+      // final writes cannot land on a replacement web:life generation.
+      await typingLoop.stop();
+    } finally {
+      if (operationHeartbeat) clearInterval(operationHeartbeat);
+      if (workerOperationId) finishChannelOperation(workerOperationId);
+    }
   }
 }
 
-function createTypingLoop(jid: string): { stop: () => Promise<void> } {
+function createTypingLoop(
+  jid: string,
+  writeFence: { expectedFolder?: string } | undefined,
+  renewOwnership: (force?: boolean) => boolean,
+): { stop: () => Promise<void> } {
   let typingAlive = true;
   let cancelTypingDelay = () => {};
 
   const loop = (async () => {
     while (typingAlive) {
-      await getTransport().setTyping(jid);
+      if (!renewOwnership()) break;
+      await getTransport().setTyping(jid, writeFence);
       if (!typingAlive) break;
 
       const delay = cancellableSleep(8000);
@@ -487,7 +571,10 @@ function createTypingLoop(jid: string): { stop: () => Promise<void> } {
       typingAlive = false;
       cancelTypingDelay();
       await loop;
-      await getTransport().clearTyping(jid);
+      // Always ask the transport to discard its in-memory stream buffer. The
+      // generation fence makes the persisted clear a no-op after rotation.
+      renewOwnership(true);
+      await getTransport().clearTyping(jid, writeFence);
     },
   };
 }

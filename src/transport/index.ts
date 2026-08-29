@@ -9,19 +9,32 @@
  * than silently dropping an agent reply if one was never installed.
  */
 
+export interface ChannelWriteFence {
+  /** Opaque persisted channel generation; stale workers must not write through a reused JID. */
+  expectedFolder?: string;
+}
+
 export interface Transport {
   /** Deliver assistant text. Returns false if it could not be delivered. */
-  sendResponse(jid: string, text: string): Promise<boolean>;
+  sendResponse(jid: string, text: string, fence?: ChannelWriteFence): Promise<boolean>;
   /** Deliver assistant text plus generated files (outbox markers). */
-  sendFilesResponse(jid: string, text: string, files: string[]): Promise<boolean>;
+  sendFilesResponse(
+    jid: string,
+    text: string,
+    files: string[],
+    fence?: ChannelWriteFence,
+  ): Promise<boolean>;
   /** A short system notice in the transcript (e.g. "interrupted"). Optional. */
-  sendNotice?(jid: string, text: string): Promise<void>;
+  sendNotice?(jid: string, text: string, fence?: ChannelWriteFence): Promise<void>;
   /** Show/refresh a "working" indicator for the channel. */
-  setTyping(jid: string): Promise<void>;
+  setTyping(jid: string, fence?: ChannelWriteFence): Promise<void>;
   /** Clear the working indicator. */
-  clearTyping(jid: string): Promise<void>;
+  clearTyping(jid: string, fence?: ChannelWriteFence): Promise<void>;
   /** Build the per-run handler for pi's intermediate events (thinking/tools). */
-  createEventStreamer(jid: string): (event: unknown) => Promise<void>;
+  createEventStreamer(
+    jid: string,
+    fence?: ChannelWriteFence,
+  ): (event: unknown) => Promise<void>;
 }
 
 let active: Transport | undefined;

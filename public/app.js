@@ -82,6 +82,12 @@ const state = {
 
 // ── api ──────────────────────────────────────────────────────────────────
 
+function withLifeGeneration(path, jid, generation = state.lifeSession?.generation) {
+  if (jid !== LIFE_JID) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}generation=${encodeURIComponent(generation || '')}`;
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     credentials: 'same-origin',
@@ -677,7 +683,7 @@ async function enterLifeMode({ preserveSwipePreview = false } = {}) {
   try {
     const life = await api('/api/life-session', { method: 'POST' });
     if (navigation !== lifeNavigationGeneration) return false;
-    if (life?.jid !== LIFE_JID || life?.kind !== 'life') {
+    if (life?.jid !== LIFE_JID || life?.kind !== 'life' || !life?.generation) {
       throw new Error('Life endpoint returned an invalid singleton identity');
     }
     state.lifeSession = life;
@@ -981,8 +987,14 @@ async function selectSession(jid, opts = {}) {
   renderSessions();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
+  const requestedLifeGeneration =
+    jid === LIFE_JID ? state.lifeSession?.generation : undefined;
   const { events, busy, hasMore, partial, session: sessionMeta } = await api(
-    `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
+    withLifeGeneration(
+      `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
+      jid,
+      requestedLifeGeneration,
+    ),
   );
   if (
     selection !== sessionSelectionGeneration ||
@@ -994,6 +1006,8 @@ async function selectSession(jid, opts = {}) {
     ? jid === LIFE_JID &&
       exactMetadata &&
       sessionMeta.kind === 'life' &&
+      sessionMeta.generation === requestedLifeGeneration &&
+      sessionMeta.generation === state.lifeSession?.generation &&
       sessionMeta.deleted === false
     : previewingDeleted
       ? jid !== LIFE_JID &&
@@ -1077,7 +1091,10 @@ async function loadOlder() {
 
   try {
     const { events, hasMore } = await api(
-      `/api/sessions/${encodeURIComponent(jid)}/events?before=${oldest}&limit=${PAGE_SIZE}`,
+      withLifeGeneration(
+        `/api/sessions/${encodeURIComponent(jid)}/events?before=${oldest}&limit=${PAGE_SIZE}`,
+        jid,
+      ),
     );
     if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
 
@@ -1157,7 +1174,10 @@ async function loadNewer() {
   state.loadingNewer = true;
   try {
     const { events, hasMoreNewer } = await api(
-      `/api/sessions/${encodeURIComponent(jid)}/events?after=${newest}&limit=${PAGE_SIZE}`,
+      withLifeGeneration(
+        `/api/sessions/${encodeURIComponent(jid)}/events?after=${newest}&limit=${PAGE_SIZE}`,
+        jid,
+      ),
     );
     if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
     const messages = $('messages');
@@ -1271,7 +1291,10 @@ async function runSearch() {
   const jid = state.activeJid;
 
   const { hits } = await api(
-    `/api/sessions/${encodeURIComponent(jid)}/search?q=${encodeURIComponent(q)}`,
+    withLifeGeneration(
+      `/api/sessions/${encodeURIComponent(jid)}/search?q=${encodeURIComponent(q)}`,
+      jid,
+    ),
   );
   if (
     search !== searchOwnershipGeneration ||
@@ -1334,7 +1357,10 @@ async function jumpTo(id) {
   const jid = state.activeJid;
 
   const { events, hasMore, hasMoreNewer, busy } = await api(
-    `/api/sessions/${encodeURIComponent(jid)}/events?around=${id}&limit=${PAGE_SIZE}`,
+    withLifeGeneration(
+      `/api/sessions/${encodeURIComponent(jid)}/events?around=${id}&limit=${PAGE_SIZE}`,
+      jid,
+    ),
   );
   if (selection !== sessionSelectionGeneration || state.activeJid !== jid) return;
 
@@ -1371,21 +1397,79 @@ async function jumpTo(id) {
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
 async function runQuickCommand(command, args = {}) {
   if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
+  const lifeGeneration =
+    state.activeJid === LIFE_JID ? state.lifeSession?.generation : undefined;
   await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
     method: 'POST',
-    body: JSON.stringify({ command, args }),
-  }).catch((err) => alert(err.message));
+    body: JSON.stringify({ command, args, ...(lifeGeneration ? { lifeGeneration } : {}) }),
+  }).catch(async (err) => {
+    if (state.mode === 'life' && state.activeJid === LIFE_JID) await enterLifeMode();
+    alert(err.message);
+  });
 }
 
 function newPiSession() {
-  // No confirm: /pi new archives the old session rather than destroying it, and
-  // the worker posts "Started a fresh pi session." straight into the transcript,
-  // which is the feedback a dialog would have been asking for.
   runQuickCommand('pi new');
 }
 
+async function newLifeSession() {
+  if (
+    state.selectionPending ||
+    state.mode !== 'life' ||
+    state.activeJid !== LIFE_JID ||
+    $('btn-life-new-session').disabled
+  ) {
+    return;
+  }
+
+  const navigation = lifeNavigationGeneration;
+  const generation = state.lifeSession?.generation;
+  const newestReadEvent = state.newest;
+  const button = $('btn-life-new-session');
+  button.disabled = true;
+
+  try {
+    const result = await api('/api/life-session/new', {
+      method: 'POST',
+      body: JSON.stringify({ generation }),
+    });
+    if (navigation !== lifeNavigationGeneration || state.mode !== 'life') return;
+    if (
+      result?.life?.jid !== LIFE_JID ||
+      result.life.kind !== 'life' ||
+      !result.life.generation ||
+      !result?.archived?.jid ||
+      result.archived.jid === LIFE_JID ||
+      result.archived.kind !== 'standard'
+    ) {
+      throw new Error('New Life endpoint returned invalid session identities');
+    }
+
+    markSeen(result.archived.jid, newestReadEvent);
+    state.lifeSession = result.life;
+    const selected = await selectSession(LIFE_JID, {
+      name: result.life.name,
+      life: true,
+      navigation,
+    });
+    if (!selected || navigation !== lifeNavigationGeneration) return;
+    // The archived conversation appears in Sessions immediately; the regular
+    // poll remains a fallback if this refresh happens to fail offline.
+    await loadSessions().catch(() => false);
+  } catch (err) {
+    if (navigation !== lifeNavigationGeneration) return;
+    // The archive may have committed even when its response was lost. Always
+    // re-enter through the canonical endpoint so the UI cannot keep showing an
+    // old transcript while web:life now belongs to the empty replacement.
+    await enterLifeMode();
+    alert(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 $('btn-stop').addEventListener('click', () => runQuickCommand('pi stop'));
-$('btn-life-new-session').addEventListener('click', newPiSession);
+$('btn-life-new-session').addEventListener('click', () => void newLifeSession());
 
 $('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
 // The usage button reports the agent the session actually runs on: an agy model
@@ -1482,7 +1566,9 @@ async function openMediaSheet() {
 
   let items = [];
   try {
-    ({ items } = await api(`/api/sessions/${encodeURIComponent(jid)}/media`));
+    ({ items } = await api(
+      withLifeGeneration(`/api/sessions/${encodeURIComponent(jid)}/media`, jid),
+    ));
   } catch {
     if (
       ownership === mediaOwnershipGeneration &&
@@ -2006,13 +2092,24 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
     state.activeJid !== jid
   ) return;
 
-  const url = `/api/sessions/${encodeURIComponent(jid)}/stream?after=${state.cursor}`;
+  const url = withLifeGeneration(
+    `/api/sessions/${encodeURIComponent(jid)}/stream?after=${state.cursor}`,
+    jid,
+  );
   const source = new EventSource(url);
   state.source = source;
   const ownsStream = () =>
     state.source === source &&
     selection === sessionSelectionGeneration &&
     state.activeJid === jid;
+
+  source.addEventListener('generation', (e) => {
+    if (!ownsStream() || jid !== LIFE_JID || state.mode !== 'life') return;
+    const nextGeneration = JSON.parse(e.data)?.generation;
+    if (nextGeneration && nextGeneration !== state.lifeSession?.generation) {
+      void enterLifeMode();
+    }
+  });
 
   source.addEventListener('event', (e) => {
     if (!ownsStream()) return;
@@ -2800,6 +2897,8 @@ $('composer').addEventListener('submit', async (e) => {
   // belongs to the transcript visible when submit started, never whichever
   // session happens to be active after that asynchronous work finishes.
   const destinationJid = state.activeJid;
+  const destinationLifeGeneration =
+    destinationJid === LIFE_JID ? state.lifeSession?.generation : undefined;
   const destinationSelection = sessionSelectionGeneration;
 
   const text = input.value.trim();
@@ -2819,7 +2918,7 @@ $('composer').addEventListener('submit', async (e) => {
     input.value = '';
     autoGrow();
     hideAutocomplete();
-    const sent = await trySendCommand(text, destinationJid);
+    const sent = await trySendCommand(text, destinationJid, destinationLifeGeneration);
     if (sent) return;
     if (
       destinationSelection !== sessionSelectionGeneration ||
@@ -2859,7 +2958,14 @@ $('composer').addEventListener('submit', async (e) => {
     }
 
     const path = `/api/sessions/${encodeURIComponent(destinationJid)}/messages`;
-    const payload = { text, quote, attachments };
+    const payload = {
+      text,
+      quote,
+      attachments,
+      ...(destinationLifeGeneration
+        ? { lifeGeneration: destinationLifeGeneration }
+        : {}),
+    };
     const result = hasAttachments
       ? await sendJsonWithUploadProgress(path, payload, {
           onProgress: (percent) => showUploadProgress(uploadProgress, percent),
@@ -2868,6 +2974,13 @@ $('composer').addEventListener('submit', async (e) => {
     applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
   } catch (err) {
     if (err.status === 401) showLogin();
+    if (
+      destinationJid === LIFE_JID &&
+      state.mode === 'life' &&
+      state.activeJid === LIFE_JID
+    ) {
+      await enterLifeMode();
+    }
     alert(err.message);
   } finally {
     for (const attachment of submittedAttachments) {
@@ -2878,7 +2991,12 @@ $('composer').addEventListener('submit', async (e) => {
 });
 
 /** Parse "/pi model gpt-5" into a command + its single argument. */
-async function trySendCommand(line, destinationJid = state.activeJid) {
+async function trySendCommand(
+  line,
+  destinationJid = state.activeJid,
+  destinationLifeGeneration =
+    destinationJid === LIFE_JID ? state.lifeSession?.generation : undefined,
+) {
   const raw = line.slice(1).trim();
   const match = state.commands
     .filter((c) => raw === c.name || raw.startsWith(`${c.name} `))
@@ -2902,8 +3020,23 @@ async function trySendCommand(line, destinationJid = state.activeJid) {
 
   await api(`/api/sessions/${encodeURIComponent(destinationJid)}/commands`, {
     method: 'POST',
-    body: JSON.stringify({ command: match.name, args }),
-  }).catch((err) => alert(err.message));
+    body: JSON.stringify({
+      command: match.name,
+      args,
+      ...(destinationLifeGeneration
+        ? { lifeGeneration: destinationLifeGeneration }
+        : {}),
+    }),
+  }).catch(async (err) => {
+    if (
+      destinationJid === LIFE_JID &&
+      state.mode === 'life' &&
+      state.activeJid === LIFE_JID
+    ) {
+      await enterLifeMode();
+    }
+    alert(err.message);
+  });
 
   return true;
 }

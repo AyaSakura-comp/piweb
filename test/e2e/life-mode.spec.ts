@@ -39,6 +39,7 @@ async function installLifeApi(
   options: {
     failLife?: boolean;
     failLifeEvents?: boolean;
+    failLifeNewAfterArchive?: boolean;
     delayLife?: boolean;
     delaySecondLife?: boolean;
     delayLifeEvents?: boolean;
@@ -73,6 +74,8 @@ async function installLifeApi(
   } = {},
 ) {
   let lifeRequests = 0;
+  let lifeGeneration = 'life-generation-1';
+  let archivedLifeCount = 0;
   let deletedRequests = 0;
   let ordinaryStreamRequests = 0;
   let standardSessions = options.standardSessions ?? [STANDARD_SESSION];
@@ -165,10 +168,12 @@ async function installLifeApi(
     : null;
   const messagePaths: string[] = [];
   const messageBodies: unknown[] = [];
+  const lifeReadUrls: string[] = [];
 
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const requestUrl = new URL(request.url());
+    const path = requestUrl.pathname;
 
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
     if (path === '/api/commands') {
@@ -198,6 +203,29 @@ async function installLifeApi(
       standardSessions = [created, ...standardSessions];
       return route.fulfill({ json: { jid: created.jid, name: created.name } });
     }
+    if (path === '/api/life-session/new' && request.method() === 'POST') {
+      if (request.postDataJSON()?.generation !== lifeGeneration) {
+        return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+      }
+      archivedLifeCount += 1;
+      const archived = {
+        ...STANDARD_SESSION,
+        jid: `web:life-archive-${archivedLifeCount}`,
+        name: 'Life',
+        lastActivity: '2026-08-29 00:00:00',
+      };
+      standardSessions = [archived, ...standardSessions];
+      lifeGeneration = `life-generation-${archivedLifeCount + 1}`;
+      if (options.failLifeNewAfterArchive) {
+        return route.fulfill({ status: 503, json: { error: 'Response lost after archive' } });
+      }
+      return route.fulfill({
+        json: {
+          archived: { jid: archived.jid, name: archived.name, kind: 'standard' },
+          life: { ...LIFE_SESSION, generation: lifeGeneration, created: true },
+        },
+      });
+    }
     if (path === '/api/life-session' && request.method() === 'POST') {
       lifeRequests += 1;
       if (options.failLife) {
@@ -208,7 +236,11 @@ async function installLifeApi(
       return route.fulfill({
         json: options.corruptLifeEndpoint
           ? { ...STANDARD_SESSION, created: false }
-          : { ...LIFE_SESSION, created: lifeRequests === 1 },
+          : {
+              ...LIFE_SESSION,
+              generation: lifeGeneration,
+              created: lifeRequests === 1,
+            },
       });
     }
     if (path.endsWith('/clear') && request.method() === 'POST') {
@@ -242,7 +274,14 @@ async function installLifeApi(
       return route.fulfill({ json: { ok: true, permanent: false } });
     }
     if (path.endsWith('/media')) {
-      const isLifeMedia = path.includes(encodeURIComponent(LIFE_SESSION.jid));
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      const isLifeMedia = requestedJid === LIFE_SESSION.jid;
+      if (isLifeMedia) {
+        lifeReadUrls.push(request.url());
+        if (requestUrl.searchParams.get('generation') !== lifeGeneration) {
+          return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+        }
+      }
       if (isLifeMedia && lifeMediaGate) await lifeMediaGate;
       if (options.delayLifeMedia || (isLifeMedia && options.lifeMediaItem)) {
         const name = isLifeMedia ? 'Life image' : 'Standard image';
@@ -255,6 +294,12 @@ async function installLifeApi(
     if (path.endsWith('/events')) {
       const requestedJid = decodeURIComponent(path.split('/')[3]);
       const isLifeEvents = requestedJid === LIFE_SESSION.jid;
+      if (isLifeEvents) {
+        lifeReadUrls.push(request.url());
+        if (requestUrl.searchParams.get('generation') !== lifeGeneration) {
+          return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+        }
+      }
       const standardMetadata = standardSessions.find((session) => session.jid === requestedJid);
       const deletedMetadata = deletedSessions.find((session) => session.jid === requestedJid);
       const isUnknownEvents = !isLifeEvents && !standardMetadata && !deletedMetadata;
@@ -270,9 +315,9 @@ async function installLifeApi(
       if (options.failLifeEvents && isLifeEvents) {
         return route.fulfill({ status: 503, json: { error: 'Life events unavailable' } });
       }
-      const lifeEventState = isLifeEvents && options.lifeEventState;
+      const lifeEventState = isLifeEvents && archivedLifeCount === 0 && options.lifeEventState;
       const lifeEvents =
-        isLifeEvents && options.lifeEventCount
+        isLifeEvents && archivedLifeCount === 0 && options.lifeEventCount
           ? Array.from({ length: options.lifeEventCount }, (_, index) => ({
               id: index + 1,
               kind: 'message',
@@ -343,6 +388,7 @@ async function installLifeApi(
                       : isLifeEvents
                         ? 'life'
                         : 'standard',
+                  ...(isLifeEvents ? { generation: lifeGeneration } : {}),
                   deleted:
                     options.omitOrdinaryDeletedState && requestedJid === STANDARD_SESSION.jid
                       ? undefined
@@ -354,6 +400,13 @@ async function installLifeApi(
       });
     }
     if (path.endsWith('/search')) {
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      if (requestedJid === LIFE_SESSION.jid) {
+        lifeReadUrls.push(request.url());
+        if (requestUrl.searchParams.get('generation') !== lifeGeneration) {
+          return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+        }
+      }
       return route.fulfill({
         json: {
           hits: options.lifeSearchResult
@@ -372,6 +425,12 @@ async function installLifeApi(
     }
     if (path.endsWith('/stream')) {
       const requestedJid = decodeURIComponent(path.split('/')[3]);
+      if (requestedJid === LIFE_SESSION.jid) {
+        lifeReadUrls.push(request.url());
+        if (requestUrl.searchParams.get('generation') !== lifeGeneration) {
+          return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+        }
+      }
       if (requestedJid === STANDARD_SESSION.jid) ordinaryStreamRequests += 1;
       const oldEvent =
         options.oldStreamEventDuringPending &&
@@ -387,12 +446,22 @@ async function installLifeApi(
       });
     }
     if (path.endsWith('/commands') && request.method() === 'POST') {
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      const body = request.postDataJSON();
+      if (requestedJid === LIFE_SESSION.jid && body.lifeGeneration !== lifeGeneration) {
+        return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+      }
       if (commandGate) await commandGate;
       return route.fulfill({ status: 200, json: { ok: true } });
     }
     if (path.endsWith('/messages') && request.method() === 'POST') {
+      const requestedJid = decodeURIComponent(path.split('/')[3]);
+      const body = request.postDataJSON();
+      if (requestedJid === LIFE_SESSION.jid && body.lifeGeneration !== lifeGeneration) {
+        return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+      }
       messagePaths.push(path);
-      messageBodies.push(request.postDataJSON());
+      messageBodies.push(body);
       if (messageGate) await messageGate;
       return route.fulfill({
         status: 200,
@@ -405,6 +474,9 @@ async function installLifeApi(
 
   return {
     lifeRequests: () => lifeRequests,
+    archivedLifeCount: () => archivedLifeCount,
+    standardSessions: () => standardSessions,
+    lifeReadUrls: () => [...lifeReadUrls],
     releaseLifeResponse: () => releaseLifeResponse?.(),
     releaseSecondLife: () => releaseSecondLife?.(),
     releaseLifeEvents: () => releaseLifeEvents?.(),
@@ -590,7 +662,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ]) {
     await expect(page.locator(selector)).toBeHidden();
   }
-  const lifeNewSession = page.getByRole('button', { name: 'New pi session' });
+  const lifeNewSession = page.getByRole('button', { name: 'New Life session' });
   await expect(lifeNewSession).toBeVisible();
   const lifeHeaderGeometry = await page.evaluate(() => {
     const title = document.querySelector('.topbar-title').getBoundingClientRect();
@@ -608,11 +680,24 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
     clearsCenteredTitle: true,
     precedesOverflow: true,
   });
-  const newLifeSessionRequest = page.waitForRequest((request) =>
-    request.url().endsWith(`/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/commands`),
+  const newLifeSessionResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/life-session/new') && response.request().method() === 'POST',
   );
   await lifeNewSession.click();
-  expect((await newLifeSessionRequest).postDataJSON()).toEqual({ command: 'pi new', args: {} });
+  const newLifeResponse = await newLifeSessionResponse;
+  expect(newLifeResponse.request().postDataJSON()).toEqual({
+    generation: 'life-generation-1',
+  });
+  expect(await newLifeResponse.json()).toMatchObject({
+    archived: { jid: 'web:life-archive-1', name: 'Life', kind: 'standard' },
+    life: { ...LIFE_SESSION, generation: 'life-generation-2' },
+  });
+  await expect.poll(api.archivedLifeCount).toBe(1);
+  await expect
+    .poll(() => api.standardSessions().map((session) => session.jid))
+    .toContain('web:life-archive-1');
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
   await page.locator('#btn-more').click();
   await expect(page.getByRole('menuitem', { name: 'Search' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
@@ -643,12 +728,13 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   expect(api.messagePaths[0]).toBe(
     `/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/messages`,
   );
+  expect(api.messageBodies[0]).toMatchObject({ lifeGeneration: 'life-generation-2' });
 
   await page.reload();
   await expect.poll(api.lifeRequests).toBe(2);
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText('Life');
-  await expect(page.getByRole('button', { name: 'New pi session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Life session' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('04-life-mode-reloaded.png') });
 
   const backSwipe = await touchDrag(
@@ -664,10 +750,10 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.waitForTimeout(60);
   await page.screenshot({ path: testInfo.outputPath('06-life-back-settle.png') });
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
-  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#session-name')).toHaveText('Life');
   expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
   await expect(page.locator('#life-edge-hint')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New pi session' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'New Life session' })).toBeHidden();
   await expect(preview).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('07-returned-to-sessions.png') });
 
@@ -686,7 +772,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.getByRole('button', { name: 'Return to sessions' }).click();
   await page.waitForTimeout(60);
   await page.screenshot({ path: testInfo.outputPath('10-sessions-button-settle.png') });
-  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.locator('#btn-status')).toBeVisible();
   await expect(page.locator('#header-badge')).toBeVisible();
   await expect(preview).toBeHidden();
@@ -699,6 +785,25 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('a failed New response reconciles to the fresh Life generation', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    lifeEventCount: 2,
+    failLifeNewAfterArchive: true,
+  });
+  page.on('dialog', (dialog) => void dialog.dismiss());
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  await expect(page.locator('#messages .msg')).toHaveCount(2);
+  await page.getByRole('button', { name: 'New Life session' }).click();
+
+  await expect.poll(api.archivedLifeCount).toBe(1);
+  await expect.poll(api.lifeRequests).toBe(2);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
+  await expect(page.locator('#session-name')).toHaveText('Life');
 });
 
 test('busy Life header keeps every action clear at 320px', async ({ page }, testInfo) => {
@@ -2191,6 +2296,49 @@ test('attachment conversion snapshots the original draft and cannot consume a la
     `/api/sessions/${encodeURIComponent(STANDARD_SESSION.jid)}/messages`,
   );
   await expect(page.getByRole('button', { name: 'Remove second.txt' })).toBeVisible();
+});
+
+test('an attachment converting across New cannot spill into fresh Life', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = FileReader.prototype.readAsDataURL;
+    const pending: Array<() => void> = [];
+    FileReader.prototype.readAsDataURL = function delayedRead(blob: Blob) {
+      pending.push(() => original.call(this, blob));
+    };
+    (window as any).__pendingFileReaders = () => pending.length;
+    (window as any).__releaseFileReaders = () => {
+      for (const release of pending.splice(0)) release();
+    };
+    localStorage.setItem('piweb.mode', 'life');
+  });
+  const api = await installLifeApi(page);
+  page.on('dialog', (dialog) => void dialog.dismiss());
+  await page.goto('/');
+  await page.locator('#file-input').setInputFiles({
+    name: 'old-life.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('old Life attachment'),
+  });
+  await page.locator('#input').fill('old Life draft');
+  await page.locator('#btn-send').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__pendingFileReaders())).toBe(1);
+
+  await page.getByRole('button', { name: 'New Life session' }).click();
+  await expect.poll(api.archivedLifeCount).toBe(1);
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
+
+  const staleMessage = page.waitForResponse(
+    (response) =>
+      response.url().includes('/messages') && response.request().method() === 'POST',
+  );
+  await page.evaluate(() => (window as any).__releaseFileReaders());
+  const response = await staleMessage;
+  expect(response.status()).toBe(409);
+  expect(response.request().postDataJSON()).toMatchObject({
+    lifeGeneration: 'life-generation-1',
+  });
+  expect(api.messagePaths).toEqual([]);
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
 });
 
 test('a delayed slash command cannot clear a newer Life draft', async ({ page }) => {

@@ -22,11 +22,17 @@ import { logger } from '../logger.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
   appendWebEvent,
+  archiveLifeSessionAndStartNew,
+  beginChannelOperation,
+  CHANNEL_GENERATION_CHANGED_ERROR,
+  commitLifeControlOperation,
+  commitLifeMessageOperation,
   deletePushSubscription,
   deleteWebEvents,
   enqueueControl,
   enqueueMessage,
   getChannel,
+  getFirstUserMessageContent,
   getMeta,
   getOrCreateLifeChannel,
   getRecentWebEvents,
@@ -34,11 +40,15 @@ import {
   getWebEventsAround,
   getWebEventsBefore,
   getWebEventsSince,
+  finishChannelOperation,
   hasWebEventsAfter,
   hasWebEventsBefore,
   searchWebEvents,
   isChannelBusy,
   isChannelDeleted,
+  isChannelQuarantinedForLifeArchive,
+  isLifeArchiveMediaDirQuarantined,
+  LIFE_ARCHIVE_QUARANTINE_ERROR,
   listDeletedWebSessions,
   listWebSessions,
   purgeChannel,
@@ -47,6 +57,7 @@ import {
   softDeleteChannel,
   registerChannel,
   savePushSubscription,
+  touchChannelOperation,
   type WebEventRow,
   listSessionMedia,
   getLiveOutput,
@@ -141,6 +152,10 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
   return JSON.parse(raw) as T;
 }
 
+function cleanStaticRelativePath(relPath: string): string {
+  return normalize(relPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+}
+
 /** Serve a file from `root`, refusing anything that escapes it via `..`. */
 export function serveStatic(
   req: IncomingMessage,
@@ -148,8 +163,7 @@ export function serveStatic(
   root: string,
   relPath: string,
 ): boolean {
-  const normalizedRel = normalize(relPath).replace(/^(\.\.[/\\])+/, '');
-  const cleanRel = normalizedRel.replace(/^[/\\]+/, '');
+  const cleanRel = cleanStaticRelativePath(relPath);
   const target = join(root, cleanRel);
   if (!target.startsWith(root)) return false;
   if (!existsSync(target)) return false;
@@ -296,6 +310,44 @@ function clampLimit(raw: string | null): number {
   return Math.min(Math.floor(n), MAX_PAGE);
 }
 
+const LIFE_GENERATION_RE = /^web_life_[0-9a-f]{8}$/;
+
+function requireLifeGeneration(res: ServerResponse, raw: unknown): string | undefined {
+  if (typeof raw !== 'string') {
+    sendJson(res, 400, { error: 'Life generation is required' });
+    return undefined;
+  }
+  const generation = raw.trim();
+  if (!LIFE_GENERATION_RE.test(generation)) {
+    sendJson(res, 400, { error: 'Life generation is malformed' });
+    return undefined;
+  }
+  return generation;
+}
+
+function heartbeatChannelOperation(operationId: string | undefined): {
+  renew: () => boolean;
+  stop: () => void;
+} {
+  if (!operationId) return { renew: () => true, stop: () => {} };
+  let valid = true;
+  const renew = () => {
+    if (!valid) return false;
+    try {
+      valid = touchChannelOperation(operationId);
+    } catch {
+      valid = false;
+    }
+    return valid;
+  };
+  const timer = setInterval(renew, 60_000);
+  timer.unref?.();
+  return {
+    renew,
+    stop: () => clearInterval(timer),
+  };
+}
+
 function serializeEvent(row: WebEventRow) {
   return {
     id: row.rowid,
@@ -431,11 +483,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (method === 'GET' && path.startsWith('/media/')) {
-    if (
-      serveStatic(req, res, config.webMediaDir, decodeURIComponent(path.slice('/media/'.length)))
-    ) {
+    const relativePath = cleanStaticRelativePath(
+      decodeURIComponent(path.slice('/media/'.length)),
+    );
+    const directory = relativePath.split(/[\\/]/, 1)[0] ?? '';
+    if (isLifeArchiveMediaDirQuarantined(directory)) {
+      sendJson(res, 503, { error: LIFE_ARCHIVE_QUARANTINE_ERROR });
       return;
     }
+    if (serveStatic(req, res, config.webMediaDir, relativePath)) return;
     sendJson(res, 404, { error: 'Not found' });
     return;
   }
@@ -484,6 +540,52 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   // ── sessions ──
+  // Starting a new Life conversation promotes the current transcript and Pi
+  // folder into the ordinary session list, then replaces the singleton with a
+  // new empty folder. No worker-side `pi new` is needed or enqueued.
+  if (path === '/api/life-session/new' && method === 'POST') {
+    const body = await readJson<{ generation?: unknown }>(req);
+    const generation = requireLifeGeneration(res, body?.generation);
+    if (!generation) return;
+
+    const firstPrompt = getFirstUserMessageContent('web:life')?.trim() ?? '';
+    const id = randomUUID().slice(0, 8);
+    try {
+      const { archived, life } = archiveLifeSessionAndStartNew({
+        archivedJid: webJid(id),
+        archivedName: firstPrompt ? extractSessionTitle(firstPrompt) : 'Life',
+        expectedFolder: generation,
+      });
+      sendJson(res, 200, {
+        archived: { jid: archived.jid, name: archived.name, kind: 'standard' },
+        life: {
+          jid: life.jid,
+          name: life.name,
+          kind: 'life',
+          model: '',
+          thinking: '',
+          generation: life.folder,
+          created: true,
+        },
+      });
+    } catch (error) {
+      const message = (error as Error).message;
+      if (
+        message === 'Life session still has active or queued work' ||
+        message === 'Life session changed before it could be archived'
+      ) {
+        sendJson(res, 409, { error: message });
+        return;
+      }
+      if (message === 'Life session does not exist') {
+        sendJson(res, 404, { error: message });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
   // Life is created separately from ordinary sessions: its unique empty folder
   // needs no asynchronous `pi new`, so the first message cannot race a reset.
   if (path === '/api/life-session' && method === 'POST') {
@@ -494,6 +596,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       kind: 'life',
       model: '',
       thinking: '',
+      generation: channel.folder,
       created,
     });
     return;
@@ -586,8 +689,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (sessionMatch) {
     const jid = webJid(decodeURIComponent(sessionMatch[1]));
     const sub = sessionMatch[2];
-    const channel = getChannel(jid);
 
+    // The DB re-key becomes visible before its media/upload renames can finish.
+    // Quarantine the archived owner before reading a body, staging files, or
+    // touching its Pi/transcript state; recovery is the only allowed writer.
+    if (isChannelQuarantinedForLifeArchive(jid)) {
+      sendJson(res, 503, { error: LIFE_ARCHIVE_QUARANTINE_ERROR });
+      return;
+    }
+
+    const channel = getChannel(jid);
     if (!channel) {
       sendJson(res, 404, { error: 'Session not found' });
       return;
@@ -633,6 +744,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    // Every Life read is bound to the generation the tab selected. Otherwise a
+    // stale tab could page, search, or stream the replacement web:life and mix
+    // a different conversation into its old UI.
+    let expectedLifeGeneration: string | undefined;
+    if (
+      channel.kind === 'life' &&
+      method === 'GET' &&
+      ['events', 'media', 'search', 'stream'].includes(sub ?? '')
+    ) {
+      expectedLifeGeneration = requireLifeGeneration(res, url.searchParams.get('generation'));
+      if (!expectedLifeGeneration) return;
+      if (expectedLifeGeneration !== channel.folder) {
+        sendJson(res, 409, { error: 'Life session generation changed' });
+        return;
+      }
+    }
+
     // Four read modes, all index-backed range scans:
     //   ?after=<id>   catch-up after a reconnect (newer than id)
     //   ?before=<id>  one page of OLDER history (infinite scroll upward)
@@ -672,6 +800,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           jid: channel.jid,
           name: channel.name,
           kind: channel.kind ?? 'standard',
+          ...(channel.kind === 'life' ? { generation: channel.folder } : {}),
           deleted: isChannelDeleted(jid),
         },
       });
@@ -695,7 +824,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
 
     if (sub === 'stream' && method === 'GET') {
-      streamEvents(req, res, jid, Number(url.searchParams.get('after') ?? '0'));
+      streamEvents(
+        req,
+        res,
+        jid,
+        Number(url.searchParams.get('after') ?? '0'),
+        expectedLifeGeneration,
+      );
       return;
     }
 
@@ -727,99 +862,186 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         text?: string;
         quote?: string;
         attachments?: Array<{ name: string; dataBase64: string }>;
+        lifeGeneration?: unknown;
       }>(req);
 
-      const text = (body.text ?? '').trim();
-      const quote = normalizeQuote(body.quote);
-      const attachments = body.attachments ?? [];
-      if (!text && !quote && attachments.length === 0) {
-        sendJson(res, 400, { error: 'Message is empty' });
+      const lifeGeneration =
+        channel.kind === 'life'
+          ? requireLifeGeneration(res, body?.lifeGeneration)
+          : undefined;
+      if (channel.kind === 'life' && !lifeGeneration) return;
+      const operationId =
+        channel.kind === 'life' ? beginChannelOperation(jid, lifeGeneration!) : undefined;
+      if (channel.kind === 'life' && !operationId) {
+        sendJson(res, 409, { error: 'Life session changed while this message was submitted' });
         return;
       }
+      const operationHeartbeat = heartbeatChannelOperation(operationId);
 
-      const savedPaths = await saveUploads(jid, attachments);
+      try {
+        const text = (body.text ?? '').trim();
+        const quote = normalizeQuote(body.quote);
+        const attachments = body.attachments ?? [];
+        if (!text && !quote && attachments.length === 0) {
+          sendJson(res, 400, { error: 'Message is empty' });
+          return;
+        }
 
-      // Mirror the user turn into the transcript immediately so the phone sees
-      // its own message without waiting for the worker to pick it up.
-      appendWebEvent({
-        channelJid: jid,
-        kind: 'message',
-        role: 'user',
-        content: buildQuotedDisplay(text, quote),
-        files: savedPaths.urls,
-      });
+        const savedPaths = await saveUploads(jid, attachments, operationId);
+        if (!operationHeartbeat.renew()) {
+          await cleanupOperationUploads(savedPaths);
+          sendJson(res, 409, { error: 'Life session changed while uploads were saved' });
+          return;
+        }
 
-      // Capture exactly the first normal prompt for an independent title job.
-      // The message and title source commit together, so a crash cannot let a
-      // later turn take this first-turn slot. The worker erases its copy after
-      // the in-process statistical title extraction finishes.
-      const titleSource = buildSessionTitleSource(
-        text,
-        quote,
-        attachments.map((file) => file.name),
-      );
-      const immediateSessionTitle = titleSource ? extractSessionTitle(titleSource) : undefined;
-      const messageRowid = enqueueMessage({
-        channelJid: jid,
-        sender: 'web',
-        senderName: 'web',
-        content: buildQuotedPrompt(text, quote),
-        timestamp: new Date().toISOString(),
-        // AttachmentMeta shape, using the local-file variant: media.ts copies
-        // these instead of fetching, so uploads flow through the same
-        // transcode/voice-ASR/@file pipeline as Discord attachments.
-        attachments:
-          savedPaths.files.length > 0
-            ? JSON.stringify(
-                savedPaths.files.map((filePath, i) => ({
-                  url: '',
-                  name: attachments[i]?.name ?? 'file',
-                  contentType: '',
-                  size: 0,
-                  filePath,
-                })),
-              )
-            : null,
-        sessionTitlePrompt: titleSource,
-        immediateSessionTitle,
-      });
+        // Capture exactly the first normal prompt for an independent title job.
+        // The message and title source commit together, so a crash cannot let a
+        // later turn take this first-turn slot. The worker erases its copy after
+        // the in-process statistical title extraction finishes.
+        const titleSource = buildSessionTitleSource(
+          text,
+          quote,
+          attachments.map((file) => file.name),
+        );
+        const immediateSessionTitle = titleSource ? extractSessionTitle(titleSource) : undefined;
+        const queuedMessage = {
+          sender: 'web',
+          senderName: 'web',
+          content: buildQuotedPrompt(text, quote),
+          timestamp: new Date().toISOString(),
+          // AttachmentMeta shape, using the local-file variant: media.ts copies
+          // these instead of fetching, so uploads flow through the same
+          // transcode/voice-ASR/@file pipeline as Discord attachments.
+          attachments:
+            savedPaths.files.length > 0
+              ? JSON.stringify(
+                  savedPaths.files.map((filePath, i) => ({
+                    url: '',
+                    name: attachments[i]?.name ?? 'file',
+                    contentType: '',
+                    size: 0,
+                    filePath,
+                  })),
+                )
+              : null,
+          sessionTitlePrompt: titleSource,
+          immediateSessionTitle,
+        };
+        let messageRowid: number;
+        try {
+          if (operationId && lifeGeneration) {
+            messageRowid = commitLifeMessageOperation({
+              operationId,
+              channelJid: jid,
+              expectedFolder: lifeGeneration,
+              event: {
+                kind: 'message',
+                role: 'user',
+                content: buildQuotedDisplay(text, quote),
+                files: savedPaths.urls,
+              },
+              message: queuedMessage,
+            });
+          } else {
+            appendWebEvent({
+              channelJid: jid,
+              kind: 'message',
+              role: 'user',
+              content: buildQuotedDisplay(text, quote),
+              files: savedPaths.urls,
+            });
+            messageRowid = enqueueMessage({ channelJid: jid, ...queuedMessage });
+          }
+        } catch (error) {
+          await cleanupOperationUploads(savedPaths);
+          if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+            sendJson(res, 409, { error: 'Life session changed before the message committed' });
+            return;
+          }
+          throw error;
+        }
 
-      const titleJob = getSessionTitleJob(jid);
-      const appliedSessionTitle =
-        immediateSessionTitle &&
-        titleJob?.status === 'done' &&
-        titleJob.message_rowid === messageRowid &&
-        getChannel(jid)?.name === immediateSessionTitle
-          ? immediateSessionTitle
-          : undefined;
-      sendJson(res, 200, {
-        ok: true,
-        ...(appliedSessionTitle ? { sessionTitle: appliedSessionTitle } : {}),
-      });
-      return;
+        const titleJob = getSessionTitleJob(jid);
+        const appliedSessionTitle =
+          immediateSessionTitle &&
+          titleJob?.status === 'done' &&
+          titleJob.message_rowid === messageRowid &&
+          getChannel(jid)?.name === immediateSessionTitle
+            ? immediateSessionTitle
+            : undefined;
+        sendJson(res, 200, {
+          ok: true,
+          ...(appliedSessionTitle ? { sessionTitle: appliedSessionTitle } : {}),
+        });
+        return;
+      } finally {
+        operationHeartbeat.stop();
+        if (operationId) finishChannelOperation(operationId);
+      }
     }
 
     if (sub === 'commands' && method === 'POST') {
-      const body = await readJson<{ command?: string; args?: Record<string, string> }>(req);
-      const command = (body.command ?? '').trim();
-      if (
-        channel.kind === 'life' &&
-        ['pi model', 'pi reset-model', 'pi thinking', 'pi cwd', 'pi reset-cwd'].includes(command)
-      ) {
-        sendJson(res, 409, { error: 'Life always uses default settings' });
+      const body = await readJson<{
+        command?: string;
+        args?: Record<string, string>;
+        lifeGeneration?: unknown;
+      }>(req);
+      const lifeGeneration =
+        channel.kind === 'life'
+          ? requireLifeGeneration(res, body?.lifeGeneration)
+          : undefined;
+      if (channel.kind === 'life' && !lifeGeneration) return;
+      const operationId =
+        channel.kind === 'life' ? beginChannelOperation(jid, lifeGeneration!) : undefined;
+      if (channel.kind === 'life' && !operationId) {
+        sendJson(res, 409, { error: 'Life session changed while this command was submitted' });
         return;
       }
-      if (!COMMANDS.some((c) => c.name === command)) {
-        sendJson(res, 400, { error: `Unknown command: ${command}` });
-        return;
-      }
+      const operationHeartbeat = heartbeatChannelOperation(operationId);
 
-      // Echo the invocation into the transcript so the exchange reads like a
-      // conversation rather than settings mutating invisibly.
-      appendWebEvent({ channelJid: jid, kind: 'message', role: 'user', content: `/${command}` });
-      const rowid = enqueueControl(jid, command, body.args ?? {});
-      sendJson(res, 200, { ok: true, rowid });
-      return;
+      try {
+        const command = (body.command ?? '').trim();
+        if (
+          channel.kind === 'life' &&
+          ['pi model', 'pi reset-model', 'pi thinking', 'pi cwd', 'pi reset-cwd'].includes(command)
+        ) {
+          sendJson(res, 409, { error: 'Life always uses default settings' });
+          return;
+        }
+        if (!COMMANDS.some((c) => c.name === command)) {
+          sendJson(res, 400, { error: `Unknown command: ${command}` });
+          return;
+        }
+
+        // Echo and enqueue commit together for Life so a stale request cannot
+        // split one invocation across two folder generations.
+        let rowid: number;
+        if (operationId && lifeGeneration) {
+          try {
+            rowid = commitLifeControlOperation({
+              operationId,
+              channelJid: jid,
+              expectedFolder: lifeGeneration,
+              command,
+              args: body.args ?? {},
+            });
+          } catch (error) {
+            if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+              sendJson(res, 409, { error: 'Life session changed before the command committed' });
+              return;
+            }
+            throw error;
+          }
+        } else {
+          appendWebEvent({ channelJid: jid, kind: 'message', role: 'user', content: `/${command}` });
+          rowid = enqueueControl(jid, command, body.args ?? {});
+        }
+        sendJson(res, 200, { ok: true, rowid });
+        return;
+      } finally {
+        operationHeartbeat.stop();
+        if (operationId) finishChannelOperation(operationId);
+      }
     }
   }
 
@@ -847,39 +1069,64 @@ async function purgeSessionFiles(folder: string, jid: string): Promise<void> {
  * Stage browser uploads on disk and return both the pi-facing paths and the
  * browser-facing URLs (so the user's own photo renders in their bubble).
  */
+interface SavedUploads {
+  files: string[];
+  urls: string[];
+  operationDirs: string[];
+}
+
+async function cleanupOperationUploads(saved: SavedUploads): Promise<void> {
+  await Promise.all(
+    saved.operationDirs.map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})),
+  );
+}
+
 async function saveUploads(
   jid: string,
   attachments: Array<{ name: string; dataBase64: string }>,
-): Promise<{ files: string[]; urls: string[] }> {
-  if (attachments.length === 0) return { files: [], urls: [] };
+  operationId?: string,
+): Promise<SavedUploads> {
+  if (attachments.length === 0) return { files: [], urls: [], operationDirs: [] };
 
-  const uploadDir = join(config.webUploadDir, mediaDirName(jid));
-  const mediaDir = join(config.webMediaDir, mediaDirName(jid));
-  await mkdir(uploadDir, { recursive: true });
-  await mkdir(mediaDir, { recursive: true });
+  // Life uploads stay in an operation-unique subdirectory. If a suspended
+  // request loses its lease while writeFile is pending, its path can never be
+  // mistaken for files from a newer request; archive moves the old root as one.
+  const relativeOperationDir = operationId ? join('.operations', operationId) : '';
+  const uploadDir = join(config.webUploadDir, mediaDirName(jid), relativeOperationDir);
+  const mediaDir = join(config.webMediaDir, mediaDirName(jid), relativeOperationDir);
+  const operationDirs = operationId ? [uploadDir, mediaDir] : [];
 
-  const files: string[] = [];
-  const urls: string[] = [];
+  try {
+    await mkdir(uploadDir, { recursive: true });
+    await mkdir(mediaDir, { recursive: true });
 
-  for (const attachment of attachments) {
-    const safeName = mediaFileName(randomUUID().slice(0, 8), attachment.name);
-    const buffer = Buffer.from(attachment.dataBase64, 'base64');
+    const files: string[] = [];
+    const urls: string[] = [];
 
-    if (config.maxAttachmentBytes > 0 && buffer.length > config.maxAttachmentBytes) {
-      throw new Error(`Attachment exceeds the size limit: ${attachment.name}`);
+    for (const attachment of attachments) {
+      const safeName = mediaFileName(randomUUID().slice(0, 8), attachment.name);
+      const buffer = Buffer.from(attachment.dataBase64, 'base64');
+
+      if (config.maxAttachmentBytes > 0 && buffer.length > config.maxAttachmentBytes) {
+        throw new Error(`Attachment exceeds the size limit: ${attachment.name}`);
+      }
+
+      const piPath = join(uploadDir, safeName);
+      await writeFile(piPath, buffer);
+      files.push(piPath);
+
+      // A second copy under the served media root — webUploadDir is deliberately
+      // not exposed over HTTP.
+      await writeFile(join(mediaDir, safeName), buffer);
+      const urlName = operationId ? `.operations/${operationId}/${safeName}` : safeName;
+      urls.push(mediaUrl(jid, urlName));
     }
 
-    const piPath = join(uploadDir, safeName);
-    await writeFile(piPath, buffer);
-    files.push(piPath);
-
-    // A second copy under the served media root — webUploadDir is deliberately
-    // not exposed over HTTP.
-    await writeFile(join(mediaDir, safeName), buffer);
-    urls.push(mediaUrl(jid, safeName));
+    return { files, urls, operationDirs };
+  } catch (error) {
+    await cleanupOperationUploads({ files: [], urls: [], operationDirs });
+    throw error;
   }
-
-  return { files, urls };
 }
 
 /**
@@ -894,6 +1141,7 @@ function streamEvents(
   res: ServerResponse,
   jid: string,
   afterRowid: number,
+  expectedLifeGeneration?: string,
 ): void {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -903,6 +1151,7 @@ function streamEvents(
     'x-accel-buffering': 'no',
   });
 
+  const streamGeneration = expectedLifeGeneration ?? null;
   let cursor = afterRowid;
   let lastBusy: boolean | undefined;
   let lastLiveSeq = -1;
@@ -914,10 +1163,22 @@ function streamEvents(
   };
 
   send('hello', { cursor });
+  if (streamGeneration) send('generation', { generation: streamGeneration });
 
   const timer = setInterval(() => {
     if (closed) return;
     try {
+      if (streamGeneration) {
+        const current = getChannel(jid);
+        const currentGeneration = current?.kind === 'life' ? current.folder : null;
+        if (currentGeneration !== streamGeneration) {
+          send('generation', { generation: currentGeneration });
+          cleanup();
+          res.end();
+          return;
+        }
+      }
+
       const rows = getWebEventsSince(jid, cursor);
       for (const row of rows) {
         cursor = row.rowid;

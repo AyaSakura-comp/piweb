@@ -1,10 +1,10 @@
 # Life Mode: workflow and software architecture
 
 Life is a deliberately small, persistent chat surface for the current Pi default.
-It is not a shortcut that creates an ordinary session: Piweb stores one protected
-`channels.kind='life'` channel, reuses its channel and transcript across entries,
-and removes channel/model management from its UI. The user may explicitly start
-a fresh Pi context inside that protected channel with **New pi session**.
+Piweb stores one protected `channels.kind='life'` channel, reuses its channel and
+transcript across entries, and removes channel/model management from its UI.
+Choosing **New Life session** promotes the current conversation into the ordinary
+Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
 
 ## Product contract
 
@@ -28,19 +28,25 @@ a fresh Pi context inside that protected channel with **New pi session**.
 - Life has the stable JID `web:life` and one randomly named, persistent Pi
   session folder. The partial unique database index permits only one Life row.
 - Re-entry restores the same row and transcript while clearing model, thinking,
-  and cwd overrides.
+  and cwd overrides. **New Life session** is the deliberate boundary: under an
+  immediate database lock, the old row, transcript, Pi folder, logs, scheduled
+  tasks, and media ownership are re-keyed to a new standard `web:*` JID, while a
+  new empty `web:life` row receives a freshly reserved folder.
 - Every Life turn asks the configured `PI_BIN` for its exact current runtime
   model and effective thinking level, then passes both explicitly to the
   persistent Life conversation. It never trusts stale values from
   `pi --continue`.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
 - Rename, delete, clear, restore, model, thinking, cwd, and reset-cwd operations
-  are rejected server-side. Emergency `pi stop` and **New pi session** (`/pi new`)
-  remain available. `/pi new` archives the previous Pi context and starts fresh
-  without replacing or exposing the protected Life channel. Life exposes this
-  action as a dedicated pencil button in the header, immediately before ⋯. Its
-  overflow contains **Search** and **Media**; Sessions, New pi session, clean
-  session, and their separator remain hidden there.
+  are rejected server-side. Emergency `pi stop` remains available. The dedicated
+  **New Life session** pencil immediately before ⋯ calls
+  `POST /api/life-session/new`: it saves the current conversation into the
+  standard list under an extractive first-prompt title and opens a fresh, empty
+  Life session. Rotation is refused while Life has active or queued work. The
+  lower-level typed `/pi new` command remains available for rotating only Pi's
+  internal context without promoting the transcript. Life's overflow contains
+  **Search** and **Media**; Sessions, New pi session, clean session, and their
+  separator remain hidden there.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.
 - Tapping **Sessions** or swiping right from within 36 px of the phone's left
@@ -59,7 +65,11 @@ a fresh Pi context inside that protected channel with **New pi session**.
   Life history/partial/busy/search ownership, and renders `no session`; a later
   composer submit cannot target `web:life`.
 - `localStorage.piweb.mode` stores only the device's presentation mode. It is
-  not the source of truth for the Life channel or Pi settings.
+  not the source of truth for the Life channel or Pi settings. The Life endpoint
+  returns an in-memory generation token for the current folder; New, messages,
+  commands, events paging/jump, search, media, and stream requests must echo it.
+  A stale or malformed generation is rejected before replacement-Life data can
+  be read or mutated.
 
 ## User workflow
 
@@ -85,8 +95,9 @@ flowchart TD
     N --> O{Next action}
     O -- Send message --> P[Run one Life turn using<br/>fresh Pi runtime defaults]
     P --> N
-    O -- New pi session --> S[Archive the current Pi context<br/>and start fresh in web:life]
-    S --> N
+    O -- New Life session --> S[Re-key current Life as a standard session<br/>with its transcript, media, and Pi folder]
+    S --> T[Create a new empty web:life<br/>with a fresh folder]
+    T --> N
     O -- Reload or notification --> H
     O -- Tap Sessions or swipe back --> Q[Settle right over Sessions underlay,<br/>restore destination, then crossfade]
     Q --> A
@@ -115,6 +126,7 @@ flowchart LR
 
     subgraph Web[Piweb web tier in Docker]
         LifeAPI[POST /api/life-session]
+        NewLifeAPI[POST /api/life-session/new]
         MsgAPI[POST /api/sessions/:jid/messages]
         HistoryAPI[events / search / stream APIs]
         Guards[Life management guards]
@@ -140,6 +152,7 @@ flowchart LR
 
     Gesture --> LifeAPI
     LifeAPI --> Channels
+    NewLifeAPI --> Channels
     Channels --> LifeUI
     Composer --> MsgAPI
     MsgAPI --> WebEvents
@@ -252,10 +265,59 @@ Database and API rules:
    routes remain valid.
 4. Every authenticated `POST /api/life-session` restores the singleton and
    clears all overrides before returning it.
-5. API guards enforce the simplified contract even when an old or hand-written
-   client calls hidden management routes. `pi new` is the deliberate exception:
-   it rotates the internal Pi context while leaving the Life row and web transcript
-   protected and persistent.
+5. `archiveLifeSessionAndStartNew()` takes an expected folder-generation token
+   and an immediate SQLite write lock. It fails closed if that generation has
+   already been replaced, refuses pending/processing message work, recent
+   controls, and active request/worker leases, and re-keys every
+   conversation-owned row (including scheduled tasks) to a new standard JID.
+   Before changing ownership it requires both archived media/upload destinations
+   to be absent; a collision fails closed with the original JID, generation,
+   source directories, and DB rows untouched. The same commit inserts a fresh
+   `web:life` row and a durable `life_archive_moves` intent. Session-folder
+   creation and media/upload renames happen only after commit. Each move is
+   idempotent (including crash-after-rename before journal update), and
+   `initDb()` resumes pending work at startup. A genuine post-commit failure
+   never rolls back the DB re-key or deletes/repoints the new Life folder;
+   quarantine stays active until recovery completes.
+6. Life message and command requests echo the generation captured when their
+   draft started, then acquire a short-lived lease for that exact channel folder
+   after reading their request body and before staging uploads or mutating
+   SQLite. The message worker acquires the same persisted ownership before it
+   starts a Life turn, heartbeats long runs, and releases only after delayed
+   stream buffers and typing state are cleared—even when the queue row became
+   terminal earlier. A crashed worker lease expires after one hour. Every worker
+   output/state write also carries the captured folder generation and commits
+   through a SQLite compare-and-write fence. If a suspended worker resumes after
+   expiry and rotation, its heartbeat aborts the run and its stale stream,
+   transcript, file, partial, and busy writes are rejected; archive clears the
+   expired generation's transient partial/busy mirrors. Archive and request-start
+   serialize through immediate write transactions, so an old request or final
+   worker write cannot spill into the replacement. Browser uploads use
+   operation-unique subdirectories, heartbeat across file I/O, then commit the
+   user event and queue row together only while that operation/folder still owns
+   Life. Processing controls remain authoritative regardless of heartbeat age,
+   so a suspended command blocks New rather than resuming across generations;
+   worker startup fails unfinished controls instead of replaying non-idempotent
+   work. Owner/folder checks additionally fence asynchronous command mutation
+   points and output. The UI busy flag is not authoritative.
+7. While a `life_archive_moves` row remains pending, its authoritative DB
+   barrier quarantines both the fresh Life generation and the archived standard
+   JID. Session APIs and direct media reads fail early with 503 before reading a
+   request body, staging files, or mutating state; the pending standard owner is
+   omitted from the normal session list. Queue/control/event and worker output
+   writes are rejected. A due scheduled task re-resolves its DB owner, defers
+   without changing `last_run_at`, `next_run_at`, or `enabled`, does not consume
+   the scheduler's per-tick concurrency budget or starve unrelated due tasks,
+   and resumes only after recovery removes the journal row. Life events
+   paging/jump, search,
+   media, and stream requests otherwise require the selected generation.
+   Missing/malformed values return 400 and stale values return 409; SSE checks
+   the generation before polling rows and closes on replacement.
+8. API guards enforce the simplified contract even when an old or hand-written
+   client calls hidden management routes. A typed `pi new` remains the
+   lower-level exception that rotates only the internal Pi context; the header
+   action uses `/api/life-session/new` so the visible conversation is preserved
+   in Sessions.
 
 ## Frontend ownership and race protection
 
@@ -270,7 +332,8 @@ ownership generations rather than relying on response order:
 | `searchOwnershipGeneration` | Closing or abandoning Life invalidates delayed search results. |
 | `mediaOwnershipGeneration` | A delayed Life gallery cannot overwrite a later standard-session gallery. |
 | `sessionsLoadGeneration` | An older session-list poll cannot replace a newer list. |
-| Captured destination/operation ownership | Composer sends, new-session creation, clean completion, and trash loads cannot mutate a newer Life or standard destination; submitted attachments detach synchronously so later pastes remain with the newer draft. |
+| Captured destination/operation ownership | Composer sends and Life commands carry the captured Life generation; standard new-session creation, Life archive/new selection, clean completion, and trash loads cannot mutate a newer destination. Submitted attachments detach synchronously so later pastes remain with the newer draft. A failed or lost New response always re-enters canonical Life, reconciling whichever generation actually committed. |
+| Life generation metadata + guarded reads | Initial history, older/newer pages, search jumps, search, media, and SSE all send the selected generation. The server returns a conflict before reading replacement data; the stream emits its generation before rows and closes with the replacement generation after a cross-tab rotation, forcing canonical re-entry before fresh events can mix into an old transcript. |
 
 A notification target is consumed from the URL before boot's asynchronous API
 loads begin. Piweb removes its session query parameter immediately, so even a
@@ -310,7 +373,7 @@ flowchart LR
     Unit[Vitest Life DB/API/default/UI tests] --> Types[TypeScript typecheck]
     Types --> Lint[ESLint and formatting]
     Lint --> E2E[Playwright 390x844 mobile E2E]
-    E2E --> Vision[Inspect edge hint, partial/flick inertia,<br/>Life, new context, reload, and return screenshots]
+    E2E --> Vision[Inspect edge hint, partial/flick inertia,<br/>Life archive/new, reload, and return screenshots]
     Vision --> Build[Production build]
     Build --> Deploy[Restart-service Piweb deployment]
     Deploy --> Live[Public HTTP + live mobile verification]

@@ -26,7 +26,7 @@ async function setup() {
     cwdOverride: '',
   });
   openDbs.push(db);
-  return { db, stream: webTransport.createEventStreamer('web:thinking-stream') };
+  return { db, webTransport, stream: webTransport.createEventStreamer('web:thinking-stream') };
 }
 
 describe('streamed thinking UI', () => {
@@ -54,6 +54,19 @@ describe('streamed thinking UI', () => {
 });
 
 describe('intermediate assistant text', () => {
+  it('cancels a delayed live-buffer flush during final typing cleanup', async () => {
+    const { db, webTransport, stream } = await setup();
+
+    await stream({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'must stay with old Life' },
+    });
+    await webTransport.clearTyping('web:thinking-stream');
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
+
+    expect(db.getLiveOutput('web:thinking-stream')).toBeNull();
+  });
+
   it('folds text that is followed by a tool call into thinking instead of leaving an answer preview', async () => {
     const { db, stream } = await setup();
 

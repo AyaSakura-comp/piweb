@@ -73,42 +73,61 @@ export async function runCommand(
   channel: RegisteredChannel,
   command: string,
   args: Record<string, string> = {},
+  options: { assertOwnership?: () => void } = {},
 ): Promise<CommandResult> {
   try {
+    options.assertOwnership?.();
+    let result: CommandResult;
     switch (command) {
       case 'pi status':
-        return await cmdStatus(channel);
+        result = await cmdStatus(channel);
+        break;
       case 'pi model':
-        return cmdModelSet(channel, args.model ?? '');
+        result = cmdModelSet(channel, args.model ?? '');
+        break;
       case 'pi reset-model':
-        return await cmdModelReset(channel);
+        result = await cmdModelReset(channel, options.assertOwnership);
+        break;
       case 'pi thinking':
-        return await cmdThinkingSet(channel, args.level ?? '');
+        result = await cmdThinkingSet(channel, args.level ?? '', options.assertOwnership);
+        break;
       case 'pi new':
-        return cmdNew(channel, args);
+        result = cmdNew(channel, args);
+        break;
       case 'pi stop':
       case 'until stop':
-        return cmdStop(channel);
+        result = cmdStop(channel);
+        break;
       case 'pi cwd':
-        return cmdCwdSet(channel, args.path ?? '');
+        result = cmdCwdSet(channel, args.path ?? '');
+        break;
       case 'pi reset-cwd':
-        return cmdCwdReset(channel);
+        result = cmdCwdReset(channel);
+        break;
       case 'pi gpt-usage':
       case 'gpt-usage':
-        return await cmdGptUsage();
+        result = await cmdGptUsage();
+        break;
       case 'agy-usage':
-        return await cmdAgyUsage();
+        result = await cmdAgyUsage();
+        break;
       case 'until goal':
-        return cmdUntilGoal(channel, args.text ?? '');
+        result = cmdUntilGoal(channel, args.text ?? '');
+        break;
       case 'until status':
-        return cmdUntilStatus(channel);
+        result = cmdUntilStatus(channel);
+        break;
       case 'task cron':
-        return cmdTaskCron(channel, args.text ?? '');
+        result = cmdTaskCron(channel, args.text ?? '');
+        break;
       case 'task list':
-        return cmdTaskList(channel);
+        result = cmdTaskList(channel);
+        break;
       default:
-        return { ok: false, text: `Unknown command: ${command}` };
+        result = { ok: false, text: `Unknown command: ${command}` };
     }
+    options.assertOwnership?.();
+    return result;
   } catch (err: any) {
     logger.error({ err: err.message, command }, 'Command failed');
     return { ok: false, text: `⚠️ ${err.message}` };
@@ -291,11 +310,15 @@ function cmdModelSet(channel: RegisteredChannel, selectedRef: string): CommandRe
   return { ok: true, text: notes.join('\n') };
 }
 
-async function cmdModelReset(channel: RegisteredChannel): Promise<CommandResult> {
+async function cmdModelReset(
+  channel: RegisteredChannel,
+  assertOwnership?: () => void,
+): Promise<CommandResult> {
   clearChannelModelOverride(channel.jid);
 
   const updated = getChannel(channel.jid)!;
   const effective = await computeEffectiveChannelSettings(updated, { forceRefresh: true });
+  assertOwnership?.();
   const notes = ['Model reset to the gateway default.'];
 
   if (updated.thinkingOverride && effective.thinkingAdjusted) {
@@ -317,6 +340,7 @@ async function cmdModelReset(channel: RegisteredChannel): Promise<CommandResult>
 async function cmdThinkingSet(
   channel: RegisteredChannel,
   rawLevel: string,
+  assertOwnership?: () => void,
 ): Promise<CommandResult> {
   if (!isThinkingLevel(rawLevel)) {
     return { ok: false, text: `Invalid thinking level: ${rawLevel}` };
@@ -325,6 +349,7 @@ async function cmdThinkingSet(
   const effective = await computeEffectiveChannelSettings(channel, { forceRefresh: true });
   const resolution = resolveThinkingForModel(effective.modelInfo, rawLevel);
 
+  assertOwnership?.();
   setChannelThinkingOverride(channel.jid, resolution.effective);
 
   const notes = [`Thinking level set to ${resolution.effective}.`];

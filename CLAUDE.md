@@ -157,6 +157,7 @@ origin check.
 | `/api/commands` | GET | the `COMMANDS` catalog for autocomplete |
 | `/api/models` | GET | pi's model list (from `meta`, published by the worker) |
 | `/api/life-session` | POST | idempotently create/restore the singleton Life channel and clear its overrides |
+| `/api/life-session/new` | POST | promote current Life into the standard list and create a fresh empty Life singleton |
 | `/api/sessions` | GET/POST | list standard live sessions (with badge, busy, `lastReplyId`); create immediately as `New session` |
 | `/api/sessions/deleted` | GET | the trash (must precede the `:jid` matcher) |
 | `/api/sessions/:jid` | PATCH/DELETE | rename; soft-delete (or `?permanent=1`) |
@@ -180,7 +181,7 @@ origin check.
 | text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
 | image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]` |
 | multimedia paste | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents) |
-| Life mode | singleton `channels.kind='life'` + `/api/life-session`; right-edge UI in `public/app.js`; full diagrams in [`docs/life-mode.md`](docs/life-mode.md) |
+| Life mode | singleton `channels.kind='life'` + `/api/life-session` and `/api/life-session/new`; right-edge UI in `public/app.js`; full diagrams in [`docs/life-mode.md`](docs/life-mode.md) |
 | thinking & tool physics | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia) |
 | Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
 | push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
@@ -714,9 +715,10 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     goal without the ranking's downside of rows jumping between state buckets.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
   holds `/pi status`, `/gpt-usage` and the model picker; search, `/pi new` and
-  clean session live in the ⋯ menu. Life promotes `/pi new` to the pencil button
-  immediately before ⋯ because rotating its one protected context is a primary
-  action there. The menu is a popover anchored under the button, not a bottom
+  clean session live in the ⋯ menu. Life uses the pencil immediately before ⋯
+  for **New Life session**: atomically promote the current transcript/Pi folder
+  into the standard list, then select a fresh empty Life singleton. The menu is
+  a popover anchored under the button, not a bottom
   sheet: these are quick actions and a sheet would feel as heavy as the model
   picker. Each row names the slash command it runs, so the menu also teaches
   the typed form. Dismissal is a
@@ -792,11 +794,34 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   model/effective thinking, explicitly applies both to the persistent Life
   conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
   escalates to SIGKILL after a bounded grace, and waits for child exit.
-  Channel/settings management is rejected server-side; `pi stop` and `pi new`
-  remain available. Life exposes New pi session as the header pencil button;
-  its ⋯ menu keeps Search and Media. `pi new` rotates only the internal Pi
-  context while preserving the protected
-  Life row and its web transcript. Returning or rolling back with no
+  Channel/settings management is rejected server-side; `pi stop` and the typed
+  `pi new` command remain available. Life exposes **New Life session** as the
+  header pencil button; its ⋯ menu keeps Search and Media. That button calls
+  `/api/life-session/new`, which compares the caller's Life generation, refuses
+  stale generations, active/queued work, or request/worker leases, re-keys the
+  current row/transcript/Pi folder and scheduled tasks to a new standard JID,
+  inserts a fresh empty `web:life`, and commits a media/upload move journal.
+  Filesystem moves finish idempotently after commit and recover during DB startup;
+  a failed completion never rolls back or deletes the new Life folder. Life
+  messages/commands echo the generation captured with their draft and lease that
+  exact folder across upload/commit awaits. Uploads use operation-unique paths and
+  atomically commit their event/queue row only after post-I/O ownership renewal.
+  The message worker heartbeats the same persisted ownership through final
+  stream/typing cleanup, then releases it; a
+  crashed lease expires after one hour. Every worker write is additionally fenced
+  by the captured folder generation, so a suspended worker that resumes after
+  expiry is aborted and cannot touch replacement-Life output, media, partial, or
+  busy state. Scheduled enqueue re-resolves its current DB owner, no-ops when its
+  row was deleted, and skips quarantined tasks without consuming the per-tick
+  budget or starving unrelated due work. Events paging/jump, search, media, and
+  SSE require the expected generation, so stale tabs get a conflict before
+  replacement rows can mix into old chrome. Processing controls remain an
+  authoritative archive blocker regardless of heartbeat age; worker startup fails
+  unfinished rows rather than replaying non-idempotent commands. Owner/folder
+  checks still fence asynchronous mutation points and output. The non-authoritative
+  UI busy mirror never gates archive without matching queue work. The lower-level
+  typed `pi new` still rotates only
+  Pi's internal context. Returning or rolling back with no
   standard session must clear the active Life JID, stream, transcript, partial,
   busy, and search ownership before showing `no session`, so the composer cannot
   submit to hidden Life state. See [`docs/life-mode.md`](docs/life-mode.md) for

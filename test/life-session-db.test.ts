@@ -1,12 +1,19 @@
 import Database from 'better-sqlite3';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const originalEnv = { ...process.env };
 const tempDirs: string[] = [];
-const CONFIG_ENV_KEYS = ['DB_PATH', 'HOME', 'PIDG_CONFIG', 'SESSIONS_DIR'];
+const CONFIG_ENV_KEYS = [
+  'DB_PATH',
+  'HOME',
+  'PIDG_CONFIG',
+  'SESSIONS_DIR',
+  'WEB_MEDIA_DIR',
+  'WEB_UPLOAD_DIR',
+];
 
 afterEach(() => {
   vi.doUnmock('node:crypto');
@@ -25,6 +32,8 @@ async function openTestDb(prefix = 'piweb-life-') {
   const dbPath = resolve(tempDir, 'gateway.db');
   process.env.DB_PATH = dbPath;
   process.env.SESSIONS_DIR = resolve(tempDir, 'sessions');
+  process.env.WEB_MEDIA_DIR = resolve(tempDir, 'web-media');
+  process.env.WEB_UPLOAD_DIR = resolve(tempDir, 'web-uploads');
   vi.resetModules();
   const db = await import('../src/db.js');
   db.initDb();
@@ -191,6 +200,456 @@ describe('Life channel persistence', () => {
       expect(first.created).toBe(true);
       expect(second.created).toBe(false);
       expect(second.channel.jid).toBe(first.channel.jid);
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('archives the current Life conversation as a standard session and starts empty', async () => {
+    const { db } = await openTestDb('piweb-life-archive-');
+    try {
+      const original = db.getOrCreateLifeChannel().channel;
+      db.appendWebEvent({
+        channelJid: original.jid,
+        kind: 'message',
+        role: 'user',
+        content: 'Plan a weekend trip to Tainan',
+        files: ['/media/web_life/photo.png'],
+      });
+      db.appendWebEvent({
+        channelJid: original.jid,
+        kind: 'message',
+        role: 'assistant',
+        content: 'Here is the plan.',
+      });
+      const scheduledTaskId = db.addScheduledTask({
+        name: 'Continue planning',
+        type: 'once',
+        schedule: '2099-01-01T00:00:00.000Z',
+        channelJid: original.jid,
+        prompt: 'Continue the plan',
+        nextRunAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      const mediaSource = resolve(process.env.WEB_MEDIA_DIR!, 'web_life');
+      const uploadSource = resolve(process.env.WEB_UPLOAD_DIR!, 'web_life');
+      mkdirSync(mediaSource, { recursive: true });
+      mkdirSync(uploadSource, { recursive: true });
+      writeFileSync(resolve(mediaSource, 'photo.png'), 'photo');
+      writeFileSync(resolve(uploadSource, 'source.png'), 'upload');
+
+      const result = db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:archive1',
+        archivedName: 'Tainan',
+        expectedFolder: original.folder,
+      });
+
+      expect(result.archived).toMatchObject({
+        jid: 'web:archive1',
+        name: 'Tainan',
+        folder: original.folder,
+        kind: 'standard',
+      });
+      expect(result.life).toMatchObject({
+        jid: 'web:life',
+        name: 'Life',
+        kind: 'life',
+      });
+      expect(result.life.folder).not.toBe(original.folder);
+      expect(db.listWebSessions().map((session) => session.jid)).toEqual(['web:archive1']);
+      expect(db.getRecentWebEvents('web:life')).toEqual([]);
+      expect(db.getRecentWebEvents('web:archive1')).toHaveLength(2);
+      expect(JSON.parse(db.getRecentWebEvents('web:archive1')[0].files!)).toEqual([
+        '/media/web_archive1/photo.png',
+      ]);
+      expect(readdirSync(resolve(process.env.WEB_MEDIA_DIR!, 'web_archive1'))).toEqual([
+        'photo.png',
+      ]);
+      expect(readdirSync(resolve(process.env.WEB_UPLOAD_DIR!, 'web_archive1'))).toEqual([
+        'source.png',
+      ]);
+      expect(() => readdirSync(mediaSource)).toThrow();
+      expect(() => readdirSync(uploadSource)).toThrow();
+      expect(db.listScheduledTasks()).toEqual([
+        expect.objectContaining({ id: scheduledTaskId, channel_jid: 'web:archive1' }),
+      ]);
+
+      // The scheduler may have fetched the task before the archive committed.
+      // Enqueue must resolve its current DB owner instead of trusting that stale JID.
+      db.enqueueScheduledTask(
+        scheduledTaskId,
+        {
+          channelJid: 'web:life',
+          sender: 'scheduler',
+          senderName: 'Scheduler',
+          content: 'Continue the plan',
+          timestamp: new Date().toISOString(),
+        },
+        new Date().toISOString(),
+        null,
+      );
+      expect(db.channelsWithPending()).toEqual(['web:archive1']);
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:duplicate-new',
+          archivedName: 'Must not archive fresh Life',
+          expectedFolder: original.folder,
+        }),
+      ).toThrow('Life session changed before it could be archived');
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('refuses to archive Life while a request owns its current generation', async () => {
+    const { db } = await openTestDb('piweb-life-archive-request-');
+    try {
+      const life = db.getOrCreateLifeChannel().channel;
+      const operationId = db.beginChannelOperation(life.jid, life.folder);
+      expect(operationId).toBeTruthy();
+
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:must-wait',
+          archivedName: 'Life request',
+          expectedFolder: life.folder,
+        }),
+      ).toThrow('Life session still has active or queued work');
+
+      db.finishChannelOperation(operationId!);
+      db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:after-request',
+        archivedName: 'Life request',
+        expectedFolder: life.folder,
+      });
+      expect(db.beginChannelOperation('web:life', life.folder)).toBeUndefined();
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('atomically rejects transcript and queue commit after an HTTP operation generation expired', async () => {
+    const { db, dbPath } = await openTestDb('piweb-life-http-operation-fence-');
+    try {
+      const life = db.getOrCreateLifeChannel().channel;
+      const operationId = db.beginChannelOperation(life.jid, life.folder)!;
+      const sqlite = new Database(dbPath);
+      try {
+        sqlite
+          .prepare("update channel_operations set updated_at = datetime('now', '-2 hours')")
+          .run();
+      } finally {
+        sqlite.close();
+      }
+
+      db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:expired-http-request',
+        archivedName: 'Expired request',
+        expectedFolder: life.folder,
+      });
+      expect(() =>
+        db.commitLifeMessageOperation({
+          operationId,
+          channelJid: 'web:life',
+          expectedFolder: life.folder,
+          event: { kind: 'message', role: 'user', content: 'must not cross generations' },
+          message: {
+            sender: 'web',
+            senderName: 'web',
+            content: 'must not cross generations',
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      ).toThrow('Channel generation changed');
+      expect(db.getRecentWebEvents('web:life')).toEqual([]);
+      expect(db.channelsWithPending()).toEqual([]);
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('keeps a heartbeating worker lease alive past the stale cutoff and expires a crashed one', async () => {
+    const { db, dbPath } = await openTestDb('piweb-life-worker-lease-');
+    try {
+      const life = db.getOrCreateLifeChannel().channel;
+      const operationId = db.beginChannelOperation(life.jid, life.folder);
+      expect(operationId).toBeTruthy();
+
+      const sqlite = new Database(dbPath);
+      try {
+        sqlite
+          .prepare("update channel_operations set updated_at = datetime('now', '-2 hours') where id = ?")
+          .run(operationId);
+      } finally {
+        sqlite.close();
+      }
+
+      expect(db.touchChannelOperation(operationId!)).toBe(true);
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:live-worker',
+          archivedName: 'Live worker',
+          expectedFolder: life.folder,
+        }),
+      ).toThrow('Life session still has active or queued work');
+
+      const staleSqlite = new Database(dbPath);
+      try {
+        staleSqlite
+          .prepare("update channel_operations set updated_at = datetime('now', '-2 hours') where id = ?")
+          .run(operationId);
+      } finally {
+        staleSqlite.close();
+      }
+
+      db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:crashed-worker',
+        archivedName: 'Crashed worker',
+        expectedFolder: life.folder,
+      });
+      expect(db.getChannel('web:crashed-worker')).toMatchObject({ kind: 'standard' });
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it.each([
+    ['media', 'WEB_MEDIA_DIR'],
+    ['upload', 'WEB_UPLOAD_DIR'],
+  ] as const)(
+    'rejects a pre-existing archived %s destination before committing DB ownership',
+    async (_label, rootEnv) => {
+      const { db, dbPath } = await openTestDb(`piweb-life-${rootEnv.toLowerCase()}-collision-`);
+      try {
+        const life = db.getOrCreateLifeChannel().channel;
+        const source = resolve(process.env[rootEnv]!, 'web_life');
+        const destination = resolve(process.env[rootEnv]!, 'web_collision');
+        mkdirSync(source, { recursive: true });
+        mkdirSync(destination, { recursive: true });
+        writeFileSync(resolve(source, 'source.txt'), 'source');
+        writeFileSync(resolve(destination, 'existing.txt'), 'existing');
+
+        expect(() =>
+          db.archiveLifeSessionAndStartNew({
+            archivedJid: 'web:collision',
+            archivedName: 'Collision',
+            expectedFolder: life.folder,
+          }),
+        ).toThrow('Life archive destination already exists');
+
+        expect(db.getChannel('web:life')).toMatchObject({ folder: life.folder, kind: 'life' });
+        expect(db.getChannel('web:collision')).toBeUndefined();
+        expect(readdirSync(source)).toEqual(['source.txt']);
+        expect(readdirSync(destination)).toEqual(['existing.txt']);
+        expect(readdirSync(process.env.SESSIONS_DIR!)).toEqual([life.folder]);
+
+        const sqlite = new Database(dbPath, { readonly: true });
+        try {
+          expect(sqlite.prepare('select count(*) as count from life_archive_moves').get()).toEqual({
+            count: 0,
+          });
+        } finally {
+          sqlite.close();
+        }
+      } finally {
+        db.closeDb();
+      }
+    },
+  );
+
+  it('recovers a committed Life re-key after an injected post-commit rename failure', async () => {
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    let failUploadRename = true;
+    vi.doMock('node:fs', () => ({
+      ...actualFs,
+      renameSync: (from: string, to: string) => {
+        if (failUploadRename && from.endsWith('/web-uploads/web_life')) {
+          failUploadRename = false;
+          throw Object.assign(new Error('Injected post-commit upload rename failure'), {
+            code: 'EIO',
+          });
+        }
+        return actualFs.renameSync(from, to);
+      },
+    }));
+
+    const { db, dbPath } = await openTestDb('piweb-life-move-recovery-');
+    const life = db.getOrCreateLifeChannel().channel;
+    const mediaSource = resolve(process.env.WEB_MEDIA_DIR!, 'web_life');
+    const mediaDestination = resolve(process.env.WEB_MEDIA_DIR!, 'web_recovery');
+    const uploadSource = resolve(process.env.WEB_UPLOAD_DIR!, 'web_life');
+    const uploadDestination = resolve(process.env.WEB_UPLOAD_DIR!, 'web_recovery');
+    mkdirSync(mediaSource, { recursive: true });
+    mkdirSync(uploadSource, { recursive: true });
+    writeFileSync(resolve(mediaSource, 'old-photo.png'), 'old media');
+    writeFileSync(resolve(uploadSource, 'old-upload.png'), 'old upload');
+
+    expect(() =>
+      db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:recovery',
+        archivedName: 'Recovery',
+        expectedFolder: life.folder,
+      }),
+    ).toThrow('Injected post-commit upload rename failure');
+
+    const replacement = db.getChannel('web:life');
+    expect(replacement?.folder).not.toBe(life.folder);
+    expect(db.getChannel('web:recovery')).toMatchObject({
+      folder: life.folder,
+      kind: 'standard',
+    });
+    expect(existsSync(resolve(process.env.SESSIONS_DIR!, replacement!.folder))).toBe(true);
+    expect(existsSync(mediaSource)).toBe(false);
+    expect(readdirSync(mediaDestination)).toEqual(['old-photo.png']);
+    expect(existsSync(uploadSource)).toBe(true);
+    expect(existsSync(uploadDestination)).toBe(false);
+
+    expect(db.isChannelQuarantinedForLifeArchive('web:recovery')).toBe(true);
+    expect(db.isChannelQuarantinedForLifeArchive('web:life')).toBe(true);
+    expect(() =>
+      db.enqueueMessage({
+        channelJid: 'web:recovery',
+        sender: 'web',
+        senderName: 'web',
+        content: 'must wait',
+        timestamp: new Date().toISOString(),
+      }),
+    ).toThrow('Life archive filesystem recovery is still pending');
+    expect(() => db.enqueueControl('web:recovery', 'pi status')).toThrow(
+      'Life archive filesystem recovery is still pending',
+    );
+    expect(() =>
+      db.appendWebEvent({
+        channelJid: 'web:recovery',
+        kind: 'message',
+        role: 'assistant',
+        content: 'must wait',
+      }),
+    ).toThrow('Life archive filesystem recovery is still pending');
+    expect(() => db.setLiveOutput('web:recovery', { content: 'must wait' })).toThrow(
+      'Life archive filesystem recovery is still pending',
+    );
+    expect(() => db.setChannelBusy('web:recovery', true)).toThrow(
+      'Life archive filesystem recovery is still pending',
+    );
+
+    let sqlite = new Database(dbPath);
+    try {
+      expect(sqlite.prepare('select count(*) as count from life_archive_moves').get()).toEqual({
+        count: 1,
+      });
+      // Simulate the narrower crash boundary: rename reached disk, but its
+      // completion bit did not. Destination-only must still recover as done.
+      sqlite.prepare('update life_archive_moves set media_done = 0').run();
+    } finally {
+      sqlite.close();
+    }
+
+    // Simulate process restart after the DB commit. Startup must finish both
+    // pending steps idempotently without relying on a destination collision.
+    db.closeDb();
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+    const recoveredDb = await import('../src/db.js');
+    recoveredDb.initDb();
+    try {
+      expect(readdirSync(mediaDestination)).toEqual(['old-photo.png']);
+      expect(readdirSync(uploadDestination)).toEqual(['old-upload.png']);
+      expect(existsSync(mediaSource)).toBe(false);
+      expect(existsSync(uploadSource)).toBe(false);
+      expect(recoveredDb.getChannel('web:life')).toMatchObject({
+        folder: replacement!.folder,
+        kind: 'life',
+      });
+      sqlite = new Database(dbPath, { readonly: true });
+      try {
+        expect(sqlite.prepare('select count(*) as count from life_archive_moves').get()).toEqual({
+          count: 0,
+        });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      recoveredDb.closeDb();
+    }
+  });
+
+  it('blocks every processing control and fails crashed rows during worker recovery', async () => {
+    const { db, dbPath } = await openTestDb('piweb-life-stale-control-');
+    try {
+      const life = db.getOrCreateLifeChannel().channel;
+      db.enqueueControl(life.jid, 'pi status');
+      expect(db.claimPendingControls()).toHaveLength(1);
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:recent-control',
+          archivedName: 'Recent control',
+          expectedFolder: life.folder,
+        }),
+      ).toThrow('Life session still has active or queued work');
+
+      const sqlite = new Database(dbPath);
+      try {
+        sqlite
+          .prepare("update control_queue set processing_at = datetime('now', '-2 hours')")
+          .run();
+      } finally {
+        sqlite.close();
+      }
+
+      // Wall-clock age cannot prove that a worker is dead: it may have been
+      // suspended and could resume with stale web:life ownership. Only worker
+      // startup recovery may terminalize an unfinished control.
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:still-processing',
+          archivedName: 'Still processing',
+          expectedFolder: life.folder,
+        }),
+      ).toThrow('Life session still has active or queued work');
+      expect(db.recoverStuckControls()).toBe(1);
+      expect(db.getControl(1)).toMatchObject({ status: 'failed' });
+
+      // Busy is a non-authoritative UI mirror and is cleared on archive.
+      db.setChannelBusy(life.jid, true);
+      db.archiveLifeSessionAndStartNew({
+        archivedJid: 'web:after-control-recovery',
+        archivedName: 'Recovered control',
+        expectedFolder: life.folder,
+      });
+      expect(db.getChannel('web:after-control-recovery')).toMatchObject({ kind: 'standard' });
+      expect(db.touchControlProcessing(1)).toBeUndefined();
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('refuses to archive Life while it has queued work', async () => {
+    const { db } = await openTestDb('piweb-life-archive-busy-');
+    try {
+      const life = db.getOrCreateLifeChannel().channel;
+      const mediaSource = resolve(process.env.WEB_MEDIA_DIR!, 'web_life');
+      mkdirSync(mediaSource, { recursive: true });
+      writeFileSync(resolve(mediaSource, 'still-owned.png'), 'old Life');
+      db.enqueueMessage({
+        channelJid: life.jid,
+        sender: 'web',
+        senderName: 'web',
+        content: 'Still waiting',
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(() =>
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:must-not-exist',
+          archivedName: 'Busy Life',
+          expectedFolder: life.folder,
+        }),
+      ).toThrow('Life session still has active or queued work');
+      expect(db.getChannel('web:life')).toMatchObject({ folder: life.folder, kind: 'life' });
+      expect(db.getChannel('web:must-not-exist')).toBeUndefined();
+      expect(readdirSync(mediaSource)).toEqual(['still-owned.png']);
+      expect(existsSync(resolve(process.env.WEB_MEDIA_DIR!, 'web_must-not-exist'))).toBe(false);
     } finally {
       db.closeDb();
     }

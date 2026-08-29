@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Life mode's New action now saves the current conversation into the ordinary Sessions list, including its transcript, media, and Pi context, before opening a fresh empty Life session
 - Syntax highlighting for fenced code blocks, including automatic language detection when the language tag is omitted or unknown
 - Persisted dark/light appearance switching from the Sessions drawer, with a Japanese-minimal daytime palette
 - Playwright mobile E2E coverage with WebM recording, reviewed screenshot baselines, traces, and an HTML evidence report
@@ -13,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Fence suspended Life workers and controls after generation rotation, and prevent quarantined Life tasks from starving unrelated scheduled work
 - Restore all message handling under pi 0.84, which replaced the synchronous model registry with an async `ModelRuntime` — the stale construction left every inbound message failing with `Internal error: this.runtime.refresh is not a function`
 - Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile
 - Render fenced code and command output on a warm, light syntax surface in the Japanese-minimal daytime appearance

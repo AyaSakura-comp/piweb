@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, renameSync, rmdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { mediaDirName } from './media-path.js';
 import { resolveChannelSessionDir } from './session/path.js';
 import {
   type ChannelKind,
@@ -125,10 +126,11 @@ export function initDb(): void {
       channel_jid text not null,
       command     text not null,
       args        text not null default '{}',
-      status      text not null default 'pending',
-      result      text,
-      created_at  text not null default (datetime('now')),
-      done_at     text
+      status        text not null default 'pending',
+      result        text,
+      created_at    text not null default (datetime('now')),
+      processing_at text,
+      done_at       text
     );
 
     create index if not exists idx_control_pending on control_queue(status, rowid);
@@ -173,6 +175,36 @@ export function initDb(): void {
       updated_at  text not null default (datetime('now'))
     );
 
+    -- Generation leases protect HTTP mutation requests and Life workers. A
+    -- worker heartbeats through final stream/typing cleanup; stale rows expire
+    -- after a crash so they cannot block archive forever.
+    create table if not exists channel_operations (
+      id             text primary key,
+      channel_jid    text not null,
+      channel_folder text not null,
+      created_at     text not null default (datetime('now')),
+      updated_at     text not null default (datetime('now'))
+    );
+
+    create index if not exists idx_channel_operations_channel
+      on channel_operations(channel_jid, created_at);
+
+    -- Filesystem renames cannot participate in a SQLite transaction. Life
+    -- rotation commits this durable intent with the channel re-key, then moves
+    -- media/uploads after commit. Startup can safely resume any interrupted
+    -- move because each step is idempotent.
+    create table if not exists life_archive_moves (
+      id                text primary key,
+      archived_jid      text not null unique,
+      new_life_folder   text not null,
+      media_required    integer not null,
+      upload_required   integer not null,
+      folder_done       integer not null default 0,
+      media_done        integer not null default 0,
+      upload_done       integer not null default 0,
+      created_at        text not null default (datetime('now'))
+    );
+
     -- One auxiliary, ephemeral title job per newly created web session. A row
     -- is prepared at creation, captures exactly the first normal prompt, and is
     -- erased after the in-process extraction. This table makes the job crash-safe.
@@ -210,6 +242,14 @@ export function initDb(): void {
   // session no longer strands its pi session directory on disk.
   ensureTableColumn('channels', 'deleted_at', 'text');
   ensureTableColumn('message_queue', 'attachments', 'text');
+  ensureTableColumn('control_queue', 'processing_at', 'text');
+  ensureTableColumn('channel_operations', 'updated_at', 'text');
+  db.prepare(
+    'update channel_operations set updated_at = created_at where updated_at is null',
+  ).run();
+  db.exec(
+    'create index if not exists idx_channel_operations_heartbeat on channel_operations(channel_jid, updated_at)',
+  );
   // Reasoning streams on its own lane so the UI can show it while it happens
   // and still fold it into one thinking block when it ends.
   ensureTableColumn('live_output', 'thinking', "text not null default ''");
@@ -217,6 +257,7 @@ export function initDb(): void {
   // than triggering INTERRUPT_ON_NEW_MESSAGE. User messages keep the default.
   ensureTableColumn('message_queue', 'interrupt_active', 'integer not null default 1');
 
+  recoverLifeArchiveMoves();
   logger.info({ path: config.dbPath }, 'Database initialized');
 }
 
@@ -359,6 +400,92 @@ function rowToChannel(row: any): RegisteredChannel {
   };
 }
 
+export const LIFE_ARCHIVE_QUARANTINE_ERROR =
+  'Life archive filesystem recovery is still pending';
+
+/**
+ * A pending filesystem move quarantines both owners created by the DB re-key:
+ * the archived standard JID and the replacement Life folder. This table is the
+ * authoritative barrier; filesystem observations cannot safely distinguish a
+ * transient rename failure from another writer creating the destination.
+ */
+export function isChannelQuarantinedForLifeArchive(channelJid: string): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `select 1
+           from life_archive_moves m
+          where m.archived_jid = ?
+             or (? = 'web:life' and exists (
+               select 1 from channels c
+                where c.jid = 'web:life' and c.folder = m.new_life_folder
+             ))
+          limit 1`,
+      )
+      .get(channelJid, channelJid),
+  );
+}
+
+/** Same quarantine barrier for direct `/media/<directory>/...` reads. */
+export function isLifeArchiveMediaDirQuarantined(directory: string): boolean {
+  const rows = db.prepare('select archived_jid from life_archive_moves').all() as Array<{
+    archived_jid: string;
+  }>;
+  return rows.some(
+    (row) =>
+      directory === mediaDirName(row.archived_jid) || directory === mediaDirName('web:life'),
+  );
+}
+
+function assertChannelNotQuarantined(channelJid: string): void {
+  if (isChannelQuarantinedForLifeArchive(channelJid)) {
+    throw new Error(LIFE_ARCHIVE_QUARANTINE_ERROR);
+  }
+}
+
+export const CHANNEL_GENERATION_CHANGED_ERROR = 'Channel generation changed';
+
+export interface ChannelGenerationFence {
+  expectedFolder?: string;
+}
+
+export function isChannelGenerationCurrent(
+  channelJid: string,
+  expectedFolder: string,
+): boolean {
+  const current = db.prepare('select folder from channels where jid = ?').get(channelJid) as
+    | { folder: string }
+    | undefined;
+  return (
+    current?.folder === expectedFolder && !isChannelQuarantinedForLifeArchive(channelJid)
+  );
+}
+
+function assertChannelWriteFence(
+  channelJid: string,
+  fence?: ChannelGenerationFence,
+): void {
+  assertChannelNotQuarantined(channelJid);
+  if (fence?.expectedFolder && !isChannelGenerationCurrent(channelJid, fence.expectedFolder)) {
+    throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+  }
+}
+
+function fencedChannelWrite<T>(
+  channelJid: string,
+  fence: ChannelGenerationFence | undefined,
+  write: () => T,
+): T {
+  if (!fence?.expectedFolder) {
+    assertChannelWriteFence(channelJid, fence);
+    return write();
+  }
+  return db.transaction(() => {
+    assertChannelWriteFence(channelJid, fence);
+    return write();
+  }).immediate();
+}
+
 // ── Message queue ──
 
 export function enqueueMessage(msg: {
@@ -373,6 +500,7 @@ export function enqueueMessage(msg: {
   immediateSessionTitle?: string;
 }): number {
   return db.transaction(() => {
+    assertChannelNotQuarantined(msg.channelJid);
     const result = db
       .prepare(
         `
@@ -402,6 +530,7 @@ export function enqueueMessage(msg: {
 }
 
 export function claimNextMessage(channelJid: string): QueuedMessage | undefined {
+  if (isChannelQuarantinedForLifeArchive(channelJid)) return undefined;
   const row = db
     .prepare(
       `
@@ -496,7 +625,9 @@ export function channelsWithInterruptingPending(): string[] {
   `,
     )
     .all() as any[];
-  return rows.map((r) => r.channel_jid);
+  return rows
+    .map((r) => r.channel_jid as string)
+    .filter((channelJid) => !isChannelQuarantinedForLifeArchive(channelJid));
 }
 
 /** Get channels that have pending messages */
@@ -512,7 +643,9 @@ export function channelsWithPending(): string[] {
   `,
     )
     .all() as any[];
-  return rows.map((r) => r.channel_jid);
+  return rows
+    .map((r) => r.channel_jid as string)
+    .filter((channelJid) => !isChannelQuarantinedForLifeArchive(channelJid));
 }
 
 // ── Scheduled tasks ──
@@ -526,6 +659,7 @@ export function addScheduledTask(task: {
   createdBy?: string;
   nextRunAt: string;
 }): number {
+  assertChannelNotQuarantined(task.channelJid);
   const result = db
     .prepare(
       `
@@ -611,21 +745,40 @@ export function enqueueScheduledTask(
   },
   lastRunAt: string,
   nextRunAt: string | null,
-): void {
-  db.transaction(() => {
-    enqueueMessage({ ...msg, interruptActive: false });
+): boolean {
+  return db.transaction(() => {
+    // A Life archive may re-key a task after the scheduler fetched it. Resolve
+    // its owner again inside this write transaction so stale scheduler memory
+    // cannot inject the task into the brand-new web:life replacement.
+    const task = db.prepare('select channel_jid from scheduled_tasks where id = ?').get(taskId) as
+      | { channel_jid: string }
+      | undefined;
+    if (!task || isChannelQuarantinedForLifeArchive(task.channel_jid)) return false;
+    enqueueMessage({
+      ...msg,
+      channelJid: task.channel_jid,
+      interruptActive: false,
+    });
     updateTaskAfterRun(taskId, lastRunAt, nextRunAt);
+    return true;
   })();
 }
 
 // ── Message log ──
 
-export function logMessage(channelJid: string, role: string, content: string): void {
-  db.prepare('insert into message_log (channel_jid, role, content) values (?, ?, ?)').run(
-    channelJid,
-    role,
-    content,
-  );
+export function logMessage(
+  channelJid: string,
+  role: string,
+  content: string,
+  fence?: ChannelGenerationFence,
+): void {
+  fencedChannelWrite(channelJid, fence, () => {
+    db.prepare('insert into message_log (channel_jid, role, content) values (?, ?, ?)').run(
+      channelJid,
+      role,
+      content,
+    );
+  });
 }
 
 // ── piweb: web events (transcript + live stream) ──
@@ -643,25 +796,41 @@ export interface WebEventRow {
   created_at: string;
 }
 
-export function appendWebEvent(event: {
-  channelJid: string;
-  kind: WebEventKind;
-  role?: string;
-  content?: string;
-  files?: string[];
-}): number {
-  const result = db
+export function getFirstUserMessageContent(channelJid: string): string | undefined {
+  const row = db
     .prepare(
-      'insert into web_events (channel_jid, kind, role, content, files) values (?, ?, ?, ?, ?)',
+      `select content from web_events
+        where channel_jid = ? and kind = 'message' and role = 'user'
+        order by rowid asc limit 1`,
     )
-    .run(
-      event.channelJid,
-      event.kind,
-      event.role ?? '',
-      event.content ?? '',
-      event.files && event.files.length > 0 ? JSON.stringify(event.files) : null,
-    );
-  return Number(result.lastInsertRowid);
+    .get(channelJid) as { content: string } | undefined;
+  return row?.content;
+}
+
+export function appendWebEvent(
+  event: {
+    channelJid: string;
+    kind: WebEventKind;
+    role?: string;
+    content?: string;
+    files?: string[];
+  },
+  fence?: ChannelGenerationFence,
+): number {
+  return fencedChannelWrite(event.channelJid, fence, () => {
+    const result = db
+      .prepare(
+        'insert into web_events (channel_jid, kind, role, content, files) values (?, ?, ?, ?, ?)',
+      )
+      .run(
+        event.channelJid,
+        event.kind,
+        event.role ?? '',
+        event.content ?? '',
+        event.files && event.files.length > 0 ? JSON.stringify(event.files) : null,
+      );
+    return Number(result.lastInsertRowid);
+  });
 }
 
 /**
@@ -829,19 +998,22 @@ export interface LiveOutput {
 export function setLiveOutput(
   channelJid: string,
   value: { content?: string; thinking?: string },
+  fence?: ChannelGenerationFence,
 ): number {
-  const row = db
-    .prepare('select seq from live_output where channel_jid = ?')
-    .get(channelJid) as { seq: number } | undefined;
-  const seq = (row?.seq ?? 0) + 1;
-  db.prepare(
-    `insert into live_output (channel_jid, content, thinking, seq, updated_at)
-     values (?, ?, ?, ?, datetime('now'))
-     on conflict(channel_jid) do update set
-       content = excluded.content, thinking = excluded.thinking,
-       seq = excluded.seq, updated_at = excluded.updated_at`,
-  ).run(channelJid, value.content ?? '', value.thinking ?? '', seq);
-  return seq;
+  return fencedChannelWrite(channelJid, fence, () => {
+    const row = db
+      .prepare('select seq from live_output where channel_jid = ?')
+      .get(channelJid) as { seq: number } | undefined;
+    const seq = (row?.seq ?? 0) + 1;
+    db.prepare(
+      `insert into live_output (channel_jid, content, thinking, seq, updated_at)
+       values (?, ?, ?, ?, datetime('now'))
+       on conflict(channel_jid) do update set
+         content = excluded.content, thinking = excluded.thinking,
+         seq = excluded.seq, updated_at = excluded.updated_at`,
+    ).run(channelJid, value.content ?? '', value.thinking ?? '', seq);
+    return seq;
+  });
 }
 
 export function getLiveOutput(channelJid: string): LiveOutput | null {
@@ -852,8 +1024,13 @@ export function getLiveOutput(channelJid: string): LiveOutput | null {
 }
 
 /** Called when the finished message is appended, so the two never both show. */
-export function clearLiveOutput(channelJid: string): void {
-  db.prepare('delete from live_output where channel_jid = ?').run(channelJid);
+export function clearLiveOutput(
+  channelJid: string,
+  fence?: ChannelGenerationFence,
+): void {
+  fencedChannelWrite(channelJid, fence, () => {
+    db.prepare('delete from live_output where channel_jid = ?').run(channelJid);
+  });
 }
 
 export function searchWebEvents(channelJid: string, query: string, limit = 50): WebSearchHit[] {
@@ -918,11 +1095,12 @@ export interface ControlRow {
   channel_jid: string;
   command: string;
   args: string;
-  status: 'pending' | 'done' | 'failed';
+  status: 'pending' | 'processing' | 'done' | 'failed';
   result: string | null;
 }
 
 export function enqueueControl(channelJid: string, command: string, args: unknown = {}): number {
+  assertChannelNotQuarantined(channelJid);
   const result = db
     .prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)')
     .run(channelJid, command, JSON.stringify(args ?? {}));
@@ -930,18 +1108,68 @@ export function enqueueControl(channelJid: string, command: string, args: unknow
 }
 
 export function claimPendingControls(limit = 10): ControlRow[] {
-  const rows = db
-    .prepare("select * from control_queue where status = 'pending' order by rowid limit ?")
-    .all(limit) as ControlRow[];
-  const claim = db.prepare("update control_queue set status = 'processing' where rowid = ?");
+  const rows = (
+    db
+      .prepare("select * from control_queue where status = 'pending' order by rowid")
+      .all() as ControlRow[]
+  )
+    .filter((row) => !isChannelQuarantinedForLifeArchive(row.channel_jid))
+    .slice(0, limit);
+  const claim = db.prepare(
+    "update control_queue set status = 'processing', processing_at = datetime('now') where rowid = ?",
+  );
   for (const row of rows) claim.run(row.rowid);
   return rows;
 }
 
+export function touchControlProcessing(
+  rowid: number,
+  expectedChannelJid?: string,
+  expectedFolder?: string,
+): ControlRow | undefined {
+  return db.transaction(() => {
+    const current = db.prepare('select * from control_queue where rowid = ?').get(rowid) as
+      | ControlRow
+      | undefined;
+    if (!current || isChannelQuarantinedForLifeArchive(current.channel_jid)) return undefined;
+    if (expectedChannelJid && current.channel_jid !== expectedChannelJid) return undefined;
+    if (
+      expectedFolder &&
+      !isChannelGenerationCurrent(current.channel_jid, expectedFolder)
+    ) return undefined;
+    return db
+      .prepare(
+        `update control_queue
+            set processing_at = datetime('now')
+          where rowid = ? and status = 'processing'
+          returning *`,
+      )
+      .get(rowid) as ControlRow | undefined;
+  }).immediate();
+}
+
 export function finishControl(rowid: number, ok: boolean, result: string): void {
+  const current = getControl(rowid);
+  if (!current || isChannelQuarantinedForLifeArchive(current.channel_jid)) return;
   db.prepare(
     "update control_queue set status = ?, result = ?, done_at = datetime('now') where rowid = ?",
   ).run(ok ? 'done' : 'failed', result, rowid);
+}
+
+/**
+ * A processing control is authoritative until its worker exits. On worker
+ * startup, unfinished rows are failed rather than replayed: commands such as
+ * `pi new` are not safely repeatable after a crash.
+ */
+export function recoverStuckControls(): number {
+  return db
+    .prepare(
+      `update control_queue
+          set status = 'failed', result = 'Worker restarted before command completed',
+              done_at = datetime('now')
+        where status = 'processing'`,
+    )
+    .run().changes;
 }
 
 export function getControl(rowid: number): ControlRow | undefined {
@@ -1040,6 +1268,9 @@ export function claimPendingSessionTitle(): SessionTitleJobRow | undefined {
            left join message_queue m on m.rowid = j.message_rowid
           where j.status = 'pending'
             and c.deleted_at is null
+            and not exists (
+              select 1 from life_archive_moves a where a.archived_jid = j.channel_jid
+            )
             and (j.message_rowid is null or m.status in ('done', 'failed', 'aborted'))
           order by j.updated_at, j.created_at
           limit 1
@@ -1119,7 +1350,11 @@ export function recoverSessionTitleJobs(): number {
     .prepare(
       `update session_title_jobs
           set status = 'pending', updated_at = datetime('now')
-        where status = 'processing'`,
+        where status = 'processing'
+          and not exists (
+            select 1 from life_archive_moves a
+             where a.archived_jid = session_title_jobs.channel_jid
+          )`,
     )
     .run().changes;
 }
@@ -1133,14 +1368,139 @@ export function getSessionTitleJob(channelJid: string): SessionTitleJobRow | und
     .get(channelJid) as SessionTitleJobRow | undefined;
 }
 
-// ── piweb: per-channel busy flag (typing indicator) ──
+// ── piweb: per-channel busy flag and request leases ──
 
-export function setChannelBusy(channelJid: string, busy: boolean): void {
-  db.prepare(
-    `insert into channel_state (channel_jid, busy, updated_at)
-     values (?, ?, datetime('now'))
-     on conflict(channel_jid) do update set busy = excluded.busy, updated_at = excluded.updated_at`,
-  ).run(channelJid, busy ? 1 : 0);
+/**
+ * Lease one exact channel generation while an HTTP request or worker owns it.
+ * Heartbeats keep long worker turns alive past the one-hour crash cutoff; a
+ * process that disappears leaves a row which eventually expires.
+ */
+export function beginChannelOperation(
+  channelJid: string,
+  expectedFolder: string,
+): string | undefined {
+  recoverLifeArchiveMoves();
+  return db.transaction(() => {
+    db.prepare(
+      "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+    ).run();
+    const current = db.prepare('select folder from channels where jid = ?').get(channelJid) as
+      | { folder: string }
+      | undefined;
+    if (!current || current.folder !== expectedFolder) return undefined;
+    if (isChannelQuarantinedForLifeArchive(channelJid)) return undefined;
+
+    const id = randomUUID();
+    db.prepare(
+      `insert into channel_operations
+        (id, channel_jid, channel_folder, created_at, updated_at)
+       values (?, ?, ?, datetime('now'), datetime('now'))`,
+    ).run(id, channelJid, expectedFolder);
+    return id;
+  }).immediate();
+}
+
+function isChannelOperationCurrent(
+  id: string,
+  channelJid: string,
+  expectedFolder: string,
+): boolean {
+  const operation = db
+    .prepare(
+      `select 1 from channel_operations
+        where id = ? and channel_jid = ? and channel_folder = ?`,
+    )
+    .get(id, channelJid, expectedFolder);
+  return Boolean(operation) && isChannelGenerationCurrent(channelJid, expectedFolder);
+}
+
+export function touchChannelOperation(id: string): boolean {
+  return db.transaction(() => {
+    const operation = db
+      .prepare('select channel_jid, channel_folder from channel_operations where id = ?')
+      .get(id) as { channel_jid: string; channel_folder: string } | undefined;
+    if (
+      !operation ||
+      !isChannelOperationCurrent(id, operation.channel_jid, operation.channel_folder)
+    ) return false;
+    return db
+      .prepare("update channel_operations set updated_at = datetime('now') where id = ?")
+      .run(id).changes > 0;
+  }).immediate();
+}
+
+export function commitLifeMessageOperation(options: {
+  operationId: string;
+  channelJid: string;
+  expectedFolder: string;
+  event: {
+    kind: WebEventKind;
+    role?: string;
+    content?: string;
+    files?: string[];
+  };
+  message: Omit<Parameters<typeof enqueueMessage>[0], 'channelJid'>;
+}): number {
+  return db.transaction(() => {
+    if (
+      !isChannelOperationCurrent(
+        options.operationId,
+        options.channelJid,
+        options.expectedFolder,
+      )
+    ) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+    appendWebEvent(
+      { channelJid: options.channelJid, ...options.event },
+      { expectedFolder: options.expectedFolder },
+    );
+    return enqueueMessage({ channelJid: options.channelJid, ...options.message });
+  }).immediate();
+}
+
+export function commitLifeControlOperation(options: {
+  operationId: string;
+  channelJid: string;
+  expectedFolder: string;
+  command: string;
+  args: unknown;
+}): number {
+  return db.transaction(() => {
+    if (
+      !isChannelOperationCurrent(
+        options.operationId,
+        options.channelJid,
+        options.expectedFolder,
+      )
+    ) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+    appendWebEvent(
+      {
+        channelJid: options.channelJid,
+        kind: 'message',
+        role: 'user',
+        content: `/${options.command}`,
+      },
+      { expectedFolder: options.expectedFolder },
+    );
+    return enqueueControl(options.channelJid, options.command, options.args);
+  }).immediate();
+}
+
+export function finishChannelOperation(id: string): void {
+  db.prepare('delete from channel_operations where id = ?').run(id);
+}
+
+export function setChannelBusy(
+  channelJid: string,
+  busy: boolean,
+  fence?: ChannelGenerationFence,
+): void {
+  fencedChannelWrite(channelJid, fence, () => {
+    db.prepare(
+      `insert into channel_state (channel_jid, busy, updated_at)
+       values (?, ?, datetime('now'))
+       on conflict(channel_jid) do update set busy = excluded.busy, updated_at = excluded.updated_at`,
+    ).run(channelJid, busy ? 1 : 0);
+  });
 }
 
 /**
@@ -1176,6 +1536,9 @@ export function listWebSessions(): Array<{
          from channels c
          left join channel_state s on s.channel_jid = c.jid
         where c.jid like 'web:%' and c.kind = 'standard' and c.deleted_at is null
+          and not exists (
+            select 1 from life_archive_moves m where m.archived_jid = c.jid
+          )
         order by coalesce((select max(created_at) from web_events e where e.channel_jid = c.jid), c.created_at) desc, c.created_at desc`,
     )
     .all() as any[];
@@ -1205,18 +1568,23 @@ export function getOrCreateLifeChannel(): {
   channel: RegisteredChannel;
   created: boolean;
 } {
+  recoverLifeArchiveMoves();
   return db.transaction(() => {
     const existing = db.prepare("select * from channels where kind = 'life' limit 1").get() as
       | any
       | undefined;
 
     if (existing) {
-      db.prepare(
-        `update channels
-            set jid = 'web:life', name = 'Life', model_override = '',
-                thinking_override = '', cwd_override = '', deleted_at = null
-          where jid = ?`,
-      ).run(existing.jid);
+      // A failed post-commit rename still leaves a valid fresh Life row. Return
+      // that canonical generation, but let recovery remain its only writer.
+      if (!isChannelQuarantinedForLifeArchive(existing.jid)) {
+        db.prepare(
+          `update channels
+              set jid = 'web:life', name = 'Life', model_override = '',
+                  thinking_override = '', cwd_override = '', deleted_at = null
+            where jid = ?`,
+        ).run(existing.jid);
+      }
       return {
         channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
         created: false,
@@ -1273,6 +1641,281 @@ export function getOrCreateLifeChannel(): {
       created: true,
     };
   })();
+}
+
+interface LifeArchiveMoveRow {
+  id: string;
+  archived_jid: string;
+  new_life_folder: string;
+  media_required: number;
+  upload_required: number;
+  folder_done: number;
+  media_done: number;
+  upload_done: number;
+}
+
+function finishLifeArchiveDirectoryMove(
+  row: LifeArchiveMoveRow,
+  column: 'media_done' | 'upload_done',
+  root: string,
+  required: boolean,
+): void {
+  if (!required) {
+    db.prepare(`update life_archive_moves set ${column} = 1 where id = ?`).run(row.id);
+    return;
+  }
+
+  const from = join(root, mediaDirName('web:life'));
+  const to = join(root, mediaDirName(row.archived_jid));
+  const fromExists = existsSync(from);
+  const toExists = existsSync(to);
+
+  // Destination-only is the expected recovery state when rename committed to
+  // disk and the process died before recording that step in SQLite.
+  if (toExists && !fromExists) {
+    db.prepare(`update life_archive_moves set ${column} = 1 where id = ?`).run(row.id);
+    return;
+  }
+  if (toExists && fromExists) {
+    throw new Error(`Life archive destination already exists: ${to}`);
+  }
+  if (!fromExists) {
+    throw new Error(`Life archive source disappeared before recovery: ${from}`);
+  }
+
+  mkdirSync(root, { recursive: true });
+  try {
+    renameSync(from, to);
+  } catch (error) {
+    // Two piweb processes may both recover the same journal row. If the other
+    // one won the rename, this process can safely record the same completed step.
+    if (!(existsSync(to) && !existsSync(from))) throw error;
+  }
+  db.prepare(`update life_archive_moves set ${column} = 1 where id = ?`).run(row.id);
+}
+
+function completeLifeArchiveMove(id: string): void {
+  let row = db.prepare('select * from life_archive_moves where id = ?').get(id) as
+    | LifeArchiveMoveRow
+    | undefined;
+  if (!row) return;
+
+  if (!row.folder_done) {
+    mkdirSync(config.sessionsDir, { recursive: true });
+    // This path was checked absent before the DB commit. EEXIST on recovery is
+    // also valid: the process may have died after mkdir and before this update.
+    mkdirSync(resolveChannelSessionDir(row.new_life_folder), { recursive: true });
+    db.prepare('update life_archive_moves set folder_done = 1 where id = ?').run(id);
+  }
+
+  row = db.prepare('select * from life_archive_moves where id = ?').get(id) as
+    | LifeArchiveMoveRow
+    | undefined;
+  if (!row) return;
+  if (!row.media_done) {
+    finishLifeArchiveDirectoryMove(
+      row,
+      'media_done',
+      config.webMediaDir,
+      Boolean(row.media_required),
+    );
+  }
+  row = db.prepare('select * from life_archive_moves where id = ?').get(id) as
+    | LifeArchiveMoveRow
+    | undefined;
+  if (!row) return;
+  if (!row.upload_done) {
+    finishLifeArchiveDirectoryMove(
+      row,
+      'upload_done',
+      config.webUploadDir,
+      Boolean(row.upload_required),
+    );
+  }
+
+  const finished = db
+    .prepare('select folder_done, media_done, upload_done from life_archive_moves where id = ?')
+    .get(id) as { folder_done: number; media_done: number; upload_done: number } | undefined;
+  if (finished?.folder_done && finished.media_done && finished.upload_done) {
+    db.prepare('delete from life_archive_moves where id = ?').run(id);
+  }
+}
+
+/** Resume filesystem work committed by a Life re-key before a process crash. */
+export function recoverLifeArchiveMoves(): number {
+  const rows = db
+    .prepare('select id from life_archive_moves order by created_at, id')
+    .all() as Array<{
+    id: string;
+  }>;
+  let recovered = 0;
+  for (const row of rows) {
+    try {
+      completeLifeArchiveMove(row.id);
+      if (!db.prepare('select 1 from life_archive_moves where id = ?').get(row.id)) recovered += 1;
+    } catch (error) {
+      logger.warn(
+        { err: (error as Error).message, moveId: row.id },
+        'Life archive filesystem recovery remains pending',
+      );
+    }
+  }
+  return recovered;
+}
+
+export function archiveLifeSessionAndStartNew(options: {
+  archivedJid: string;
+  archivedName: string;
+  expectedFolder: string;
+}): { archived: RegisteredChannel; life: RegisteredChannel } {
+  const archivedJid = options.archivedJid.trim();
+  const archivedName = options.archivedName.trim().slice(0, 80) || 'Life';
+  if (!archivedJid.startsWith('web:') || archivedJid === 'web:life') {
+    throw new Error('Archived Life session needs a distinct web JID');
+  }
+
+  recoverLifeArchiveMoves();
+  if (db.prepare('select 1 from life_archive_moves limit 1').get()) {
+    throw new Error('A previous Life filesystem archive is still incomplete');
+  }
+
+  const committed = db
+    .transaction(() => {
+      const current = db
+        .prepare("select * from channels where jid = 'web:life' and kind = 'life'")
+        .get() as { folder: string } | undefined;
+      if (!current) throw new Error('Life session does not exist');
+      if (current.folder !== options.expectedFolder) {
+        throw new Error('Life session changed before it could be archived');
+      }
+      if (db.prepare('select 1 from channels where jid = ?').get(archivedJid)) {
+        throw new Error(`Session already exists: ${archivedJid}`);
+      }
+
+      // A pre-existing destination is not recoverable: after commit there is
+      // no safe way to distinguish it from data written by a stale owner. Fail
+      // before changing any DB ownership or reserving the replacement folder.
+      const archivedMediaDir = mediaDirName(archivedJid);
+      const archivedMediaPath = join(config.webMediaDir, archivedMediaDir);
+      const archivedUploadPath = join(config.webUploadDir, archivedMediaDir);
+      for (const destination of [archivedMediaPath, archivedUploadPath]) {
+        if (existsSync(destination)) {
+          throw new Error(`Life archive destination already exists: ${destination}`);
+        }
+      }
+
+      db.prepare(
+        "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+      ).run();
+      const queuedWork = db
+        .prepare(
+          `select 1 from message_queue
+          where channel_jid = 'web:life' and status in ('pending', 'processing')
+         union all
+         select 1 from control_queue
+          where channel_jid = 'web:life' and status in ('pending', 'processing')
+         union all
+         select 1 from channel_operations
+          where channel_jid = 'web:life'
+         union all
+         select 1 from session_title_jobs
+          where channel_jid = 'web:life' and status = 'processing'
+         limit 1`,
+        )
+        .get();
+      if (queuedWork) throw new Error('Life session still has active or queued work');
+
+      let newLifeFolder = '';
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        const candidate = `web_life_${randomUUID().slice(0, 8)}`;
+        if (existsSync(resolveChannelSessionDir(candidate))) continue;
+        if (db.prepare('select 1 from channels where folder = ?').get(candidate)) continue;
+        newLifeFolder = candidate;
+        break;
+      }
+      if (!newLifeFolder) throw new Error('Could not reserve an empty Life session folder');
+
+      const oldMediaDir = mediaDirName('web:life');
+      const mediaRequired = existsSync(join(config.webMediaDir, oldMediaDir));
+      const uploadRequired = existsSync(join(config.webUploadDir, oldMediaDir));
+
+      db.prepare(
+        `update web_events
+          set files = replace(files, ?, ?)
+        where channel_jid = 'web:life' and files is not null`,
+      ).run(`/media/${oldMediaDir}/`, `/media/${archivedMediaDir}/`);
+      db.prepare(
+        `update message_queue
+          set attachments = replace(attachments, ?, ?)
+        where channel_jid = 'web:life' and attachments is not null`,
+      ).run(join(config.webUploadDir, oldMediaDir), join(config.webUploadDir, archivedMediaDir));
+
+      db.prepare(
+        `update channels
+          set jid = ?, name = ?, kind = 'standard', deleted_at = null
+        where jid = 'web:life' and kind = 'life'`,
+      ).run(archivedJid, archivedName);
+
+      for (const table of [
+        'web_events',
+        'message_queue',
+        'message_log',
+        'control_queue',
+        'live_output',
+        'channel_state',
+        'session_title_jobs',
+        'scheduled_tasks',
+      ]) {
+        db.prepare(`update ${table} set channel_jid = ? where channel_jid = 'web:life'`).run(
+          archivedJid,
+        );
+      }
+      // A lease old enough to expire belongs to a crashed or suspended worker.
+      // Its transient preview/busy mirror must not survive as permanent archive
+      // chrome, and a fenced late cleanup is deliberately not allowed to write.
+      db.prepare('delete from live_output where channel_jid = ?').run(archivedJid);
+      db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(archivedJid);
+
+      db.prepare(
+        `insert into channels
+        (jid, name, folder, requires_trigger, is_main, model_override,
+         thinking_override, cwd_override, kind)
+       values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life')`,
+      ).run(newLifeFolder);
+
+      const moveId = randomUUID();
+      db.prepare(
+        `insert into life_archive_moves
+        (id, archived_jid, new_life_folder, media_required, upload_required,
+         folder_done, media_done, upload_done)
+       values (?, ?, ?, ?, ?, 0, ?, ?)`,
+      ).run(
+        moveId,
+        archivedJid,
+        newLifeFolder,
+        mediaRequired ? 1 : 0,
+        uploadRequired ? 1 : 0,
+        mediaRequired ? 0 : 1,
+        uploadRequired ? 0 : 1,
+      );
+
+      return {
+        moveId,
+        result: {
+          archived: rowToChannel(
+            db.prepare('select * from channels where jid = ?').get(archivedJid),
+          ),
+          life: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
+        },
+      };
+    })
+    .immediate();
+
+  // Deliberately post-commit: a crash here leaves the durable move journal and
+  // the already-correct DB ownership for startup recovery. Never roll back or
+  // delete the replacement Life folder after the re-key has committed.
+  completeLifeArchiveMove(committed.moveId);
+  return committed.result;
 }
 
 export function isChannelBusy(channelJid: string): boolean {
@@ -1400,6 +2043,7 @@ export function purgeChannel(jid: string): void {
   db.prepare('delete from control_queue where channel_jid = ?').run(jid);
   db.prepare('delete from channel_state where channel_jid = ?').run(jid);
   db.prepare('delete from session_title_jobs where channel_jid = ?').run(jid);
+  db.prepare('delete from channel_operations where channel_jid = ?').run(jid);
   db.prepare('delete from channels where jid = ?').run(jid);
 }
 
