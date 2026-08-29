@@ -802,18 +802,20 @@ const INLINE_RE = new RegExp(
 function renderInlineText(container, text) {
   let last = 0;
   let m;
-  INLINE_RE.lastIndex = 0;
+  // Styled spans recurse into this parser. Each call needs its own cursor;
+  // sharing INLINE_RE.lastIndex would restart the outer call forever.
+  const inlineRe = new RegExp(INLINE_RE.source, INLINE_RE.flags);
 
-  while ((m = INLINE_RE.exec(text)) !== null) {
+  while ((m = inlineRe.exec(text)) !== null) {
     if (m.index > last) container.append(document.createTextNode(text.slice(last, m.index)));
     const [, , codeText, bold1, bold2, strike, ital1, ital2, linkText, linkUrl, bareUrl] = m;
 
     if (codeText !== undefined) container.append(tag('code', codeText));
-    else if (bold1 !== undefined) container.append(tag('strong', bold1));
-    else if (bold2 !== undefined) container.append(tag('strong', bold2));
-    else if (strike !== undefined) container.append(tag('del', strike));
-    else if (ital1 !== undefined) container.append(tag('em', ital1));
-    else if (ital2 !== undefined) container.append(tag('em', ital2));
+    else if (bold1 !== undefined) container.append(formattedTag('strong', bold1));
+    else if (bold2 !== undefined) container.append(formattedTag('strong', bold2));
+    else if (strike !== undefined) container.append(formattedTag('del', strike));
+    else if (ital1 !== undefined) container.append(formattedTag('em', ital1));
+    else if (ital2 !== undefined) container.append(formattedTag('em', ital2));
     else if (linkText !== undefined) container.append(link(linkText, linkUrl));
     else if (bareUrl !== undefined) container.append(link(bareUrl, bareUrl));
 
@@ -826,6 +828,13 @@ function renderInlineText(container, text) {
 function tag(name, text) {
   const node = document.createElement(name);
   node.textContent = text;
+  return node;
+}
+
+/** Styled spans may contain links or other inline markup; code spans stay literal. */
+function formattedTag(name, text) {
+  const node = document.createElement(name);
+  renderInlineText(node, text);
   return node;
 }
 

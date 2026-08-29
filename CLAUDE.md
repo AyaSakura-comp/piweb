@@ -681,8 +681,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Layout**: drawer overlays below 768px and becomes a fixed sidebar above it.
   Long content (code, tool output) scrolls inside `overflow-x: auto`; the page
   body never scrolls horizontally.
-- **Message rendering**: minimal markdown (fenced code, inline code, bold, loose/nested lists, `<ol start="N">` numbering offsets, indented item continuations, blockquotes, tables) built
-  from **text nodes only**. Never assign model-authored HTML to `innerHTML`;
+- **Message rendering**: minimal markdown (fenced code, inline code, nested
+  bold/italic/strike links, loose/nested lists, `<ol start="N">` numbering
+  offsets, indented item continuations, blockquotes, tables) built from **text
+  nodes only**. Styled inline spans recurse with a per-call regex cursor; never
+  share `INLINE_RE.lastIndex` across nested parsing. Never assign model-authored HTML to `innerHTML`;
   KaTeX and highlight.js may assign only the escaped markup they generate from
   math/code source.
 - **Streamed events** (thinking / tool / result) are collapsed `<details>` with a

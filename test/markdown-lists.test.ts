@@ -4,14 +4,14 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 
-describe('markdown list rendering', () => {
+describe('markdown rendering', () => {
   let server: http.Server;
   let browser: Browser;
   let page: Page;
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
-      const filePath = path.join('/home/chihmin/src/piweb/public', req.url || '/');
+      const filePath = path.join(path.resolve('public'), req.url || '/');
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<!DOCTYPE html><html><body><div id="c"></div><script type="module">
@@ -67,6 +67,41 @@ describe('markdown list rendering', () => {
       };
     }, markdown);
   }
+
+  it('renders a bold embedded URL in a table as a secure clickable link', async () => {
+    const md = `| 影片 | 說明 |\n|---|---|\n| **[攀山者繩盤收繩法示範](https://www.youtube.com/watch?v=3CzZO7JujJU)** | 直接示範 |`;
+    await render(md);
+    const result = await page.evaluate(() => {
+      const anchor = document.querySelector<HTMLAnchorElement>('#c td strong a');
+      return anchor
+        ? {
+            text: anchor.textContent,
+            href: anchor.href,
+            target: anchor.target,
+            rel: anchor.rel,
+            literalSyntaxVisible: document.querySelector('#c td')?.textContent?.includes(']('),
+          }
+        : null;
+    });
+
+    expect(result).toEqual({
+      text: '攀山者繩盤收繩法示範',
+      href: 'https://www.youtube.com/watch?v=3CzZO7JujJU',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      literalSyntaxVisible: false,
+    });
+  });
+
+  it('keeps an unsafe embedded URL inert inside bold text', async () => {
+    await render('**[unsafe](data:text/html,evil)**');
+    const result = await page.evaluate(() => ({
+      anchors: document.querySelectorAll('#c a').length,
+      text: document.querySelector('#c strong')?.textContent,
+    }));
+
+    expect(result).toEqual({ anchors: 0, text: 'unsafe' });
+  });
 
   it('keeps loose ordered lists (with blank lines between items) in a single ol element', async () => {
     const md = `1. **Item 1**:\n   - sub a\n   - sub b\n\n2. **Item 2**:\n   - sub c\n\n3. **Item 3**`;

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Embedded markdown links</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      body { margin: 0; background: var(--bg); color: var(--text); }
+      .markdown-links-fixture { min-height: 100dvh; padding: 18px 0; }
+    </style>
+  </head>
+  <body>
+    <main class="markdown-links-fixture">
+      <article class="msg">
+        <div class="msg-body"><div class="msg-text" id="content"></div></div>
+      </article>
+    </main>
+    <script type="module">
+      import { renderRich } from '/markdown.js';
+      const markdown = `## 🪢 圖6-3：登山者繩盤（Mountaineer's Coil）
+
+| 影片 | 說明 |
+|---|---|
+| **[攀山者繩盤收繩法示範](https://www.youtube.com/watch?v=3CzZO7JujJU)** | 直接示範登山者盤繩法 |
+
+## 🦋 圖6-4：蝴蝶繩盤（Butterfly Coil）
+
+| 影片 | 說明 |
+|---|---|
+| **[【蝴蝶收繩法 Part 1】](https://www.youtube.com/watch?v=3eCNZafONJo)** | 山川頻道的蝴蝶盤法 |`;
+      renderRich(document.getElementById('content'), markdown);
+      document.documentElement.dataset.ready = 'true';
+    </script>
+  </body>
+</html>
