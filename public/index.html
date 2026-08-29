@@ -71,12 +71,17 @@
     <div id="app" class="app" hidden>
       <div class="scrim" id="scrim" hidden></div>
 
-      <!-- Quiet, non-interactive affordance for the physical right-edge swipe. -->
-      <div class="life-edge-hint" id="life-edge-hint" aria-hidden="true">
+      <!-- Right-edge affordance: swipe from it or tap to auto-settle into Life. -->
+      <button
+        type="button"
+        class="life-edge-hint"
+        id="life-edge-hint"
+        aria-label="Open Life"
+      >
         <svg viewBox="0 0 24 24">
           <path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" />
         </svg>
-      </div>
+      </button>
       <div class="life-swipe-preview" id="life-swipe-preview" aria-hidden="true" hidden>
         <div class="life-swipe-mark">
           <svg viewBox="0 0 24 24">

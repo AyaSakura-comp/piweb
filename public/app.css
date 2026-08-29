@@ -199,8 +199,9 @@ svg {
   z-index: 30;
   top: 42%;
   right: max(0px, env(safe-area-inset-right));
-  width: 18px;
-  height: 58px;
+  width: 44px;
+  height: 64px;
+  padding: 0;
   display: grid;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--tool) 42%, transparent);
@@ -208,8 +209,20 @@ svg {
   border-radius: 18px 0 0 18px;
   background: color-mix(in srgb, var(--bg-alt) 90%, transparent);
   color: color-mix(in srgb, var(--tool) 80%, var(--text));
-  opacity: 0.72;
-  pointer-events: none;
+  opacity: 0.76;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.life-edge-hint:active {
+  background: color-mix(in srgb, var(--tool) 14%, var(--bg-alt));
+  color: var(--text-bright);
+}
+
+.life-edge-hint:focus-visible {
+  outline: 2px solid var(--tool);
+  outline-offset: -3px;
 }
 
 .life-edge-hint svg {

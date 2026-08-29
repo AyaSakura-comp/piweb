@@ -66,8 +66,9 @@ just visually cleared.
 
 ### Life mode
 
-On a phone, start within 56 px of the **right edge** and swipe left. The preview
-follows the finger, uses release velocity to settle with the flick, and opens
+On a phone, start within 56 px of the **right edge** and swipe left, or tap the
+44×64 px edge leaf to let it slide open automatically. The preview follows the
+finger, uses release velocity to settle with the flick, and opens
 after 22% of the viewport or a shorter projected fast flick. During settlement
 it blocks the underlying session and offers **Cancel**, so a delayed load cannot
 receive accidental input. Life reuses one

@@ -64,6 +64,7 @@ async function installLifeApi(
     standardSessions?: (typeof STANDARD_SESSION)[];
     deletedSessions?: (typeof DELETED_SESSION)[];
     lifeEventState?: boolean;
+    standardEventCount?: number;
   } = {},
 ) {
   let lifeRequests = 0;
@@ -249,6 +250,17 @@ async function installLifeApi(
       }
       if (isLifeEvents && lifeEventsGate) await lifeEventsGate;
       const lifeEventState = isLifeEvents && options.lifeEventState;
+      const standardEvents =
+        standardMetadata && options.standardEventCount
+          ? Array.from({ length: options.standardEventCount }, (_, index) => ({
+              id: index + 1,
+              kind: 'message',
+              role: index % 2 === 0 ? 'user' : 'assistant',
+              content: `Scrollable message ${index + 1} ${'content '.repeat(12)}`,
+              createdAt: '2026-08-29T00:00:00.000Z',
+              files: [],
+            }))
+          : [];
       return route.fulfill({
         json: {
           events: unknownReplyEvent
@@ -269,7 +281,7 @@ async function installLifeApi(
                     content: lifeEventState ? 'Life-only history' : 'late Life transcript',
                   },
                 ]
-              : [],
+              : standardEvents,
           busy: lifeEventState,
           hasMore: false,
           partial: lifeEventState ? { content: 'unfinished Life response' } : null,
@@ -406,26 +418,44 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
-  await expect(page.locator('#life-edge-hint')).toBeVisible();
+  const edgeHint = page.locator('#life-edge-hint');
+  await expect(edgeHint).toBeVisible();
+  const edgeHintBox = (await edgeHint.boundingBox())!;
+  const edgeTouch = {
+    x: Math.round(edgeHintBox.x + edgeHintBox.width / 2),
+    y: Math.round(edgeHintBox.y + edgeHintBox.height / 2),
+  };
+  const edgeTouchNearBoundary = {
+    x: Math.round(edgeHintBox.x + edgeHintBox.width - 2),
+    y: edgeTouch.y,
+  };
   await page.screenshot({ path: testInfo.outputPath('00-life-edge-hint.png') });
 
   // A foreground sheet owns edge gestures until it closes.
   await page.locator('#btn-more').click();
   await page.getByRole('menuitem', { name: 'Media' }).click();
   await expect(page.locator('#media-sheet')).toBeVisible();
-  await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 });
+  await touchDrag(
+    page,
+    edgeTouchNearBoundary,
+    { x: edgeTouchNearBoundary.x - 218, y: edgeTouchNearBoundary.y + 2 },
+  );
   expect(api.lifeRequests()).toBe(0);
   await page.locator('#btn-media-close').click();
 
-  // A vertical gesture at the edge remains an ordinary page scroll gesture.
-  await touchDrag(page, { x: 388, y: 220 }, { x: 380, y: 430 });
+  // A vertical gesture starting on the button remains an ordinary scroll gesture.
+  await touchDrag(
+    page,
+    edgeTouchNearBoundary,
+    { x: edgeTouchNearBoundary.x - 8, y: edgeTouchNearBoundary.y + 210 },
+  );
   expect(api.lifeRequests()).toBe(0);
 
   // A slow shallow horizontal drag snaps back instead of opening Life.
   await touchDrag(
     page,
-    { x: 388, y: 430 },
-    { x: 335, y: 432 },
+    edgeTouchNearBoundary,
+    { x: edgeTouchNearBoundary.x - 53, y: edgeTouchNearBoundary.y + 2 },
     { stepDelayMs: 60 },
   );
   expect(api.lifeRequests()).toBe(0);
@@ -434,7 +464,12 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   // Hold a partial drag long enough to inspect the panel following the finger,
   // then let the stale velocity expire so this preview returns to Sessions.
-  const touch = await touchDrag(page, { x: 388, y: 430 }, { x: 333, y: 432 }, { hold: true });
+  const touch = await touchDrag(
+    page,
+    edgeTouchNearBoundary,
+    { x: edgeTouchNearBoundary.x - 55, y: edgeTouchNearBoundary.y + 2 },
+    { hold: true },
+  );
   const preview = page.locator('#life-swipe-preview');
   await expect(preview).toBeVisible();
   const previewRect = await preview.boundingBox();
@@ -448,10 +483,16 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(preview).toBeHidden();
   expect(api.lifeRequests()).toBe(0);
 
-  // The actual entry is a short flick starting 50px from the physical edge.
-  // The preview keeps travelling inward after release instead of disappearing.
-  await touchDrag(page, { x: 340, y: 430 }, { x: 285, y: 431 });
+  // The actual entry starts inside the button and is still a short flick.
+  // preventDefault suppresses its compatibility click, so exactly one entry owns it.
+  await touchDrag(
+    page,
+    edgeTouch,
+    { x: edgeTouch.x - 55, y: edgeTouch.y + 1 },
+  );
   await expect.poll(api.lifeRequests).toBe(1);
+  await page.waitForTimeout(120);
+  expect(api.lifeRequests()).toBe(1);
   await expect(preview).toBeVisible();
   const releaseX = (await preview.boundingBox())!.x;
   await page.waitForTimeout(60);
@@ -523,6 +564,23 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.locator('#life-edge-hint')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('05-returned-to-sessions.png') });
 
+  // The same edge affordance is also a real 44px touch target. Tapping it
+  // auto-settles the panel with the same protected transition as a flick.
+  await page.getByRole('button', { name: 'Open Life' }).click();
+  await expect.poll(api.lifeRequests).toBe(3);
+  await expect(preview).toBeVisible();
+  await page.waitForTimeout(60);
+  expect((await preview.boundingBox())!.x).toBeLessThan(390);
+  await page.screenshot({ path: testInfo.outputPath('06-edge-button-auto-settle.png') });
+  await expect(preview).toBeHidden();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await page.screenshot({ path: testInfo.outputPath('07-life-opened-by-button.png') });
+  await page.getByRole('button', { name: 'Return to sessions' }).click();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#btn-status')).toBeVisible();
+  await expect(page.locator('#header-badge')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('08-button-returned-to-sessions.png') });
+
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
@@ -530,6 +588,70 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {
+  const api = await installLifeApi(page, { delayLife: true });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+
+  const edgeHint = page.getByRole('button', { name: 'Open Life' });
+  const edgeHintBox = (await edgeHint.boundingBox())!;
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      {
+        x: Math.round(edgeHintBox.x + edgeHintBox.width / 2),
+        y: Math.round(edgeHintBox.y + edgeHintBox.height / 2),
+      },
+    ],
+  });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect.poll(api.lifeRequests).toBe(1);
+  await page.waitForTimeout(120);
+  expect(api.lifeRequests()).toBe(1);
+  const preview = page.locator('#life-swipe-preview');
+  await expect(preview).toBeVisible();
+  expect(
+    await page.locator('#life-edge-hint').evaluate((element) => ({
+      inert: element.inert,
+      activeId: document.activeElement?.id,
+    })),
+  ).toEqual({ inert: true, activeId: 'life-swipe-cancel' });
+  const startedX = (await preview.boundingBox())!.x;
+  await page.waitForTimeout(60);
+  expect((await preview.boundingBox())!.x).toBeLessThan(startedX);
+
+  api.releaseLifeResponse();
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(preview).toBeHidden();
+});
+
+test('a vertical drag on the edge button scrolls the underlying transcript', async ({ page }) => {
+  const api = await installLifeApi(page, { standardEventCount: 40 });
+  await page.goto('/');
+  await expect(page.locator('#messages')).toContainText('Scrollable message 40');
+  const messages = page.locator('#messages');
+  const scrollMetrics = await messages.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+  await messages.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+
+  const edgeBox = (await page.getByRole('button', { name: 'Open Life' }).boundingBox())!;
+  const center = {
+    x: Math.round(edgeBox.x + edgeBox.width / 2),
+    y: Math.round(edgeBox.y + edgeBox.height / 2),
+  };
+  await touchDrag(page, center, { x: center.x, y: center.y - 180 });
+
+  expect(await messages.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(api.lifeRequests()).toBe(0);
 });
 
 test('a short flick from the wider right edge settles into Life with inertia', async ({ page }) => {
@@ -639,6 +761,7 @@ test('a pending Life swipe can be cancelled before its endpoint returns', async 
 
   await expect(page.locator('#life-swipe-preview')).toBeHidden();
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#life-edge-hint')).toBeFocused();
   api.releaseLifeResponse();
   await page.waitForTimeout(50);
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
@@ -718,10 +841,13 @@ test('settling Life owns input until delayed entry finishes', async ({ page }) =
     const preview = document.querySelector('#life-swipe-preview');
     const main = document.querySelector('.main');
     const drawer = document.querySelector('#drawer');
+    const edgeHint = document.querySelector('#life-edge-hint');
     const hit = document.elementFromPoint(window.innerWidth - 28, window.innerHeight - 34);
     return {
       mainInert: main?.inert,
       drawerInert: drawer?.inert,
+      edgeHintInert: edgeHint?.inert,
+      activeId: document.activeElement?.id,
       pointerEvents: preview ? getComputedStyle(preview).pointerEvents : null,
       hitId: hit?.id,
     };
@@ -729,10 +855,12 @@ test('settling Life owns input until delayed entry finishes', async ({ page }) =
   expect(ownership).toEqual({
     mainInert: true,
     drawerInert: true,
+    edgeHintInert: true,
+    activeId: 'life-swipe-cancel',
     pointerEvents: 'auto',
     hitId: 'life-swipe-preview',
   });
-  await page.keyboard.press('Enter');
+  await page.keyboard.type('x');
   await page.waitForTimeout(50);
   expect(api.messagePaths).toEqual([]);
 

@@ -10,11 +10,15 @@ a fresh Pi context inside that protected channel with **New pi session**.
 
 - On a phone, start within 56 px of the **right edge** and swipe left. A drag
   commits after 22% of the visual viewport, while a shorter fast flick commits
-  when its projected velocity crosses the same boundary.
+  when its projected velocity crosses the same boundary. The 44×64 px edge leaf
+  is also a button: tap it to auto-settle the same panel into Life.
 - Vertical motion wins after the 8 px axis lock, so the gesture does not steal
-  transcript scrolling. After release, the settling preview owns pointer and
-  keyboard input, blocks the underlying drawer/composer, and exposes **Cancel**
-  until Life entry succeeds or fails.
+  transcript scrolling. Because the fixed button is outside the transcript's
+  scroll ancestry, a vertical drag beginning on it forwards that locked motion
+  to the transcript explicitly. After release, the settling preview owns pointer and
+  keyboard input, blocks the underlying drawer/composer and edge button, and
+  moves focus to **Cancel** until Life entry succeeds or fails. Cancellation
+  returns focus to the edge button.
 - Life has the stable JID `web:life` and one randomly named, persistent Pi
   session folder. The partial unique database index permits only one Life row.
 - Re-entry restores the same row and transcript while clearing model, thinking,
@@ -45,6 +49,7 @@ a fresh Pi context inside that protected channel with **New pi session**.
 ```mermaid
 flowchart TD
     A[Standard Sessions mode] --> B{Touch starts within<br/>56 px of right edge?}
+    A -- Tap edge leaf --> H
     B -- No --> A
     B -- Yes --> C[Track drag and preview]
     C --> D{8 px axis lock}
@@ -71,8 +76,9 @@ flowchart TD
     R --> A
 ```
 
-The right-edge leaf is a non-interactive hint. The gesture is disabled above
-768 px, while Life is already active or settling, and while a menu, sheet, or
+The right-edge leaf is both a swipe affordance and an accessible **Open Life**
+button; tapping it uses the same inert, cancellable settlement path as a flick.
+Entry is disabled above 768 px, while Life is already active or settling, and while a menu, sheet, or
 lightbox owns the foreground. Cancelling settlement—or crossing the desktop
 breakpoint while it is pending—invalidates navigation and preview ownership,
 restores standard mode, and ignores any delayed Life response.

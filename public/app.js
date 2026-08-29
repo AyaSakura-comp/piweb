@@ -3853,10 +3853,23 @@ function isLifeGestureAllowed() {
 function setLifeSettlementBlocking(blocked) {
   document.querySelector('.main').inert = blocked;
   $('drawer').inert = blocked;
+  const edgeHint = $('life-edge-hint');
   const preview = $('life-swipe-preview');
+  const cancel = $('life-swipe-cancel');
+  const cancelOwnedFocus = document.activeElement === cancel;
+  edgeHint.inert = blocked;
   preview.classList.toggle('settling', blocked);
   preview.setAttribute('aria-hidden', String(!blocked));
-  $('life-swipe-cancel').hidden = !blocked;
+  cancel.hidden = !blocked;
+  if (blocked) {
+    cancel.focus({ preventScroll: true });
+  } else if (cancelOwnedFocus) {
+    queueMicrotask(() => {
+      if (state.mode !== 'life' && getComputedStyle(edgeHint).display !== 'none') {
+        edgeHint.focus({ preventScroll: true });
+      }
+    });
+  }
 }
 
 function resetLifePreview(generation = lifePreviewGeneration) {
@@ -3917,6 +3930,8 @@ document.addEventListener(
       x: touch.clientX,
       y: touch.clientY,
       axis: null,
+      forwardVerticalScroll: $('life-edge-hint').contains(e.target),
+      initialScrollTop: $('messages').scrollTop,
       distance: 0,
       lastDistance: 0,
       startedAt: now,
@@ -3939,12 +3954,21 @@ document.addEventListener(
     const dy = touch.clientY - lifeDrag.y;
     if (!lifeDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
       lifeDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-      if (lifeDrag.axis === 'y') {
+      if (lifeDrag.axis === 'y' && !lifeDrag.forwardVerticalScroll) {
         lifeDrag = null;
         return;
       }
     }
-    if (!lifeDrag || lifeDrag.axis !== 'x') return;
+    if (!lifeDrag) return;
+    if (lifeDrag.axis === 'y') {
+      // The fixed button is not a descendant of the transcript scroller, so
+      // native touch panning cannot discover it. Forward only the locked
+      // vertical gesture; horizontal motion continues through Life physics.
+      if (e.cancelable) e.preventDefault();
+      $('messages').scrollTop = lifeDrag.initialScrollTop - dy;
+      return;
+    }
+    if (lifeDrag.axis !== 'x') return;
     if (e.cancelable) e.preventDefault();
 
     const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
@@ -4001,6 +4025,17 @@ async function settleLifeDrag(drag, shouldEnter, viewportWidth) {
   resetLifePreview(generation);
 }
 
+function openLifeFromEdgeHint() {
+  if (!isLifeGestureAllowed()) return;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const preview = $('life-swipe-preview');
+  preview.hidden = false;
+  preview.style.opacity = '1';
+  preview.style.transition = 'none';
+  preview.style.transform = `translate3d(${viewportWidth}px, 0, 0)`;
+  void settleLifeDrag({ distance: 0, velocity: 1.2 }, true, viewportWidth);
+}
+
 function endLifeDrag(commit = true) {
   if (!lifeDrag) return;
   const drag = lifeDrag;
@@ -4035,6 +4070,7 @@ function endLifeDrag(commit = true) {
 
 document.addEventListener('touchend', () => endLifeDrag(true), { passive: true });
 document.addEventListener('touchcancel', () => endLifeDrag(false), { passive: true });
+$('life-edge-hint').addEventListener('click', openLifeFromEdgeHint);
 $('life-swipe-cancel').addEventListener('click', () => {
   if (lifeTransitioning) void exitLifeMode();
 });

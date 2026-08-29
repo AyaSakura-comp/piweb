@@ -12,6 +12,7 @@ describe('Life mode UI contract', () => {
 
     expect(html).toContain('id="btn-life-back"');
     expect(html).toContain('id="life-edge-hint"');
+    expect(html).toContain('aria-label="Open Life"');
     expect(html).toContain('id="life-swipe-preview"');
     expect(css).toContain('.app.life-mode');
     expect(css).toContain('.life-swipe-preview');
@@ -28,6 +29,8 @@ describe('Life mode UI contract', () => {
     expect(app).toContain('const LIFE_EDGE_ZONE_PX = 56');
     expect(app).toContain('const LIFE_VELOCITY_PROJECTION_MS = 180');
     expect(app).toContain('async function settleLifeDrag');
+    expect(app).toContain('function openLifeFromEdgeHint()');
+    expect(app).toContain("$('life-edge-hint').addEventListener('click', openLifeFromEdgeHint)");
     expect(app).toContain("$('app').classList.toggle('life-mode'");
     expect(app).toContain('const destinationJid = state.activeJid');
     expect(app).toContain('encodeURIComponent(destinationJid)');
