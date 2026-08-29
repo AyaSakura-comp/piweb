@@ -67,9 +67,9 @@ just visually cleared.
 ### Life mode
 
 On a phone, start within 56 px of the **right edge** and swipe left, or tap the
-44×64 px edge leaf to let it slide open automatically. The preview follows the
-finger, uses release velocity to settle with the flick, and opens
-after 22% of the viewport or a shorter projected fast flick. During settlement
+48×64 px water-drop leaf to open automatically. The current page and its drop
+handle follow the finger, progressively revealing Life underneath, then use
+release velocity to settle after 22% of the viewport or a shorter projected fast flick. During settlement
 it blocks the underlying session and offers **Cancel**, so a delayed load cannot
 receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective

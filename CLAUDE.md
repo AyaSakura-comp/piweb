@@ -745,11 +745,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   `/api/sessions` every 5s or every other session's state freezes at page load.
 - **Edge swipes have paired meanings**: a drag from the left edge opens the
   standard session drawer; a drag starting within 56px of the right edge and
-  moving left opens Life. The visible 44×64px leaf is also an accessible button;
-  tapping it auto-settles through the same protected transition. Life commits
-  after 22% or when a shorter fast flick's
-  velocity projection crosses that boundary, then settles the preview inward
-  with a velocity-scaled ease instead of hiding it at release. Both gestures
+  moving left opens Life. The visible 48×64px water-drop leaf is also an
+  accessible button; tapping it auto-settles through the same protected
+  transition. Life commits after 22% or when a shorter fast flick's velocity
+  projection crosses that boundary. The current page and attached drop track
+  left with a velocity-scaled ease, revealing the stationary Life preview
+  underneath instead of sliding an overlay above the page. Both gestures
   track the finger, lock their axis after 8px, and abandon a vertical lock before
   calling `preventDefault`, so transcript scrolling is never stolen. The fixed
   edge button is outside `.messages`' scroll ancestry, so a vertical lock that

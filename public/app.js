@@ -3875,9 +3875,35 @@ function setLifeSettlementBlocking(blocked) {
   }
 }
 
+function setLifePageOffset(distance, transition = 'none') {
+  const transform = `translate3d(${-Math.max(0, distance)}px, 0, 0)`;
+  for (const element of [document.querySelector('.main'), $('life-edge-hint')]) {
+    element.style.transition = transition;
+    element.style.transform = transform;
+  }
+}
+
+function showLifeUnderlay() {
+  const preview = $('life-swipe-preview');
+  $('app').classList.add('life-page-dragging');
+  preview.hidden = false;
+  preview.style.transition = 'none';
+  preview.style.transform = 'translate3d(0, 0, 0)';
+  preview.style.opacity = '1';
+}
+
+function clearLifePageOffset() {
+  $('app').classList.remove('life-page-dragging');
+  for (const element of [document.querySelector('.main'), $('life-edge-hint')]) {
+    element.style.transition = '';
+    element.style.transform = '';
+  }
+}
+
 function resetLifePreview(generation = lifePreviewGeneration) {
   if (generation !== lifePreviewGeneration) return;
   setLifeSettlementBlocking(false);
+  clearLifePageOffset();
   const preview = $('life-swipe-preview');
   preview.style.transition = '';
   preview.style.transform = '';
@@ -3892,6 +3918,7 @@ function cancelLifePreview() {
   ++lifePreviewGeneration;
   lifeDrag = null;
   setLifeSettlementBlocking(false);
+  clearLifePageOffset();
   preview.style.transition = '';
   preview.style.transform = '';
   preview.style.opacity = '';
@@ -3899,19 +3926,17 @@ function cancelLifePreview() {
   lifeTransitioning = false;
 }
 
-function animateLifePreview({ x, opacity = 1, duration, generation }) {
+function animateLifePage({ distance, duration, generation }) {
   if (generation !== lifePreviewGeneration) return Promise.resolve();
-  const preview = $('life-swipe-preview');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const animationMs = reducedMotion ? 0 : Math.max(0, Math.round(duration));
-  preview.hidden = false;
-  preview.getBoundingClientRect();
-  preview.style.transition =
+  showLifeUnderlay();
+  document.querySelector('.main').getBoundingClientRect();
+  const transition =
     animationMs === 0
       ? 'none'
-      : `transform ${animationMs}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${animationMs}ms ease-out`;
-  preview.style.transform = `translate3d(${x}px, 0, 0)`;
-  preview.style.opacity = String(opacity);
+      : `transform ${animationMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+  setLifePageOffset(distance, transition);
   if (animationMs === 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, animationMs + 24));
 }
@@ -3992,11 +4017,8 @@ document.addEventListener(
       lifeDrag.lastDistance = lifeDrag.distance;
       lifeDrag.lastTime = now;
     }
-    const preview = $('life-swipe-preview');
-    preview.hidden = false;
-    preview.style.opacity = '1';
-    preview.style.transition = 'none';
-    preview.style.transform = `translate3d(${viewportWidth - lifeDrag.distance}px, 0, 0)`;
+    showLifeUnderlay();
+    setLifePageOffset(lifeDrag.distance);
   },
   { passive: false },
 );
@@ -4009,33 +4031,29 @@ async function settleLifeDrag(drag, shouldEnter, viewportWidth) {
   const duration = lifeSettleDuration(remaining, drag.velocity, shouldEnter);
 
   if (!shouldEnter) {
-    await animateLifePreview({ x: viewportWidth, duration, generation });
+    await animateLifePage({ distance: 0, duration, generation });
     resetLifePreview(generation);
     return;
   }
 
   const enterPromise = enterLifeMode({ preserveSwipePreview: true });
-  await animateLifePreview({ x: 0, duration, generation });
+  await animateLifePage({ distance: viewportWidth, duration, generation });
   const entered = await enterPromise;
   if (generation !== lifePreviewGeneration) return;
   if (!entered) {
-    await animateLifePreview({ x: viewportWidth, duration: 220, generation });
+    await animateLifePage({ distance: 0, duration: 220, generation });
     resetLifePreview(generation);
     return;
   }
 
-  await animateLifePreview({ x: 0, opacity: 0, duration: 120, generation });
   resetLifePreview(generation);
 }
 
 function openLifeFromEdgeHint() {
   if (!isLifeGestureAllowed()) return;
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-  const preview = $('life-swipe-preview');
-  preview.hidden = false;
-  preview.style.opacity = '1';
-  preview.style.transition = 'none';
-  preview.style.transform = `translate3d(${viewportWidth}px, 0, 0)`;
+  showLifeUnderlay();
+  setLifePageOffset(0);
   void settleLifeDrag({ distance: 0, velocity: 1.2 }, true, viewportWidth);
 }
 

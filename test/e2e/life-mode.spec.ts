@@ -421,6 +421,18 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   const edgeHint = page.locator('#life-edge-hint');
   await expect(edgeHint).toBeVisible();
   const edgeHintBox = (await edgeHint.boundingBox())!;
+  expect(edgeHintBox.width).toBeGreaterThanOrEqual(48);
+  expect(edgeHintBox.height).toBeGreaterThanOrEqual(64);
+  expect(edgeHintBox.x).toBeGreaterThanOrEqual(0);
+  expect(edgeHintBox.x + edgeHintBox.width).toBeLessThanOrEqual(390);
+  expect(await edgeHint.locator('.life-edge-drop').count()).toBe(1);
+  expect(
+    await edgeHint.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit === element || Boolean(hit && element.contains(hit));
+    }),
+  ).toBe(true);
   const edgeTouch = {
     x: Math.round(edgeHintBox.x + edgeHintBox.width / 2),
     y: Math.round(edgeHintBox.y + edgeHintBox.height / 2),
@@ -474,13 +486,18 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(preview).toBeVisible();
   const previewRect = await preview.boundingBox();
   expect(previewRect).not.toBeNull();
-  expect(previewRect!.x).toBeGreaterThan(0);
-  expect(previewRect!.x).toBeLessThan(390);
+  expect(previewRect!.x).toBe(0);
+  const draggedMain = await page.locator('.main').boundingBox();
+  const draggedHint = await edgeHint.boundingBox();
+  expect(draggedMain!.x).toBeLessThan(-40);
+  expect(draggedMain!.x).toBeGreaterThan(-70);
+  expect(draggedHint!.x).toBeLessThan(edgeHintBox.x - 40);
   await page.screenshot({ path: testInfo.outputPath('01-life-swipe-progress.png') });
   await page.waitForTimeout(110);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await expect(preview).toBeHidden();
+  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
   expect(api.lifeRequests()).toBe(0);
 
   // The actual entry starts inside the button and is still a short flick.
@@ -494,9 +511,9 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.waitForTimeout(120);
   expect(api.lifeRequests()).toBe(1);
   await expect(preview).toBeVisible();
-  const releaseX = (await preview.boundingBox())!.x;
+  const releasePageX = (await page.locator('.main').boundingBox())!.x;
   await page.waitForTimeout(60);
-  expect((await preview.boundingBox())!.x).toBeLessThan(releaseX);
+  expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(releasePageX);
   await page.screenshot({ path: testInfo.outputPath('02-life-swipe-inertia.png') });
   await expect(preview).toBeHidden();
 
@@ -582,13 +599,13 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.getByRole('button', { name: 'New pi session' })).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('05-returned-to-sessions.png') });
 
-  // The same edge affordance is also a real 44px touch target. Tapping it
-  // auto-settles the panel with the same protected transition as a flick.
+  // The water-drop affordance is also a real 48px touch target. Tapping it
+  // auto-settles the page with the same protected transition as a flick.
   await page.getByRole('button', { name: 'Open Life' }).click();
   await expect.poll(api.lifeRequests).toBe(3);
   await expect(preview).toBeVisible();
   await page.waitForTimeout(60);
-  expect((await preview.boundingBox())!.x).toBeLessThan(390);
+  expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(0);
   await page.screenshot({ path: testInfo.outputPath('06-edge-button-auto-settle.png') });
   await expect(preview).toBeHidden();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
@@ -676,9 +693,9 @@ test('tapping the right-edge leaf auto-settles into Life', async ({ page }) => {
       activeId: document.activeElement?.id,
     })),
   ).toEqual({ inert: true, activeId: 'life-swipe-cancel' });
-  const startedX = (await preview.boundingBox())!.x;
+  const startedPageX = (await page.locator('.main').boundingBox())!.x;
   await page.waitForTimeout(60);
-  expect((await preview.boundingBox())!.x).toBeLessThan(startedX);
+  expect((await page.locator('.main').boundingBox())!.x).toBeLessThan(startedPageX);
 
   api.releaseLifeResponse();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
@@ -722,11 +739,11 @@ test('a short flick from the wider right edge settles into Life with inertia', a
 
   const preview = page.locator('#life-swipe-preview');
   await expect(preview).toBeVisible();
-  const releaseX = (await preview.boundingBox())!.x;
+  const releasePageX = (await page.locator('.main').boundingBox())!.x;
   await page.waitForTimeout(60);
-  const settlingX = (await preview.boundingBox())!.x;
-  expect(settlingX).toBeLessThan(releaseX);
-  expect(settlingX).toBeGreaterThanOrEqual(0);
+  const settlingPageX = (await page.locator('.main').boundingBox())!.x;
+  expect(settlingPageX).toBeLessThan(releasePageX);
+  expect(settlingPageX).toBeGreaterThanOrEqual(-390);
 
   api.releaseLifeResponse();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);

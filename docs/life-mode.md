@@ -10,8 +10,8 @@ a fresh Pi context inside that protected channel with **New pi session**.
 
 - On a phone, start within 56 px of the **right edge** and swipe left. A drag
   commits after 22% of the visual viewport, while a shorter fast flick commits
-  when its projected velocity crosses the same boundary. The 44×64 px edge leaf
-  is also a button: tap it to auto-settle the same panel into Life.
+  when its projected velocity crosses the same boundary. The 48×64 px water-drop
+  leaf is also a button: tap it to auto-settle the current page and reveal Life.
 - Vertical motion wins after the 8 px axis lock, so the gesture does not steal
   transcript scrolling. Because the fixed button is outside the transcript's
   scroll ancestry, a vertical drag beginning on it forwards that locked motion
@@ -52,12 +52,12 @@ flowchart TD
     A[Standard Sessions mode] --> B{Touch starts within<br/>56 px of right edge?}
     A -- Tap edge leaf --> H
     B -- No --> A
-    B -- Yes --> C[Track drag and preview]
+    B -- Yes --> C[Current page tracks the drag;<br/>reveal Life underneath]
     C --> D{8 px axis lock}
     D -- Vertical --> E[Release gesture;<br/>allow normal page scrolling]
     D -- Horizontal left --> F{Crossed 22% or will<br/>flick inertia project across it?}
-    F -- No --> G[Animate preview back out<br/>and stay in Sessions]
-    F -- Yes --> H[Settle preview inward with velocity<br/>and POST /api/life-session]
+    F -- No --> G[Animate current page back<br/>and stay in Sessions]
+    F -- Yes --> H[Settle current page left with velocity<br/>and POST /api/life-session]
     H --> I{Singleton exists?}
     I -- No --> J[Create web:life with a<br/>new empty session folder]
     I -- Yes --> K[Restore web:life and clear<br/>model/thinking/cwd overrides]
@@ -77,8 +77,9 @@ flowchart TD
     R --> A
 ```
 
-The right-edge leaf is both a swipe affordance and an accessible **Open Life**
-button; tapping it uses the same inert, cancellable settlement path as a flick.
+The right-edge water-drop leaf is both a swipe affordance and an accessible
+**Open Life** button; tapping it uses the same inert, cancellable page-settlement
+path as a flick.
 Entry is disabled above 768 px, while Life is already active or settling, and while a menu, sheet, or
 lightbox owns the foreground. Cancelling settlement—or crossing the desktop
 breakpoint while it is pending—invalidates navigation and preview ownership,
