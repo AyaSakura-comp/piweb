@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 - Playwright mobile E2E coverage with WebM recording, reviewed screenshot baselines, traces, and an HTML evidence report
 - Deterministic Playwright behavior and visual regression coverage for theme persistence and drawer/sheet layering
 
+### Changed
+
+- Replace the overflow menu's **Clean session** action with the same restorable **Delete session** flow used by the Sessions drawer
+
 ### Fixed
 
 - Fence suspended Life workers and controls after generation rotation, and prevent quarantined Life tasks from starving unrelated scheduled work

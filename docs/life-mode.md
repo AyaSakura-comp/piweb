@@ -45,7 +45,7 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   Life session. Rotation is refused while Life has active or queued work. The
   lower-level typed `/pi new` command remains available for rotating only Pi's
   internal context without promoting the transcript. Life's overflow contains
-  **Search** and **Media**; Sessions, New pi session, clean session, and their
+  **Search** and **Media**; Sessions, New pi session, Delete session, and their
   separator remain hidden there.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.

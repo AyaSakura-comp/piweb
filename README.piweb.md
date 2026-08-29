@@ -59,10 +59,10 @@ Sessions are created instantly from the drawer—there is no naming dialog. As
 soon as the first normal prompt is accepted, an in-process statistical ranker
 replaces **New session** with an extractive title of at most 10 visible characters. It
 preserves the prompt's original writing system and uses no language model,
-network call, or model context. Sessions are deleted from the drawer. The 🗑
-button in the header is **clean session**: it clears the transcript _and_ rotates
-pi's session directory, so the agent's context is genuinely reset rather than
-just visually cleared.
+network call, or model context. Sessions can be moved to **Recently deleted**
+from either the drawer row or **Delete session** in the ⋯ menu; both use the
+same restorable soft-delete flow. Use **New pi session** (`/pi new`) when the
+goal is to rotate the agent context without deleting the Piweb session.
 
 ### Life mode
 

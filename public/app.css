@@ -3035,6 +3035,9 @@ svg {
   align-items: center;
   gap: 10px;
   width: 100%;
+  /* The menu enters at scale(.96); 46px keeps the transformed touch target
+     above the 44px mobile minimum for the entire animation. */
+  min-height: 46px;
   padding: 10px 10px;
   border: 0;
   border-radius: var(--radius);

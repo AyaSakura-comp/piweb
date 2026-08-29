@@ -50,7 +50,6 @@ async function installLifeApi(
     delayRestore?: boolean;
     delayDelete?: boolean;
     delayCreate?: boolean;
-    delayClear?: boolean;
     delayTrashLoad?: boolean;
     delayCommand?: boolean;
     delayMessage?: boolean;
@@ -128,12 +127,6 @@ async function installLifeApi(
   const createGate = options.delayCreate
     ? new Promise<void>((resolve) => {
         releaseCreate = resolve;
-      })
-    : null;
-  let releaseClear: (() => void) | undefined;
-  const clearGate = options.delayClear
-    ? new Promise<void>((resolve) => {
-        releaseClear = resolve;
       })
     : null;
   let releaseTrashLoad: (() => void) | undefined;
@@ -242,10 +235,6 @@ async function installLifeApi(
               created: lifeRequests === 1,
             },
       });
-    }
-    if (path.endsWith('/clear') && request.method() === 'POST') {
-      if (clearGate) await clearGate;
-      return route.fulfill({ json: { ok: true, removed: 1 } });
     }
     if (path.endsWith('/restore') && request.method() === 'POST') {
       if (restoreGate) await restoreGate;
@@ -485,7 +474,6 @@ async function installLifeApi(
     releaseRestore: () => releaseRestore?.(),
     releaseDelete: () => releaseDelete?.(),
     releaseCreate: () => releaseCreate?.(),
-    releaseClear: () => releaseClear?.(),
     releaseTrashLoad: () => releaseTrashLoad?.(),
     releaseCommand: () => releaseCommand?.(),
     releaseMessage: () => releaseMessage?.(),
@@ -703,7 +691,8 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'New pi session' })).toBeHidden();
   await expect(page.locator('#mi-sessions')).toBeHidden();
-  await expect(page.locator('#mi-clean')).toBeHidden();
+  await expect(page.locator('#mi-delete')).toBeHidden();
+  await expect(page.locator('#mi-clean')).toHaveCount(0);
   await expect(page.locator('#mi-management-separator')).toBeHidden();
   await page.getByRole('menuitem', { name: 'Search' }).click();
   await expect(page.locator('#search-panel')).toBeVisible();
@@ -1953,16 +1942,20 @@ test('a delayed new-session response cannot override newer Life navigation', asy
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
 });
 
-test('a delayed clean response cannot clear a newer Life transcript', async ({ page }) => {
-  const api = await installLifeApi(page, { delayClear: true, lifeEventState: true });
+test('a delayed menu delete cannot clear a newer Life transcript', async ({ page }) => {
+  const api = await installLifeApi(page, { delayDelete: true, lifeEventState: true });
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
 
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#btn-more').click();
-  const clearRequest = page.waitForRequest((request) => request.url().endsWith('/clear'));
-  await page.getByRole('menuitem', { name: 'Clean session' }).click();
-  await clearRequest;
+  const deleteRequest = page.waitForRequest(
+    (request) =>
+      request.method() === 'DELETE' &&
+      request.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
+  );
+  await page.getByRole('menuitem', { name: 'Delete session' }).click();
+  await deleteRequest;
 
   await page.evaluate(() => {
     navigator.serviceWorker.dispatchEvent(
@@ -1971,9 +1964,13 @@ test('a delayed clean response cannot clear a newer Life transcript', async ({ p
   });
   await expect(page.locator('#messages')).toContainText('Life-only history');
 
-  const clearResponse = page.waitForResponse((response) => response.url().endsWith('/clear'));
-  api.releaseClear();
-  await clearResponse;
+  const deleteResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      response.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
+  );
+  api.releaseDelete();
+  await deleteResponse;
   await page.waitForTimeout(50);
 
   await expect(page.locator('#messages')).toContainText('Life-only history');

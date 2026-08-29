@@ -44,6 +44,7 @@ const LIFE_JID = 'web:life';
 let lifeNavigationGeneration = 0;
 let sessionsLoadGeneration = 0;
 let sessionSelectionGeneration = 0;
+let deletingSessionJid = null;
 let searchOwnershipGeneration = 0;
 let mediaOwnershipGeneration = 0;
 
@@ -828,6 +829,42 @@ function sessionsForDisplay() {
     .map((e) => e.session);
 }
 
+async function deleteSession(session) {
+  if (
+    deletingSessionJid ||
+    state.selectionPending ||
+    !session ||
+    session.kind === 'life'
+  ) return;
+  if (!confirm(`Move "${session.name}" to Recently deleted?`)) return;
+
+  const navigation = beginStandardNavigation();
+  const jid = session.jid;
+  deletingSessionJid = jid;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(jid)}`, { method: 'DELETE' });
+  } catch (err) {
+    if (navigation === lifeNavigationGeneration) alert(err.message);
+    return;
+  } finally {
+    deletingSessionJid = null;
+  }
+  if (navigation !== lifeNavigationGeneration) return;
+
+  void refreshTrashCount({ navigation });
+  if (state.activeJid === jid) {
+    state.activeJid = null;
+    $('messages').textContent = '';
+    $('session-name').textContent = 'no session';
+    closeStream();
+  }
+  await loadSessions();
+  if (navigation !== lifeNavigationGeneration) return;
+  if (!state.activeJid) {
+    await selectStandardCandidates(standardSelectionCandidates(standardFallbackJid()), navigation);
+  }
+}
+
 function renderSessions(force = false) {
   const list = $('session-list');
   // The 5s session poll and busy-state updates must not replace an input while
@@ -897,27 +934,7 @@ function renderSessions(force = false) {
     del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
     del.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (state.selectionPending) return;
-      // Soft delete: it goes to "Recently deleted" and can be restored.
-      if (!confirm(`Move "${session.name}" to Recently deleted?`)) return;
-      const navigation = beginStandardNavigation();
-      await api(`/api/sessions/${encodeURIComponent(session.jid)}`, { method: 'DELETE' });
-      if (navigation !== lifeNavigationGeneration) return;
-      void refreshTrashCount({ navigation });
-      if (state.activeJid === session.jid) {
-        state.activeJid = null;
-        $('messages').textContent = '';
-        $('session-name').textContent = 'no session';
-        closeStream();
-      }
-      await loadSessions();
-      if (navigation !== lifeNavigationGeneration) return;
-      if (!state.activeJid) {
-        await selectStandardCandidates(
-          standardSelectionCandidates(standardFallbackJid()),
-          navigation,
-        );
-      }
+      await deleteSession(session);
     });
     item.append(del);
 
@@ -1490,7 +1507,7 @@ $('btn-gpt-usage').addEventListener('click', () => runQuickCommand(usageCommandF
 
 // ── overflow menu ────────────────────────────────────────────────────────
 //
-// Search / new session / clean live behind a ⋯ button instead of sitting in the
+// Search / new session / delete live behind a ⋯ button instead of sitting in the
 // topbar, which was crowding the session title. Each row names the slash
 // command it runs, so the menu also teaches the typed form.
 
@@ -1508,10 +1525,11 @@ function openMoreMenu() {
   // A trashed session is frozen: only Search still makes sense.
   $('mi-sessions').hidden = life;
   $('mi-new-chat').hidden = life;
-  $('mi-clean').hidden = life;
+  $('mi-delete').hidden = life;
   $('mi-management-separator').hidden = life;
   $('mi-new-chat').disabled = state.previewingDeleted;
-  $('mi-clean').disabled = state.previewingDeleted || life;
+  $('mi-delete').disabled =
+    Boolean(deletingSessionJid) || state.selectionPending || state.previewingDeleted || life;
 }
 
 function closeMoreMenu() {
@@ -1658,7 +1676,7 @@ onMenuItem('mi-sessions', openDrawer);
 onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());
 onMenuItem('mi-new-chat', newPiSession);
-onMenuItem('mi-clean', cleanSession);
+onMenuItem('mi-delete', deleteActiveSession);
 
 // ── model sheet ──
 
@@ -2055,23 +2073,20 @@ $('session-name-input').addEventListener('blur', () => commitRename(true));
 $('btn-new-session').addEventListener('click', createSession);
 $('btn-life-back').addEventListener('click', openSessionsFromLife);
 
-async function cleanSession() {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted || state.mode === 'life') return;
-  if (!confirm('Clean this session? Clears the transcript and starts a fresh pi session.')) return;
-  const jid = state.activeJid;
-  const navigation = beginStandardNavigation();
-  const selection = sessionSelectionGeneration;
-  await api(`/api/sessions/${encodeURIComponent(jid)}/clear`, { method: 'POST' });
+async function deleteActiveSession() {
   if (
-    navigation !== lifeNavigationGeneration ||
-    selection !== sessionSelectionGeneration ||
-    state.activeJid !== jid
-  ) {
-    return;
-  }
-  $('messages').textContent = '';
-  state.cursor = 0;
-  openStream(selection, jid);
+    state.selectionPending ||
+    !state.activeJid ||
+    state.previewingDeleted ||
+    state.mode === 'life'
+  ) return;
+  // Event metadata, not the 5s list cache, proves the active destination. Use
+  // the rendered confirmed name so notification-opened sessions remain deletable.
+  await deleteSession({
+    jid: state.activeJid,
+    name: $('session-name').textContent.trim() || state.activeJid,
+    kind: 'standard',
+  });
 }
 
 // ── streaming ────────────────────────────────────────────────────────────

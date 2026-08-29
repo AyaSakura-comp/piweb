@@ -289,12 +289,13 @@ disk forever — now it is either restorable or genuinely purged.
 
 | store | what | cleared by |
 |---|---|---|
-| `web_events` table | what the UI shows | "clean session" / delete |
-| `sessions/<folder>/*.jsonl` | what pi actually remembers | `/pi new` (rotates to archive) |
+| `web_events` table | what the UI shows | `POST /clear` or permanent delete |
+| `sessions/<folder>/*.jsonl` | what pi actually remembers | `/pi new` rotates it; permanent delete removes it |
 
-Clearing one does **not** clear the other, which is why the header 🗑 button does
-both (`deleteWebEvents` + enqueue `pi new`). Query either with
-`scripts/history.py show|context`.
+The header's **Delete session** action is deliberately soft and clears neither
+store; the session remains restorable under **Recently deleted**. The legacy
+`POST /clear` route still clears both histories but is no longer exposed as the
+header menu action. Query either with `scripts/history.py show|context`.
 
 ### Search and jump
 
@@ -715,13 +716,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     goal without the ranking's downside of rows jumping between state buckets.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
   holds `/pi status`, `/gpt-usage` and the model picker; search, `/pi new` and
-  clean session live in the ⋯ menu. Life uses the pencil immediately before ⋯
+  soft **Delete session** live in the ⋯ menu. Life uses the pencil immediately before ⋯
   for **New Life session**: atomically promote the current transcript/Pi folder
   into the standard list, then select a fresh empty Life singleton. The menu is
   a popover anchored under the button, not a bottom
   sheet: these are quick actions and a sheet would feel as heavy as the model
-  picker. Each row names the slash command it runs, so the menu also teaches
-  the typed form. Dismissal is a
+  picker. Command rows name the slash command they run; Delete session instead
+  names its Recently deleted destination in the confirmation. Dismissal is a
   transparent full-screen `#menu-scrim` (plus Escape) — a `document` click
   listener would fire on the opening tap itself. Rows that need a live session
   are disabled while previewing a trashed one, and the topbar's session-bound
@@ -1105,7 +1106,8 @@ Consequences that surprise people:
   the next message starts a fresh pi session (new UUID). Past context is NOT
   re-injected — verified: a codeword remembered before `/pi new` returns "NONE"
   after. It does **not** clear `web_events`, so the on-screen transcript stays
-  while pi's memory resets. The 🗑 header button does both (clear + `pi new`).
+  while pi's memory resets. The header's **Delete session** is a restorable soft
+  delete; `POST /clear` remains a separate compatibility API.
 - **New session** opens immediately as `New session` (no native naming prompt)
   and auto-issues a silent `pi new` with `keepQueue` (invariant 5). Its first
   normal prompt is captured once in `session_title_jobs`; only after that real
