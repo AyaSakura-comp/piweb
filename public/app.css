@@ -280,8 +280,8 @@ svg {
 
 /* During a Life pull, the current page—not the destination overlay—tracks the
    finger. The stationary Life preview sits underneath and is progressively
-   revealed from the right, while the water-drop handle stays attached to the
-   moving page edge. */
+   revealed from the right. The water drop is nested in .main, so its rounded
+   body and edge-attached point inherit the exact same page transform. */
 .app.life-page-dragging .main {
   z-index: 54;
   background: var(--bg);

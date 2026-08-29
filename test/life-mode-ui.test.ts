@@ -16,6 +16,9 @@ describe('Life mode UI contract', () => {
     expect(html).toContain('id="life-edge-hint"');
     expect(html).toContain('aria-label="Open Life"');
     expect(html).toContain('class="life-edge-drop"');
+    expect(html).toMatch(
+      /<main class="main">[\s\S]*id="life-edge-hint"[\s\S]*<\/main>/,
+    );
     expect(html).toContain('id="life-swipe-preview"');
     expect(css).toContain('.life-edge-drop');
     expect(css).toContain('.app.life-mode');
@@ -34,6 +37,16 @@ describe('Life mode UI contract', () => {
     expect(app).toContain('const LIFE_VELOCITY_PROJECTION_MS = 180');
     expect(app).toContain('async function settleLifeDrag');
     expect(app).toContain('function setLifePageOffset');
+    const pageOffsetImplementation = app.match(
+      /function setLifePageOffset[\s\S]*?\n}\n/,
+    )?.[0];
+    const clearPageOffsetImplementation = app.match(
+      /function clearLifePageOffset[\s\S]*?\n}\n/,
+    )?.[0];
+    expect(pageOffsetImplementation).toBeDefined();
+    expect(pageOffsetImplementation).not.toContain("$('life-edge-hint')");
+    expect(clearPageOffsetImplementation).toBeDefined();
+    expect(clearPageOffsetImplementation).not.toContain("$('life-edge-hint')");
     expect(app).toContain('function openLifeFromEdgeHint()');
     expect(app).toContain("$('life-edge-hint').addEventListener('click', openLifeFromEdgeHint)");
     expect(app).toContain("$('app').classList.toggle('life-mode'");

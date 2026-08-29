@@ -67,9 +67,11 @@ just visually cleared.
 ### Life mode
 
 On a phone, start within 56 px of the **right edge** and swipe left, or tap the
-48×64 px water-drop leaf to open automatically. The current page and its drop
-handle follow the finger, progressively revealing Life underneath, then use
-release velocity to settle after 22% of the viewport or a shorter projected fast flick. During settlement
+48×64 px water-drop leaf to open automatically. Its rounded body sits inside
+`.main` while its pointed tip meets the page's right edge, so the drop inherits
+one page transform instead of being animated separately. They follow the finger,
+progressively revealing Life underneath, then use release velocity to settle
+after 22% of the viewport or a shorter projected fast flick. During settlement
 it blocks the underlying session and offers **Cancel**, so a delayed load cannot
 receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective

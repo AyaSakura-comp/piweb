@@ -3976,11 +3976,9 @@ function setLifeSettlementBlocking(blocked) {
 }
 
 function setLifePageOffset(distance, transition = 'none') {
-  const transform = `translate3d(${-Math.max(0, distance)}px, 0, 0)`;
-  for (const element of [document.querySelector('.main'), $('life-edge-hint')]) {
-    element.style.transition = transition;
-    element.style.transform = transform;
-  }
+  const main = document.querySelector('.main');
+  main.style.transition = transition;
+  main.style.transform = `translate3d(${-Math.max(0, distance)}px, 0, 0)`;
 }
 
 function showLifeUnderlay() {
@@ -3994,10 +3992,9 @@ function showLifeUnderlay() {
 
 function clearLifePageOffset() {
   $('app').classList.remove('life-page-dragging');
-  for (const element of [document.querySelector('.main'), $('life-edge-hint')]) {
-    element.style.transition = '';
-    element.style.transform = '';
-  }
+  const main = document.querySelector('.main');
+  main.style.transition = '';
+  main.style.transform = '';
 }
 
 function resetLifePreview(generation = lifePreviewGeneration) {

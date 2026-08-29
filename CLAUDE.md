@@ -749,9 +749,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   and moving left opens Life. The visible 48×64px water-drop leaf is also an
   accessible button; tapping it auto-settles through the same protected
   transition. Life commits after 22% or when a shorter fast flick's velocity
-  projection crosses that boundary. The current page and attached drop track
-  left with a velocity-scaled ease, revealing the stationary Life preview
-  underneath instead of sliding an overlay above the page. Both gestures
+  projection crosses that boundary. The drop is nested inside `.main`: its
+  rounded body stays within the page and its point meets the right edge, so one
+  shared page transform carries both left with a velocity-scaled ease. This
+  reveals the stationary Life preview underneath instead of sliding an overlay
+  above the page. Both gestures
   track the finger, lock their axis after 8px, and abandon a vertical lock before
   calling `preventDefault`, so transcript scrolling is never stolen. Life's
   left-edge back drag follows the finger, commits after 22%, and requires the

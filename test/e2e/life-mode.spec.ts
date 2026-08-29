@@ -461,6 +461,9 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   expect(edgeHintBox.x).toBeGreaterThanOrEqual(0);
   expect(edgeHintBox.x + edgeHintBox.width).toBeLessThanOrEqual(390);
   expect(await edgeHint.locator('.life-edge-drop').count()).toBe(1);
+  expect(await edgeHint.evaluate((element) => element.parentElement?.classList.contains('main'))).toBe(
+    true,
+  );
   expect(
     await edgeHint.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -527,6 +530,9 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   expect(draggedMain!.x).toBeLessThan(-40);
   expect(draggedMain!.x).toBeGreaterThan(-70);
   expect(draggedHint!.x).toBeLessThan(edgeHintBox.x - 40);
+  expect(
+    Math.abs(draggedHint!.x + draggedHint!.width - (draggedMain!.x + draggedMain!.width)),
+  ).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath('01-life-swipe-progress.png') });
   await page.waitForTimeout(110);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });

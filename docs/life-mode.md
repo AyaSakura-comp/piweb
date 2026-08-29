@@ -11,7 +11,9 @@ a fresh Pi context inside that protected channel with **New pi session**.
 - On a phone, start within 56 px of the **right edge** and swipe left. A drag
   commits after 22% of the visual viewport, while a shorter fast flick commits
   when its projected velocity crosses the same boundary. The 48×64 px water-drop
-  leaf is also a button: tap it to auto-settle the current page and reveal Life.
+  leaf is also a button: its rounded body is nested inside the current page, its
+  pointed tip meets the right edge, and it inherits that page's transform. Tap
+  it to auto-settle the current page and reveal Life.
 - Vertical motion wins after the 8 px axis lock, so the gesture does not steal
   transcript scrolling. Because the fixed button is outside the transcript's
   scroll ancestry, a vertical drag beginning on it forwards that locked motion

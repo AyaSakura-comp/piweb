@@ -71,24 +71,6 @@
     <div id="app" class="app" hidden>
       <div class="scrim" id="scrim" hidden></div>
 
-      <!-- Right-edge affordance: swipe from it or tap to auto-settle into Life. -->
-      <button
-        type="button"
-        class="life-edge-hint"
-        id="life-edge-hint"
-        aria-label="Open Life"
-      >
-        <svg viewBox="0 0 48 64" aria-hidden="true">
-          <path
-            class="life-edge-drop"
-            d="M48 32C39 25 37 10 22 8C10 6 2 17 2 32s8 26 20 24c15-2 17-17 26-24Z"
-          />
-          <path
-            class="life-edge-leaf"
-            d="M31 22c-8 0-13 4.4-13 11 0 2.1.8 3.7 2.1 4.8M19 36c2.8-4.7 6.1-7.8 10.2-10"
-          />
-        </svg>
-      </button>
       <div class="life-swipe-preview" id="life-swipe-preview" aria-hidden="true" hidden>
         <div class="life-swipe-mark">
           <svg viewBox="0 0 24 24">
@@ -169,6 +151,25 @@
       </aside>
 
       <main class="main">
+        <!-- This sideways drop belongs to the current page, so the rounded body
+             stays inside it and the pointed tip remains attached to its right edge. -->
+        <button
+          type="button"
+          class="life-edge-hint"
+          id="life-edge-hint"
+          aria-label="Open Life"
+        >
+          <svg viewBox="0 0 48 64" aria-hidden="true">
+            <path
+              class="life-edge-drop"
+              d="M48 32C39 25 37 10 22 8C10 6 2 17 2 32s8 26 20 24c15-2 17-17 26-24Z"
+            />
+            <path
+              class="life-edge-leaf"
+              d="M31 22c-8 0-13 4.4-13 11 0 2.1.8 3.7 2.1 4.8M19 36c2.8-4.7 6.1-7.8 10.2-10"
+            />
+          </svg>
+        </button>
         <header class="topbar">
           <button
             class="icon-btn"
