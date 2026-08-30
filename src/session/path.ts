@@ -35,8 +35,16 @@ export function validateSessionFolder(folder: string): string {
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     throw new Error(`Session folder contains an invalid path segment: ${folder}`);
   }
+  if (segments[0]?.toLowerCase() === '.piweb-purge') {
+    throw new Error(`Session folder uses the reserved purge namespace: ${folder}`);
+  }
 
   return trimmed;
+}
+
+/** True only for an actual parent segment or an absolute relative() result. */
+export function relativePathEscapesRoot(rel: string): boolean {
+  return isAbsolute(rel) || /^\.\.(?:[\\/]|$)/u.test(rel);
 }
 
 /** Resolve a channel session folder to an absolute directory under sessionsDir. */
@@ -46,7 +54,7 @@ export function resolveChannelSessionDir(folder: string): string {
   const sessionDir = resolve(baseDir, safeFolder);
   const rel = relative(baseDir, sessionDir);
 
-  if (!rel || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) {
+  if (!rel || rel === '.' || relativePathEscapesRoot(rel)) {
     throw new Error(`Session folder escapes sessions directory: ${folder}`);
   }
 
@@ -82,12 +90,19 @@ export function listSessionFamilyDirs(sessionDir: string): string[] {
   let entries;
   try {
     entries = readdirSync(parentDir, { withFileTypes: true });
-  } catch {
-    return [activeDir];
+  } catch (error) {
+    // A missing parent proves there can be no archived siblings. Every other
+    // I/O failure is ambiguous and must keep permanent deletion pending rather
+    // than silently orphaning archives we failed to enumerate.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [activeDir];
+    throw error;
   }
 
+  // Match by the rotation-owned name, not by followed file type. A symlink or
+  // malformed file at an archive name is still owned debris; purge safely
+  // unlinks that top-level entry without traversing its target.
   const archives = entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith(archivePrefix))
+    .filter((entry) => entry.name.startsWith(archivePrefix))
     .map((entry) => resolve(parentDir, entry.name));
 
   return [activeDir, ...archives];
@@ -222,7 +237,11 @@ export function repairSessionForContinue(folder: string): boolean {
   // name defensively so a shape change degrades to "leave the file alone" rather
   // than to the old destructive truncation.
   const callId = (c: any): string | undefined =>
-    typeof c?.id === 'string' ? c.id : typeof c?.toolCall?.id === 'string' ? c.toolCall.id : undefined;
+    typeof c?.id === 'string'
+      ? c.id
+      : typeof c?.toolCall?.id === 'string'
+        ? c.toolCall.id
+        : undefined;
   const callName = (c: any): string =>
     (typeof c?.name === 'string' ? c.name : c?.toolCall?.name) ?? 'unknown';
 

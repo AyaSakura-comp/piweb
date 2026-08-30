@@ -30,7 +30,9 @@ describe('scheduled task web commands', () => {
     db.initDb();
 
     try {
-      const result = await runCommand(channel(), 'task cron', {
+      db.registerChannel({ ...channel(), kind: 'standard' });
+      const owner = db.getChannel('web:cron123')!;
+      const result = await runCommand(owner, 'task cron', {
         text: 'daily report | 0 9 * * * | Generate the daily report',
       });
 
@@ -42,6 +44,37 @@ describe('scheduled task web commands', () => {
         channel_jid: 'web:cron123',
         prompt: 'Generate the daily report',
       });
+    } finally {
+      db.closeDb();
+    }
+  });
+
+  it('does not mutate a session trashed immediately after ownership validation', async () => {
+    process.env.DB_PATH = ':memory:';
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    const { runCommand } = await import('../src/commands/index.js');
+    db.initDb();
+
+    try {
+      db.registerChannel({ ...channel(), kind: 'standard' });
+      const owner = db.getChannel('web:cron123')!;
+      let checked = false;
+      const result = await runCommand(
+        owner,
+        'task cron',
+        { text: 'stale task | 0 9 * * * | must not be created' },
+        {
+          assertOwnership: () => {
+            if (checked) return;
+            checked = true;
+            db.softDeleteChannel(owner.jid, owner.folder, owner.storageToken);
+          },
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(db.listScheduledTasks()).toEqual([]);
     } finally {
       db.closeDb();
     }

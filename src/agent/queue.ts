@@ -22,6 +22,7 @@ import {
   recoverStuckMessages,
   logMessage,
   getChannel,
+  isChannelGenerationCurrent,
   touchChannelOperation,
 } from '../db.js';
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
@@ -41,8 +42,11 @@ const activeChannels = new Set<string>();
 const activeTaskPromises = new Set<Promise<void>>();
 const activeTaskControllers = new Map<number, AbortController>();
 const activeChannelControllers = new Map<string, AbortController>();
-/** Folder generation owned by each active JID; web:life itself is reusable. */
-const activeChannelFolders = new Map<string, string>();
+/** Immutable generation owned by each active JID; JID and folder may both be reused. */
+const activeChannelFolders = new Map<
+  string,
+  { folder: string; storageToken: string; ownershipEpoch: number }
+>();
 /** Channels whose next queued user message explicitly replaces the aborted task. */
 const supersededChannels = new Set<string>();
 
@@ -129,9 +133,9 @@ export function stopProcessingLoop(opts: { timeoutMs?: number } = {}): Promise<v
   running = false;
   clearPollTimer();
 
-  stopPromise = drainActiveTasks(opts.timeoutMs ?? config.shutdownTimeoutMs).finally(() => {
-    closeAllRpcSessions();
-  });
+  stopPromise = drainActiveTasks(opts.timeoutMs ?? config.shutdownTimeoutMs).finally(() =>
+    closeAllRpcSessions(),
+  );
   return stopPromise;
 }
 
@@ -172,11 +176,18 @@ function interruptSupersededRuns(): void {
     // them through Pi's RPC protocol; retain the controller path only for
     // attachment/until-done turns that still use the one-shot process.
     const channel = getChannel(jid);
-    const activeFolder = activeChannelFolders.get(jid);
+    const activeGeneration = activeChannelFolders.get(jid);
     // A terminal old-Life worker may still be cleaning up after its lease was
     // expired and rotated. A fresh web:life message is a different generation,
     // not an interruption or handoff for that archived turn.
-    if (!channel || !activeFolder || channel.folder !== activeFolder) continue;
+    if (
+      !channel ||
+      !activeGeneration ||
+      channel.folder !== activeGeneration.folder ||
+      channel.storageToken !== activeGeneration.storageToken ||
+      channel.ownershipEpoch !== activeGeneration.ownershipEpoch
+    )
+      continue;
     const rpcAborted = Boolean(config.rpcSteer && abortRpcSession(channel.folder));
     const interrupted = rpcAborted || interruptChannelTask(jid);
     if (!interrupted) continue;
@@ -189,7 +200,11 @@ function interruptSupersededRuns(): void {
     void getTransport().sendNotice?.(
       jid,
       '⏹ Stopped the previous task — running your new message.',
-      { expectedFolder: activeFolder },
+      {
+        expectedFolder: activeGeneration.folder,
+        expectedStorageToken: activeGeneration.storageToken,
+        expectedOwnershipEpoch: activeGeneration.ownershipEpoch,
+      },
     );
   }
 }
@@ -218,11 +233,17 @@ function dispatch(): void {
     if (!msg) continue;
 
     const controller = new AbortController();
-    const activeFolder = getChannel(jid)?.folder;
+    const activeOwner = getChannel(jid);
     activeChannels.add(jid);
     activeTaskControllers.set(msg.rowid, controller);
     activeChannelControllers.set(jid, controller);
-    if (activeFolder) activeChannelFolders.set(jid, activeFolder);
+    if (activeOwner) {
+      activeChannelFolders.set(jid, {
+        folder: activeOwner.folder,
+        storageToken: activeOwner.storageToken || '',
+        ownershipEpoch: activeOwner.ownershipEpoch ?? 0,
+      });
+    }
 
     const taskPromise = processMessage(
       jid,
@@ -312,17 +333,25 @@ async function processMessage(
     return;
   }
 
-  const workerOperationId =
-    channel.kind === 'life' ? beginChannelOperation(jid, channel.folder) : undefined;
-  if (channel.kind === 'life' && !workerOperationId) {
-    logger.warn({ jid, rowid }, 'Life generation changed before worker ownership began');
+  const workerOperationId = beginChannelOperation(
+    jid,
+    channel.folder,
+    channel.storageToken,
+    channel.ownershipEpoch,
+  );
+  if (!workerOperationId) {
+    logger.warn({ jid, rowid }, 'Channel generation changed before worker ownership began');
     markMessageFailed(rowid);
     return;
   }
 
   logger.info({ jid, senderName, len: content.length }, 'Processing message');
 
-  const writeFence = channel.kind === 'life' ? { expectedFolder: channel.folder } : undefined;
+  const writeFence = {
+    expectedFolder: channel.folder,
+    expectedStorageToken: channel.storageToken,
+    expectedOwnershipEpoch: channel.ownershipEpoch,
+  };
   let workerLeaseValid = true;
   let lastLeaseCheckAt = Date.now();
   const loseWorkerLease = (reason: string): false => {
@@ -330,18 +359,25 @@ async function processMessage(
     workerLeaseValid = false;
     controller.abort();
     abortRpcSession(channel.folder);
-    logger.warn({ jid, rowid, reason }, 'Life worker ownership was fenced');
+    logger.warn({ jid, rowid, reason }, 'Worker ownership was fenced');
     return false;
   };
   const renewWorkerLease = (force = false): boolean => {
-    if (!workerOperationId) return true;
     if (!workerLeaseValid) return false;
     const now = Date.now();
     // Event stream callbacks can fire per token. A monotonic-enough wall-clock
     // check catches a resumed/suspended worker without writing SQLite per token.
     if (!force && now - lastLeaseCheckAt < 30_000) return true;
     try {
-      if (!touchChannelOperation(workerOperationId)) return loseWorkerLease('lease missing');
+      const owned = workerOperationId
+        ? touchChannelOperation(workerOperationId)
+        : isChannelGenerationCurrent(
+            jid,
+            channel.folder,
+            channel.storageToken,
+            channel.ownershipEpoch,
+          );
+      if (!owned) return loseWorkerLease('lease missing or generation ended');
       lastLeaseCheckAt = now;
       return true;
     } catch (err: any) {
@@ -398,34 +434,47 @@ async function processMessage(
     // Attachments and until-done use the one-shot process, which writes the
     // same history files as RPC. Retire an idle warm session first so the next
     // text turn reloads those additions instead of following a stale branch.
-    if (!useAgy && !useRpc) closeRpcSession(channel.folder);
+    if (!useAgy && !useRpc) await closeRpcSession(channel.folder);
 
-    const result = useAgy
-      ? await invokeAgy(channel.folder, prompt, {
+    let result;
+    if (useAgy) {
+      result = await invokeAgy(channel.folder, prompt, {
+        channelJid: channel.jid,
+        model: effective.rawModelRef,
+        thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+        cwd: effective.effectiveCwd,
+        signal,
+        attachments,
+        onEvent,
+      });
+    } else if (useRpc) {
+      try {
+        result = await getRpcSession(channel.folder, {
           channelJid: channel.jid,
-          model: effective.rawModelRef,
-          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
-          cwd: effective.effectiveCwd,
-          signal,
-          attachments,
-          onEvent,
-        })
-      : useRpc
-      ? await getRpcSession(channel.folder, {
-          channelJid: channel.jid,
+          channelStorageToken: channel.storageToken,
+          channelOwnershipEpoch: channel.ownershipEpoch,
           model: effective.rawModelRef || undefined,
           thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
           cwd: effective.effectiveCwd,
-        }).prompt(prompt, onEvent)
-      : await invokeAgent(channel.folder, prompt, {
-          channelJid: channel.jid,
-          model: effective.rawModelRef || undefined,
-          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
-          cwd: effective.effectiveCwd,
-          signal,
-          attachments,
-          onEvent,
-        });
+        }).prompt(prompt, onEvent);
+      } finally {
+        // Life folders are archive generations. A warm idle RPC would keep its
+        // durable lease until the generic timeout and make New Life appear
+        // busy after a completed turn. Standard sessions intentionally remain
+        // warm; Life retires and confirms child exit before response delivery.
+        if (channel.kind === 'life') await closeRpcSession(channel.folder);
+      }
+    } else {
+      result = await invokeAgent(channel.folder, prompt, {
+        channelJid: channel.jid,
+        model: effective.rawModelRef || undefined,
+        thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+        cwd: effective.effectiveCwd,
+        signal,
+        attachments,
+        onEvent,
+      });
+    }
 
     if (!renewWorkerLease(true)) {
       markMessageFailed(rowid);
@@ -473,7 +522,11 @@ async function processMessage(
     // (repairSessionForContinue drops only the aborted turn's partial work) and
     // pi re-runs the original message. Capped so a message that reliably kills
     // pi can't loop forever.
-    if (/(?:exited (?:with )?code (?:143|137)|\(code (?:143|137)\)|SIGTERM|SIGKILL|oom-kill)/i.test(rawError)) {
+    if (
+      /(?:exited (?:with )?code (?:143|137)|\(code (?:143|137)\)|SIGTERM|SIGKILL|oom-kill)/i.test(
+        rawError,
+      )
+    ) {
       const attempts = (sigtermRetries.get(rowid) ?? 0) + 1;
       const isOom = /137|143|oom-kill|SIGKILL/i.test(rawError);
       if (attempts <= MAX_SIGTERM_RETRIES) {
@@ -534,7 +587,7 @@ async function processMessage(
     }
   } finally {
     try {
-      // The message row may already be terminal. Keep the persisted Life lease
+      // The message row may already be terminal. Keep the persisted generation lease
       // until all stream timers and the busy mirror have been cleared so those
       // final writes cannot land on a replacement web:life generation.
       await typingLoop.stop();
@@ -547,7 +600,13 @@ async function processMessage(
 
 function createTypingLoop(
   jid: string,
-  writeFence: { expectedFolder?: string } | undefined,
+  writeFence:
+    | {
+        expectedFolder?: string;
+        expectedStorageToken?: string;
+        expectedOwnershipEpoch?: number;
+      }
+    | undefined,
   renewOwnership: (force?: boolean) => boolean,
 ): { stop: () => Promise<void> } {
   let typingAlive = true;

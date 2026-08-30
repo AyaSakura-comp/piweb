@@ -81,6 +81,60 @@ describe('scheduled task db helpers', () => {
     }
   });
 
+  it('does not enqueue or expose due scheduled work while its session is trashed', async () => {
+    process.env.DB_PATH = ':memory:';
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    db.initDb();
+
+    try {
+      db.registerChannel({
+        jid: 'web:trashed-schedule',
+        name: 'Trashed schedule',
+        folder: 'trashed-schedule',
+        requiresTrigger: false,
+        isMain: false,
+        modelOverride: '',
+        thinkingOverride: '',
+        cwdOverride: '',
+        kind: 'standard',
+      });
+      const due = new Date(Date.now() - 60_000).toISOString();
+      const taskId = db.addScheduledTask({
+        name: 'Frozen task',
+        type: 'recurring',
+        schedule: '* * * * *',
+        channelJid: 'web:trashed-schedule',
+        prompt: 'must stay frozen',
+        nextRunAt: due,
+      });
+      db.softDeleteChannel('web:trashed-schedule');
+
+      expect(db.getDueScheduledTasks()).toEqual([]);
+      expect(
+        db.enqueueScheduledTask(
+          taskId,
+          {
+            channelJid: 'web:trashed-schedule',
+            sender: 'scheduler',
+            senderName: 'Scheduler',
+            content: 'must stay frozen',
+            timestamp: new Date().toISOString(),
+          },
+          new Date().toISOString(),
+          new Date(Date.now() + 60_000).toISOString(),
+        ),
+      ).toBe(false);
+      expect(db.channelsWithPending()).toEqual([]);
+      expect(db.claimNextMessage('web:trashed-schedule')).toBeUndefined();
+    } finally {
+      db.closeDb();
+      vi.resetModules();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  });
+
   it('defers an archived Life task without advancing its schedule, then resumes after recovery', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'piweb-scheduler-life-quarantine-'));
     const previousEnv = {

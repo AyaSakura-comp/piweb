@@ -13,6 +13,8 @@
  * filesystem-safe and URL-safe, so encoding it is a no-op in either direction.
  */
 
+import { createHash } from 'node:crypto';
+
 /** Directory name for a channel's media. Safe on disk and in a URL. */
 export function mediaDirName(jid: string): string {
   return jid.replace(/[^\w.-]/g, '_');
@@ -26,4 +28,30 @@ export function mediaFileName(prefix: string, originalName: string): string {
 /** Browser-facing URL for a stored file. */
 export function mediaUrl(jid: string, fileName: string): string {
   return `/media/${mediaDirName(jid)}/${fileName}`;
+}
+
+/**
+ * Stable namespace for one standard channel generation's request uploads.
+ *
+ * Requests stage below a global `.operations` tree rather than below the
+ * durable owner media/upload roots. A suspended request can therefore resume
+ * or clean up only its random operation directory after its lease is revoked;
+ * it cannot recreate or remove files belonging to a later owner of the same
+ * JID/folder.
+ */
+export function standardUploadOwnerDirName(
+  jid: string,
+  folder: string,
+  storageToken: string,
+): string {
+  if (!storageToken) throw new Error('Standard upload storage token is required');
+  const digest = createHash('sha256')
+    .update(jid)
+    .update('\0')
+    .update(folder)
+    .update('\0')
+    .update(storageToken)
+    .digest('hex')
+    .slice(0, 16);
+  return `${mediaDirName(jid)}-${digest}`;
 }

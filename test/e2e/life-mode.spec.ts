@@ -24,6 +24,24 @@ const DELETED_SESSION = {
   name: 'Deleted session',
   deletedAt: '2026-08-28 00:00:00',
   events: 3,
+  storageToken: 'deleted-generation-1',
+  deletionToken: 'deleted-episode-1',
+};
+
+const SECOND_DELETED_SESSION = {
+  ...DELETED_SESSION,
+  jid: 'web:deleted-second',
+  name: 'Second deleted session',
+  storageToken: 'deleted-generation-2',
+  deletionToken: 'deleted-episode-2',
+};
+
+const THIRD_DELETED_SESSION = {
+  ...DELETED_SESSION,
+  jid: 'web:deleted-third',
+  name: 'Third deleted session',
+  storageToken: 'deleted-generation-3',
+  deletionToken: 'deleted-episode-3',
 };
 
 const LIFE_SESSION = {
@@ -51,6 +69,10 @@ async function installLifeApi(
     delayDelete?: boolean;
     delayCreate?: boolean;
     delayTrashLoad?: boolean;
+    delayTrashRequestAt?: number;
+    delayTrashPurge?: boolean;
+    delayTrashReconcile?: boolean;
+    failTrashReload?: boolean;
     delayCommand?: boolean;
     delayMessage?: boolean;
     messageSessionTitle?: string;
@@ -130,9 +152,16 @@ async function installLifeApi(
       })
     : null;
   let releaseTrashLoad: (() => void) | undefined;
-  const trashLoadGate = options.delayTrashLoad
+  const trashLoadGate =
+    options.delayTrashLoad || options.delayTrashReconcile || options.delayTrashRequestAt
+      ? new Promise<void>((resolve) => {
+          releaseTrashLoad = resolve;
+        })
+      : null;
+  let releaseTrashPurge: (() => void) | undefined;
+  const trashPurgeGate = options.delayTrashPurge
     ? new Promise<void>((resolve) => {
-        releaseTrashLoad = resolve;
+        releaseTrashPurge = resolve;
       })
     : null;
   let releaseCommand: (() => void) | undefined;
@@ -161,6 +190,7 @@ async function installLifeApi(
     : null;
   const messagePaths: string[] = [];
   const messageBodies: unknown[] = [];
+  const trashPurgeBodies: unknown[] = [];
   const lifeReadUrls: string[] = [];
 
   await page.route('**/api/**', async (route: Route) => {
@@ -175,10 +205,36 @@ async function installLifeApi(
     }
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/push/key') return route.fulfill({ json: { key: '' } });
-    if (path === '/api/sessions/deleted') {
+    if (path === '/api/sessions/deleted/purge' && request.method() === 'POST') {
+      const body = request.postDataJSON() as {
+        jids?: string[];
+        storageTokens?: string[];
+        deletionTokens?: string[];
+        deletedAts?: string[];
+      };
+      trashPurgeBodies.push(body);
+      if (trashPurgeGate) await trashPurgeGate;
+      const targets = new Set(body.jids ?? []);
+      const purged = deletedSessions.filter((session) => targets.has(session.jid)).length;
+      deletedSessions = deletedSessions.filter((session) => !targets.has(session.jid));
+      return route.fulfill({ json: { ok: true, purged } });
+    }
+    if (path === '/api/sessions/deleted' && request.method() === 'GET') {
       deletedRequests += 1;
-      if (trashLoadGate && deletedRequests > 1) await trashLoadGate;
-      return route.fulfill({ json: { sessions: deletedSessions } });
+      // Snapshot when the request starts so tests can model an old response
+      // arriving after a newer destructive mutation has committed.
+      const responseSessions = deletedSessions.map((session) => ({ ...session }));
+      if (
+        trashLoadGate &&
+        ((options.delayTrashLoad && deletedRequests > 1) ||
+          (options.delayTrashReconcile && trashPurgeBodies.length > 0) ||
+          options.delayTrashRequestAt === deletedRequests)
+      )
+        await trashLoadGate;
+      if (options.failTrashReload && trashPurgeBodies.length > 0) {
+        return route.fulfill({ status: 503, json: { error: 'Trash reload unavailable' } });
+      }
+      return route.fulfill({ json: { sessions: responseSessions } });
     }
     if (path === '/api/sessions' && request.method() === 'GET') {
       return route.fulfill({
@@ -275,7 +331,9 @@ async function installLifeApi(
       if (options.delayLifeMedia || (isLifeMedia && options.lifeMediaItem)) {
         const name = isLifeMedia ? 'Life image' : 'Standard image';
         return route.fulfill({
-          json: { items: [{ type: 'image', name, url: `/${name.replace(' ', '-').toLowerCase()}.png` }] },
+          json: {
+            items: [{ type: 'image', name, url: `/${name.replace(' ', '-').toLowerCase()}.png` }],
+          },
         });
       }
       return route.fulfill({ json: { items: [] } });
@@ -454,7 +512,10 @@ async function installLifeApi(
       if (messageGate) await messageGate;
       return route.fulfill({
         status: 200,
-        json: { ok: true, ...(options.messageSessionTitle ? { sessionTitle: options.messageSessionTitle } : {}) },
+        json: {
+          ok: true,
+          ...(options.messageSessionTitle ? { sessionTitle: options.messageSessionTitle } : {}),
+        },
       });
     }
 
@@ -475,12 +536,16 @@ async function installLifeApi(
     releaseDelete: () => releaseDelete?.(),
     releaseCreate: () => releaseCreate?.(),
     releaseTrashLoad: () => releaseTrashLoad?.(),
+    releaseTrashPurge: () => releaseTrashPurge?.(),
     releaseCommand: () => releaseCommand?.(),
     releaseMessage: () => releaseMessage?.(),
     releaseUnknownEvents: () => releaseUnknownEvents?.(),
     releaseBoot: () => releaseBoot?.(),
     setStandardSessions: (sessions: (typeof STANDARD_SESSION)[]) => {
       standardSessions = sessions;
+    },
+    setDeletedSessions: (sessions: (typeof DELETED_SESSION)[]) => {
+      deletedSessions = sessions;
     },
     failUnknownEvents: () => {
       failUnknownEvents = true;
@@ -490,6 +555,7 @@ async function installLifeApi(
     },
     messagePaths,
     messageBodies,
+    trashPurgeBodies,
   };
 }
 
@@ -541,9 +607,9 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   expect(edgeHintBox.x).toBeGreaterThanOrEqual(0);
   expect(edgeHintBox.x + edgeHintBox.width).toBeLessThanOrEqual(390);
   expect(await edgeHint.locator('.life-edge-drop').count()).toBe(1);
-  expect(await edgeHint.evaluate((element) => element.parentElement?.classList.contains('main'))).toBe(
-    true,
-  );
+  expect(
+    await edgeHint.evaluate((element) => element.parentElement?.classList.contains('main')),
+  ).toBe(true);
   expect(
     await edgeHint.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -565,20 +631,18 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.locator('#btn-more').click();
   await page.getByRole('menuitem', { name: 'Media' }).click();
   await expect(page.locator('#media-sheet')).toBeVisible();
-  await touchDrag(
-    page,
-    edgeTouchNearBoundary,
-    { x: edgeTouchNearBoundary.x - 218, y: edgeTouchNearBoundary.y + 2 },
-  );
+  await touchDrag(page, edgeTouchNearBoundary, {
+    x: edgeTouchNearBoundary.x - 218,
+    y: edgeTouchNearBoundary.y + 2,
+  });
   expect(api.lifeRequests()).toBe(0);
   await page.locator('#btn-media-close').click();
 
   // A vertical gesture starting on the button remains an ordinary scroll gesture.
-  await touchDrag(
-    page,
-    edgeTouchNearBoundary,
-    { x: edgeTouchNearBoundary.x - 8, y: edgeTouchNearBoundary.y + 210 },
-  );
+  await touchDrag(page, edgeTouchNearBoundary, {
+    x: edgeTouchNearBoundary.x - 8,
+    y: edgeTouchNearBoundary.y + 210,
+  });
   expect(api.lifeRequests()).toBe(0);
 
   // A slow shallow horizontal drag snaps back instead of opening Life.
@@ -618,16 +682,14 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await expect(preview).toBeHidden();
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(0);
 
   // The actual entry starts inside the button and is still a short flick.
   // preventDefault suppresses its compatibility click, so exactly one entry owns it.
-  await touchDrag(
-    page,
-    edgeTouch,
-    { x: edgeTouch.x - 55, y: edgeTouch.y + 1 },
-  );
+  await touchDrag(page, edgeTouch, { x: edgeTouch.x - 55, y: edgeTouch.y + 1 });
   expect(api.lifeRequests()).toBe(0);
   await expect(preview).toBeVisible();
   const releasePageX = (await page.locator('.main').boundingBox())!.x;
@@ -657,8 +719,9 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
     const action = document.querySelector('#btn-life-new-session').getBoundingClientRect();
     const more = document.querySelector('#btn-more').getBoundingClientRect();
     return {
-      directTopbarChild:
-        document.querySelector('#btn-life-new-session').parentElement?.classList.contains('topbar'),
+      directTopbarChild: document
+        .querySelector('#btn-life-new-session')
+        .parentElement?.classList.contains('topbar'),
       clearsCenteredTitle: action.left >= title.right,
       precedesOverflow: action.right <= more.left,
     };
@@ -726,12 +789,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.getByRole('button', { name: 'New Life session' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('04-life-mode-reloaded.png') });
 
-  const backSwipe = await touchDrag(
-    page,
-    { x: 2, y: 430 },
-    { x: 150, y: 432 },
-    { hold: true },
-  );
+  const backSwipe = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
   expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
   await page.screenshot({ path: testInfo.outputPath('05-life-back-swipe-progress.png') });
   await backSwipe.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -846,7 +904,9 @@ test('a rightward left-edge back swipe exits Life mode', async ({ page }) => {
 
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(await page.evaluate(() => localStorage.getItem('piweb.mode'))).toBe('sessions');
   expect(api.lifeRequests()).toBe(1);
 });
@@ -863,7 +923,9 @@ test('a shallow left-edge back drag returns to Life', async ({ page }) => {
   await touch.detach();
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
 
@@ -888,7 +950,9 @@ test('a leftward reversal cancels a Life back swipe', async ({ page }) => {
   await touch.detach();
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
 
@@ -904,11 +968,15 @@ test('a cancelled Life back touch never exits', async ({ page }) => {
   await touch.detach();
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
 
-test('Life foreground menu, sheet, and lightbox own the left-edge back gesture', async ({ page }) => {
+test('Life foreground menu, sheet, and lightbox own the left-edge back gesture', async ({
+  page,
+}) => {
   const api = await installLifeApi(page, { lifeMediaItem: true });
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
   await page.goto('/');
@@ -947,7 +1015,9 @@ test('a vertical left-edge drag keeps scrolling the Life transcript', async ({ p
   await touchDrag(page, { x: 2, y: 300 }, { x: 5, y: 650 }, { stepDelayMs: 12 });
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('#messages').evaluate((element) => element.scrollTop)).toBeLessThan(before);
+  await expect
+    .poll(() => page.locator('#messages').evaluate((element) => element.scrollTop))
+    .toBeLessThan(before);
   expect((await page.locator('.main').boundingBox())!.x).toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
@@ -1004,7 +1074,9 @@ test('a final leftward release movement cancels a Life back swipe', async ({ pag
   });
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
 
@@ -1078,7 +1150,9 @@ test('an unrelated touch release cannot commit a held Life back swipe', async ({
   });
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   expect(api.lifeRequests()).toBe(1);
 });
 
@@ -1093,7 +1167,9 @@ test('failed Life history rollback cancels a held back drag', async ({ page }) =
   api.releaseLifeEvents();
 
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
@@ -1115,7 +1191,9 @@ test('reopening the Life tail cancels a held back drag', async ({ page }) => {
   expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
   await page.locator('#jump-live').evaluate((button: HTMLElement) => button.click());
 
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
@@ -1139,7 +1217,9 @@ test('newer standard navigation cancels a held Life back drag', async ({ page })
   }, OTHER_STANDARD_SESSION.jid);
 
   await expect(page.locator('#session-name')).toHaveText(OTHER_STANDARD_SESSION.name);
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await page.waitForTimeout(50);
@@ -1149,7 +1229,9 @@ test('newer standard navigation cancels a held Life back drag', async ({ page })
   expect(api.lifeRequests()).toBe(1);
 });
 
-test('newer standard navigation cancels a held drawer drag without leaving its scrim', async ({ page }) => {
+test('newer standard navigation cancels a held drawer drag without leaving its scrim', async ({
+  page,
+}) => {
   await installLifeApi(page, {
     standardSessions: [STANDARD_SESSION, OTHER_STANDARD_SESSION],
   });
@@ -1183,14 +1265,18 @@ test('desktop breakpoint cancels a held Life back drag', async ({ page }) => {
   expect((await page.locator('.main').boundingBox())!.x).toBeGreaterThan(80);
   await page.setViewportSize({ width: 800, height: 844 });
 
-  await expect.poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x)).toBe(0);
+  await expect
+    .poll(() => page.locator('.main').evaluate((element) => element.getBoundingClientRect().x))
+    .toBe(0);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await touch.detach();
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   expect(api.lifeRequests()).toBe(1);
 });
 
-test('desktop breakpoint cancels a standard drawer drag without reviving its scrim', async ({ page }) => {
+test('desktop breakpoint cancels a standard drawer drag without reviving its scrim', async ({
+  page,
+}) => {
   await installLifeApi(page);
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1262,7 +1348,9 @@ test('edge-button entry keeps an old-page sliver visible during its settle', asy
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
 });
 
-test('fast Life readiness cannot replace the visible source during entry travel', async ({ page }) => {
+test('fast Life readiness cannot replace the visible source during entry travel', async ({
+  page,
+}) => {
   const api = await installLifeApi(page);
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1319,10 +1407,7 @@ test('committed Life back swipe settles offscreen before switching pages', async
   expect(pageX).toBeGreaterThan(150);
   expect(pageX).toBeLessThan(390);
   await expect(page.locator('#life-swipe-preview')).toBeVisible();
-  await expect(page.locator('#life-swipe-preview')).toHaveAttribute(
-    'data-destination',
-    'sessions',
-  );
+  await expect(page.locator('#life-swipe-preview')).toHaveAttribute('data-destination', 'sessions');
 
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1346,10 +1431,7 @@ test('Sessions button uses the same smooth Life exit transition', async ({ page 
   const pageX = (await page.locator('.main').boundingBox())!.x;
   expect(pageX).toBeGreaterThan(0);
   expect(pageX).toBeLessThan(360);
-  await expect(page.locator('#life-swipe-preview')).toHaveAttribute(
-    'data-destination',
-    'sessions',
-  );
+  await expect(page.locator('#life-swipe-preview')).toHaveAttribute('data-destination', 'sessions');
 
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1440,7 +1522,9 @@ test('desktop breakpoint re-enters Life after standard selection has started', a
   await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
 });
 
-test('reduced motion finishes Life entry and exit without stale transition state', async ({ page }) => {
+test('reduced motion finishes Life entry and exit without stale transition state', async ({
+  page,
+}) => {
   const api = await installLifeApi(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
@@ -1557,7 +1641,9 @@ test('a short flick from the wider right edge settles into Life with inertia', a
   await expect(preview).toBeHidden();
 });
 
-test('a flick reversing right before release does not inherit leftward momentum', async ({ page }) => {
+test('a flick reversing right before release does not inherit leftward momentum', async ({
+  page,
+}) => {
   const api = await installLifeApi(page);
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1581,7 +1667,9 @@ test('a flick reversing right before release does not inherit leftward momentum'
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
 });
 
-test('a rightward reversal followed by tiny left jitter does not revive old momentum', async ({ page }) => {
+test('a rightward reversal followed by tiny left jitter does not revive old momentum', async ({
+  page,
+}) => {
   const api = await installLifeApi(page);
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1652,12 +1740,7 @@ test('desktop breakpoint cancels a held drag before touch release', async ({ pag
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
 
-  const touch = await touchDrag(
-    page,
-    { x: 388, y: 430 },
-    { x: 170, y: 432 },
-    { hold: true },
-  );
+  const touch = await touchDrag(page, { x: 388, y: 430 }, { x: 170, y: 432 }, { hold: true });
   await expect(page.locator('#life-swipe-preview')).toBeVisible();
   await page.setViewportSize({ width: 800, height: 844 });
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -1668,7 +1751,9 @@ test('desktop breakpoint cancels a held drag before touch release', async ({ pag
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
 });
 
-test('desktop breakpoint cancels delayed settlement before hiding its controls', async ({ page }) => {
+test('desktop breakpoint cancels delayed settlement before hiding its controls', async ({
+  page,
+}) => {
   const api = await installLifeApi(page, { delayLife: true });
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
@@ -1799,6 +1884,397 @@ test('newer standard navigation cancels a delayed swipe settlement', async ({ pa
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
 });
 
+test('Recently deleted supports long-press multi-select and Delete all', async ({
+  page,
+}, testInfo) => {
+  await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION, THIRD_DELETED_SESSION],
+  });
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await expect(page.locator('.trash-item')).toHaveCount(3);
+  await expect(page.locator('#btn-trash-select')).toHaveText('Select');
+  await expect(page.locator('#btn-trash-delete-all')).toBeVisible();
+  expect(
+    await page.locator('#trash-sheet button:visible').evaluateAll((buttons) =>
+      buttons.flatMap((button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.width < 44 || rect.height < 44
+          ? [
+              {
+                label: button.textContent?.trim() || button.getAttribute('aria-label'),
+                width: rect.width,
+                height: rect.height,
+              },
+            ]
+          : [];
+      }),
+    ),
+  ).toEqual([]);
+  const dangerContrast = await page.locator('#btn-trash-delete-all').evaluate((button) => {
+    const rgb = (value: string) =>
+      value
+        .match(/[\d.]+/g)
+        ?.slice(0, 3)
+        .map(Number) ?? [];
+    const luminance = (value: string) => {
+      const channels = rgb(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const style = getComputedStyle(button);
+    const foreground = luminance(style.color);
+    const background = luminance(style.backgroundColor);
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  expect(dangerContrast).toBeGreaterThanOrEqual(4.5);
+  await page.screenshot({ path: testInfo.outputPath('00-recently-deleted.png') });
+
+  const firstRow = page.locator('.trash-item-main').first();
+  const firstBox = (await firstRow.boundingBox())!;
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: firstBox.x + firstBox.width / 2, y: firstBox.y + firstBox.height / 2 }],
+  });
+  await page.waitForTimeout(600);
+  await expect(page.locator('#trash-selected-count')).toHaveText('1 selected');
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect(page.locator('.trash-select-input').first()).toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath('01-long-press-selection.png') });
+
+  await page.locator('.trash-item-main').nth(1).click();
+  await expect(page.locator('#trash-selected-count')).toHaveText('2 selected');
+  const deleteSelected = page.locator('#btn-trash-delete-selected');
+  expect(
+    await deleteSelected.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit === element || Boolean(hit && element.contains(hit));
+    }),
+  ).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('02-two-selected.png') });
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toMatch(/Permanently delete 2 selected sessions/);
+    await dialog.accept();
+  });
+  await deleteSelected.click();
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('#trash-count')).toHaveText('1');
+  await expect(page.locator('#btn-trash-select')).toHaveText('Select');
+  await expect(page.locator('#trash-note')).toHaveText(
+    'Deleted sessions are kept for 30 days. Long-press a session to select several.',
+  );
+  await page.screenshot({ path: testInfo.outputPath('03-selected-deleted.png') });
+
+  await page.locator('#btn-trash-select').click();
+  await expect(page.locator('#btn-trash-select')).toHaveText('Cancel');
+  await expect(page.locator('#trash-selection-tools')).toBeVisible();
+  await page.locator('#btn-trash-select').click();
+  await expect(page.locator('#btn-trash-select')).toHaveText('Select');
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toMatch(/Permanently delete all 1 recently deleted session/);
+    await dialog.accept();
+  });
+  await page.locator('#btn-trash-delete-all').click();
+  await expect(page.locator('.trash-item')).toHaveCount(0);
+  await expect(page.locator('#trash-note')).toHaveText(
+    'Nothing here. Deleted sessions appear for 30 days.',
+  );
+  await expect(page.locator('#trash-count')).toBeHidden();
+  await expect(page.locator('#trash-bulk-bar')).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('04-delete-all-empty.png') });
+
+  const panel = await page.locator('#trash-sheet .sheet-panel').boundingBox();
+  expect(panel).not.toBeNull();
+  expect(panel!.x).toBeGreaterThanOrEqual(0);
+  expect(panel!.x + panel!.width).toBeLessThanOrEqual(390);
+  expect(panel!.y + panel!.height).toBeLessThanOrEqual(844);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('Recently deleted supports constrained desktop selection and mouse long-press', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION, THIRD_DELETED_SESSION],
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+
+  const panel = (await page.locator('#trash-sheet .sheet-panel').boundingBox())!;
+  expect(panel.width).toBeLessThanOrEqual(640);
+  expect(Math.abs(panel.x + panel.width / 2 - 640)).toBeLessThanOrEqual(1);
+  expect(panel.y).toBeGreaterThan(0);
+  expect(panel.y + panel.height).toBeLessThan(800);
+
+  const firstRow = page.locator('.trash-item-main').first();
+  const firstBox = (await firstRow.boundingBox())!;
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(600);
+  await page.mouse.up();
+  await expect(page.locator('#trash-selected-count')).toHaveText('1 selected');
+  await expect(page.locator('.trash-select-input').first()).toBeChecked();
+
+  await page.locator('.trash-item-main').nth(1).click();
+  await expect(page.locator('#trash-selected-count')).toHaveText('2 selected');
+  await page.screenshot({ path: testInfo.outputPath('desktop-two-selected.png') });
+});
+
+test('Delete all submits only the authoritative identities visible at confirmation time', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION],
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await expect(page.locator('.trash-item')).toHaveCount(2);
+
+  // A different device trashes another session after this sheet loaded. It was
+  // not part of what this user reviewed or the count they are about to confirm.
+  api.setDeletedSessions([DELETED_SESSION, SECOND_DELETED_SESSION, THIRD_DELETED_SESSION]);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#btn-trash-delete-all').click();
+
+  await expect.poll(() => api.trashPurgeBodies.length).toBe(1);
+  expect(api.trashPurgeBodies[0]).toEqual({
+    jids: [DELETED_SESSION.jid, SECOND_DELETED_SESSION.jid],
+    storageTokens: [DELETED_SESSION.storageToken, SECOND_DELETED_SESSION.storageToken],
+    deletionTokens: [DELETED_SESSION.deletionToken, SECOND_DELETED_SESSION.deletionToken],
+    deletedAts: [DELETED_SESSION.deletedAt, SECOND_DELETED_SESSION.deletedAt],
+  });
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('.trash-item .t-name')).toHaveText(THIRD_DELETED_SESSION.name);
+  await expect(page.locator('#trash-count')).toHaveText('1');
+});
+
+test('closing and reopening during purge reflects completion in the current trash view', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION],
+    delayTrashPurge: true,
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete forever' }).first().click();
+  await expect.poll(() => api.trashPurgeBodies.length).toBe(1);
+  await expect(page.locator('#trash-list')).toHaveAttribute('aria-busy', 'true');
+
+  await page.locator('#btn-trash-close').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await expect(page.locator('#trash-list')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByRole('button', { name: 'Delete forever' }).first()).toBeDisabled();
+
+  api.releaseTrashPurge();
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('.trash-item .t-name')).toHaveText(SECOND_DELETED_SESSION.name);
+  await expect(page.locator('#trash-list')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('button', { name: 'Delete forever' })).toBeEnabled();
+});
+
+test('Recently deleted is a contained modal with coherent list and checkbox semantics', async ({
+  page,
+}) => {
+  await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION],
+  });
+  await page.goto('/');
+  await page.evaluate(() => {
+    document.querySelector('#login')!.inert = true;
+  });
+  await page.locator('#btn-menu').click();
+  const opener = page.getByRole('button', { name: 'Recently deleted' });
+  await opener.focus();
+  await opener.click();
+
+  await expect(page.locator('#trash-sheet')).toHaveJSProperty('open', true);
+  await expect(page.locator('#trash-sheet')).toHaveJSProperty('tagName', 'DIALOG');
+  await expect(page.locator('#btn-trash-close')).toBeFocused();
+  // Native showModal owns background isolation without mutating another
+  // surface's explicit inert property.
+  expect(await page.locator('#app').evaluate((element) => element.inert)).toBe(false);
+  expect(await page.locator('#login').evaluate((element) => element.inert)).toBe(true);
+  await page.evaluate(() => {
+    const dynamic = document.createElement('button');
+    dynamic.id = 'dynamic-background-surface';
+    dynamic.textContent = 'Dynamic background';
+    document.body.append(dynamic);
+    dynamic.focus();
+  });
+  await expect(page.locator('#btn-trash-close')).toBeFocused();
+  expect(
+    await page.locator('#dynamic-background-surface').evaluate((element) => element.inert),
+  ).toBe(false);
+  await expect(page.locator('#trash-list')).toHaveAttribute('role', 'list');
+  await expect(page.locator('.trash-item').first()).toHaveAttribute('role', 'listitem');
+
+  await page.locator('#btn-trash-select').click();
+  await expect(page.locator('#trash-list')).toHaveAttribute('role', 'list');
+  await expect(page.locator('.trash-item').first()).toHaveAttribute('role', 'listitem');
+  await expect(page.locator('.trash-select-input').first()).toHaveAttribute(
+    'aria-label',
+    `Select ${DELETED_SESSION.name}`,
+  );
+
+  await page.locator('#btn-trash-select').click();
+  await page.locator('#btn-trash-select').focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#btn-trash-delete-all')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#trash-sheet')).toBeHidden();
+  expect(await page.locator('#app').evaluate((element) => element.inert)).toBe(false);
+  expect(await page.locator('#login').evaluate((element) => element.inert)).toBe(true);
+  await expect(opener).toBeFocused();
+
+  // A newer native modal can stack above trash. Closing trash must not make the
+  // rest of the document interactive while that independent modal remains.
+  await opener.click();
+  await page.evaluate(() => {
+    const other = document.createElement('dialog');
+    other.id = 'other-modal-owner';
+    const button = document.createElement('button');
+    button.id = 'other-modal-button';
+    button.textContent = 'Other modal';
+    other.append(button);
+    document.body.append(other);
+    other.showModal();
+    document
+      .querySelector('#btn-trash-close')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  await expect(page.locator('#trash-sheet')).toBeHidden();
+  await expect(page.locator('#other-modal-owner')).toHaveJSProperty('open', true);
+  await page.locator('#btn-menu').evaluate((element: HTMLElement) => element.focus());
+  await expect(page.locator('#other-modal-button')).toBeFocused();
+
+  await page.evaluate(() => {
+    const other = document.querySelector<HTMLDialogElement>('#other-modal-owner');
+    other?.close();
+    other?.remove();
+    document.querySelector('#login')!.inert = false;
+    document.querySelector('#dynamic-background-surface')?.remove();
+  });
+});
+
+test('a committed purge updates the sheet even when reconciliation GET fails', async ({ page }) => {
+  await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION],
+    failTrashReload: true,
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete forever' }).first().click();
+
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('.trash-item .t-name')).toHaveText(SECOND_DELETED_SESSION.name);
+  await expect(page.locator('#trash-count')).toHaveText('1');
+  await expect(page.locator('#trash-note')).not.toContainText('Could not delete');
+});
+
+test('a stale trash load cannot overwrite a newer committed purge result', async ({ page }) => {
+  const api = await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION],
+    delayTrashPurge: true,
+    delayTrashRequestAt: 3,
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await expect(page.locator('.trash-item')).toHaveCount(2);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete forever' }).first().click();
+  await expect.poll(() => api.trashPurgeBodies.length).toBe(1);
+  await page.locator('#btn-trash-close').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+
+  api.releaseTrashPurge();
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('.trash-item .t-name')).toHaveText(SECOND_DELETED_SESSION.name);
+
+  // Release the older GET only after the POST result and its newer
+  // reconciliation have both committed to the UI.
+  api.releaseTrashLoad();
+  await page.waitForTimeout(50);
+  await expect(page.locator('.trash-item')).toHaveCount(1);
+  await expect(page.locator('.trash-item .t-name')).toHaveText(SECOND_DELETED_SESSION.name);
+  await expect(page.locator('#trash-count')).toHaveText('1');
+});
+
+test('active-preview fallback does not wait for post-success trash reconciliation', async ({
+  page,
+}) => {
+  await installLifeApi(page, {
+    deletedSessions: [DELETED_SESSION],
+    delayTrashReconcile: true,
+  });
+  await page.goto('/');
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await expect(page.locator('#deleted-banner')).toBeVisible();
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete forever' }).click();
+
+  await expect(page.locator('#trash-sheet')).toBeHidden();
+  await expect(page.locator('#deleted-banner')).toBeHidden();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#trash-count')).toBeHidden();
+});
+
+test('purging the active deleted preview falls back to a live session', async ({ page }) => {
+  await installLifeApi(page, { deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION] });
+  await page.goto('/');
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await page.getByRole('button', { name: 'Preview' }).first().click();
+  await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
+  await expect(page.locator('#deleted-banner')).toBeVisible();
+
+  await page.locator('#btn-menu').click();
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#btn-trash-delete-all').click();
+
+  await expect(page.locator('#trash-sheet')).toBeHidden();
+  await expect(page.locator('#deleted-banner')).toBeHidden();
+  await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#composer-wrap')).toBeVisible();
+  await expect(page.locator('#trash-count')).toBeHidden();
+});
+
 test('a trash preview started after Life entry keeps navigation ownership', async ({ page }) => {
   const api = await installLifeApi(page, {
     delayLife: true,
@@ -1890,7 +2366,8 @@ test('a session delete started after Life entry owns the eventual fallback selec
   await page.locator('#btn-menu').click();
   const deleteRequest = page.waitForRequest(
     (request) =>
-      request.method() === 'DELETE' && request.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
+      request.method() === 'DELETE' &&
+      request.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
   );
   await page.getByRole('button', { name: `Delete ${STANDARD_SESSION.name}` }).click();
   await deleteRequest;
@@ -1932,7 +2409,8 @@ test('a delayed new-session response cannot override newer Life navigation', asy
   await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
 
   const createResponse = page.waitForResponse(
-    (response) => response.url().endsWith('/api/sessions') && response.request().method() === 'POST',
+    (response) =>
+      response.url().endsWith('/api/sessions') && response.request().method() === 'POST',
   );
   api.releaseCreate();
   await createResponse;
@@ -2011,7 +2489,9 @@ test('a delayed trash load is closed and ignored after Life navigation', async (
   await expect(page.locator('#session-name')).toHaveText(LIFE_SESSION.name);
 });
 
-test('a pending unvalidated destination blocks all prior-session interactions', async ({ page }) => {
+test('a pending unvalidated destination blocks all prior-session interactions', async ({
+  page,
+}) => {
   const api = await installLifeApi(page, {
     delayUnknownEvents: true,
     oldStreamEventDuringPending: true,
@@ -2089,7 +2569,9 @@ test('a newer Life navigation invalidates a pending standard selection before co
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
 });
 
-test('validated metadata name wins over a stale poll during pending selection', async ({ page }) => {
+test('validated metadata name wins over a stale poll during pending selection', async ({
+  page,
+}) => {
   const api = await installLifeApi(page, {
     delayUnknownEvents: true,
     unknownMetadataName: 'Confirmed notification target',
@@ -2279,9 +2761,11 @@ test('attachment conversion snapshots the original draft and cannot consume a la
   await page.evaluate(() => {
     const data = new DataTransfer();
     data.items.add(new File(['second attachment'], 'second.txt', { type: 'text/plain' }));
-    document.querySelector('#input')!.dispatchEvent(
-      new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }),
-    );
+    document
+      .querySelector('#input')!
+      .dispatchEvent(
+        new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }),
+      );
   });
   await expect(page.getByRole('button', { name: 'Remove second.txt' })).toBeVisible();
 
@@ -2325,8 +2809,7 @@ test('an attachment converting across New cannot spill into fresh Life', async (
   await expect(page.locator('#messages .msg')).toHaveCount(0);
 
   const staleMessage = page.waitForResponse(
-    (response) =>
-      response.url().includes('/messages') && response.request().method() === 'POST',
+    (response) => response.url().includes('/messages') && response.request().method() === 'POST',
   );
   await page.evaluate(() => (window as any).__releaseFileReaders());
   const response = await staleMessage;
@@ -2474,7 +2957,9 @@ test('a live standard notification opens its JID when the session cache is stale
   await expect(page.locator('#session-name')).toHaveText('web:newly-restored');
   await expect
     .poll(() =>
-      page.evaluate(() => JSON.parse(localStorage.getItem('piweb.seen') || '{}')['web:newly-restored']),
+      page.evaluate(
+        () => JSON.parse(localStorage.getItem('piweb.seen') || '{}')['web:newly-restored'],
+      ),
     )
     .toBe(77);
 });

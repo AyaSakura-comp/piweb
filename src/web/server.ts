@@ -12,8 +12,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { mkdir, rmdir, writeFile } from 'node:fs/promises';
+import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { extractSessionTitle } from '../agent/session-title.js';
@@ -21,16 +21,15 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
-  appendWebEvent,
   archiveLifeSessionAndStartNew,
   beginChannelOperation,
   CHANNEL_GENERATION_CHANGED_ERROR,
+  claimDeletedSessionsForPurge,
+  clearChannelSession,
   commitLifeControlOperation,
   commitLifeMessageOperation,
   deletePushSubscription,
-  deleteWebEvents,
   enqueueControl,
-  enqueueMessage,
   getChannel,
   getFirstUserMessageContent,
   getMeta,
@@ -46,12 +45,14 @@ import {
   searchWebEvents,
   isChannelBusy,
   isChannelDeleted,
+  isChannelPurgePending,
   isChannelQuarantinedForLifeArchive,
   isLifeArchiveMediaDirQuarantined,
   LIFE_ARCHIVE_QUARANTINE_ERROR,
+  SESSION_PURGE_CONFLICT_ERROR,
+  SESSION_PURGE_IN_PROGRESS_ERROR,
   listDeletedWebSessions,
   listWebSessions,
-  purgeChannel,
   renameChannel,
   restoreChannel,
   softDeleteChannel,
@@ -63,9 +64,18 @@ import {
   getLiveOutput,
 } from '../db.js';
 import { COMMANDS } from '../commands/catalog.js';
-import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
+import {
+  mediaDirName,
+  mediaFileName,
+  mediaUrl,
+  standardUploadOwnerDirName,
+} from '../media-path.js';
 import { rm } from 'node:fs/promises';
-import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
+import {
+  purgeSessionBatch,
+  recoverPendingSessionPurges,
+  SessionPurgePendingError,
+} from '../session/purge.js';
 import {
   getSessionModel,
   modelIdFromRef,
@@ -73,10 +83,7 @@ import {
   providerFromRef,
 } from '../session/model-info.js';
 import { getPushPublicKey, startPush } from './push.js';
-import {
-  buildSessionTitleSource,
-  resolveSessionCreationTitle,
-} from './session-title-source.js';
+import { buildSessionTitleSource, resolveSessionCreationTitle } from './session-title-source.js';
 import {
   buildSetCookie,
   COOKIE_NAME,
@@ -153,7 +160,9 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
 }
 
 function cleanStaticRelativePath(relPath: string): string {
-  return normalize(relPath).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
+  return normalize(relPath)
+    .replace(/^(\.\.[/\\])+/, '')
+    .replace(/^[/\\]+/, '');
 }
 
 /** Serve a file from `root`, refusing anything that escapes it via `..`. */
@@ -176,9 +185,7 @@ export function serveStatic(
     cleanRel.startsWith('icons/') ||
     cleanRel.startsWith('favicon');
 
-  const cacheControl = isImmutable
-    ? 'public, max-age=31536000, immutable'
-    : 'no-cache';
+  const cacheControl = isImmutable ? 'public, max-age=31536000, immutable' : 'no-cache';
 
   const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
   const lastModified = stat.mtime.toUTCString();
@@ -359,6 +366,38 @@ function serializeEvent(row: WebEventRow) {
   };
 }
 
+async function permanentlyPurgeDeletedSessions(
+  jids: string[],
+  expectedStorageTokens?: string[],
+  expectedDeletionTokens?: string[],
+  expectedDeletedAts?: string[],
+): Promise<number> {
+  const batch = claimDeletedSessionsForPurge(
+    jids,
+    expectedStorageTokens,
+    expectedDeletionTokens,
+    expectedDeletedAts,
+  );
+  return purgeSessionBatch(batch.batchId);
+}
+
+function sendSessionPurgeError(res: ServerResponse, error: unknown): void {
+  const message = (error as Error).message;
+  if (error instanceof SessionPurgePendingError) {
+    sendJson(res, 503, { error: message, pending: true, purged: 0 });
+    return;
+  }
+  if (message === LIFE_ARCHIVE_QUARANTINE_ERROR) {
+    sendJson(res, 503, { error: message });
+    return;
+  }
+  if (message === SESSION_PURGE_CONFLICT_ERROR || message === SESSION_PURGE_IN_PROGRESS_ERROR) {
+    sendJson(res, 409, { error: message });
+    return;
+  }
+  throw error;
+}
+
 export function startWebServer(): ReturnType<typeof createServer> {
   // One of the two auth paths must exist. This endpoint can run commands on the
   // host, so starting with neither would publish an unauthenticated RCE.
@@ -378,6 +417,11 @@ export function startWebServer(): ReturnType<typeof createServer> {
       'WEB_TRUST_TAILSCALE_IDENTITY is on but WEB_HOST is not loopback — identity headers will be ignored for non-loopback connections',
     );
   }
+
+  // A prior process may have exited after claiming owners or deleting only
+  // some files. Recovery is idempotent; requests remain fenced by the journal
+  // while this asynchronous startup pass runs.
+  void recoverPendingSessionPurges();
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -456,7 +500,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
-  if ((method === 'GET' || method === 'HEAD') && !path.startsWith('/api/') && !path.startsWith('/media/')) {
+  if (
+    (method === 'GET' || method === 'HEAD') &&
+    !path.startsWith('/api/') &&
+    !path.startsWith('/media/')
+  ) {
     if (serveStatic(req, res, PUBLIC_DIR, path)) return;
   }
 
@@ -483,9 +531,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (method === 'GET' && path.startsWith('/media/')) {
-    const relativePath = cleanStaticRelativePath(
-      decodeURIComponent(path.slice('/media/'.length)),
-    );
+    const relativePath = cleanStaticRelativePath(decodeURIComponent(path.slice('/media/'.length)));
     const directory = relativePath.split(/[\\/]/, 1)[0] ?? '';
     if (isLifeArchiveMediaDirQuarantined(directory)) {
       sendJson(res, 503, { error: LIFE_ARCHIVE_QUARANTINE_ERROR });
@@ -685,6 +731,76 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
+  if (path === '/api/sessions/deleted/purge' && method === 'POST') {
+    const parsedBody = await readJson<unknown>(req);
+    if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+      sendJson(res, 400, {
+        error: 'Expected jids, storageTokens, deletionTokens, and deletedAts',
+      });
+      return;
+    }
+    const body = parsedBody as {
+      jids?: unknown;
+      storageTokens?: unknown;
+      deletionTokens?: unknown;
+      deletedAts?: unknown;
+    };
+    const keys = Object.keys(body);
+    const jids = body.jids;
+    const storageTokens = body.storageTokens;
+    const deletionTokens = body.deletionTokens;
+    const deletedAts = body.deletedAts;
+    const valid =
+      keys.length === 4 &&
+      keys.includes('jids') &&
+      keys.includes('storageTokens') &&
+      keys.includes('deletionTokens') &&
+      keys.includes('deletedAts') &&
+      Array.isArray(jids) &&
+      jids.length > 0 &&
+      jids.every(
+        (jid) =>
+          typeof jid === 'string' &&
+          jid.startsWith('web:') &&
+          jid.length <= 256 &&
+          jid === jid.trim(),
+      ) &&
+      new Set(jids).size === jids.length &&
+      Array.isArray(storageTokens) &&
+      storageTokens.length === jids.length &&
+      storageTokens.every(
+        (token) => typeof token === 'string' && token.length > 0 && token.length <= 256,
+      ) &&
+      Array.isArray(deletionTokens) &&
+      deletionTokens.length === jids.length &&
+      deletionTokens.every(
+        (token) => typeof token === 'string' && token.length > 0 && token.length <= 256,
+      ) &&
+      Array.isArray(deletedAts) &&
+      deletedAts.length === jids.length &&
+      deletedAts.every((at) => typeof at === 'string' && at.length > 0 && at.length <= 64);
+
+    if (!valid) {
+      sendJson(res, 400, {
+        error: 'Provide aligned JIDs, generation/deletion tokens, and deletion times',
+      });
+      return;
+    }
+
+    try {
+      const purged = await permanentlyPurgeDeletedSessions(
+        jids as string[],
+        storageTokens as string[],
+        deletionTokens as string[],
+        deletedAts as string[],
+      );
+      sendJson(res, 200, { ok: true, purged });
+    } catch (error) {
+      sendSessionPurgeError(res, error);
+    }
+    return;
+  }
+
   const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)(?:\/(.+))?$/);
   if (sessionMatch) {
     const jid = webJid(decodeURIComponent(sessionMatch[1]));
@@ -704,6 +820,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    const retryingPermanentPurge =
+      !sub && method === 'DELETE' && url.searchParams.get('permanent') === '1';
+    if (isChannelPurgePending(jid) && !retryingPermanentPurge) {
+      sendJson(res, 409, { error: SESSION_PURGE_IN_PROGRESS_ERROR });
+      return;
+    }
+
     // Life exposes transcript/message/search/stream routes, but is not a
     // manageable session. Enforce this here as well as hiding the controls.
     if (
@@ -715,32 +838,83 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
+    // A trashed session is readable (so it can be previewed) but frozen. This
+    // guard must precede clear: clear deletes the transcript before enqueueing.
+    if (
+      ((method === 'POST' && sub === 'clear') || (method === 'PATCH' && !sub)) &&
+      isChannelDeleted(jid)
+    ) {
+      sendJson(res, 409, { error: 'This session is in the trash — restore it first' });
+      return;
+    }
+
     // Default DELETE is a soft delete into the trash. ?permanent=1 destroys
     // the transcript AND pi's session directory, and cannot be undone.
     if (!sub && method === 'DELETE') {
       if (url.searchParams.get('permanent') === '1') {
-        await purgeSessionFiles(channel.folder, jid);
-        purgeChannel(jid);
-        sendJson(res, 200, { ok: true, permanent: true });
+        try {
+          const purged = await permanentlyPurgeDeletedSessions(
+            [jid],
+            [channel.storageToken || ''],
+            [channel.deletionToken || ''],
+            [channel.deletedAt || ''],
+          );
+          sendJson(res, 200, { ok: true, permanent: true, purged });
+        } catch (error) {
+          sendSessionPurgeError(res, error);
+        }
         return;
       }
-      softDeleteChannel(jid);
-      sendJson(res, 200, { ok: true, permanent: false });
+      try {
+        softDeleteChannel(jid, channel.folder, channel.storageToken, channel.ownershipEpoch);
+        sendJson(res, 200, { ok: true, permanent: false });
+      } catch (error) {
+        if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+          sendJson(res, 409, { error: 'Session changed before it could be moved to trash' });
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
     if (sub === 'restore' && method === 'POST') {
-      const restored = restoreChannel(jid);
-      sendJson(res, restored ? 200 : 404, restored ? { ok: true } : { error: 'Not in trash' });
+      try {
+        const restored = restoreChannel(
+          jid,
+          channel.folder,
+          channel.storageToken,
+          channel.ownershipEpoch,
+        );
+        sendJson(res, restored ? 200 : 404, restored ? { ok: true } : { error: 'Not in trash' });
+      } catch (error) {
+        if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+          sendJson(res, 409, { error: 'Session changed before it could be restored' });
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
     // "Clean session" = wipe the visible transcript AND rotate pi's session
     // dir, so the agent's context is genuinely reset rather than just hidden.
     if (sub === 'clear' && method === 'POST') {
-      const removed = deleteWebEvents(jid);
-      enqueueControl(jid, 'pi new');
-      sendJson(res, 200, { ok: true, removed });
+      try {
+        const removed = clearChannelSession(
+          jid,
+          channel.folder,
+          channel.storageToken,
+          channel.ownershipEpoch,
+        );
+        sendJson(res, 200, { ok: true, removed });
+      } catch (error) {
+        if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+          sendJson(res, 409, { error: 'Session changed before it could be cleared' });
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
@@ -834,17 +1008,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
 
-    // A trashed session is readable (so it can be previewed) but frozen.
-    if (
-      (method === 'POST' && (sub === 'messages' || sub === 'commands' || sub === 'clear')) ||
-      (method === 'PATCH' && !sub)
-    ) {
-      if (isChannelDeleted(jid)) {
-        sendJson(res, 409, { error: 'This session is in the trash — restore it first' });
-        return;
-      }
-    }
-
     if (!sub && method === 'PATCH') {
       const body = await readJson<{ name?: string }>(req);
       const name = (body.name ?? '').trim();
@@ -852,33 +1015,63 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         sendJson(res, 400, { error: 'Name cannot be empty' });
         return;
       }
-      renameChannel(jid, name);
-      sendJson(res, 200, { ok: true, name: name.slice(0, 80) });
+      try {
+        renameChannel(jid, name, channel.folder, channel.storageToken, channel.ownershipEpoch);
+        sendJson(res, 200, { ok: true, name: name.slice(0, 80) });
+      } catch (error) {
+        if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+          sendJson(res, 409, { error: 'Session changed before it could be renamed' });
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
     if (sub === 'messages' && method === 'POST') {
-      const body = await readJson<{
-        text?: string;
-        quote?: string;
-        attachments?: Array<{ name: string; dataBase64: string }>;
-        lifeGeneration?: unknown;
-      }>(req);
-
-      const lifeGeneration =
-        channel.kind === 'life'
-          ? requireLifeGeneration(res, body?.lifeGeneration)
-          : undefined;
-      if (channel.kind === 'life' && !lifeGeneration) return;
-      const operationId =
-        channel.kind === 'life' ? beginChannelOperation(jid, lifeGeneration!) : undefined;
-      if (channel.kind === 'life' && !operationId) {
-        sendJson(res, 409, { error: 'Life session changed while this message was submitted' });
+      const operationFolder = channel.folder;
+      const operationId = beginChannelOperation(
+        jid,
+        operationFolder,
+        channel.storageToken,
+        channel.ownershipEpoch,
+      );
+      if (!operationId) {
+        sendJson(res, 409, {
+          error:
+            channel.kind === 'life'
+              ? 'Life session changed while this message was submitted'
+              : 'Session changed while this message was submitted',
+        });
         return;
       }
       const operationHeartbeat = heartbeatChannelOperation(operationId);
 
       try {
+        const body = await readJson<{
+          text?: string;
+          quote?: string;
+          attachments?: Array<{ name: string; dataBase64: string }>;
+          lifeGeneration?: unknown;
+        }>(req);
+        if (!operationHeartbeat.renew()) {
+          sendJson(res, 409, {
+            error:
+              channel.kind === 'life'
+                ? 'Life session changed while this message was submitted'
+                : 'Session changed while this message was submitted',
+          });
+          return;
+        }
+        if (channel.kind === 'life') {
+          const lifeGeneration = requireLifeGeneration(res, body?.lifeGeneration);
+          if (!lifeGeneration) return;
+          if (lifeGeneration !== operationFolder) {
+            sendJson(res, 409, { error: 'Life session changed while this message was submitted' });
+            return;
+          }
+        }
+
         const text = (body.text ?? '').trim();
         const quote = normalizeQuote(body.quote);
         const attachments = body.attachments ?? [];
@@ -887,10 +1080,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           return;
         }
 
-        const savedPaths = await saveUploads(jid, attachments, operationId);
+        let savedPaths: SavedUploads;
+        try {
+          savedPaths = await saveUploads(jid, attachments, {
+            operationId,
+            standardFolder: channel.kind === 'standard' ? operationFolder : undefined,
+            standardStorageToken: channel.kind === 'standard' ? channel.storageToken : undefined,
+          });
+        } catch (error) {
+          if (!operationHeartbeat.renew()) {
+            sendJson(res, 409, {
+              error:
+                channel.kind === 'life'
+                  ? 'Life session changed while uploads were saved'
+                  : 'Session changed while uploads were saved',
+            });
+            return;
+          }
+          throw error;
+        }
         if (!operationHeartbeat.renew()) {
           await cleanupOperationUploads(savedPaths);
-          sendJson(res, 409, { error: 'Life session changed while uploads were saved' });
+          sendJson(res, 409, {
+            error:
+              channel.kind === 'life'
+                ? 'Life session changed while uploads were saved'
+                : 'Session changed while uploads were saved',
+          });
           return;
         }
 
@@ -929,33 +1145,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         };
         let messageRowid: number;
         try {
-          if (operationId && lifeGeneration) {
-            messageRowid = commitLifeMessageOperation({
-              operationId,
-              channelJid: jid,
-              expectedFolder: lifeGeneration,
-              event: {
-                kind: 'message',
-                role: 'user',
-                content: buildQuotedDisplay(text, quote),
-                files: savedPaths.urls,
-              },
-              message: queuedMessage,
-            });
-          } else {
-            appendWebEvent({
-              channelJid: jid,
+          messageRowid = commitLifeMessageOperation({
+            operationId,
+            channelJid: jid,
+            expectedFolder: operationFolder,
+            event: {
               kind: 'message',
               role: 'user',
               content: buildQuotedDisplay(text, quote),
               files: savedPaths.urls,
-            });
-            messageRowid = enqueueMessage({ channelJid: jid, ...queuedMessage });
-          }
+            },
+            message: queuedMessage,
+          });
         } catch (error) {
           await cleanupOperationUploads(savedPaths);
           if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
-            sendJson(res, 409, { error: 'Life session changed before the message committed' });
+            sendJson(res, 409, {
+              error:
+                channel.kind === 'life'
+                  ? 'Life session changed before the message committed'
+                  : 'Session changed before the message committed',
+            });
             return;
           }
           throw error;
@@ -981,25 +1191,48 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
 
     if (sub === 'commands' && method === 'POST') {
-      const body = await readJson<{
-        command?: string;
-        args?: Record<string, string>;
-        lifeGeneration?: unknown;
-      }>(req);
-      const lifeGeneration =
-        channel.kind === 'life'
-          ? requireLifeGeneration(res, body?.lifeGeneration)
-          : undefined;
-      if (channel.kind === 'life' && !lifeGeneration) return;
-      const operationId =
-        channel.kind === 'life' ? beginChannelOperation(jid, lifeGeneration!) : undefined;
-      if (channel.kind === 'life' && !operationId) {
-        sendJson(res, 409, { error: 'Life session changed while this command was submitted' });
+      const operationFolder = channel.folder;
+      const operationId = beginChannelOperation(
+        jid,
+        operationFolder,
+        channel.storageToken,
+        channel.ownershipEpoch,
+      );
+      if (!operationId) {
+        sendJson(res, 409, {
+          error:
+            channel.kind === 'life'
+              ? 'Life session changed while this command was submitted'
+              : 'Session changed while this command was submitted',
+        });
         return;
       }
       const operationHeartbeat = heartbeatChannelOperation(operationId);
 
       try {
+        const body = await readJson<{
+          command?: string;
+          args?: Record<string, string>;
+          lifeGeneration?: unknown;
+        }>(req);
+        if (!operationHeartbeat.renew()) {
+          sendJson(res, 409, {
+            error:
+              channel.kind === 'life'
+                ? 'Life session changed while this command was submitted'
+                : 'Session changed while this command was submitted',
+          });
+          return;
+        }
+        if (channel.kind === 'life') {
+          const lifeGeneration = requireLifeGeneration(res, body?.lifeGeneration);
+          if (!lifeGeneration) return;
+          if (lifeGeneration !== operationFolder) {
+            sendJson(res, 409, { error: 'Life session changed while this command was submitted' });
+            return;
+          }
+        }
+
         const command = (body.command ?? '').trim();
         if (
           channel.kind === 'life' &&
@@ -1013,28 +1246,28 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           return;
         }
 
-        // Echo and enqueue commit together for Life so a stale request cannot
-        // split one invocation across two folder generations.
+        // Echo and enqueue commit together under the request lease so a soft
+        // delete, purge claim, or Life generation change cannot split them.
         let rowid: number;
-        if (operationId && lifeGeneration) {
-          try {
-            rowid = commitLifeControlOperation({
-              operationId,
-              channelJid: jid,
-              expectedFolder: lifeGeneration,
-              command,
-              args: body.args ?? {},
+        try {
+          rowid = commitLifeControlOperation({
+            operationId,
+            channelJid: jid,
+            expectedFolder: operationFolder,
+            command,
+            args: body.args ?? {},
+          });
+        } catch (error) {
+          if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
+            sendJson(res, 409, {
+              error:
+                channel.kind === 'life'
+                  ? 'Life session changed before the command committed'
+                  : 'Session changed before the command committed',
             });
-          } catch (error) {
-            if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
-              sendJson(res, 409, { error: 'Life session changed before the command committed' });
-              return;
-            }
-            throw error;
+            return;
           }
-        } else {
-          appendWebEvent({ channelJid: jid, kind: 'message', role: 'user', content: `/${command}` });
-          rowid = enqueueControl(jid, command, body.args ?? {});
+          throw error;
         }
         sendJson(res, 200, { ok: true, rowid });
         return;
@@ -1049,23 +1282,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 }
 
 /**
- * Remove everything a purged session owns on disk: pi's session directory
- * (the real conversation) plus its served media and staged uploads.
- */
-async function purgeSessionFiles(folder: string, jid: string): Promise<void> {
-  const targets = [
-    ...listSessionFamilyDirs(resolveChannelSessionDir(folder)),
-    join(config.webMediaDir, mediaDirName(jid)),
-    join(config.webUploadDir, mediaDirName(jid)),
-  ];
-  for (const target of targets) {
-    await rm(target, { recursive: true, force: true }).catch((err) =>
-      logger.warn({ err: err.message, target }, 'purge: failed to remove'),
-    );
-  }
-}
-
-/**
  * Stage browser uploads on disk and return both the pi-facing paths and the
  * browser-facing URLs (so the user's own photo renders in their bubble).
  */
@@ -1073,28 +1289,51 @@ interface SavedUploads {
   files: string[];
   urls: string[];
   operationDirs: string[];
+  cleanupPaths: string[];
+  pruneDirs: string[];
 }
 
 async function cleanupOperationUploads(saved: SavedUploads): Promise<void> {
+  const targets = saved.operationDirs.length > 0 ? saved.operationDirs : saved.cleanupPaths;
   await Promise.all(
-    saved.operationDirs.map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})),
+    targets.map((target) => rm(target, { recursive: true, force: true }).catch(() => {})),
   );
+  // Remove now-empty generation namespaces left by a revoked standard request.
+  // rmdir is deliberately non-recursive: another committed/concurrent operation
+  // keeps the owner namespace intact instead of being caught by stale cleanup.
+  await Promise.all(saved.pruneDirs.map((target) => rmdir(target).catch(() => {})));
 }
 
 async function saveUploads(
   jid: string,
   attachments: Array<{ name: string; dataBase64: string }>,
-  operationId?: string,
+  options: {
+    operationId: string;
+    standardFolder?: string;
+    standardStorageToken?: string;
+  },
 ): Promise<SavedUploads> {
-  if (attachments.length === 0) return { files: [], urls: [], operationDirs: [] };
+  if (attachments.length === 0) {
+    return { files: [], urls: [], operationDirs: [], cleanupPaths: [], pruneDirs: [] };
+  }
 
-  // Life uploads stay in an operation-unique subdirectory. If a suspended
-  // request loses its lease while writeFile is pending, its path can never be
-  // mistaken for files from a newer request; archive moves the old root as one.
-  const relativeOperationDir = operationId ? join('.operations', operationId) : '';
-  const uploadDir = join(config.webUploadDir, mediaDirName(jid), relativeOperationDir);
-  const mediaDir = join(config.webMediaDir, mediaDirName(jid), relativeOperationDir);
-  const operationDirs = operationId ? [uploadDir, mediaDir] : [];
+  // A standard request stages outside the owner's durable media/upload roots,
+  // below a generation-specific and operation-unique namespace. If its lease
+  // expires while an fs call is suspended, late staging/cleanup can affect only
+  // that random operation path, never a later owner reusing the JID/folder.
+  // Life retains its existing per-owner layout because archive rotation moves
+  // that complete root and rewrites its stable media URLs atomically.
+  const standardOwner = options.standardFolder
+    ? standardUploadOwnerDirName(jid, options.standardFolder, options.standardStorageToken ?? '')
+    : undefined;
+  const relativeOperationDir = standardOwner
+    ? join('.operations', standardOwner, options.operationId)
+    : join(mediaDirName(jid), '.operations', options.operationId);
+  const uploadDir = join(config.webUploadDir, relativeOperationDir);
+  const mediaDir = join(config.webMediaDir, relativeOperationDir);
+  const operationDirs = [uploadDir, mediaDir];
+  const pruneDirs = standardOwner ? [dirname(uploadDir), dirname(mediaDir)] : [];
+  const cleanupPaths: string[] = [];
 
   try {
     await mkdir(uploadDir, { recursive: true });
@@ -1112,19 +1351,31 @@ async function saveUploads(
       }
 
       const piPath = join(uploadDir, safeName);
+      cleanupPaths.push(piPath);
       await writeFile(piPath, buffer);
       files.push(piPath);
 
       // A second copy under the served media root — webUploadDir is deliberately
       // not exposed over HTTP.
-      await writeFile(join(mediaDir, safeName), buffer);
-      const urlName = operationId ? `.operations/${operationId}/${safeName}` : safeName;
-      urls.push(mediaUrl(jid, urlName));
+      const servedPath = join(mediaDir, safeName);
+      cleanupPaths.push(servedPath);
+      await writeFile(servedPath, buffer);
+      if (standardOwner) {
+        urls.push(`/media/.operations/${standardOwner}/${options.operationId}/${safeName}`);
+      } else {
+        urls.push(mediaUrl(jid, `.operations/${options.operationId}/${safeName}`));
+      }
     }
 
-    return { files, urls, operationDirs };
+    return { files, urls, operationDirs, cleanupPaths, pruneDirs };
   } catch (error) {
-    await cleanupOperationUploads({ files: [], urls: [], operationDirs });
+    await cleanupOperationUploads({
+      files: [],
+      urls: [],
+      operationDirs,
+      cleanupPaths,
+      pruneDirs,
+    });
     throw error;
   }
 }
@@ -1198,7 +1449,10 @@ function streamEvents(
       const liveSeq = live?.seq ?? 0;
       if (liveSeq !== lastLiveSeq) {
         lastLiveSeq = liveSeq;
-        send('partial', live ? { content: live.content, thinking: live.thinking, seq: live.seq } : null);
+        send(
+          'partial',
+          live ? { content: live.content, thinking: live.thinking, seq: live.seq } : null,
+        );
       }
     } catch (err: any) {
       logger.warn({ err: err.message, jid }, 'SSE poll failed');

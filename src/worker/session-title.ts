@@ -24,17 +24,17 @@ export async function processNextSessionTitle(
 
   try {
     const title = await generateSessionTitle(job.prompt, { signal });
-    const applied = completeSessionTitle(job.channel_jid, title);
+    const applied = completeSessionTitle(job.channel_jid, title, job.channel_storage_token);
     logger.info({ jid: job.channel_jid, title, applied }, 'Extracted one-shot session title');
   } catch (error: any) {
     const message = error?.message || String(error);
     if (signal.aborted) {
       // Graceful shutdown is not an extraction failure. Keep the prompt and retry
       // budget intact so repeated deploys cannot permanently consume the job.
-      requeueInterruptedSessionTitle(job.channel_jid, message);
+      requeueInterruptedSessionTitle(job.channel_jid, message, job.channel_storage_token);
       logger.info({ jid: job.channel_jid }, 'Deferred session title during worker shutdown');
     } else {
-      const status = failSessionTitle(job.channel_jid, message);
+      const status = failSessionTitle(job.channel_jid, message, 3, job.channel_storage_token);
       logger.warn(
         { jid: job.channel_jid, status, error: error?.message },
         'One-shot session title extraction failed',

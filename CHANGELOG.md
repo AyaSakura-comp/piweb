@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Recently deleted now supports Select-button or touch/mouse long-press multi-selection, one-confirmation permanent deletion, Select all, and Delete all in responsive phone and desktop layouts
 - Life mode's New action now saves the current conversation into the ordinary Sessions list, including its transcript, media, and Pi context, before opening a fresh empty Life session
 - Syntax highlighting for fenced code blocks, including automatic language detection when the language tag is omitted or unknown
 - Persisted dark/light appearance switching from the Sessions drawer, with a Japanese-minimal daytime palette
@@ -18,6 +19,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Make permanent session purge recovery concurrency-safe with displayed channel-generation and deletion-episode purge tokens (including stale automatic-retention snapshots), generation-atomic command/title mutations with post-RPC cross-worker `/pi new` processing and durable-operation exclusion, reserved tombstone namespaces plus segment-aware cross-channel path-alias rejection with post-claim registration fencing, persisted directory inode identities, authenticated non-removable fsynced terminal seals and monotonic rmdir-only stale-upload guard publication, settled child/path/target cleanup, symlink/hard-link safety, missing-root creation, archive-discovery error propagation, confirmed-exit RPC ownership, pre-body request leases, post-retirement control fencing, atomic active-owner control claims, terminal cleanup of controls interrupted by trashing, frozen scheduled/message work plus folder-and-storage-token generation fencing for request leases, session-management mutations, and late worker cleanup on exactly reused owners, frozen transcript-safe clear handling plus stale live-output removal plus durable-worker plus monotonic-ownership-epoch restore-ABA exclusion for trashed sessions, delete/folder fences, completion receipts, and generation-specific guarded standard upload staging
+- Prevent stale trash-list responses from resurrecting purged rows, and use native modal isolation so stacked dialogs preserve each other's ownership
 - Fence suspended Life workers and controls after generation rotation, and prevent quarantined Life tasks from starving unrelated scheduled work
 - Restore all message handling under pi 0.84, which replaced the synchronous model registry with an async `ModelRuntime` — the stale construction left every inbound message failing with `Internal error: this.runtime.refresh is not a function`
 - Keep the Sessions drawer and its bottom actions above the composer and “Jump to present” control on mobile

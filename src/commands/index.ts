@@ -27,6 +27,8 @@ import {
   clearChannelModelOverride,
   clearChannelThinkingOverride,
   addScheduledTask,
+  assertChannelHasNoActiveOperations,
+  assertChannelHasNoProcessingMessages,
   clearPendingMessages,
   enqueueMessage,
   getChannel,
@@ -34,6 +36,7 @@ import {
   setChannelCwdOverride,
   setChannelModelOverride,
   setChannelThinkingOverride,
+  withChannelGenerationMutation,
 } from '../db.js';
 import { logger } from '../logger.js';
 import {
@@ -62,6 +65,16 @@ export interface CommandResult {
 }
 
 export { COMMANDS, type CommandSpec } from './catalog.js';
+
+function mutateOwnedChannel<T>(channel: RegisteredChannel, mutate: () => T): T {
+  return withChannelGenerationMutation(
+    channel.jid,
+    channel.folder,
+    channel.storageToken,
+    channel.ownershipEpoch,
+    mutate,
+  );
+}
 
 /**
  * Execute a command for a channel.
@@ -92,7 +105,7 @@ export async function runCommand(
         result = await cmdThinkingSet(channel, args.level ?? '', options.assertOwnership);
         break;
       case 'pi new':
-        result = cmdNew(channel, args);
+        result = await cmdNew(channel, args, options.assertOwnership);
         break;
       case 'pi stop':
       case 'until stop':
@@ -136,7 +149,11 @@ export async function runCommand(
 
 // ── session lifecycle ──
 
-function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): CommandResult {
+async function cmdNew(
+  channel: RegisteredChannel,
+  args: Record<string, string> = {},
+  assertOwnership?: () => void,
+): Promise<CommandResult> {
   // Rotating the session directory under a live run would strand the pi
   // subprocess writing into an archived path, so refuse rather than corrupt it.
   if (isChannelProcessing(channel.jid)) {
@@ -151,14 +168,37 @@ function cmdNew(channel: RegisteredChannel, args: Record<string, string> = {}): 
   // sent in the moments before the control loop picks it up would be silently
   // deleted — the user sees their message vanish with no reply and no error.
   // An explicit /pi new still clears, which is the point of it.
-  const cleared = args.keepQueue === 'true' ? 0 : clearPendingMessages(channel.jid);
-
   // Retire the warm RPC process BEFORE moving the directory out from under it.
   // It holds `--session-dir` plus an already-resolved session file; leaving it
   // alive across the rename makes the next prompt fail with ENOENT on a .jsonl
   // that now lives in the archive. The next message simply spawns a fresh one.
-  const closedRpc = closeRpcSession(channel.folder);
-  const archivedSession = rotateChannelSessionDir(channel.folder);
+  const closedRpc = await closeRpcSession(channel.folder);
+  assertOwnership?.();
+  if (isChannelProcessing(channel.jid)) {
+    return {
+      ok: false,
+      text: 'This session started processing a message while the reset was waiting. Try again after it finishes.',
+    };
+  }
+  const { cleared, archivedSession } = mutateOwnedChannel(channel, () => {
+    // This DB check closes the same race against another worker process. The
+    // surrounding IMMEDIATE transaction prevents a new claim until rotation
+    // and pending-queue cleanup finish synchronously.
+    assertChannelHasNoProcessingMessages(channel.jid);
+    assertChannelHasNoActiveOperations(channel.jid);
+    return {
+      cleared:
+        args.keepQueue === 'true'
+          ? 0
+          : clearPendingMessages(
+              channel.jid,
+              channel.folder,
+              channel.storageToken,
+              channel.ownershipEpoch,
+            ),
+      archivedSession: rotateChannelSessionDir(channel.folder),
+    };
+  });
 
   logger.info(
     { jid: channel.jid, cleared, archived: Boolean(archivedSession), closedRpc },
@@ -206,6 +246,9 @@ function cmdUntilGoal(channel: RegisteredChannel, goalRaw: string): CommandResul
     senderName: 'web',
     content: `${UNTIL_DONE_MARKER}${goal}`,
     timestamp: new Date().toISOString(),
+    expectedFolder: channel.folder,
+    expectedStorageToken: channel.storageToken,
+    expectedOwnershipEpoch: channel.ownershipEpoch,
   });
 
   return {
@@ -223,6 +266,9 @@ function cmdUntilStatus(channel: RegisteredChannel): CommandResult {
       'Report the current pi-until-done goal status: the goal, which tasks are done vs. remaining, ' +
       'and the latest verifyCommand result. If there is no active goal, say so briefly.',
     timestamp: new Date().toISOString(),
+    expectedFolder: channel.folder,
+    expectedStorageToken: channel.storageToken,
+    expectedOwnershipEpoch: channel.ownershipEpoch,
   });
 
   return { ok: true, text: '📊 Asked pi to report the current until-done status.' };
@@ -246,15 +292,17 @@ function cmdTaskCron(channel: RegisteredChannel, raw: string): CommandResult {
     return { ok: false, text: `Invalid cron schedule: ${schedule}` };
   }
 
-  const id = addScheduledTask({
-    name,
-    type: 'recurring',
-    schedule,
-    channelJid: channel.jid,
-    prompt,
-    createdBy: 'web',
-    nextRunAt,
-  });
+  const id = mutateOwnedChannel(channel, () =>
+    addScheduledTask({
+      name,
+      type: 'recurring',
+      schedule,
+      channelJid: channel.jid,
+      prompt,
+      createdBy: 'web',
+      nextRunAt,
+    }),
+  );
 
   return {
     ok: true,
@@ -285,16 +333,18 @@ function cmdModelSet(channel: RegisteredChannel, selectedRef: string): CommandRe
     return { ok: false, text: `Model is no longer available: ${selectedRef}` };
   }
 
-  setChannelModelOverride(channel.jid, selectedModel.ref);
+  const thinkingResolution = mutateOwnedChannel(channel, () => {
+    setChannelModelOverride(channel.jid, selectedModel.ref);
+    const updated = getChannel(channel.jid)!;
+    const desiredThinking = getDesiredThinkingLevel(updated);
+    const resolvedThinking = resolveThinkingForModel(selectedModel, desiredThinking);
 
-  const updated = getChannel(channel.jid)!;
-  const desiredThinking = getDesiredThinkingLevel(updated);
-  const thinkingResolution = resolveThinkingForModel(selectedModel, desiredThinking);
-
-  // Only persist the clamped value if the channel already had an explicit override.
-  if (updated.thinkingOverride) {
-    setChannelThinkingOverride(updated.jid, thinkingResolution.effective);
-  }
+    // Only persist the clamped value if the channel already had an explicit override.
+    if (updated.thinkingOverride) {
+      setChannelThinkingOverride(updated.jid, resolvedThinking.effective);
+    }
+    return resolvedThinking;
+  });
 
   const notes = [`Model set to ${selectedModel.ref}.`];
   if (thinkingResolution.adjusted) {
@@ -314,16 +364,20 @@ async function cmdModelReset(
   channel: RegisteredChannel,
   assertOwnership?: () => void,
 ): Promise<CommandResult> {
-  clearChannelModelOverride(channel.jid);
-
-  const updated = getChannel(channel.jid)!;
-  const effective = await computeEffectiveChannelSettings(updated, { forceRefresh: true });
+  const effective = await computeEffectiveChannelSettings(
+    { ...channel, modelOverride: '' },
+    { forceRefresh: true },
+  );
   assertOwnership?.();
   const notes = ['Model reset to the gateway default.'];
 
-  if (updated.thinkingOverride && effective.thinkingAdjusted) {
-    setChannelThinkingOverride(updated.jid, effective.effectiveThinking);
-  }
+  mutateOwnedChannel(channel, () => {
+    clearChannelModelOverride(channel.jid);
+    const updated = getChannel(channel.jid)!;
+    if (updated.thinkingOverride && effective.thinkingAdjusted) {
+      setChannelThinkingOverride(updated.jid, effective.effectiveThinking);
+    }
+  });
 
   if (effective.thinkingAdjusted) {
     const currentThinking = effective.hasManagedThinking
@@ -350,7 +404,7 @@ async function cmdThinkingSet(
   const resolution = resolveThinkingForModel(effective.modelInfo, rawLevel);
 
   assertOwnership?.();
-  setChannelThinkingOverride(channel.jid, resolution.effective);
+  mutateOwnedChannel(channel, () => setChannelThinkingOverride(channel.jid, resolution.effective));
 
   const notes = [`Thinking level set to ${resolution.effective}.`];
   if (resolution.adjusted) {
@@ -386,7 +440,7 @@ function cmdCwdSet(channel: RegisteredChannel, selectedPath: string): CommandRes
     // treated as "does not exist" below
   }
 
-  setChannelCwdOverride(channel.jid, resolvedPath);
+  mutateOwnedChannel(channel, () => setChannelCwdOverride(channel.jid, resolvedPath));
 
   const notes = [`Working directory set to ${resolvedPath}.`];
   if (!pathExists) {
@@ -397,12 +451,12 @@ function cmdCwdSet(channel: RegisteredChannel, selectedPath: string): CommandRes
 }
 
 function cmdCwdReset(channel: RegisteredChannel): CommandResult {
-  clearChannelCwdOverride(channel.jid);
+  mutateOwnedChannel(channel, () => clearChannelCwdOverride(channel.jid));
   return { ok: true, text: 'Working directory reset to the gateway default.' };
 }
 
 export function cmdThinkingReset(channel: RegisteredChannel): CommandResult {
-  clearChannelThinkingOverride(channel.jid);
+  mutateOwnedChannel(channel, () => clearChannelThinkingOverride(channel.jid));
   return { ok: true, text: 'Thinking level reset to the gateway default.' };
 }
 

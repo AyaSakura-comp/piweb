@@ -14,7 +14,13 @@ vi.mock('../src/agent/session-title.js', async (importOriginal) => ({
 
 const originalEnv = { ...process.env };
 const tempDirs: string[] = [];
-const CONFIG_ENV_KEYS = ['DB_PATH', 'PIDG_CONFIG', 'SESSIONS_DIR'];
+const CONFIG_ENV_KEYS = [
+  'DB_PATH',
+  'PIDG_CONFIG',
+  'SESSIONS_DIR',
+  'WEB_MEDIA_DIR',
+  'WEB_UPLOAD_DIR',
+];
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -70,6 +76,79 @@ describe('session title worker', () => {
       expect(db.getChannel('web:title1')?.name).toBe('台南兩日遊');
       expect(await worker.processNextSessionTitle()).toBe(false);
     } finally {
+      db.closeDb();
+    }
+  });
+
+  it('cannot apply a stale title completion to an exact reused owner', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'piweb-title-worker-reuse-'));
+    tempDirs.push(dir);
+    process.env.DB_PATH = resolve(dir, 'gateway.db');
+    process.env.SESSIONS_DIR = resolve(dir, 'sessions');
+    process.env.WEB_MEDIA_DIR = resolve(dir, 'media');
+    process.env.WEB_UPLOAD_DIR = resolve(dir, 'uploads');
+
+    let resolveTitle!: (title: string) => void;
+    generateSessionTitleMock.mockImplementation(
+      () =>
+        new Promise<string>((resolveResult) => {
+          resolveTitle = resolveResult;
+        }),
+    );
+
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    const worker = await import('../src/worker/session-title.js');
+    const purge = await import('../src/session/purge.js');
+    db.initDb();
+
+    const register = (name: string) => {
+      db.registerChannel({
+        jid: 'web:title-reuse',
+        name,
+        folder: 'web_title_reuse',
+        requiresTrigger: false,
+        isMain: false,
+        modelOverride: '',
+        thinkingOverride: '',
+        cwdOverride: '',
+      });
+      db.prepareSessionTitle('web:title-reuse');
+    };
+    const queueTitle = (prompt: string) => {
+      const rowid = db.enqueueMessage({
+        channelJid: 'web:title-reuse',
+        sender: 'web',
+        senderName: 'web',
+        content: prompt,
+        timestamp: new Date().toISOString(),
+      });
+      db.queuePreparedSessionTitle('web:title-reuse', prompt, rowid);
+      db.markMessageDone(rowid);
+    };
+
+    try {
+      register('Original owner');
+      queueTitle('old title prompt');
+      const staleRun = worker.processNextSessionTitle();
+      await vi.waitFor(() => expect(generateSessionTitleMock).toHaveBeenCalledTimes(1));
+
+      db.softDeleteChannel('web:title-reuse');
+      const batch = db.claimDeletedSessionsForPurge(['web:title-reuse']);
+      expect(await purge.purgeSessionBatch(batch.batchId)).toBe(1);
+      register('Replacement owner');
+      queueTitle('replacement title prompt');
+      expect(db.claimPendingSessionTitle()).toMatchObject({ status: 'processing' });
+
+      resolveTitle('Stale old title');
+      await staleRun;
+      expect(db.getChannel('web:title-reuse')?.name).toBe('Replacement owner');
+      expect(db.getSessionTitleJob('web:title-reuse')).toMatchObject({
+        prompt: 'replacement title prompt',
+        status: 'processing',
+      });
+    } finally {
+      resolveTitle?.('cleanup');
       db.closeDb();
     }
   });

@@ -13,7 +13,7 @@
  * (config.maxEventChars) to keep a chatty tool loop from flooding the UI.
  */
 
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
@@ -80,16 +80,33 @@ async function publishFile(
     // still needs to rename the old Life media directory into that path.
     if (
       isChannelQuarantinedForLifeArchive(jid) ||
-      (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder))
-    ) return undefined;
+      (fence?.expectedFolder &&
+        !isChannelGenerationCurrent(
+          jid,
+          fence.expectedFolder,
+          fence.expectedStorageToken,
+          fence.expectedOwnershipEpoch,
+        ))
+    )
+      return undefined;
     const channelDir = join(config.webMediaDir, mediaDirName(jid));
     await mkdir(channelDir, { recursive: true });
     // Keep the extension (the browser sniffs images by it) but prefix a UUID so
     // two runs writing "chart.png" don't clobber each other.
     const safeName =
       mediaFileName(randomUUID().slice(0, 8), basename(filePath)) || `file${extname(filePath)}`;
-    await copyFile(filePath, join(channelDir, safeName));
-    if (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder)) {
+    const publishedPath = join(channelDir, safeName);
+    await copyFile(filePath, publishedPath);
+    if (
+      fence?.expectedFolder &&
+      !isChannelGenerationCurrent(
+        jid,
+        fence.expectedFolder,
+        fence.expectedStorageToken,
+        fence.expectedOwnershipEpoch,
+      )
+    ) {
+      await rm(publishedPath, { force: true });
       return undefined;
     }
     return mediaUrl(jid, safeName);
@@ -126,7 +143,7 @@ function snapshot(buf: LiveBuffer): string {
 const liveBuffers = new Map<string, LiveBuffer>();
 
 function liveBufferKey(jid: string, fence?: ChannelWriteFence): string {
-  return `${jid}\u0000${fence?.expectedFolder ?? ''}`;
+  return `${jid}\u0000${fence?.expectedFolder ?? ''}\u0000${fence?.expectedStorageToken ?? ''}\u0000${fence?.expectedOwnershipEpoch ?? ''}`;
 }
 
 function writeEvent(
@@ -209,11 +226,7 @@ function appendLive(
 }
 
 export const webTransport: Transport = {
-  async sendResponse(
-    jid: string,
-    text: string,
-    fence?: ChannelWriteFence,
-  ): Promise<boolean> {
+  async sendResponse(jid: string, text: string, fence?: ChannelWriteFence): Promise<boolean> {
     // The finished message replaces the streaming preview; clear it first so a
     // poll landing between the two can never show the reply twice.
     flushLive(jid, true, fence);
@@ -250,11 +263,7 @@ export const webTransport: Transport = {
     );
   },
 
-  async sendNotice(
-    jid: string,
-    text: string,
-    fence?: ChannelWriteFence,
-  ): Promise<void> {
+  async sendNotice(jid: string, text: string, fence?: ChannelWriteFence): Promise<void> {
     writeEvent({ channelJid: jid, kind: 'system', role: 'interrupt', content: text }, fence);
   },
 
@@ -278,13 +287,19 @@ export const webTransport: Transport = {
     }
   },
 
-  createEventStreamer(
-    jid: string,
-    fence?: ChannelWriteFence,
-  ): (event: any) => Promise<void> {
+  createEventStreamer(jid: string, fence?: ChannelWriteFence): (event: any) => Promise<void> {
     return async (event: any) => {
       if (!event || typeof event !== 'object') return;
-      if (fence?.expectedFolder && !isChannelGenerationCurrent(jid, fence.expectedFolder)) return;
+      if (
+        fence?.expectedFolder &&
+        !isChannelGenerationCurrent(
+          jid,
+          fence.expectedFolder,
+          fence.expectedStorageToken,
+          fence.expectedOwnershipEpoch,
+        )
+      )
+        return;
 
       // Assistant text, token by token. Buffered and throttled by appendLive;
       // the finished message still arrives through sendResponse, which clears
@@ -427,7 +442,8 @@ export const webTransport: Transport = {
         const text = parts
           .map((c: any) => {
             if (typeof c?.content === 'string') return c.content;
-            if (Array.isArray(c?.content)) return c.content.map((p: any) => p?.text ?? '').join('\n');
+            if (Array.isArray(c?.content))
+              return c.content.map((p: any) => p?.text ?? '').join('\n');
             return c?.text ?? '';
           })
           .join('\n')

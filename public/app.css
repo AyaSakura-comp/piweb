@@ -2277,6 +2277,21 @@ svg {
   background: rgb(0 0 0 / 0.55);
 }
 
+dialog.sheet {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+}
+
+dialog.sheet::backdrop {
+  background: transparent;
+}
+
 .sheet-panel {
   width: 100%;
   /* --sheet-max is synced to visualViewport by app.js: with the keyboard open
@@ -2304,6 +2319,17 @@ svg {
   color: var(--text-bright);
 }
 
+.sheet-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trash-panel .icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
 .sheet-note {
   margin: 0;
   padding: 10px 16px 0;
@@ -2322,13 +2348,47 @@ svg {
 }
 
 .trash-item {
-  padding: 10px 16px;
+  padding: 8px 16px 10px;
   border-top: 1px solid var(--bg-dark);
+  transition: background 120ms ease;
+}
+
+.trash-item.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.trash-item-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.trash-item.selecting .trash-item-main {
+  cursor: pointer;
+}
+
+.trash-item-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.trash-select-input {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: none;
 }
 
 .trash-item .t-name {
   color: var(--text-bright);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .trash-item .t-meta {
@@ -2340,17 +2400,29 @@ svg {
 .trash-actions {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 6px;
   flex-wrap: wrap;
 }
 
-.trash-actions button {
-  padding: 7px 12px;
+.trash-actions button,
+.trash-select-toggle,
+.trash-bulk-bar button {
+  min-height: 44px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-input);
   color: var(--text);
+  font: inherit;
   font-size: 13px;
+}
+
+.trash-select-toggle {
+  min-width: 64px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .trash-actions .primary {
@@ -2360,9 +2432,56 @@ svg {
   font-weight: 600;
 }
 
-.trash-actions .danger {
-  color: #f87171;
+.trash-actions .danger,
+.trash-bulk-bar .trash-bulk-danger {
+  color: #fb7f7f;
   border-color: #5c2b2b;
+}
+
+.trash-bulk-bar {
+  flex: none;
+  padding: 10px 16px max(10px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--bg-dark);
+  background: var(--bg-alt);
+}
+
+#btn-trash-delete-all {
+  width: 100%;
+}
+
+.trash-selection-tools {
+  display: grid;
+  grid-template-columns: minmax(84px, auto) 1fr minmax(118px, auto);
+  align-items: center;
+  gap: 8px;
+}
+
+#trash-selected-count {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.trash-bulk-bar button:disabled,
+.trash-actions button:disabled,
+.trash-select-toggle:disabled {
+  opacity: 0.45;
+}
+
+@media (min-width: 768px) {
+  #trash-sheet {
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  #trash-sheet .trash-panel {
+    width: min(640px, 100%);
+    max-height: min(var(--sheet-max, 82dvh), 720px);
+    border-radius: 14px;
+    padding-bottom: 0;
+  }
 }
 
 .deleted-banner {
@@ -3467,12 +3586,14 @@ svg {
 
 :root[data-theme='light'] .login-error,
 :root[data-theme='light'] .trash-actions .danger,
+:root[data-theme='light'] .trash-bulk-bar .trash-bulk-danger,
 :root[data-theme='light'] .icon-btn.danger,
 :root[data-theme='light'] .menu-item.danger {
   color: #b4232a;
 }
 
-:root[data-theme='light'] .trash-actions .danger {
+:root[data-theme='light'] .trash-actions .danger,
+:root[data-theme='light'] .trash-bulk-bar .trash-bulk-danger {
   border-color: #e3a9ac;
 }
 

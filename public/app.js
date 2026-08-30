@@ -14,11 +14,7 @@ import { renderRich } from './markdown.js';
 import { createMediaViewer, createVideoAttachment } from './media-files.js';
 import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
-import {
-  bindCustomSelection,
-  quotePreview,
-  selectedTranscriptText,
-} from './text-selection.js';
+import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
   bindLongPress,
   isTranscriptNearBottom,
@@ -306,7 +302,7 @@ function showSelectionActions(text, rect) {
   // Center horizontally over selection, clamped within margins
   const left = Math.min(
     window.innerWidth - toolbarWidth / 2 - 12,
-    Math.max(toolbarWidth / 2 + 12, rect.left + rect.width / 2)
+    Math.max(toolbarWidth / 2 + 12, rect.left + rect.width / 2),
   );
 
   // Position directly BELOW the selection box
@@ -339,12 +335,16 @@ document.addEventListener('selectionchange', () => {
   selectionFrame = requestAnimationFrame(syncSelectionActions);
 });
 
-$('messages')?.addEventListener('scroll', () => {
-  if (!$('selection-actions').hidden) {
-    cancelAnimationFrame(selectionFrame);
-    selectionFrame = requestAnimationFrame(syncSelectionActions);
-  }
-}, { passive: true });
+$('messages')?.addEventListener(
+  'scroll',
+  () => {
+    if (!$('selection-actions').hidden) {
+      cancelAnimationFrame(selectionFrame);
+      selectionFrame = requestAnimationFrame(syncSelectionActions);
+    }
+  },
+  { passive: true },
+);
 
 $('messages')?.addEventListener('contextmenu', (event) => {
   if (event.target.closest('.msg-text, .event-body')) {
@@ -407,7 +407,9 @@ $('quote-preview-remove').addEventListener('click', (e) => {
 // than asking on load.
 
 function isStandalone() {
-  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  );
 }
 
 function pushSupported() {
@@ -668,10 +670,7 @@ async function restoreStandardAfterLifeFailure(navigation) {
   if (navigation !== lifeNavigationGeneration) return false;
   cancelDrawerDrag();
   setPresentationMode('sessions');
-  return selectStandardCandidates(
-    standardSelectionCandidates(standardFallbackJid()),
-    navigation,
-  );
+  return selectStandardCandidates(standardSelectionCandidates(standardFallbackJid()), navigation);
 }
 
 async function enterLifeMode({ preserveSwipePreview = false } = {}) {
@@ -706,10 +705,7 @@ async function enterLifeMode({ preserveSwipePreview = false } = {}) {
 
 async function exitLifeMode({ preserveSwipePreview = false } = {}) {
   const navigation = beginStandardNavigation({ preserveSwipePreview });
-  return selectStandardCandidates(
-    standardSelectionCandidates(standardFallbackJid()),
-    navigation,
-  );
+  return selectStandardCandidates(standardSelectionCandidates(standardFallbackJid()), navigation);
 }
 
 async function openStandardSession(jid, ownedNavigation = null) {
@@ -732,10 +728,7 @@ async function openDeletedSession(jid, name) {
     return selected;
   } catch {
     if (navigation !== lifeNavigationGeneration) return false;
-    return selectStandardCandidates(
-      standardSelectionCandidates(standardFallbackJid()),
-      navigation,
-    );
+    return selectStandardCandidates(standardSelectionCandidates(standardFallbackJid()), navigation);
   }
 }
 
@@ -823,19 +816,13 @@ function sessionsForDisplay() {
   return state.sessions
     .map((session, index) => ({ session, index }))
     .sort(
-      (a, b) =>
-        activityKey(b.session).localeCompare(activityKey(a.session)) || a.index - b.index,
+      (a, b) => activityKey(b.session).localeCompare(activityKey(a.session)) || a.index - b.index,
     )
     .map((e) => e.session);
 }
 
 async function deleteSession(session) {
-  if (
-    deletingSessionJid ||
-    state.selectionPending ||
-    !session ||
-    session.kind === 'life'
-  ) return;
+  if (deletingSessionJid || state.selectionPending || !session || session.kind === 'life') return;
   if (!confirm(`Move "${session.name}" to Recently deleted?`)) return;
 
   const navigation = beginStandardNavigation();
@@ -1004,19 +991,22 @@ async function selectSession(jid, opts = {}) {
   renderSessions();
 
   // Only the newest page; older history is pulled in as the user scrolls up.
-  const requestedLifeGeneration =
-    jid === LIFE_JID ? state.lifeSession?.generation : undefined;
-  const { events, busy, hasMore, partial, session: sessionMeta } = await api(
+  const requestedLifeGeneration = jid === LIFE_JID ? state.lifeSession?.generation : undefined;
+  const {
+    events,
+    busy,
+    hasMore,
+    partial,
+    session: sessionMeta,
+  } = await api(
     withLifeGeneration(
       `/api/sessions/${encodeURIComponent(jid)}/events?limit=${PAGE_SIZE}`,
       jid,
       requestedLifeGeneration,
     ),
   );
-  if (
-    selection !== sessionSelectionGeneration ||
-    navigation !== lifeNavigationGeneration
-  ) return false;
+  if (selection !== sessionSelectionGeneration || navigation !== lifeNavigationGeneration)
+    return false;
 
   const exactMetadata = sessionMeta?.jid === jid;
   const confirmedDestination = opts.life
@@ -1063,10 +1053,7 @@ async function selectSession(jid, opts = {}) {
     // (for example, a notification for a newly restored session). Preserve
     // that confirmed standard destination and mark the loaded tail as read.
     state.lastStandardJid = jid;
-    markSeen(
-      jid,
-      Math.max(openedSession?.lastReplyId ?? 0, events[events.length - 1]?.id ?? 0),
-    );
+    markSeen(jid, Math.max(openedSession?.lastReplyId ?? 0, events[events.length - 1]?.id ?? 0));
   }
   renderSessions();
   state.oldest = events.length > 0 ? events[0].id : 0;
@@ -1099,7 +1086,8 @@ async function loadOlder() {
     !state.hasMore ||
     !state.activeJid ||
     !state.oldest
-  ) return;
+  )
+    return;
   const selection = sessionSelectionGeneration;
   const jid = state.activeJid;
   const oldest = state.oldest;
@@ -1317,7 +1305,8 @@ async function runSearch() {
     search !== searchOwnershipGeneration ||
     selection !== sessionSelectionGeneration ||
     state.activeJid !== jid
-  ) return;
+  )
+    return;
 
   results.textContent = '';
   if (hits.length === 0) {
@@ -1414,8 +1403,7 @@ async function jumpTo(id) {
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
 async function runQuickCommand(command, args = {}) {
   if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
-  const lifeGeneration =
-    state.activeJid === LIFE_JID ? state.lifeSession?.generation : undefined;
+  const lifeGeneration = state.activeJid === LIFE_JID ? state.lifeSession?.generation : undefined;
   await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
     method: 'POST',
     body: JSON.stringify({ command, args, ...(lifeGeneration ? { lifeGeneration } : {}) }),
@@ -2009,7 +1997,13 @@ async function commitListRename(jid, save) {
 }
 
 function startRename() {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted || state.mode === 'life') return;
+  if (
+    state.selectionPending ||
+    !state.activeJid ||
+    state.previewingDeleted ||
+    state.mode === 'life'
+  )
+    return;
   const label = $('session-name');
   const input = $('session-name-input');
   input.value = label.textContent;
@@ -2079,7 +2073,8 @@ async function deleteActiveSession() {
     !state.activeJid ||
     state.previewingDeleted ||
     state.mode === 'life'
-  ) return;
+  )
+    return;
   // Event metadata, not the 5s list cache, proves the active destination. Use
   // the rendered confirmed name so notification-opened sessions remain deletable.
   await deleteSession({
@@ -2105,7 +2100,8 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
     !jid ||
     selection !== sessionSelectionGeneration ||
     state.activeJid !== jid
-  ) return;
+  )
+    return;
 
   const url = withLifeGeneration(
     `/api/sessions/${encodeURIComponent(jid)}/stream?after=${state.cursor}`,
@@ -2114,9 +2110,7 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
   const source = new EventSource(url);
   state.source = source;
   const ownsStream = () =>
-    state.source === source &&
-    selection === sessionSelectionGeneration &&
-    state.activeJid === jid;
+    state.source === source && selection === sessionSelectionGeneration && state.activeJid === jid;
 
   source.addEventListener('generation', (e) => {
     if (!ownsStream() || jid !== LIFE_JID || state.mode !== 'life') return;
@@ -2137,7 +2131,12 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
       return;
     }
     appendEvent(event, true);
-    if (event.kind !== 'thinking' && event.kind !== 'tool' && event.kind !== 'tool_result' && event.role !== 'user') {
+    if (
+      event.kind !== 'thinking' &&
+      event.kind !== 'tool' &&
+      event.kind !== 'tool_result' &&
+      event.role !== 'user'
+    ) {
       markSeen(jid, event.id);
       const open = state.sessions.find((s) => s.jid === jid);
       if (open) open.lastReplyId = Math.max(open.lastReplyId ?? 0, event.id);
@@ -2162,11 +2161,8 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
     if (!ownsStream()) return;
     closeStream();
     setTimeout(() => {
-      if (
-        selection === sessionSelectionGeneration &&
-        state.activeJid === jid &&
-        !state.source
-      ) openStream(selection, jid);
+      if (selection === sessionSelectionGeneration && state.activeJid === jid && !state.source)
+        openStream(selection, jid);
     }, 2000);
   });
 }
@@ -2652,8 +2648,12 @@ input.addEventListener('input', () => {
 // that lands in the same tick-ish window; a human follow-up keypress is far
 // slower than this.
 let compositionEndedAt = 0;
-input.addEventListener('compositionstart', () => { compositionEndedAt = 0; });
-input.addEventListener('compositionend', () => { compositionEndedAt = Date.now(); });
+input.addEventListener('compositionstart', () => {
+  compositionEndedAt = 0;
+});
+input.addEventListener('compositionend', () => {
+  compositionEndedAt = Date.now();
+});
 
 input.addEventListener('keydown', (e) => {
   // An IME (Chinese, Japanese, …) uses Enter to commit the composition; that
@@ -2977,9 +2977,7 @@ $('composer').addEventListener('submit', async (e) => {
       text,
       quote,
       attachments,
-      ...(destinationLifeGeneration
-        ? { lifeGeneration: destinationLifeGeneration }
-        : {}),
+      ...(destinationLifeGeneration ? { lifeGeneration: destinationLifeGeneration } : {}),
     };
     const result = hasAttachments
       ? await sendJsonWithUploadProgress(path, payload, {
@@ -2989,11 +2987,7 @@ $('composer').addEventListener('submit', async (e) => {
     applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
   } catch (err) {
     if (err.status === 401) showLogin();
-    if (
-      destinationJid === LIFE_JID &&
-      state.mode === 'life' &&
-      state.activeJid === LIFE_JID
-    ) {
+    if (destinationJid === LIFE_JID && state.mode === 'life' && state.activeJid === LIFE_JID) {
       await enterLifeMode();
     }
     alert(err.message);
@@ -3009,8 +3003,9 @@ $('composer').addEventListener('submit', async (e) => {
 async function trySendCommand(
   line,
   destinationJid = state.activeJid,
-  destinationLifeGeneration =
-    destinationJid === LIFE_JID ? state.lifeSession?.generation : undefined,
+  destinationLifeGeneration = destinationJid === LIFE_JID
+    ? state.lifeSession?.generation
+    : undefined,
 ) {
   const raw = line.slice(1).trim();
   const match = state.commands
@@ -3038,16 +3033,10 @@ async function trySendCommand(
     body: JSON.stringify({
       command: match.name,
       args,
-      ...(destinationLifeGeneration
-        ? { lifeGeneration: destinationLifeGeneration }
-        : {}),
+      ...(destinationLifeGeneration ? { lifeGeneration: destinationLifeGeneration } : {}),
     }),
   }).catch(async (err) => {
-    if (
-      destinationJid === LIFE_JID &&
-      state.mode === 'life' &&
-      state.activeJid === LIFE_JID
-    ) {
+    if (destinationJid === LIFE_JID && state.mode === 'life' && state.activeJid === LIFE_JID) {
       await enterLifeMode();
     }
     alert(err.message);
@@ -3253,7 +3242,9 @@ function applyLightboxTransform(animate = false) {
 
 /** Every image currently in the transcript, in reading order. */
 function collectTranscriptImages() {
-  return [...document.querySelectorAll('#messages .msg-files img')].map((n) => n.getAttribute('src'));
+  return [...document.querySelectorAll('#messages .msg-files img')].map((n) =>
+    n.getAttribute('src'),
+  );
 }
 
 function openLightbox(url, urls) {
@@ -3449,118 +3440,131 @@ const lightboxEl = $('lightbox');
 const SWIPE_PAGE_PX = 60;
 const SWIPE_DISMISS_PX = 110;
 
-lightboxEl.addEventListener('touchstart', (e) => {
-  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip')) return;
+lightboxEl.addEventListener(
+  'touchstart',
+  (e) => {
+    if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip'))
+      return;
 
-  // 1. Two-finger pinch gesture
-  if (e.touches.length === 2) {
-    if (e.cancelable) e.preventDefault();
-    lb.isPinching = true;
-    lb.isPanning = false;
-    lb.drag = null;
-    const t1 = e.touches[0];
-    const t2 = e.touches[1];
-    lb.pinchDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-    lb.startScale = lb.scale;
-    lb.startX = lb.x;
-    lb.startY = lb.y;
-    lb.pinchCenter = {
-      x: (t1.clientX + t2.clientX) / 2,
-      y: (t1.clientY + t2.clientY) / 2,
-    };
-    return;
-  }
-
-  // 2. Single finger touch
-  if (e.touches.length === 1) {
-    const touch = e.touches[0];
-    const now = Date.now();
-
-    // Double-tap zoom toggle
-    if (now - lb.lastTap < 300 && Math.hypot(touch.clientX - (lb.lastTapX || 0), touch.clientY - (lb.lastTapY || 0)) < 40) {
+    // 1. Two-finger pinch gesture
+    if (e.touches.length === 2) {
       if (e.cancelable) e.preventDefault();
-      lb.lastTap = 0;
-      if (lb.scale > 1.1) {
-        lb.scale = 1;
-        lb.x = 0;
-        lb.y = 0;
-      } else {
-        lb.scale = 2.5;
-        const stage = $('lb-stage').getBoundingClientRect();
-        const centerX = stage.left + stage.width / 2;
-        const centerY = stage.top + stage.height / 2;
-        lb.x = (centerX - touch.clientX) * 1.5;
-        lb.y = (centerY - touch.clientY) * 1.5;
-      }
-      applyLightboxTransform(true);
+      lb.isPinching = true;
+      lb.isPanning = false;
+      lb.drag = null;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      lb.pinchDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      lb.startScale = lb.scale;
+      lb.startX = lb.x;
+      lb.startY = lb.y;
+      lb.pinchCenter = {
+        x: (t1.clientX + t2.clientX) / 2,
+        y: (t1.clientY + t2.clientY) / 2,
+      };
       return;
     }
-    lb.lastTap = now;
-    lb.lastTapX = touch.clientX;
-    lb.lastTapY = touch.clientY;
 
-    if (lb.scale > 1.05) {
-      lb.isPanning = true;
-      lb.panStartX = touch.clientX - lb.x;
-      lb.panStartY = touch.clientY - lb.y;
-    } else {
-      lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
+    // 2. Single finger touch
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const now = Date.now();
+
+      // Double-tap zoom toggle
+      if (
+        now - lb.lastTap < 300 &&
+        Math.hypot(touch.clientX - (lb.lastTapX || 0), touch.clientY - (lb.lastTapY || 0)) < 40
+      ) {
+        if (e.cancelable) e.preventDefault();
+        lb.lastTap = 0;
+        if (lb.scale > 1.1) {
+          lb.scale = 1;
+          lb.x = 0;
+          lb.y = 0;
+        } else {
+          lb.scale = 2.5;
+          const stage = $('lb-stage').getBoundingClientRect();
+          const centerX = stage.left + stage.width / 2;
+          const centerY = stage.top + stage.height / 2;
+          lb.x = (centerX - touch.clientX) * 1.5;
+          lb.y = (centerY - touch.clientY) * 1.5;
+        }
+        applyLightboxTransform(true);
+        return;
+      }
+      lb.lastTap = now;
+      lb.lastTapX = touch.clientX;
+      lb.lastTapY = touch.clientY;
+
+      if (lb.scale > 1.05) {
+        lb.isPanning = true;
+        lb.panStartX = touch.clientX - lb.x;
+        lb.panStartY = touch.clientY - lb.y;
+      } else {
+        lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
+      }
+      $('lb-img').style.transition = 'none';
     }
-    $('lb-img').style.transition = 'none';
-  }
-}, { passive: false });
+  },
+  { passive: false },
+);
 
-lightboxEl.addEventListener('touchmove', (e) => {
-  if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip')) return;
+lightboxEl.addEventListener(
+  'touchmove',
+  (e) => {
+    if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip'))
+      return;
 
-  // 1. Two-finger pinch scaling
-  if (lb.isPinching && e.touches.length === 2) {
-    if (e.cancelable) e.preventDefault();
-    const t1 = e.touches[0];
-    const t2 = e.touches[1];
-    const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-    const ratio = dist / (lb.pinchDist || 1);
-    lb.scale = Math.min(6, Math.max(0.6, lb.startScale * ratio));
+    // 1. Two-finger pinch scaling
+    if (lb.isPinching && e.touches.length === 2) {
+      if (e.cancelable) e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const ratio = dist / (lb.pinchDist || 1);
+      lb.scale = Math.min(6, Math.max(0.6, lb.startScale * ratio));
 
-    const cx = (t1.clientX + t2.clientX) / 2;
-    const cy = (t1.clientY + t2.clientY) / 2;
-    lb.x = lb.startX + (cx - lb.pinchCenter.x);
-    lb.y = lb.startY + (cy - lb.pinchCenter.y);
+      const cx = (t1.clientX + t2.clientX) / 2;
+      const cy = (t1.clientY + t2.clientY) / 2;
+      lb.x = lb.startX + (cx - lb.pinchCenter.x);
+      lb.y = lb.startY + (cy - lb.pinchCenter.y);
 
-    applyLightboxTransform(false);
-    return;
-  }
-
-  // 2. Single finger panning when zoomed in
-  if (lb.isPanning && e.touches.length === 1) {
-    if (e.cancelable) e.preventDefault();
-    const touch = e.touches[0];
-    lb.x = touch.clientX - lb.panStartX;
-    lb.y = touch.clientY - lb.panStartY;
-    applyLightboxTransform(false);
-    return;
-  }
-
-  // 3. Single finger swipe when 1x
-  if (lb.drag && e.touches.length === 1) {
-    const touch = e.touches[0];
-    const dx = touch.clientX - lb.drag.x;
-    const dy = touch.clientY - lb.drag.y;
-
-    if (!lb.drag.axis && Math.hypot(dx, dy) > 8) {
-      lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      applyLightboxTransform(false);
+      return;
     }
 
-    const img = $('lb-img');
-    if (lb.drag.axis === 'x') {
-      const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
-      img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
-    } else if (lb.drag.axis === 'y') {
-      img.style.transform = `translateY(${dy}px)`;
-      img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
+    // 2. Single finger panning when zoomed in
+    if (lb.isPanning && e.touches.length === 1) {
+      if (e.cancelable) e.preventDefault();
+      const touch = e.touches[0];
+      lb.x = touch.clientX - lb.panStartX;
+      lb.y = touch.clientY - lb.panStartY;
+      applyLightboxTransform(false);
+      return;
     }
-  }
-}, { passive: false });
+
+    // 3. Single finger swipe when 1x
+    if (lb.drag && e.touches.length === 1) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - lb.drag.x;
+      const dy = touch.clientY - lb.drag.y;
+
+      if (!lb.drag.axis && Math.hypot(dx, dy) > 8) {
+        lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+
+      const img = $('lb-img');
+      if (lb.drag.axis === 'x') {
+        const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
+        img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
+      } else if (lb.drag.axis === 'y') {
+        img.style.transform = `translateY(${dy}px)`;
+        img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
+      }
+    }
+  },
+  { passive: false },
+);
 
 function endLightboxTouch(e) {
   if (lb.isPinching) {
@@ -3620,13 +3624,29 @@ lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
 
 // ── recently deleted ─────────────────────────────────────────────────────
 
+let trashSessions = [];
+let trashSelectionMode = false;
+let trashSelectedJids = new Set();
+let trashMutationPending = false;
+let trashReturnFocus = null;
+let trashLoadGeneration = 0;
+
+function showTrashCount(count) {
+  const badge = $('trash-count');
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
 async function refreshTrashCount({ navigation = null } = {}) {
+  const loadGeneration = ++trashLoadGeneration;
   try {
     const { sessions } = await api('/api/sessions/deleted');
-    if (navigation !== null && navigation !== lifeNavigationGeneration) return null;
-    const badge = $('trash-count');
-    badge.textContent = String(sessions.length);
-    badge.hidden = sessions.length === 0;
+    if (
+      loadGeneration !== trashLoadGeneration ||
+      (navigation !== null && navigation !== lifeNavigationGeneration)
+    )
+      return null;
+    showTrashCount(sessions.length);
     return sessions;
   } catch {
     return [];
@@ -3637,85 +3657,351 @@ function fmtDate(iso) {
   if (!iso) return '';
   // SQLite timestamps are UTC without a marker; see timeLabel().
   const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+}
+
+function resetTrashSelection() {
+  trashSelectionMode = false;
+  trashSelectedJids = new Set();
+}
+
+function updateTrashControls() {
+  const hasSessions = trashSessions.length > 0;
+  const selectedCount = trashSelectedJids.size;
+  const allSelected = hasSessions && selectedCount === trashSessions.length;
+  const list = $('trash-list');
+  const selectToggle = $('btn-trash-select');
+  const bulkBar = $('trash-bulk-bar');
+
+  selectToggle.hidden = !hasSessions;
+  selectToggle.textContent = trashSelectionMode ? 'Cancel' : 'Select';
+  selectToggle.disabled = trashMutationPending;
+  bulkBar.hidden = !hasSessions;
+  $('btn-trash-delete-all').hidden = trashSelectionMode;
+  $('trash-selection-tools').hidden = !trashSelectionMode;
+  $('trash-selected-count').textContent = `${selectedCount} selected`;
+  $('btn-trash-select-all').textContent = allSelected ? 'Clear all' : 'Select all';
+  $('btn-trash-select-all').disabled = trashMutationPending;
+  $('btn-trash-delete-selected').disabled = selectedCount === 0 || trashMutationPending;
+  $('btn-trash-delete-all').disabled = trashMutationPending;
+  list.classList.toggle('selecting', trashSelectionMode);
+  list.setAttribute('aria-busy', String(trashMutationPending));
+  for (const control of list.querySelectorAll('button, input')) {
+    control.disabled = trashMutationPending;
+  }
+}
+
+function toggleTrashSelection(jid) {
+  if (!trashSelectionMode || trashMutationPending) return;
+  if (trashSelectedJids.has(jid)) trashSelectedJids.delete(jid);
+  else trashSelectedJids.add(jid);
+  renderTrashSessions();
+}
+
+function enterTrashSelection(jid = null) {
+  if (trashMutationPending) return;
+  if (!trashSelectionMode) {
+    trashSelectionMode = true;
+    trashSelectedJids = new Set();
+  }
+  if (jid) trashSelectedJids.add(jid);
+  renderTrashSessions();
+}
+
+function renderTrashSessions() {
+  const list = $('trash-list');
+  list.textContent = '';
+  list.setAttribute('role', 'list');
+
+  if (trashSessions.length === 0) {
+    $('trash-note').textContent = 'Nothing here. Deleted sessions appear for 30 days.';
+    updateTrashControls();
+    return;
+  }
+  if (!trashMutationPending) {
+    $('trash-note').textContent =
+      'Deleted sessions are kept for 30 days. Long-press a session to select several.';
+  }
+
+  for (const s of trashSessions) {
+    const selected = trashSelectedJids.has(s.jid);
+    const item = el(
+      'div',
+      `trash-item${trashSelectionMode ? ' selecting' : ''}${selected ? ' selected' : ''}`,
+    );
+    item.dataset.jid = s.jid;
+    item.setAttribute('role', 'listitem');
+
+    const main = el('div', 'trash-item-main');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'trash-select-input';
+    checkbox.checked = selected;
+    checkbox.hidden = !trashSelectionMode;
+    checkbox.setAttribute('aria-label', `Select ${s.name}`);
+    checkbox.addEventListener('click', (event) => event.stopPropagation());
+    checkbox.addEventListener('change', () => toggleTrashSelection(s.jid));
+
+    const copy = el('div', 'trash-item-copy');
+    copy.append(el('div', 't-name', s.name));
+    copy.append(el('div', 't-meta', `deleted ${fmtDate(s.deletedAt)} · ${s.events} messages`));
+    main.append(checkbox, copy);
+    main.addEventListener('click', () => toggleTrashSelection(s.jid));
+    bindLongPress(main, () => enterTrashSelection(s.jid));
+    item.append(main);
+
+    if (!trashSelectionMode) {
+      const actions = el('div', 'trash-actions');
+
+      const preview = el('button', null, 'Preview');
+      preview.addEventListener('click', () => {
+        closeTrash();
+        closeDrawer();
+        void openDeletedSession(s.jid, s.name);
+      });
+
+      const restore = el('button', 'primary', 'Restore');
+      restore.addEventListener('click', async () => {
+        const navigation = beginStandardNavigation();
+        await api(`/api/sessions/${encodeURIComponent(s.jid)}/restore`, { method: 'POST' });
+        if (navigation !== lifeNavigationGeneration) return;
+        await loadSessions();
+        await refreshTrashCount({ navigation });
+        if (navigation !== lifeNavigationGeneration) return;
+        closeTrash();
+        closeDrawer();
+        await openStandardSession(s.jid, navigation);
+      });
+
+      const forever = el('button', 'danger', 'Delete forever');
+      forever.addEventListener('click', () => {
+        void purgeTrashSessions({
+          jids: [s.jid],
+          confirmation: `Permanently delete "${s.name}"? This also removes pi's session files and cannot be undone.`,
+        });
+      });
+
+      actions.append(preview, restore, forever);
+      item.append(actions);
+    }
+    list.append(item);
+  }
+  updateTrashControls();
+}
+
+async function purgeTrashSessions({ all = false, jids = [], confirmation = '' } = {}) {
+  if (trashMutationPending) return;
+  const targets = all ? trashSessions.map((session) => session.jid) : [...new Set(jids)];
+  if (targets.length === 0) return;
+  const targetSessions = targets.map((jid) => trashSessions.find((session) => session.jid === jid));
+  if (
+    targetSessions.some(
+      (session) => !session?.storageToken || !session?.deletionToken || !session?.deletedAt,
+    )
+  ) {
+    $('trash-note').textContent = 'Could not delete: refresh Recently Deleted and try again.';
+    return;
+  }
+  const storageTokens = targetSessions.map((session) => session.storageToken);
+  const deletionTokens = targetSessions.map((session) => session.deletionToken);
+  const deletedAts = targetSessions.map((session) => session.deletedAt);
+
+  const noun = targets.length === 1 ? 'session' : 'sessions';
+  const prompt =
+    confirmation ||
+    (all
+      ? `Permanently delete all ${targets.length} recently deleted ${noun}? This cannot be undone.`
+      : `Permanently delete ${targets.length} selected ${noun}? This cannot be undone.`);
+  if (!confirm(prompt)) return;
+
+  const targetSet = new Set(targets);
+  trashMutationPending = true;
+  $('trash-note').textContent = 'Deleting permanently…';
+  updateTrashControls();
+
+  try {
+    await api('/api/sessions/deleted/purge', {
+      method: 'POST',
+      // Delete all is intentionally the exact identity set rendered when the
+      // user confirmed, never a server-wide wildcard that can catch a session
+      // trashed concurrently on another device.
+      body: JSON.stringify({ jids: targets, storageTokens, deletionTokens, deletedAts }),
+    });
+  } catch (error) {
+    trashMutationPending = false;
+    if (!$('trash-sheet').hidden) {
+      renderTrashSessions();
+      $('trash-note').textContent = `Could not delete: ${error.message}`;
+      updateTrashControls();
+    }
+    return;
+  }
+
+  // POST success is the commit point. Invalidate every older trash GET before
+  // applying its exact target set, so a delayed sheet load cannot resurrect a
+  // row that the server already destroyed.
+  trashLoadGeneration += 1;
+  trashSessions = trashSessions.filter((session) => !targetSet.has(session.jid));
+  showTrashCount(trashSessions.length);
+  const purgedActivePreview =
+    state.previewingDeleted && state.activeJid && targetSet.has(state.activeJid);
+  resetTrashSelection();
+  trashMutationPending = false;
+  if (!$('trash-sheet').hidden) renderTrashSessions();
+
+  // Reconcile races from other devices in the background. This is
+  // authoritative when available, but strictly best-effort after commit.
+  const reconciliationGeneration = ++trashLoadGeneration;
+  void (async () => {
+    try {
+      const { sessions } = await api('/api/sessions/deleted');
+      if (reconciliationGeneration !== trashLoadGeneration) return;
+      trashSessions = sessions;
+      showTrashCount(sessions.length);
+      if (!$('trash-sheet').hidden) renderTrashSessions();
+    } catch {
+      // The known POST result above remains successful and visible.
+    }
+  })();
+
+  if (purgedActivePreview) {
+    closeTrash();
+    const fallbackNavigation = beginStandardNavigation();
+    await selectStandardCandidates(
+      standardSelectionCandidates(standardFallbackJid()),
+      fallbackNavigation,
+    );
+    // Refresh the drawer independently; even failure here cannot resurrect the
+    // deleted preview or reinterpret the committed POST as a purge failure.
+    void loadSessions().catch(() => {});
+  }
+}
+
+function trashFocusableControls() {
+  return [
+    ...$('trash-sheet').querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((element) => !element.hidden && element.getClientRects().length > 0);
+}
+
+function enterTrashModal() {
+  const sheet = $('trash-sheet');
+  if (!sheet.hidden) return;
+  trashReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  sheet.hidden = false;
+  if (!sheet.open) sheet.showModal();
+  $('btn-trash-close').focus({ preventScroll: true });
 }
 
 async function openTrash() {
   if (state.selectionPending) return;
   const navigation = beginStandardNavigation();
-  $('trash-sheet').hidden = false;
-  const list = $('trash-list');
-  list.textContent = '';
-  $('trash-note').textContent = 'Loading…';
-
-  const sessions = await refreshTrashCount({ navigation });
-  if (
-    !sessions ||
-    navigation !== lifeNavigationGeneration ||
-    $('trash-sheet').hidden
-  ) {
-    return;
+  const loadGeneration = ++trashLoadGeneration;
+  resetTrashSelection();
+  if (!trashMutationPending) trashSessions = [];
+  enterTrashModal();
+  if (trashMutationPending) {
+    renderTrashSessions();
+    $('trash-note').textContent = 'Deleting permanently…';
+  } else {
+    $('trash-list').textContent = '';
+    $('trash-note').textContent = 'Loading…';
+    updateTrashControls();
   }
-  if (sessions.length === 0) {
-    $('trash-note').textContent = 'Nothing here. Deleted sessions appear for 30 days.';
-    return;
-  }
-  $('trash-note').textContent = 'Deleted sessions are kept for 30 days, then purged automatically.';
 
-  for (const s of sessions) {
-    const item = el('div', 'trash-item');
-    item.append(el('div', 't-name', s.name));
-    item.append(
-      el('div', 't-meta', `deleted ${fmtDate(s.deletedAt)} · ${s.events} messages`),
-    );
-
-    const actions = el('div', 'trash-actions');
-
-    const preview = el('button', null, 'Preview');
-    preview.addEventListener('click', () => {
-      closeTrash();
-      closeDrawer();
-      void openDeletedSession(s.jid, s.name);
-    });
-
-    const restore = el('button', 'primary', 'Restore');
-    restore.addEventListener('click', async () => {
-      const navigation = beginStandardNavigation();
-      await api(`/api/sessions/${encodeURIComponent(s.jid)}/restore`, { method: 'POST' });
-      if (navigation !== lifeNavigationGeneration) return;
-      await loadSessions();
-      await refreshTrashCount({ navigation });
-      if (navigation !== lifeNavigationGeneration) return;
-      closeTrash();
-      closeDrawer();
-      await openStandardSession(s.jid, navigation);
-    });
-
-    const forever = el('button', 'danger', 'Delete forever');
-    forever.addEventListener('click', async () => {
-      if (!confirm(`Permanently delete "${s.name}"? This also removes pi's session files and cannot be undone.`)) return;
-      const navigation = beginStandardNavigation();
-      await api(`/api/sessions/${encodeURIComponent(s.jid)}?permanent=1`, { method: 'DELETE' });
-      if (navigation !== lifeNavigationGeneration) return;
-      openTrash();
-    });
-
-    actions.append(preview, restore, forever);
-    item.append(actions);
-    list.append(item);
+  try {
+    const { sessions } = await api('/api/sessions/deleted');
+    if (
+      loadGeneration !== trashLoadGeneration ||
+      navigation !== lifeNavigationGeneration ||
+      $('trash-sheet').hidden
+    )
+      return;
+    trashSessions = sessions;
+    showTrashCount(sessions.length);
+    renderTrashSessions();
+  } catch (error) {
+    if (loadGeneration !== trashLoadGeneration || $('trash-sheet').hidden) return;
+    $('trash-note').textContent = `Could not load: ${error.message}`;
+    updateTrashControls();
   }
 }
 
 function closeTrash() {
-  $('trash-sheet').hidden = true;
+  const sheet = $('trash-sheet');
+  if (sheet.hidden) return;
+  trashLoadGeneration += 1;
+  if (sheet.open) sheet.close();
+  sheet.hidden = true;
+  resetTrashSelection();
+  const returnFocus = trashReturnFocus;
+  trashReturnFocus = null;
+  if (returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[inert]')) {
+    queueMicrotask(() => returnFocus.focus({ preventScroll: true }));
+  }
 }
 
 $('btn-trash').addEventListener('click', openTrash);
 $('btn-trash-close').addEventListener('click', closeTrash);
+$('btn-trash-select').addEventListener('click', () => {
+  if (trashSelectionMode) {
+    resetTrashSelection();
+    renderTrashSessions();
+  } else {
+    enterTrashSelection();
+  }
+});
+$('btn-trash-select-all').addEventListener('click', () => {
+  if (trashMutationPending) return;
+  trashSelectedJids =
+    trashSelectedJids.size === trashSessions.length
+      ? new Set()
+      : new Set(trashSessions.map((session) => session.jid));
+  renderTrashSessions();
+});
+$('btn-trash-delete-selected').addEventListener('click', () => {
+  void purgeTrashSessions({ jids: [...trashSelectedJids] });
+});
+$('btn-trash-delete-all').addEventListener('click', () => {
+  void purgeTrashSessions({ all: true });
+});
 $('trash-sheet').addEventListener('click', (e) => {
   if (e.target === $('trash-sheet')) closeTrash();
+});
+$('trash-sheet').addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeTrash();
+});
+$('trash-sheet').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeTrash();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const controls = trashFocusableControls();
+  if (controls.length === 0) {
+    e.preventDefault();
+    $('btn-trash-close').focus({ preventScroll: true });
+    return;
+  }
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus({ preventScroll: true });
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  }
 });
 
 $('btn-restore-inline').addEventListener('click', async () => {
@@ -3758,7 +4044,8 @@ function recoverStandaloneViewport() {
     orientationChanging ||
     !isStandaloneApp() ||
     !needsViewportRecovery(maximumViewportHeight, window.innerHeight)
-  ) return;
+  )
+    return;
 
   const messages = $('messages');
   const followLatest = shouldFollowTranscriptTail();
@@ -4016,9 +4303,7 @@ function endDrawerDrag(commit = true) {
     }
     const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
     const shouldExit =
-      commit &&
-      lastDirection > 0 &&
-      distance >= viewportWidth * LIFE_BACK_DISTANCE_RATIO;
+      commit && lastDirection > 0 && distance >= viewportWidth * LIFE_BACK_DISTANCE_RATIO;
     void settleLifeBackDrag({ distance, velocity: 0.75 }, shouldExit, viewportWidth);
     return;
   }
@@ -4081,12 +4366,7 @@ let lifeTransitionDirection = null;
 let lifePreviewGeneration = 0;
 
 function isLifeGestureAllowed() {
-  if (
-    wideDrawer.matches ||
-    state.mode === 'life' ||
-    lifeTransitioning ||
-    !$('login').hidden
-  ) {
+  if (wideDrawer.matches || state.mode === 'life' || lifeTransitioning || !$('login').hidden) {
     return false;
   }
   if ($('drawer').classList.contains('open') || isMenuOpen()) return false;
@@ -4189,9 +4469,7 @@ function animateLifePage({ offset, duration, generation, destination = 'life' })
   // Keep enough of the departing page visible throughout the travel. The old
   // front-loaded curve covered ~80% in the first 80ms and looked like a cut.
   const transition =
-    animationMs === 0
-      ? 'none'
-      : `transform ${animationMs}ms cubic-bezier(0.4, 0, 0.2, 1)`;
+    animationMs === 0 ? 'none' : `transform ${animationMs}ms cubic-bezier(0.4, 0, 0.2, 1)`;
   setLifePageOffset(offset, transition);
   if (animationMs === 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, animationMs + 24));
@@ -4439,8 +4717,7 @@ function endLifeDrag(commit = true) {
     drag.distance >= LIFE_FLICK_MIN_DISTANCE_PX &&
     velocity >= LIFE_FLICK_MIN_VELOCITY &&
     projectedDistance >= viewportWidth * LIFE_DISTANCE_RATIO;
-  const shouldEnter =
-    commit && drag.lastDirection > 0 && (enoughDistance || enoughVelocity);
+  const shouldEnter = commit && drag.lastDirection > 0 && (enoughDistance || enoughVelocity);
   drag.velocity = velocity;
   void settleLifeDrag(drag, shouldEnter, viewportWidth);
 }

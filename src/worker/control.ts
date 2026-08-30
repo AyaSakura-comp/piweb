@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import {
   appendWebEvent,
   claimPendingControls,
+  failSettledControl,
   finishControl,
   getChannel,
   recoverStuckControls,
@@ -26,6 +27,7 @@ const CONTROL_POLL_MS = 250;
 
 let running = false;
 let timer: NodeJS.Timeout | undefined;
+let activeTick: Promise<void> | undefined;
 
 export function startControlLoop(): void {
   if (running) return;
@@ -35,19 +37,31 @@ export function startControlLoop(): void {
   schedule(0);
 }
 
-export function stopControlLoop(): void {
+export async function stopControlLoop(): Promise<void> {
   running = false;
   if (timer) {
     clearTimeout(timer);
     timer = undefined;
   }
+  // runCommand may be awaiting a confirmed RPC retirement for `pi new`.
+  // Keep the DB open and the worker alive until that active control finishes.
+  await activeTick;
 }
 
 function schedule(delayMs = CONTROL_POLL_MS): void {
   if (!running || timer) return;
   timer = setTimeout(() => {
     timer = undefined;
-    void tick();
+    const current = tick();
+    activeTick = current;
+    void current.then(
+      () => {
+        if (activeTick === current) activeTick = undefined;
+      },
+      () => {
+        if (activeTick === current) activeTick = undefined;
+      },
+    );
   }, delayMs);
 }
 
@@ -77,60 +91,84 @@ async function tick(): Promise<void> {
         logger.warn({ rowid: owned.rowid, args: owned.args }, 'control: bad args JSON');
       }
 
-      let ownershipValid = true;
+      let ownershipLost = false;
       const renewOwnership = (): boolean => {
-        if (!ownershipValid) return false;
+        if (ownershipLost) return false;
         try {
           const current = touchControlProcessing(
             owned.rowid,
             owned.channel_jid,
             channel.folder,
+            channel.storageToken,
+            channel.ownershipEpoch,
           );
           if (current) return true;
+          ownershipLost = true;
+          logger.warn(
+            { rowid: owned.rowid, jid: owned.channel_jid },
+            'Control ownership expired; fencing stale result',
+          );
         } catch (err: any) {
+          // A transient DB failure fences this individual check, but a later
+          // reconciliation must retry instead of permanently wedging the row.
           logger.warn({ err: err.message, rowid: owned.rowid }, 'control: heartbeat failed');
         }
-        ownershipValid = false;
-        logger.warn(
-          { rowid: owned.rowid, jid: owned.channel_jid },
-          'Control ownership expired; fencing stale result',
-        );
         return false;
       };
 
       const heartbeat = setInterval(renewOwnership, 60_000);
       heartbeat.unref?.();
 
-      let result;
+      let result: { ok: boolean; text: string };
       try {
         result = await runCommand(channel, owned.command, args, {
           assertOwnership: () => {
             if (!renewOwnership()) throw new Error('Control ownership expired');
           },
         });
+      } catch (err: any) {
+        result = { ok: false, text: err?.message || 'Control command failed' };
       } finally {
         clearInterval(heartbeat);
       }
-      if (!renewOwnership()) continue;
+      if (!renewOwnership()) {
+        failSettledControl(owned.rowid, owned.channel_jid);
+        continue;
+      }
 
       // Auto-issued controls (e.g. the `pi new` fired when a session is created)
       // pass silent:true — the user did not type them, so echoing their output
       // would just be noise. Failures are still surfaced.
       const silent = args.silent === 'true' && result.ok;
-      if (!silent) {
-        appendWebEvent({
-          channelJid: owned.channel_jid,
-          kind: result.ok ? 'system' : 'error',
-          role: owned.command,
-          content: result.text,
-        });
-      }
-      finishControl(owned.rowid, result.ok, result.text);
+      try {
+        if (!silent) {
+          appendWebEvent(
+            {
+              channelJid: owned.channel_jid,
+              kind: result.ok ? 'system' : 'error',
+              role: owned.command,
+              content: result.text,
+            },
+            {
+              expectedFolder: channel.folder,
+              expectedStorageToken: channel.storageToken,
+              expectedOwnershipEpoch: channel.ownershipEpoch,
+            },
+          );
+        }
+        finishControl(owned.rowid, result.ok, result.text);
 
-      logger.info(
-        { jid: owned.channel_jid, command: owned.command, ok: result.ok },
-        'Control command executed',
-      );
+        logger.info(
+          { jid: owned.channel_jid, command: owned.command, ok: result.ok },
+          'Control command executed',
+        );
+      } catch (err: any) {
+        failSettledControl(owned.rowid, owned.channel_jid);
+        logger.warn(
+          { err: err.message, rowid: owned.rowid, jid: owned.channel_jid },
+          'Control result fenced during finalization',
+        );
+      }
     }
   } catch (err: any) {
     logger.error({ err: err.message }, 'Control loop error');

@@ -1,13 +1,5 @@
 /** Supported pi thinking levels */
-export const THINKING_LEVELS = [
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-] as const;
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /** Explicit web-channel role; Life is a singleton outside session management. */
@@ -25,6 +17,14 @@ export interface RegisteredChannel {
   cwdOverride: string;
   /** Existing non-web transports may omit this; persistence defaults to standard. */
   kind?: ChannelKind;
+  /** Internal immutable filesystem generation; populated for persisted channels. */
+  storageToken?: string;
+  /** Monotonic runtime ownership generation across delete/restore transitions. */
+  ownershipEpoch?: number;
+  /** Immutable identity of the current soft-deletion episode. */
+  deletionToken?: string;
+  /** Current soft-deletion timestamp when the channel is in trash. */
+  deletedAt?: string;
 }
 
 /** Queued message row from SQLite */

@@ -7,17 +7,14 @@
  * web server in Docker talks to it purely through the shared SQLite database.
  */
 
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
+  claimDeletedSessionsForPurge,
   initDb,
   closeDb,
   setMeta,
   listExpiredDeletedSessions,
-  purgeChannel,
 } from '../db.js';
-import { mediaDirName } from '../media-path.js';
-import { listSessionFamilyDirs, resolveChannelSessionDir } from '../session/path.js';
+import { purgeSessionBatch, recoverPendingSessionPurges } from '../session/purge.js';
 import { listAvailableModels, primeModelRegistry } from '../agent/model-catalog.js';
 import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
@@ -47,17 +44,23 @@ const TRASH_SWEEP_MS = 60 * 60 * 1000;
  */
 async function sweepTrash(): Promise<void> {
   try {
+    await recoverPendingSessionPurges();
     const expired = listExpiredDeletedSessions(config.webTrashRetentionDays);
     for (const session of expired) {
-      for (const target of [
-        ...listSessionFamilyDirs(resolveChannelSessionDir(session.folder)),
-        join(config.webMediaDir, mediaDirName(session.jid)),
-        join(config.webUploadDir, mediaDirName(session.jid)),
-      ]) {
-        await rm(target, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        const batch = claimDeletedSessionsForPurge(
+          [session.jid],
+          [session.storageToken],
+          [session.deletionToken],
+          [session.deletedAt],
+        );
+        const purged = await purgeSessionBatch(batch.batchId);
+        logger.info({ jid: session.jid, purged }, 'Purged expired trashed session');
+      } catch (err: any) {
+        // One active or temporarily unremovable owner must not starve every
+        // unrelated expired session behind it until the next hourly sweep.
+        logger.warn({ err: err.message, jid: session.jid }, 'Trash session purge deferred');
       }
-      purgeChannel(session.jid);
-      logger.info({ jid: session.jid, name: session.name }, 'Purged expired trashed session');
     }
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Trash sweep failed');
@@ -82,6 +85,7 @@ function publishModelCatalog(): void {
 export async function startWorker(): Promise<void> {
   initDb();
   setTransport(webTransport);
+  await recoverPendingSessionPurges();
 
   startProcessingLoop();
   startControlLoop();
@@ -111,11 +115,14 @@ export async function startWorker(): Promise<void> {
 export async function stopWorker(): Promise<void> {
   if (modelRefreshTimer) clearInterval(modelRefreshTimer);
   if (trashSweepTimer) clearInterval(trashSweepTimer);
-  stopControlLoop();
+  const controlStopped = stopControlLoop();
   stopScheduler();
   stopArchiveCleanup();
-  await stopSessionTitleLoop();
-  await stopProcessingLoop();
+  const titleStopped = stopSessionTitleLoop();
+  const processingStopped = stopProcessingLoop();
+  await controlStopped;
+  await titleStopped;
+  await processingStopped;
   closeDb();
   logger.info('piweb worker stopped');
 }

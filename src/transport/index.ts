@@ -12,6 +12,10 @@
 export interface ChannelWriteFence {
   /** Opaque persisted channel generation; stale workers must not write through a reused JID. */
   expectedFolder?: string;
+  /** Immutable owner token; folder paths are reusable after permanent purge. */
+  expectedStorageToken?: string;
+  /** Monotonic runtime generation across delete/restore ABA transitions. */
+  expectedOwnershipEpoch?: number;
 }
 
 export interface Transport {
@@ -31,10 +35,7 @@ export interface Transport {
   /** Clear the working indicator. */
   clearTyping(jid: string, fence?: ChannelWriteFence): Promise<void>;
   /** Build the per-run handler for pi's intermediate events (thinking/tools). */
-  createEventStreamer(
-    jid: string,
-    fence?: ChannelWriteFence,
-  ): (event: unknown) => Promise<void>;
+  createEventStreamer(jid: string, fence?: ChannelWriteFence): (event: unknown) => Promise<void>;
 }
 
 let active: Transport | undefined;

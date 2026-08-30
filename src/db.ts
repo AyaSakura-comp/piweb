@@ -1,11 +1,15 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { mediaDirName } from './media-path.js';
-import { resolveChannelSessionDir } from './session/path.js';
+import {
+  relativePathEscapesRoot,
+  resolveChannelSessionDir,
+  validateSessionFolder,
+} from './session/path.js';
 import {
   type ChannelKind,
   type RegisteredChannel,
@@ -52,6 +56,8 @@ export function initDb(): void {
       thinking_override text not null default '',
       cwd_override     text not null default '',
       kind             text not null default 'standard' check(kind in ('standard', 'life')),
+      storage_token    text not null default '',
+      ownership_epoch  integer not null default 0,
       created_at       text not null default (datetime('now'))
     );
 
@@ -181,8 +187,10 @@ export function initDb(): void {
     create table if not exists channel_operations (
       id             text primary key,
       channel_jid    text not null,
-      channel_folder text not null,
-      created_at     text not null default (datetime('now')),
+      channel_folder       text not null,
+      channel_storage_token text not null default '',
+      channel_ownership_epoch integer not null default 0,
+      created_at           text not null default (datetime('now')),
       updated_at     text not null default (datetime('now'))
     );
 
@@ -205,12 +213,58 @@ export function initDb(): void {
       created_at        text not null default (datetime('now'))
     );
 
+    -- Permanent deletion spans SQLite and three filesystem roots. Claim every
+    -- target in one immediate transaction, retain the immutable owner paths,
+    -- and delete DB ownership only after every filesystem step is durable.
+    create table if not exists session_purge_journal (
+      batch_id       text not null,
+      channel_jid    text primary key,
+      channel_folder text not null,
+      files_done     integer not null default 0,
+      attempts       integer not null default 0,
+      last_error     text not null default '',
+      created_at     text not null default (datetime('now')),
+      updated_at     text not null default (datetime('now'))
+    );
+
+    create index if not exists idx_session_purge_batch
+      on session_purge_journal(batch_id, channel_jid);
+
+    -- Keep a durable completion receipt so two callers finishing the same
+    -- exact batch get an authoritative result after the journal guard is gone.
+    -- This must not be inferred from a stale pre-cleanup target count.
+    create table if not exists session_purge_batches (
+      batch_id     text primary key,
+      target_count integer not null,
+      status       text not null check(status in ('claimed', 'completed')),
+      created_at   text not null default (datetime('now')),
+      completed_at text
+    );
+
+    -- The complete source manifest is inserted atomically before any detach.
+    -- Recovery therefore still knows every archived directory after another
+    -- runner has already renamed it out of the owner namespace.
+    create table if not exists session_purge_paths (
+      batch_id        text not null,
+      channel_jid     text not null,
+      source_path     text not null,
+      tombstone_path  text not null,
+      seal_token      text not null,
+      source_identity text,
+      source_guard    integer not null default 0,
+      primary key(batch_id, source_path)
+    );
+
+    create index if not exists idx_session_purge_paths_target
+      on session_purge_paths(batch_id, channel_jid);
+
     -- One auxiliary, ephemeral title job per newly created web session. A row
     -- is prepared at creation, captures exactly the first normal prompt, and is
     -- erased after the in-process extraction. This table makes the job crash-safe.
     create table if not exists session_title_jobs (
-      channel_jid   text primary key,
-      prompt        text not null default '',
+      channel_jid          text primary key,
+      channel_storage_token text not null default '',
+      prompt               text not null default '',
       message_rowid integer,
       status        text not null default 'waiting'
                     check(status in ('waiting', 'pending', 'processing', 'done', 'cancelled', 'failed')),
@@ -232,6 +286,31 @@ export function initDb(): void {
     'kind',
     "text not null default 'standard' check(kind in ('standard', 'life'))",
   );
+  ensureTableColumn('channels', 'storage_token', "text not null default ''");
+  ensureTableColumn('channels', 'ownership_epoch', 'integer not null default 0');
+  const channelsWithoutStorageToken = db
+    .prepare("select jid from channels where storage_token = ''")
+    .all() as Array<{ jid: string }>;
+  const backfillChannelStorageToken = db.prepare(
+    "update channels set storage_token = ? where jid = ? and storage_token = ''",
+  );
+  db.transaction(() => {
+    for (const channel of channelsWithoutStorageToken) {
+      backfillChannelStorageToken.run(randomUUID(), channel.jid);
+    }
+  })();
+  db.exec(
+    'create unique index if not exists idx_channels_storage_token on channels(storage_token)',
+  );
+  ensureTableColumn('session_title_jobs', 'channel_storage_token', "text not null default ''");
+  db.prepare(
+    `update session_title_jobs
+        set channel_storage_token = coalesce(
+          (select storage_token from channels where jid = session_title_jobs.channel_jid),
+          ''
+        )
+      where channel_storage_token = ''`,
+  ).run();
   // Standard sessions remain unlimited, while even concurrent first-entry
   // requests can create at most one Life row.
   db.exec(
@@ -241,9 +320,38 @@ export function initDb(): void {
   // from. Nothing is destroyed until it is purged, which also means a deleted
   // session no longer strands its pi session directory on disk.
   ensureTableColumn('channels', 'deleted_at', 'text');
+  ensureTableColumn('channels', 'deletion_token', "text not null default ''");
+  const deletedChannelsWithoutToken = db
+    .prepare("select jid from channels where deleted_at is not null and deletion_token = ''")
+    .all() as Array<{ jid: string }>;
+  const backfillDeletionToken = db.prepare(
+    "update channels set deletion_token = ? where jid = ? and deletion_token = ''",
+  );
+  db.transaction(() => {
+    for (const channel of deletedChannelsWithoutToken) {
+      backfillDeletionToken.run(randomUUID(), channel.jid);
+    }
+  })();
   ensureTableColumn('message_queue', 'attachments', 'text');
   ensureTableColumn('control_queue', 'processing_at', 'text');
   ensureTableColumn('channel_operations', 'updated_at', 'text');
+  ensureTableColumn('channel_operations', 'channel_storage_token', "text not null default ''");
+  ensureTableColumn('channel_operations', 'channel_ownership_epoch', 'integer not null default 0');
+  db.prepare(
+    `update channel_operations
+        set channel_storage_token = coalesce(
+          (select storage_token from channels where jid = channel_operations.channel_jid),
+          ''
+        )
+      where channel_storage_token = ''`,
+  ).run();
+  db.prepare(
+    `update channel_operations
+        set channel_ownership_epoch = coalesce(
+          (select ownership_epoch from channels where jid = channel_operations.channel_jid),
+          0
+        )`,
+  ).run();
   db.prepare(
     'update channel_operations set updated_at = created_at where updated_at is null',
   ).run();
@@ -257,6 +365,32 @@ export function initDb(): void {
   // than triggering INTERRUPT_ON_NEW_MESSAGE. User messages keep the default.
   ensureTableColumn('message_queue', 'interrupt_active', 'integer not null default 1');
 
+  // Databases claimed by an earlier durable-purge build need enough immutable
+  // per-path state to distinguish our terminal seals from unverified payloads.
+  ensureTableColumn('session_purge_paths', 'seal_token', "text not null default ''");
+  ensureTableColumn('session_purge_paths', 'source_identity', 'text');
+  ensureTableColumn('session_purge_paths', 'source_guard', 'integer not null default 0');
+  const legacyPurgePaths = db
+    .prepare("select batch_id, source_path from session_purge_paths where seal_token = ''")
+    .all() as Array<{ batch_id: string; source_path: string }>;
+  const backfillSealToken = db.prepare(
+    "update session_purge_paths set seal_token = ? where batch_id = ? and source_path = ? and seal_token = ''",
+  );
+  db.transaction(() => {
+    for (const path of legacyPurgePaths) {
+      backfillSealToken.run(randomUUID(), path.batch_id, path.source_path);
+    }
+  })();
+
+  // Databases claimed by the first durable-purge implementation predate the
+  // batch receipt table. Backfill those pending claims before recovery starts.
+  db.prepare(
+    `insert or ignore into session_purge_batches (batch_id, target_count, status)
+     select batch_id, count(*), 'claimed'
+       from session_purge_journal group by batch_id`,
+  ).run();
+
+  installSessionPurgeWriteFences();
   recoverLifeArchiveMoves();
   logger.info({ path: config.dbPath }, 'Database initialized');
 }
@@ -266,6 +400,78 @@ function ensureTableColumn(table: string, column: string, ddl: string): void {
   if (rows.some((row) => row.name === column)) return;
   db.exec(`alter table ${table} add column ${column} ${ddl}`);
   logger.info({ table, column }, 'Database migrated: added column');
+}
+
+function installSessionPurgeWriteFences(): void {
+  db.exec(`
+    -- Version these rather than dropping/replacing the first purge triggers:
+    -- concurrent process startup must never create a migration-time fence gap.
+    create trigger if not exists fence_purging_channel_owner_insert_v2
+    before insert on channels
+    when exists (
+      select 1 from session_purge_journal p
+       where p.channel_jid = new.jid or p.channel_folder = new.folder
+    )
+    begin
+      select raise(abort, 'Session purge in progress');
+    end;
+
+    create trigger if not exists fence_purging_channel_owner_update_v2
+    before update on channels
+    when exists (
+      select 1 from session_purge_journal p
+       where p.channel_jid in (old.jid, new.jid)
+          or p.channel_folder in (old.folder, new.folder)
+    )
+    begin
+      select raise(abort, 'Session purge in progress');
+    end;
+
+    -- No general unregister/delete path may free an owner while filesystem
+    -- cleanup is active. Finalization removes this guard immediately before
+    -- deleting channels in the same IMMEDIATE transaction.
+    create trigger if not exists fence_purging_channel_delete
+    before delete on channels
+    when exists (
+      select 1 from session_purge_journal p where p.channel_jid = old.jid
+    )
+    begin
+      select raise(abort, 'Session purge in progress');
+    end;
+  `);
+
+  for (const table of [
+    'web_events',
+    'message_queue',
+    'message_log',
+    'control_queue',
+    'scheduled_tasks',
+    'live_output',
+    'channel_state',
+    'channel_operations',
+    'session_title_jobs',
+  ]) {
+    db.exec(`
+      create trigger if not exists fence_purging_${table}_insert
+      before insert on ${table}
+      when exists (
+        select 1 from session_purge_journal p where p.channel_jid = new.channel_jid
+      )
+      begin
+        select raise(abort, 'Session purge in progress');
+      end;
+
+      create trigger if not exists fence_purging_${table}_update
+      before update on ${table}
+      when exists (
+        select 1 from session_purge_journal p
+         where p.channel_jid = old.channel_jid or p.channel_jid = new.channel_jid
+      )
+      begin
+        select raise(abort, 'Session purge in progress');
+      end;
+    `);
+  }
 }
 
 function normalizeTimestamp(timestamp: string | null): string | null {
@@ -281,17 +487,64 @@ function normalizeTimestamp(timestamp: string | null): string | null {
   return parsed.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function sessionPathContains(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || !relativePathEscapesRoot(rel);
+}
+
+function archiveFamilyContains(ownerPath: string, candidatePath: string): boolean {
+  const rel = relative(dirname(ownerPath), candidatePath);
+  if (relativePathEscapesRoot(rel)) return false;
+  const firstEntry = rel.split(/[\\/]+/u)[0] ?? '';
+  return firstEntry.startsWith(`${basename(ownerPath)}__archived_`);
+}
+
+function channelFilesystemOwnershipAliases(
+  first: { jid: string; folder: string },
+  second: { jid: string; folder: string },
+): boolean {
+  const firstPath = resolveChannelSessionDir(first.folder);
+  const secondPath = resolveChannelSessionDir(second.folder);
+  return (
+    sessionPathContains(firstPath, secondPath) ||
+    sessionPathContains(secondPath, firstPath) ||
+    archiveFamilyContains(firstPath, secondPath) ||
+    archiveFamilyContains(secondPath, firstPath) ||
+    mediaDirName(first.jid) === mediaDirName(second.jid)
+  );
+}
+
+/** Serialize channel ownership changes with every durable purge claim. */
+function assertNoPendingPurgeOwnershipAlias(jid: string, folder: string): void {
+  const pending = db
+    .prepare('select channel_jid, channel_folder from session_purge_journal')
+    .all() as Array<{ channel_jid: string; channel_folder: string }>;
+  const candidate = { jid, folder };
+  if (
+    pending.some((target) =>
+      channelFilesystemOwnershipAliases(candidate, {
+        jid: target.channel_jid,
+        folder: target.channel_folder,
+      }),
+    )
+  ) {
+    throw new Error(SESSION_PURGE_IN_PROGRESS_ERROR);
+  }
+}
+
 // ── Channel registration ──
 
 export function registerChannel(
   ch: RegisteredChannel,
   options: { prepareSessionTitle?: boolean } = {},
 ): void {
+  const folder = validateSessionFolder(ch.folder);
   db.transaction(() => {
+    assertNoPendingPurgeOwnershipAlias(ch.jid, folder);
     db.prepare(
       `
-      insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override, kind)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      insert into channels (jid, name, folder, requires_trigger, is_main, model_override, thinking_override, cwd_override, kind, storage_token)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(jid) do update set
         name = excluded.name,
         folder = excluded.folder,
@@ -305,16 +558,17 @@ export function registerChannel(
     ).run(
       ch.jid,
       ch.name,
-      ch.folder,
+      folder,
       ch.requiresTrigger ? 1 : 0,
       ch.isMain ? 1 : 0,
       ch.modelOverride || '',
       ch.thinkingOverride || '',
       ch.cwdOverride.trim(),
       ch.kind ?? 'standard',
+      randomUUID(),
     );
     if (options.prepareSessionTitle) prepareSessionTitle(ch.jid);
-  })();
+  }).immediate();
   logger.info({ jid: ch.jid, name: ch.name }, 'Channel registered');
 }
 
@@ -397,11 +651,14 @@ function rowToChannel(row: any): RegisteredChannel {
     thinkingOverride: (row.thinking_override || '') as ThinkingLevel | '',
     cwdOverride: row.cwd_override || '',
     kind: (row.kind || 'standard') as ChannelKind,
+    storageToken: row.storage_token || '',
+    ownershipEpoch: Number(row.ownership_epoch || 0),
+    deletionToken: row.deletion_token || '',
+    deletedAt: row.deleted_at ?? undefined,
   };
 }
 
-export const LIFE_ARCHIVE_QUARANTINE_ERROR =
-  'Life archive filesystem recovery is still pending';
+export const LIFE_ARCHIVE_QUARANTINE_ERROR = 'Life archive filesystem recovery is still pending';
 
 /**
  * A pending filesystem move quarantines both owners created by the DB re-key:
@@ -432,8 +689,7 @@ export function isLifeArchiveMediaDirQuarantined(directory: string): boolean {
     archived_jid: string;
   }>;
   return rows.some(
-    (row) =>
-      directory === mediaDirName(row.archived_jid) || directory === mediaDirName('web:life'),
+    (row) => directory === mediaDirName(row.archived_jid) || directory === mediaDirName('web:life'),
   );
 }
 
@@ -443,30 +699,117 @@ function assertChannelNotQuarantined(channelJid: string): void {
   }
 }
 
+export const SESSION_PURGE_IN_PROGRESS_ERROR = 'Session purge in progress';
+export const SESSION_PURGE_CONFLICT_ERROR =
+  'Every session must still be deleted, idle, and owned by this purge request';
+
+export function isChannelPurgePending(channelJid: string): boolean {
+  return Boolean(
+    db.prepare('select 1 from session_purge_journal where channel_jid = ?').get(channelJid),
+  );
+}
+
 export const CHANNEL_GENERATION_CHANGED_ERROR = 'Channel generation changed';
 
 export interface ChannelGenerationFence {
   expectedFolder?: string;
+  expectedStorageToken?: string;
+  expectedOwnershipEpoch?: number;
 }
 
 export function isChannelGenerationCurrent(
   channelJid: string,
   expectedFolder: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
 ): boolean {
-  const current = db.prepare('select folder from channels where jid = ?').get(channelJid) as
-    | { folder: string }
+  const current = db
+    .prepare(
+      'select folder, storage_token, ownership_epoch, deleted_at from channels where jid = ?',
+    )
+    .get(channelJid) as
+    | {
+        folder: string;
+        storage_token: string;
+        ownership_epoch: number;
+        deleted_at: string | null;
+      }
     | undefined;
   return (
-    current?.folder === expectedFolder && !isChannelQuarantinedForLifeArchive(channelJid)
+    current?.folder === expectedFolder &&
+    (!expectedStorageToken || current.storage_token === expectedStorageToken) &&
+    (expectedOwnershipEpoch === undefined || current.ownership_epoch === expectedOwnershipEpoch) &&
+    !current.deleted_at &&
+    !isChannelQuarantinedForLifeArchive(channelJid) &&
+    !isChannelPurgePending(channelJid)
   );
 }
 
-function assertChannelWriteFence(
+export function assertChannelHasNoActiveOperations(channelJid: string): void {
+  db.prepare(
+    "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+  ).run();
+  const operation = db
+    .prepare('select 1 from channel_operations where channel_jid = ? limit 1')
+    .get(channelJid);
+  if (operation) throw new Error('Session still has an active request or RPC owner during reset');
+}
+
+export function assertChannelHasNoProcessingMessages(channelJid: string): void {
+  const processing = db
+    .prepare(
+      `select 1 from message_queue
+        where channel_jid = ? and status = 'processing' limit 1`,
+    )
+    .get(channelJid);
+  if (processing) throw new Error('Session started processing a message during reset');
+}
+
+export function withChannelGenerationMutation<T>(
   channelJid: string,
-  fence?: ChannelGenerationFence,
-): void {
+  expectedFolder: string,
+  expectedStorageToken: string | undefined,
+  expectedOwnershipEpoch: number | undefined,
+  mutate: () => T,
+): T {
+  return db
+    .transaction(() => {
+      if (
+        !isChannelGenerationCurrent(
+          channelJid,
+          expectedFolder,
+          expectedStorageToken,
+          expectedOwnershipEpoch,
+        )
+      ) {
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      }
+      return mutate();
+    })
+    .immediate();
+}
+
+function assertChannelActive(channelJid: string): void {
+  const channel = db.prepare('select deleted_at from channels where jid = ?').get(channelJid) as
+    | { deleted_at: string | null }
+    | undefined;
+  if (!channel || channel.deleted_at) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+}
+
+function assertChannelWriteFence(channelJid: string, fence?: ChannelGenerationFence): void {
   assertChannelNotQuarantined(channelJid);
-  if (fence?.expectedFolder && !isChannelGenerationCurrent(channelJid, fence.expectedFolder)) {
+  if (isChannelPurgePending(channelJid)) {
+    throw new Error(SESSION_PURGE_IN_PROGRESS_ERROR);
+  }
+  if (
+    fence?.expectedFolder &&
+    !isChannelGenerationCurrent(
+      channelJid,
+      fence.expectedFolder,
+      fence.expectedStorageToken,
+      fence.expectedOwnershipEpoch,
+    )
+  ) {
     throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
   }
 }
@@ -480,10 +823,12 @@ function fencedChannelWrite<T>(
     assertChannelWriteFence(channelJid, fence);
     return write();
   }
-  return db.transaction(() => {
-    assertChannelWriteFence(channelJid, fence);
-    return write();
-  }).immediate();
+  return db
+    .transaction(() => {
+      assertChannelWriteFence(channelJid, fence);
+      return write();
+    })
+    .immediate();
 }
 
 // ── Message queue ──
@@ -498,35 +843,51 @@ export function enqueueMessage(msg: {
   interruptActive?: boolean;
   sessionTitlePrompt?: string;
   immediateSessionTitle?: string;
+  expectedFolder?: string;
+  expectedStorageToken?: string;
+  expectedOwnershipEpoch?: number;
 }): number {
-  return db.transaction(() => {
-    assertChannelNotQuarantined(msg.channelJid);
-    const result = db
-      .prepare(
-        `
+  return db
+    .transaction(() => {
+      assertChannelNotQuarantined(msg.channelJid);
+      assertChannelActive(msg.channelJid);
+      if (
+        msg.expectedFolder &&
+        !isChannelGenerationCurrent(
+          msg.channelJid,
+          msg.expectedFolder,
+          msg.expectedStorageToken,
+          msg.expectedOwnershipEpoch,
+        )
+      )
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      const result = db
+        .prepare(
+          `
       insert into message_queue
         (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active)
       values (?, ?, ?, ?, ?, ?, ?)
     `,
-      )
-      .run(
-        msg.channelJid,
-        msg.sender,
-        msg.senderName,
-        msg.content,
-        msg.timestamp,
-        msg.attachments ?? null,
-        msg.interruptActive === false ? 0 : 1,
-      );
-    const rowid = Number(result.lastInsertRowid);
-    if (msg.sessionTitlePrompt !== undefined) {
-      const captured = queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
-      if (captured && msg.immediateSessionTitle) {
-        completePendingSessionTitle(msg.channelJid, rowid, msg.immediateSessionTitle);
+        )
+        .run(
+          msg.channelJid,
+          msg.sender,
+          msg.senderName,
+          msg.content,
+          msg.timestamp,
+          msg.attachments ?? null,
+          msg.interruptActive === false ? 0 : 1,
+        );
+      const rowid = Number(result.lastInsertRowid);
+      if (msg.sessionTitlePrompt !== undefined) {
+        const captured = queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
+        if (captured && msg.immediateSessionTitle) {
+          completePendingSessionTitle(msg.channelJid, rowid, msg.immediateSessionTitle);
+        }
       }
-    }
-    return rowid;
-  })();
+      return rowid;
+    })
+    .immediate();
 }
 
 export function claimNextMessage(channelJid: string): QueuedMessage | undefined {
@@ -535,10 +896,11 @@ export function claimNextMessage(channelJid: string): QueuedMessage | undefined 
     .prepare(
       `
     with next_message as (
-      select rowid
-      from message_queue
-      where status = 'pending' and channel_jid = ?
-      order by rowid asc
+      select q.rowid
+      from message_queue q
+      join channels c on c.jid = q.channel_jid and c.deleted_at is null
+      where q.status = 'pending' and q.channel_jid = ?
+      order by q.rowid asc
       limit 1
     )
     update message_queue
@@ -581,15 +943,48 @@ export function markMessageAborted(rowid: number): void {
  * original request resumes instead of being lost.
  */
 export function requeueMessage(rowid: number): void {
-  db.prepare("update message_queue set status = 'pending' where rowid = ?").run(rowid);
+  db.prepare(
+    `update message_queue
+        set status = case
+          when exists (
+            select 1 from channels c
+             where c.jid = message_queue.channel_jid and c.deleted_at is null
+          ) then 'pending'
+          else 'failed'
+        end,
+        processed_at = case
+          when exists (
+            select 1 from channels c
+             where c.jid = message_queue.channel_jid and c.deleted_at is null
+          ) then null
+          else datetime('now')
+        end
+      where rowid = ? and status = 'processing'`,
+  ).run(rowid);
 }
 
-export function clearPendingMessages(channelJid: string): number {
-  return db.transaction(() => {
-    // If an explicit reset discards the first unprocessed turn, release the
-    // one-shot title slot so the next real turn can become the first prompt.
-    db.prepare(
-      `update session_title_jobs
+export function clearPendingMessages(
+  channelJid: string,
+  expectedFolder?: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
+): number {
+  return db
+    .transaction(() => {
+      if (
+        expectedFolder &&
+        !isChannelGenerationCurrent(
+          channelJid,
+          expectedFolder,
+          expectedStorageToken,
+          expectedOwnershipEpoch,
+        )
+      )
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      // If an explicit reset discards the first unprocessed turn, release the
+      // one-shot title slot so the next real turn can become the first prompt.
+      db.prepare(
+        `update session_title_jobs
           set prompt = '', message_rowid = null, status = 'waiting', last_error = '',
               updated_at = datetime('now')
         where channel_jid = ? and status = 'pending'
@@ -597,19 +992,43 @@ export function clearPendingMessages(channelJid: string): number {
             select rowid from message_queue
              where channel_jid = ? and status = 'pending'
           )`,
-    ).run(channelJid, channelJid);
+      ).run(channelJid, channelJid);
 
-    return db
-      .prepare("delete from message_queue where channel_jid = ? and status = 'pending'")
-      .run(channelJid).changes;
-  })();
+      return db
+        .prepare("delete from message_queue where channel_jid = ? and status = 'pending'")
+        .run(channelJid).changes;
+    })
+    .immediate();
 }
 
 export function recoverStuckMessages(): number {
-  const result = db
-    .prepare("update message_queue set status = 'pending' where status = 'processing'")
-    .run();
-  return result.changes;
+  return db
+    .transaction(() => {
+      const failed = db
+        .prepare(
+          `update message_queue
+            set status = 'failed', processed_at = datetime('now')
+          where status = 'processing'
+            and not exists (
+              select 1 from channels c
+               where c.jid = message_queue.channel_jid and c.deleted_at is null
+            )`,
+        )
+        .run().changes;
+      const requeued = db
+        .prepare(
+          `update message_queue
+            set status = 'pending', processed_at = null
+          where status = 'processing'
+            and exists (
+              select 1 from channels c
+               where c.jid = message_queue.channel_jid and c.deleted_at is null
+            )`,
+        )
+        .run().changes;
+      return failed + requeued;
+    })
+    .immediate();
 }
 
 /** Get channels with pending messages that are allowed to pre-empt an active turn. */
@@ -617,11 +1036,12 @@ export function channelsWithInterruptingPending(): string[] {
   const rows = db
     .prepare(
       `
-    select channel_jid
-    from message_queue
-    where status = 'pending' and interrupt_active = 1
-    group by channel_jid
-    order by min(rowid) asc
+    select q.channel_jid
+    from message_queue q
+    join channels c on c.jid = q.channel_jid and c.deleted_at is null
+    where q.status = 'pending' and q.interrupt_active = 1
+    group by q.channel_jid
+    order by min(q.rowid) asc
   `,
     )
     .all() as any[];
@@ -635,11 +1055,12 @@ export function channelsWithPending(): string[] {
   const rows = db
     .prepare(
       `
-    select channel_jid
-    from message_queue
-    where status = 'pending'
-    group by channel_jid
-    order by min(rowid) asc
+    select q.channel_jid
+    from message_queue q
+    join channels c on c.jid = q.channel_jid and c.deleted_at is null
+    where q.status = 'pending'
+    group by q.channel_jid
+    order by min(q.rowid) asc
   `,
     )
     .all() as any[];
@@ -711,12 +1132,14 @@ export function getDueScheduledTasks(): ScheduledTaskRow[] {
   return db
     .prepare(
       `
-    select id, name, type, schedule, channel_jid, prompt, enabled, last_run_at, next_run_at, created_at, created_by
-    from scheduled_tasks
-    where enabled = 1
-      and next_run_at is not null
-      and next_run_at <= datetime('now')
-    order by next_run_at asc, id asc
+    select t.id, t.name, t.type, t.schedule, t.channel_jid, t.prompt, t.enabled,
+           t.last_run_at, t.next_run_at, t.created_at, t.created_by
+    from scheduled_tasks t
+    join channels c on c.jid = t.channel_jid and c.deleted_at is null
+    where t.enabled = 1
+      and t.next_run_at is not null
+      and t.next_run_at <= datetime('now')
+    order by t.next_run_at asc, t.id asc
   `,
     )
     .all() as ScheduledTaskRow[];
@@ -746,22 +1169,34 @@ export function enqueueScheduledTask(
   lastRunAt: string,
   nextRunAt: string | null,
 ): boolean {
-  return db.transaction(() => {
-    // A Life archive may re-key a task after the scheduler fetched it. Resolve
-    // its owner again inside this write transaction so stale scheduler memory
-    // cannot inject the task into the brand-new web:life replacement.
-    const task = db.prepare('select channel_jid from scheduled_tasks where id = ?').get(taskId) as
-      | { channel_jid: string }
-      | undefined;
-    if (!task || isChannelQuarantinedForLifeArchive(task.channel_jid)) return false;
-    enqueueMessage({
-      ...msg,
-      channelJid: task.channel_jid,
-      interruptActive: false,
-    });
-    updateTaskAfterRun(taskId, lastRunAt, nextRunAt);
-    return true;
-  })();
+  return db
+    .transaction(() => {
+      // A Life archive may re-key a task after the scheduler fetched it. Resolve
+      // its owner again inside this write transaction so stale scheduler memory
+      // cannot inject the task into the brand-new web:life replacement.
+      const task = db
+        .prepare(
+          `select t.channel_jid
+           from scheduled_tasks t
+           join channels c on c.jid = t.channel_jid and c.deleted_at is null
+          where t.id = ?`,
+        )
+        .get(taskId) as { channel_jid: string } | undefined;
+      if (
+        !task ||
+        isChannelQuarantinedForLifeArchive(task.channel_jid) ||
+        isChannelPurgePending(task.channel_jid)
+      )
+        return false;
+      enqueueMessage({
+        ...msg,
+        channelJid: task.channel_jid,
+        interruptActive: false,
+      });
+      updateTaskAfterRun(taskId, lastRunAt, nextRunAt);
+      return true;
+    })
+    .immediate();
 }
 
 // ── Message log ──
@@ -932,10 +1367,30 @@ export interface SessionMediaItem {
 }
 
 const MEDIA_TYPE_BY_EXT: Record<string, SessionMediaItem['type']> = {
-  apng: 'image', avif: 'image', bmp: 'image', gif: 'image', heic: 'image', heif: 'image',
-  jpeg: 'image', jpg: 'image', png: 'image', svg: 'image', webp: 'image',
-  m4v: 'video', mkv: 'video', mov: 'video', mp4: 'video', webm: 'video',
-  aac: 'audio', flac: 'audio', m4a: 'audio', mp3: 'audio', oga: 'audio', ogg: 'audio', opus: 'audio', wav: 'audio',
+  apng: 'image',
+  avif: 'image',
+  bmp: 'image',
+  gif: 'image',
+  heic: 'image',
+  heif: 'image',
+  jpeg: 'image',
+  jpg: 'image',
+  png: 'image',
+  svg: 'image',
+  webp: 'image',
+  m4v: 'video',
+  mkv: 'video',
+  mov: 'video',
+  mp4: 'video',
+  webm: 'video',
+  aac: 'audio',
+  flac: 'audio',
+  m4a: 'audio',
+  mp3: 'audio',
+  oga: 'audio',
+  ogg: 'audio',
+  opus: 'audio',
+  wav: 'audio',
 };
 
 /**
@@ -1001,9 +1456,9 @@ export function setLiveOutput(
   fence?: ChannelGenerationFence,
 ): number {
   return fencedChannelWrite(channelJid, fence, () => {
-    const row = db
-      .prepare('select seq from live_output where channel_jid = ?')
-      .get(channelJid) as { seq: number } | undefined;
+    const row = db.prepare('select seq from live_output where channel_jid = ?').get(channelJid) as
+      | { seq: number }
+      | undefined;
     const seq = (row?.seq ?? 0) + 1;
     db.prepare(
       `insert into live_output (channel_jid, content, thinking, seq, updated_at)
@@ -1024,10 +1479,7 @@ export function getLiveOutput(channelJid: string): LiveOutput | null {
 }
 
 /** Called when the finished message is appended, so the two never both show. */
-export function clearLiveOutput(
-  channelJid: string,
-  fence?: ChannelGenerationFence,
-): void {
+export function clearLiveOutput(channelJid: string, fence?: ChannelGenerationFence): void {
   fencedChannelWrite(channelJid, fence, () => {
     db.prepare('delete from live_output where channel_jid = ?').run(channelJid);
   });
@@ -1100,60 +1552,111 @@ export interface ControlRow {
 }
 
 export function enqueueControl(channelJid: string, command: string, args: unknown = {}): number {
-  assertChannelNotQuarantined(channelJid);
-  const result = db
-    .prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)')
-    .run(channelJid, command, JSON.stringify(args ?? {}));
-  return Number(result.lastInsertRowid);
+  return db
+    .transaction(() => {
+      assertChannelNotQuarantined(channelJid);
+      assertChannelActive(channelJid);
+      const result = db
+        .prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)')
+        .run(channelJid, command, JSON.stringify(args ?? {}));
+      return Number(result.lastInsertRowid);
+    })
+    .immediate();
 }
 
 export function claimPendingControls(limit = 10): ControlRow[] {
-  const rows = (
-    db
-      .prepare("select * from control_queue where status = 'pending' order by rowid")
-      .all() as ControlRow[]
-  )
-    .filter((row) => !isChannelQuarantinedForLifeArchive(row.channel_jid))
-    .slice(0, limit);
-  const claim = db.prepare(
-    "update control_queue set status = 'processing', processing_at = datetime('now') where rowid = ?",
-  );
-  for (const row of rows) claim.run(row.rowid);
-  return rows;
+  const boundedLimit = Math.max(0, Math.floor(limit));
+  if (boundedLimit === 0) return [];
+  return db
+    .transaction(() => {
+      const rows = db
+        .prepare(
+          `with candidates as (
+           select q.rowid
+             from control_queue q
+             join channels c on c.jid = q.channel_jid and c.deleted_at is null
+            where q.status = 'pending'
+              and not exists (
+                select 1 from life_archive_moves m
+                 where m.archived_jid = q.channel_jid
+                    or (q.channel_jid = 'web:life' and exists (
+                      select 1 from channels life
+                       where life.jid = 'web:life' and life.folder = m.new_life_folder
+                    ))
+              )
+            order by q.rowid
+            limit ?
+         )
+         update control_queue
+            set status = 'processing', processing_at = datetime('now')
+          where rowid in (select rowid from candidates)
+            and status = 'pending'
+        returning *`,
+        )
+        .all(boundedLimit) as ControlRow[];
+      return rows.sort((a, b) => a.rowid - b.rowid);
+    })
+    .immediate();
 }
 
 export function touchControlProcessing(
   rowid: number,
   expectedChannelJid?: string,
   expectedFolder?: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
 ): ControlRow | undefined {
-  return db.transaction(() => {
-    const current = db.prepare('select * from control_queue where rowid = ?').get(rowid) as
-      | ControlRow
-      | undefined;
-    if (!current || isChannelQuarantinedForLifeArchive(current.channel_jid)) return undefined;
-    if (expectedChannelJid && current.channel_jid !== expectedChannelJid) return undefined;
-    if (
-      expectedFolder &&
-      !isChannelGenerationCurrent(current.channel_jid, expectedFolder)
-    ) return undefined;
-    return db
-      .prepare(
-        `update control_queue
+  return db
+    .transaction(() => {
+      const current = db.prepare('select * from control_queue where rowid = ?').get(rowid) as
+        | ControlRow
+        | undefined;
+      if (!current || isChannelQuarantinedForLifeArchive(current.channel_jid)) return undefined;
+      if (expectedChannelJid && current.channel_jid !== expectedChannelJid) return undefined;
+      if (
+        expectedFolder &&
+        !isChannelGenerationCurrent(
+          current.channel_jid,
+          expectedFolder,
+          expectedStorageToken,
+          expectedOwnershipEpoch,
+        )
+      )
+        return undefined;
+      return db
+        .prepare(
+          `update control_queue
             set processing_at = datetime('now')
           where rowid = ? and status = 'processing'
           returning *`,
-      )
-      .get(rowid) as ControlRow | undefined;
-  }).immediate();
+        )
+        .get(rowid) as ControlRow | undefined;
+    })
+    .immediate();
 }
 
 export function finishControl(rowid: number, ok: boolean, result: string): void {
   const current = getControl(rowid);
   if (!current || isChannelQuarantinedForLifeArchive(current.channel_jid)) return;
   db.prepare(
-    "update control_queue set status = ?, result = ?, done_at = datetime('now') where rowid = ?",
+    `update control_queue
+        set status = ?, result = ?, done_at = datetime('now')
+      where rowid = ? and status = 'processing'`,
   ).run(ok ? 'done' : 'failed', result, rowid);
+}
+
+/** Terminally release a settled control whose result cannot safely be published. */
+export function failSettledControl(rowid: number, expectedJid: string): boolean {
+  return (
+    db
+      .prepare(
+        `update control_queue
+            set status = 'failed', result = 'Control ownership could not be confirmed',
+                done_at = datetime('now')
+          where rowid = ? and channel_jid = ? and status = 'processing'`,
+      )
+      .run(rowid, expectedJid).changes === 1
+  );
 }
 
 /**
@@ -1190,6 +1693,7 @@ export type SessionTitleJobStatus =
 
 export interface SessionTitleJobRow {
   channel_jid: string;
+  channel_storage_token: string;
   prompt: string;
   message_rowid: number | null;
   status: SessionTitleJobStatus;
@@ -1200,8 +1704,8 @@ export interface SessionTitleJobRow {
 /** Mark only newly created web sessions as eligible for first-prompt naming. */
 export function prepareSessionTitle(channelJid: string): void {
   db.prepare(
-    `insert into session_title_jobs (channel_jid, status)
-     values (?, 'waiting')
+    `insert into session_title_jobs (channel_jid, channel_storage_token, status)
+     select jid, storage_token, 'waiting' from channels where jid = ?
      on conflict(channel_jid) do nothing`,
   ).run(channelJid);
 }
@@ -1240,15 +1744,19 @@ export function completePendingSessionTitle(
 
     const applied =
       db
-        .prepare('update channels set name = ? where jid = ? and deleted_at is null')
-        .run(clean, channelJid).changes > 0;
+        .prepare(
+          `update channels set name = ?
+            where jid = ? and storage_token = ? and deleted_at is null`,
+        )
+        .run(clean, channelJid, job.channel_storage_token).changes > 0;
     if (!applied) return false;
 
     db.prepare(
       `update session_title_jobs
           set prompt = '', status = 'done', last_error = '', updated_at = datetime('now')
-        where channel_jid = ? and status = 'pending' and message_rowid = ?`,
-    ).run(channelJid, messageRowid);
+        where channel_jid = ? and channel_storage_token = ?
+          and status = 'pending' and message_rowid = ?`,
+    ).run(channelJid, job.channel_storage_token, messageRowid);
     return true;
   })();
 }
@@ -1268,6 +1776,7 @@ export function claimPendingSessionTitle(): SessionTitleJobRow | undefined {
            left join message_queue m on m.rowid = j.message_rowid
           where j.status = 'pending'
             and c.deleted_at is null
+            and c.storage_token = j.channel_storage_token
             and not exists (
               select 1 from life_archive_moves a where a.archived_jid = j.channel_jid
             )
@@ -1279,31 +1788,45 @@ export function claimPendingSessionTitle(): SessionTitleJobRow | undefined {
           set status = 'processing', updated_at = datetime('now')
         where channel_jid = (select channel_jid from next_job)
           and status = 'pending'
-       returning channel_jid, prompt, message_rowid, status, attempts, last_error`,
+       returning channel_jid, channel_storage_token, prompt, message_rowid,
+                 status, attempts, last_error`,
     )
     .get() as SessionTitleJobRow | undefined;
 }
 
-/** Apply a title only if the job was not cancelled by a manual rename. */
-export function completeSessionTitle(channelJid: string, title: string): boolean {
+/** Apply a title only if the exact generation job was not cancelled. */
+export function completeSessionTitle(
+  channelJid: string,
+  title: string,
+  expectedStorageToken?: string,
+): boolean {
   const clean = title.trim().slice(0, 80);
   if (!clean) return false;
 
-  return db.transaction(() => {
-    const job = getSessionTitleJob(channelJid);
-    if (job?.status !== 'processing') return false;
+  return db
+    .transaction(() => {
+      const job = getSessionTitleJob(channelJid);
+      if (
+        job?.status !== 'processing' ||
+        (expectedStorageToken && job.channel_storage_token !== expectedStorageToken)
+      )
+        return false;
 
-    const applied =
-      db
-        .prepare('update channels set name = ? where jid = ? and deleted_at is null')
-        .run(clean, channelJid).changes > 0;
-    db.prepare(
-      `update session_title_jobs
+      const applied =
+        db
+          .prepare(
+            `update channels set name = ?
+            where jid = ? and storage_token = ? and deleted_at is null`,
+          )
+          .run(clean, channelJid, job.channel_storage_token).changes > 0;
+      db.prepare(
+        `update session_title_jobs
           set prompt = '', status = ?, last_error = '', updated_at = datetime('now')
-        where channel_jid = ? and status = 'processing'`,
-    ).run(applied ? 'done' : 'cancelled', channelJid);
-    return applied;
-  })();
+        where channel_jid = ? and channel_storage_token = ? and status = 'processing'`,
+      ).run(applied ? 'done' : 'cancelled', channelJid, job.channel_storage_token);
+      return applied;
+    })
+    .immediate();
 }
 
 /** Retry transient failures, then forget the auxiliary prompt copy. */
@@ -1311,17 +1834,22 @@ export function failSessionTitle(
   channelJid: string,
   error: string,
   maxAttempts = 3,
+  expectedStorageToken?: string,
 ): SessionTitleJobStatus | undefined {
   const job = getSessionTitleJob(channelJid);
-  if (job?.status !== 'processing') return job?.status;
+  if (
+    job?.status !== 'processing' ||
+    (expectedStorageToken && job.channel_storage_token !== expectedStorageToken)
+  )
+    return job?.status;
   const attempts = job.attempts + 1;
   const status: SessionTitleJobStatus = attempts >= maxAttempts ? 'failed' : 'pending';
   db.prepare(
     `update session_title_jobs
         set prompt = case when ? = 'failed' then '' else prompt end,
             status = ?, attempts = ?, last_error = ?, updated_at = datetime('now')
-      where channel_jid = ? and status = 'processing'`,
-  ).run(status, status, attempts, error.slice(0, 500), channelJid);
+      where channel_jid = ? and channel_storage_token = ? and status = 'processing'`,
+  ).run(status, status, attempts, error.slice(0, 500), channelJid, job.channel_storage_token);
   return status;
 }
 
@@ -1333,36 +1861,67 @@ export function cancelSessionTitle(channelJid: string): void {
   ).run(channelJid);
 }
 
-export function requeueInterruptedSessionTitle(channelJid: string, error = ''): boolean {
+export function requeueInterruptedSessionTitle(
+  channelJid: string,
+  error = '',
+  expectedStorageToken?: string,
+): boolean {
   return (
     db
       .prepare(
         `update session_title_jobs
             set status = 'pending', last_error = ?, updated_at = datetime('now')
-          where channel_jid = ? and status = 'processing'`,
+          where channel_jid = ? and status = 'processing'
+            and (? = '' or channel_storage_token = ?)`,
       )
-      .run(error.slice(0, 500), channelJid).changes > 0
+      .run(error.slice(0, 500), channelJid, expectedStorageToken ?? '', expectedStorageToken ?? '')
+      .changes > 0
   );
 }
 
 export function recoverSessionTitleJobs(): number {
   return db
-    .prepare(
-      `update session_title_jobs
-          set status = 'pending', updated_at = datetime('now')
-        where status = 'processing'
-          and not exists (
-            select 1 from life_archive_moves a
-             where a.archived_jid = session_title_jobs.channel_jid
-          )`,
-    )
-    .run().changes;
+    .transaction(() => {
+      const cancelled = db
+        .prepare(
+          `update session_title_jobs
+            set prompt = '', status = 'cancelled', updated_at = datetime('now')
+          where status = 'processing'
+            and not exists (
+              select 1 from channels c
+               where c.jid = session_title_jobs.channel_jid
+                 and c.storage_token = session_title_jobs.channel_storage_token
+                 and c.deleted_at is null
+            )`,
+        )
+        .run().changes;
+      const requeued = db
+        .prepare(
+          `update session_title_jobs
+            set status = 'pending', updated_at = datetime('now')
+          where status = 'processing'
+            and exists (
+              select 1 from channels c
+               where c.jid = session_title_jobs.channel_jid
+                 and c.storage_token = session_title_jobs.channel_storage_token
+                 and c.deleted_at is null
+            )
+            and not exists (
+              select 1 from life_archive_moves a
+               where a.archived_jid = session_title_jobs.channel_jid
+            )`,
+        )
+        .run().changes;
+      return cancelled + requeued;
+    })
+    .immediate();
 }
 
 export function getSessionTitleJob(channelJid: string): SessionTitleJobRow | undefined {
   return db
     .prepare(
-      `select channel_jid, prompt, message_rowid, status, attempts, last_error
+      `select channel_jid, channel_storage_token, prompt, message_rowid, status,
+              attempts, last_error
          from session_title_jobs where channel_jid = ?`,
     )
     .get(channelJid) as SessionTitleJobRow | undefined;
@@ -1378,55 +1937,109 @@ export function getSessionTitleJob(channelJid: string): SessionTitleJobRow | und
 export function beginChannelOperation(
   channelJid: string,
   expectedFolder: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
 ): string | undefined {
   recoverLifeArchiveMoves();
-  return db.transaction(() => {
-    db.prepare(
-      "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
-    ).run();
-    const current = db.prepare('select folder from channels where jid = ?').get(channelJid) as
-      | { folder: string }
-      | undefined;
-    if (!current || current.folder !== expectedFolder) return undefined;
-    if (isChannelQuarantinedForLifeArchive(channelJid)) return undefined;
+  return db
+    .transaction(() => {
+      db.prepare(
+        "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+      ).run();
+      const current = db
+        .prepare(
+          'select folder, storage_token, ownership_epoch, deleted_at from channels where jid = ?',
+        )
+        .get(channelJid) as
+        | {
+            folder: string;
+            storage_token: string;
+            ownership_epoch: number;
+            deleted_at: string | null;
+          }
+        | undefined;
+      if (
+        !current ||
+        current.folder !== expectedFolder ||
+        (expectedStorageToken && current.storage_token !== expectedStorageToken) ||
+        (expectedOwnershipEpoch !== undefined &&
+          current.ownership_epoch !== expectedOwnershipEpoch) ||
+        current.deleted_at
+      )
+        return undefined;
+      if (isChannelQuarantinedForLifeArchive(channelJid) || isChannelPurgePending(channelJid))
+        return undefined;
 
-    const id = randomUUID();
-    db.prepare(
-      `insert into channel_operations
-        (id, channel_jid, channel_folder, created_at, updated_at)
-       values (?, ?, ?, datetime('now'), datetime('now'))`,
-    ).run(id, channelJid, expectedFolder);
-    return id;
-  }).immediate();
+      const id = randomUUID();
+      db.prepare(
+        `insert into channel_operations
+        (id, channel_jid, channel_folder, channel_storage_token,
+         channel_ownership_epoch, created_at, updated_at)
+       values (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      ).run(id, channelJid, expectedFolder, current.storage_token, current.ownership_epoch);
+      return id;
+    })
+    .immediate();
 }
 
 function isChannelOperationCurrent(
   id: string,
   channelJid: string,
   expectedFolder: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
 ): boolean {
   const operation = db
     .prepare(
-      `select 1 from channel_operations
+      `select channel_storage_token, channel_ownership_epoch from channel_operations
         where id = ? and channel_jid = ? and channel_folder = ?`,
     )
-    .get(id, channelJid, expectedFolder);
-  return Boolean(operation) && isChannelGenerationCurrent(channelJid, expectedFolder);
+    .get(id, channelJid, expectedFolder) as
+    | { channel_storage_token: string; channel_ownership_epoch: number }
+    | undefined;
+  const operationToken = expectedStorageToken || operation?.channel_storage_token;
+  const operationEpoch = expectedOwnershipEpoch ?? operation?.channel_ownership_epoch;
+  return (
+    Boolean(operation) &&
+    isChannelGenerationCurrent(channelJid, expectedFolder, operationToken, operationEpoch)
+  );
 }
 
 export function touchChannelOperation(id: string): boolean {
-  return db.transaction(() => {
-    const operation = db
-      .prepare('select channel_jid, channel_folder from channel_operations where id = ?')
-      .get(id) as { channel_jid: string; channel_folder: string } | undefined;
-    if (
-      !operation ||
-      !isChannelOperationCurrent(id, operation.channel_jid, operation.channel_folder)
-    ) return false;
-    return db
-      .prepare("update channel_operations set updated_at = datetime('now') where id = ?")
-      .run(id).changes > 0;
-  }).immediate();
+  return db
+    .transaction(() => {
+      const operation = db
+        .prepare(
+          `select channel_jid, channel_folder, channel_storage_token,
+                  channel_ownership_epoch
+           from channel_operations where id = ?`,
+        )
+        .get(id) as
+        | {
+            channel_jid: string;
+            channel_folder: string;
+            channel_storage_token: string;
+            channel_ownership_epoch: number;
+          }
+        | undefined;
+      if (
+        !operation ||
+        !isChannelOperationCurrent(
+          id,
+          operation.channel_jid,
+          operation.channel_folder,
+          operation.channel_storage_token,
+          operation.channel_ownership_epoch,
+        )
+      )
+        return false;
+      return (
+        db
+          .prepare("update channel_operations set updated_at = datetime('now') where id = ?")
+          .run(id).changes > 0
+      );
+    })
+    .immediate();
 }
 
 export function commitLifeMessageOperation(options: {
@@ -1441,20 +2054,19 @@ export function commitLifeMessageOperation(options: {
   };
   message: Omit<Parameters<typeof enqueueMessage>[0], 'channelJid'>;
 }): number {
-  return db.transaction(() => {
-    if (
-      !isChannelOperationCurrent(
-        options.operationId,
-        options.channelJid,
-        options.expectedFolder,
+  return db
+    .transaction(() => {
+      if (
+        !isChannelOperationCurrent(options.operationId, options.channelJid, options.expectedFolder)
       )
-    ) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
-    appendWebEvent(
-      { channelJid: options.channelJid, ...options.event },
-      { expectedFolder: options.expectedFolder },
-    );
-    return enqueueMessage({ channelJid: options.channelJid, ...options.message });
-  }).immediate();
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      appendWebEvent(
+        { channelJid: options.channelJid, ...options.event },
+        { expectedFolder: options.expectedFolder },
+      );
+      return enqueueMessage({ channelJid: options.channelJid, ...options.message });
+    })
+    .immediate();
 }
 
 export function commitLifeControlOperation(options: {
@@ -1464,25 +2076,24 @@ export function commitLifeControlOperation(options: {
   command: string;
   args: unknown;
 }): number {
-  return db.transaction(() => {
-    if (
-      !isChannelOperationCurrent(
-        options.operationId,
-        options.channelJid,
-        options.expectedFolder,
+  return db
+    .transaction(() => {
+      if (
+        !isChannelOperationCurrent(options.operationId, options.channelJid, options.expectedFolder)
       )
-    ) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
-    appendWebEvent(
-      {
-        channelJid: options.channelJid,
-        kind: 'message',
-        role: 'user',
-        content: `/${options.command}`,
-      },
-      { expectedFolder: options.expectedFolder },
-    );
-    return enqueueControl(options.channelJid, options.command, options.args);
-  }).immediate();
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      appendWebEvent(
+        {
+          channelJid: options.channelJid,
+          kind: 'message',
+          role: 'user',
+          content: `/${options.command}`,
+        },
+        { expectedFolder: options.expectedFolder },
+      );
+      return enqueueControl(options.channelJid, options.command, options.args);
+    })
+    .immediate();
 }
 
 export function finishChannelOperation(id: string): void {
@@ -1569,78 +2180,82 @@ export function getOrCreateLifeChannel(): {
   created: boolean;
 } {
   recoverLifeArchiveMoves();
-  return db.transaction(() => {
-    const existing = db.prepare("select * from channels where kind = 'life' limit 1").get() as
-      | any
-      | undefined;
+  return db
+    .transaction(() => {
+      const existing = db.prepare("select * from channels where kind = 'life' limit 1").get() as
+        | any
+        | undefined;
 
-    if (existing) {
-      // A failed post-commit rename still leaves a valid fresh Life row. Return
-      // that canonical generation, but let recovery remain its only writer.
-      if (!isChannelQuarantinedForLifeArchive(existing.jid)) {
-        db.prepare(
-          `update channels
+      if (existing) {
+        assertNoPendingPurgeOwnershipAlias('web:life', existing.folder);
+        // A failed post-commit rename still leaves a valid fresh Life row. Return
+        // that canonical generation, but let recovery remain its only writer.
+        if (!isChannelQuarantinedForLifeArchive(existing.jid)) {
+          db.prepare(
+            `update channels
               set jid = 'web:life', name = 'Life', model_override = '',
                   thinking_override = '', cwd_override = '', deleted_at = null
             where jid = ?`,
-        ).run(existing.jid);
+          ).run(existing.jid);
+        }
+        return {
+          channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
+          created: false,
+        };
+      }
+
+      // Never reinterpret an ordinary conversation as Life: its folder may hold
+      // unrelated Pi history. A reserved-JID collision must be resolved
+      // explicitly instead of silently inheriting that context.
+      const reserved = db.prepare("select kind from channels where jid = 'web:life'").get() as
+        | { kind: ChannelKind }
+        | undefined;
+      if (reserved) {
+        throw new Error('Cannot create Life: reserved web:life JID belongs to a standard session');
+      }
+
+      mkdirSync(config.sessionsDir, { recursive: true });
+      let folder = '';
+      let folderPath = '';
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        const candidate = `web_life_${randomUUID().slice(0, 8)}`;
+        const candidatePath = resolveChannelSessionDir(candidate);
+        try {
+          // mkdir without recursive is an atomic absent-path reservation. An
+          // orphan from a prior run is never reused, even when it is non-empty.
+          mkdirSync(candidatePath);
+          folder = candidate;
+          folderPath = candidatePath;
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+      }
+      if (!folder) throw new Error('Could not reserve an empty Life session folder');
+
+      try {
+        assertNoPendingPurgeOwnershipAlias('web:life', folder);
+        db.prepare(
+          `insert into channels
+          (jid, name, folder, requires_trigger, is_main, model_override,
+           thinking_override, cwd_override, kind, storage_token)
+         values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life', ?)`,
+        ).run(folder, randomUUID());
+      } catch (error) {
+        try {
+          rmdirSync(folderPath);
+        } catch {
+          // Preserve the original database error; a non-empty directory is never
+          // safe to remove and will simply be skipped on the next attempt.
+        }
+        throw error;
       }
       return {
         channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
-        created: false,
+        created: true,
       };
-    }
-
-    // Never reinterpret an ordinary conversation as Life: its folder may hold
-    // unrelated Pi history. A reserved-JID collision must be resolved
-    // explicitly instead of silently inheriting that context.
-    const reserved = db.prepare("select kind from channels where jid = 'web:life'").get() as
-      | { kind: ChannelKind }
-      | undefined;
-    if (reserved) {
-      throw new Error('Cannot create Life: reserved web:life JID belongs to a standard session');
-    }
-
-    mkdirSync(config.sessionsDir, { recursive: true });
-    let folder = '';
-    let folderPath = '';
-    for (let attempt = 0; attempt < 32; attempt += 1) {
-      const candidate = `web_life_${randomUUID().slice(0, 8)}`;
-      const candidatePath = resolveChannelSessionDir(candidate);
-      try {
-        // mkdir without recursive is an atomic absent-path reservation. An
-        // orphan from a prior run is never reused, even when it is non-empty.
-        mkdirSync(candidatePath);
-        folder = candidate;
-        folderPath = candidatePath;
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      }
-    }
-    if (!folder) throw new Error('Could not reserve an empty Life session folder');
-
-    try {
-      db.prepare(
-        `insert into channels
-          (jid, name, folder, requires_trigger, is_main, model_override,
-           thinking_override, cwd_override, kind)
-         values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life')`,
-      ).run(folder);
-    } catch (error) {
-      try {
-        rmdirSync(folderPath);
-      } catch {
-        // Preserve the original database error; a non-empty directory is never
-        // safe to remove and will simply be skipped on the next attempt.
-      }
-      throw error;
-    }
-    return {
-      channel: rowToChannel(db.prepare("select * from channels where jid = 'web:life'").get()),
-      created: true,
-    };
-  })();
+    })
+    .immediate();
 }
 
 interface LifeArchiveMoveRow {
@@ -1791,6 +2406,7 @@ export function archiveLifeSessionAndStartNew(options: {
       if (db.prepare('select 1 from channels where jid = ?').get(archivedJid)) {
         throw new Error(`Session already exists: ${archivedJid}`);
       }
+      assertNoPendingPurgeOwnershipAlias(archivedJid, current.folder);
 
       // A pre-existing destination is not recoverable: after commit there is
       // no safe way to distinguish it from data written by a stale owner. Fail
@@ -1834,6 +2450,7 @@ export function archiveLifeSessionAndStartNew(options: {
         break;
       }
       if (!newLifeFolder) throw new Error('Could not reserve an empty Life session folder');
+      assertNoPendingPurgeOwnershipAlias('web:life', newLifeFolder);
 
       const oldMediaDir = mediaDirName('web:life');
       const mediaRequired = existsSync(join(config.webMediaDir, oldMediaDir));
@@ -1879,9 +2496,9 @@ export function archiveLifeSessionAndStartNew(options: {
       db.prepare(
         `insert into channels
         (jid, name, folder, requires_trigger, is_main, model_override,
-         thinking_override, cwd_override, kind)
-       values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life')`,
-      ).run(newLifeFolder);
+         thinking_override, cwd_override, kind, storage_token)
+       values ('web:life', 'Life', ?, 0, 0, '', '', '', 'life', ?)`,
+      ).run(newLifeFolder, randomUUID());
 
       const moveId = randomUUID();
       db.prepare(
@@ -2005,52 +2622,643 @@ export function getMeta(key: string): string | undefined {
 /**
  * Move a session to the trash.
  *
- * Only the queue is cleared — anything in flight should stop — while the
- * transcript, settings and pi session directory are left untouched so a
- * restore brings the session back exactly as it was.
+ * Pending messages and controls are cancelled — anything already in flight
+ * settles under its ownership fence — while the transcript, settings and pi
+ * session directory remain untouched so a restore keeps the conversation.
  */
-export function softDeleteChannel(jid: string): void {
+export function softDeleteChannel(
+  jid: string,
+  expectedFolder?: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
+): void {
   db.transaction(() => {
-    db.prepare("update channels set deleted_at = datetime('now') where jid = ?").run(jid);
+    if (
+      expectedFolder &&
+      !isChannelGenerationCurrent(jid, expectedFolder, expectedStorageToken, expectedOwnershipEpoch)
+    )
+      throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+    db.prepare(
+      `update channels
+          set deleted_at = datetime('now'), deletion_token = ?,
+              ownership_epoch = ownership_epoch + 1
+        where jid = ?`,
+    ).run(randomUUID(), jid);
     db.prepare("delete from message_queue where channel_jid = ? and status = 'pending'").run(jid);
+    db.prepare(
+      `update control_queue
+          set status = 'failed', result = 'Session moved to trash', done_at = datetime('now')
+        where channel_jid = ? and status = 'pending'`,
+    ).run(jid);
     db.prepare('update channel_state set busy = 0 where channel_jid = ?').run(jid);
+    db.prepare('delete from live_output where channel_jid = ?').run(jid);
     // Keep queue deletion and title cancellation atomic: otherwise a crash
     // between them leaves a restored session with an orphaned prompt copy.
     cancelSessionTitle(jid);
-  })();
+  }).immediate();
 }
 
-export function renameChannel(jid: string, name: string): boolean {
+export function clearChannelSession(
+  jid: string,
+  expectedFolder: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
+): number {
+  return db
+    .transaction(() => {
+      if (
+        !isChannelGenerationCurrent(
+          jid,
+          expectedFolder,
+          expectedStorageToken,
+          expectedOwnershipEpoch,
+        )
+      ) {
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      }
+      const removed = db.prepare('delete from web_events where channel_jid = ?').run(jid).changes;
+      db.prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)').run(
+        jid,
+        'pi new',
+        '{}',
+      );
+      return removed;
+    })
+    .immediate();
+}
+
+export function renameChannel(
+  jid: string,
+  name: string,
+  expectedFolder?: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
+): boolean {
   const trimmed = name.trim().slice(0, 80);
   if (!trimmed) return false;
-  return db.transaction(() => {
-    // An explicit user title always wins, even if the one-shot summary is
-    // currently running in the worker.
-    cancelSessionTitle(jid);
-    return db.prepare('update channels set name = ? where jid = ?').run(trimmed, jid).changes > 0;
-  })();
+  return db
+    .transaction(() => {
+      if (
+        expectedFolder &&
+        !isChannelGenerationCurrent(
+          jid,
+          expectedFolder,
+          expectedStorageToken,
+          expectedOwnershipEpoch,
+        )
+      )
+        throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      // An explicit user title always wins, even if the one-shot summary is
+      // currently running in the worker.
+      cancelSessionTitle(jid);
+      return db.prepare('update channels set name = ? where jid = ?').run(trimmed, jid).changes > 0;
+    })
+    .immediate();
 }
 
-export function restoreChannel(jid: string): boolean {
-  return db.prepare('update channels set deleted_at = null where jid = ?').run(jid).changes > 0;
+export function restoreChannel(
+  jid: string,
+  expectedFolder?: string,
+  expectedStorageToken?: string,
+  expectedOwnershipEpoch?: number,
+): boolean {
+  return db
+    .transaction(() => {
+      if (isChannelPurgePending(jid)) throw new Error(SESSION_PURGE_IN_PROGRESS_ERROR);
+      if (expectedFolder) {
+        const current = db
+          .prepare(
+            'select folder, storage_token, ownership_epoch, deleted_at from channels where jid = ?',
+          )
+          .get(jid) as
+          | {
+              folder: string;
+              storage_token: string;
+              ownership_epoch: number;
+              deleted_at: string | null;
+            }
+          | undefined;
+        if (
+          !current ||
+          current.folder !== expectedFolder ||
+          (expectedStorageToken && current.storage_token !== expectedStorageToken) ||
+          (expectedOwnershipEpoch !== undefined &&
+            current.ownership_epoch !== expectedOwnershipEpoch) ||
+          !current.deleted_at
+        )
+          throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      }
+      db.prepare(
+        "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+      ).run();
+      const activeWork = db
+        .prepare(
+          `select 1 from message_queue
+            where channel_jid = ? and status in ('pending', 'processing')
+           union all
+           select 1 from control_queue
+            where channel_jid = ? and status in ('pending', 'processing')
+           union all
+           select 1 from channel_operations where channel_jid = ?
+           limit 1`,
+        )
+        .get(jid, jid, jid);
+      if (activeWork) throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
+      return (
+        db
+          .prepare(
+            `update channels
+                set deleted_at = null, deletion_token = '',
+                    ownership_epoch = ownership_epoch + 1
+              where jid = ? and deleted_at is not null`,
+          )
+          .run(jid).changes > 0
+      );
+    })
+    .immediate();
 }
 
-/** Irreversible: drop every row for a session. The caller removes its files. */
-export function purgeChannel(jid: string): void {
-  db.prepare('delete from web_events where channel_jid = ?').run(jid);
-  db.prepare('delete from message_queue where channel_jid = ?').run(jid);
-  db.prepare('delete from message_log where channel_jid = ?').run(jid);
-  db.prepare('delete from control_queue where channel_jid = ?').run(jid);
-  db.prepare('delete from channel_state where channel_jid = ?').run(jid);
-  db.prepare('delete from session_title_jobs where channel_jid = ?').run(jid);
-  db.prepare('delete from channel_operations where channel_jid = ?').run(jid);
-  db.prepare('delete from channels where jid = ?').run(jid);
+export interface SessionPurgeTarget {
+  batchId: string;
+  jid: string;
+  folder: string;
+  storageToken: string;
+  deletionToken: string;
+  deletedAt: string;
+  filesDone: boolean;
+}
+
+export interface SessionPurgeBatch {
+  batchId: string;
+  targets: SessionPurgeTarget[];
+}
+
+export interface SessionPurgePath {
+  batchId: string;
+  jid: string;
+  sourcePath: string;
+  tombstonePath: string;
+  sealToken: string;
+  sourceIdentity: string | null;
+  sourceGuard: boolean;
+}
+
+export interface SessionPurgeFinalization {
+  status: 'purged' | 'already-purged' | 'missing';
+  count: number;
+}
+
+function sessionPurgeTargets(batchId: string): SessionPurgeTarget[] {
+  const rows = db
+    .prepare(
+      `select p.batch_id, p.channel_jid, p.channel_folder, p.files_done,
+              c.storage_token, c.deletion_token, c.deleted_at
+         from session_purge_journal p
+         join channels c on c.jid = p.channel_jid and c.folder = p.channel_folder
+        where p.batch_id = ? order by p.channel_jid`,
+    )
+    .all(batchId) as Array<{
+    batch_id: string;
+    channel_jid: string;
+    channel_folder: string;
+    files_done: number;
+    storage_token: string;
+    deletion_token: string;
+    deleted_at: string;
+  }>;
+  return rows.map((row) => ({
+    batchId: row.batch_id,
+    jid: row.channel_jid,
+    folder: row.channel_folder,
+    storageToken: row.storage_token,
+    deletionToken: row.deletion_token,
+    deletedAt: row.deleted_at,
+    filesDone: Boolean(row.files_done),
+  }));
+}
+
+export function getSessionPurgeBatch(batchId: string): SessionPurgeBatch | undefined {
+  const targets = sessionPurgeTargets(batchId);
+  return targets.length > 0 ? { batchId, targets } : undefined;
+}
+
+export function getCompletedSessionPurgeCount(batchId: string): number | undefined {
+  const row = db
+    .prepare(
+      "select target_count from session_purge_batches where batch_id = ? and status = 'completed'",
+    )
+    .get(batchId) as { target_count: number } | undefined;
+  return row?.target_count;
+}
+
+/** Persist one target's complete detach manifest before the first rename. */
+export function ensureSessionPurgeTargetPaths(
+  batchId: string,
+  jid: string,
+  paths: Array<{ sourcePath: string; tombstonePath: string; sourceGuard: boolean }>,
+): SessionPurgePath[] {
+  return db
+    .transaction(() => {
+      const claimed = db
+        .prepare('select 1 from session_purge_journal where batch_id = ? and channel_jid = ?')
+        .get(batchId, jid);
+      if (!claimed) return [];
+
+      const read = () =>
+        (
+          db
+            .prepare(
+              `select batch_id, channel_jid, source_path, tombstone_path,
+                    seal_token, source_identity, source_guard
+               from session_purge_paths
+              where batch_id = ? and channel_jid = ? order by source_path`,
+            )
+            .all(batchId, jid) as Array<{
+            batch_id: string;
+            channel_jid: string;
+            source_path: string;
+            tombstone_path: string;
+            seal_token: string;
+            source_identity: string | null;
+            source_guard: number;
+          }>
+        ).map((row) => ({
+          batchId: row.batch_id,
+          jid: row.channel_jid,
+          sourcePath: row.source_path,
+          tombstonePath: row.tombstone_path,
+          sealToken: row.seal_token,
+          sourceIdentity: row.source_identity,
+          sourceGuard: Boolean(row.source_guard),
+        }));
+
+      const existing = read();
+      if (existing.length > 0) return existing;
+      if (paths.length === 0) throw new Error('Session purge path manifest cannot be empty');
+
+      const insert = db.prepare(
+        `insert into session_purge_paths
+        (batch_id, channel_jid, source_path, tombstone_path, seal_token, source_guard)
+       values (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const path of paths) {
+        insert.run(
+          batchId,
+          jid,
+          path.sourcePath,
+          path.tombstonePath,
+          randomUUID(),
+          path.sourceGuard ? 1 : 0,
+        );
+      }
+      return read();
+    })
+    .immediate();
+}
+
+/** Lock the only directory inode recovery is allowed to recursively clean. */
+export function recordSessionPurgeSourceIdentity(
+  batchId: string,
+  jid: string,
+  sourcePath: string,
+  identity: string,
+): string {
+  return db
+    .transaction(() => {
+      const row = db
+        .prepare(
+          `select source_identity from session_purge_paths
+          where batch_id = ? and channel_jid = ? and source_path = ?`,
+        )
+        .get(batchId, jid, sourcePath) as { source_identity: string | null } | undefined;
+      if (!row) throw new Error('Session purge path manifest is no longer active');
+      if (row.source_identity && row.source_identity !== identity) {
+        throw new Error(`Session purge source identity changed: ${sourcePath}`);
+      }
+      if (!row.source_identity) {
+        const updated = db
+          .prepare(
+            `update session_purge_paths set source_identity = ?
+            where batch_id = ? and channel_jid = ? and source_path = ?
+              and source_identity is null`,
+          )
+          .run(identity, batchId, jid, sourcePath);
+        if (updated.changes !== 1) {
+          const concurrent = db
+            .prepare(
+              `select source_identity from session_purge_paths
+              where batch_id = ? and channel_jid = ? and source_path = ?`,
+            )
+            .get(batchId, jid, sourcePath) as { source_identity: string | null } | undefined;
+          if (concurrent?.source_identity !== identity) {
+            throw new Error(`Session purge source identity changed: ${sourcePath}`);
+          }
+        }
+      }
+      return identity;
+    })
+    .immediate();
+}
+
+export function listPendingSessionPurgeBatchIds(): string[] {
+  return (
+    db
+      .prepare(
+        `select batch_id from session_purge_journal
+          group by batch_id order by min(created_at), batch_id`,
+      )
+      .all() as Array<{ batch_id: string }>
+  ).map((row) => row.batch_id);
+}
+
+/**
+ * Atomically reserve an exact trash selection for permanent deletion.
+ *
+ * The immediate transaction serializes restore/worker claims with validation.
+ * Once the journal rows exist, DB triggers fence every owner write until the
+ * filesystem cleanup and one final ownership transaction have both completed.
+ */
+export function claimDeletedSessionsForPurge(
+  jids: string[],
+  expectedStorageTokens?: string[],
+  expectedDeletionTokens?: string[],
+  expectedDeletedAts?: string[],
+): SessionPurgeBatch {
+  // Validate the caller's public trash domain before expiring leases or making
+  // any other mutation. Hidden transport channels are never UI purge targets.
+  if (
+    jids.length === 0 ||
+    new Set(jids).size !== jids.length ||
+    jids.some((jid) => !jid.startsWith('web:')) ||
+    (expectedStorageTokens !== undefined &&
+      (expectedStorageTokens.length !== jids.length ||
+        expectedStorageTokens.some((token) => !token))) ||
+    (expectedDeletionTokens !== undefined &&
+      (expectedDeletionTokens.length !== jids.length ||
+        expectedDeletionTokens.some((token) => !token))) ||
+    (expectedDeletedAts !== undefined &&
+      (expectedDeletedAts.length !== jids.length || expectedDeletedAts.some((at) => !at)))
+  ) {
+    throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+  }
+
+  return db
+    .transaction(() => {
+      // Request/worker leases heartbeat while active. A process that disappeared
+      // must not strand trash forever, but queued/processing rows below remain
+      // authoritative blockers regardless of age.
+      db.prepare(
+        "delete from channel_operations where coalesce(updated_at, created_at) < datetime('now', '-1 hour')",
+      ).run();
+
+      const journalStatement = db.prepare(
+        'select batch_id from session_purge_journal where channel_jid = ?',
+      );
+      const existing = jids
+        .map((jid) => journalStatement.get(jid) as { batch_id: string } | undefined)
+        .filter((row): row is { batch_id: string } => Boolean(row));
+
+      if (existing.length > 0) {
+        const batchIds = new Set(existing.map((row) => row.batch_id));
+        if (existing.length !== jids.length || batchIds.size !== 1) {
+          throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+        }
+        const batchId = existing[0].batch_id;
+        const resumed = sessionPurgeTargets(batchId);
+        db.prepare(
+          `insert or ignore into session_purge_batches (batch_id, target_count, status)
+         values (?, ?, 'claimed')`,
+        ).run(batchId, resumed.length);
+        const requested = new Map(
+          jids.map((jid, index) => [
+            jid,
+            {
+              storageToken: expectedStorageTokens?.[index],
+              deletionToken: expectedDeletionTokens?.[index],
+              deletedAt: expectedDeletedAts?.[index],
+            },
+          ]),
+        );
+        if (
+          resumed.length !== jids.length ||
+          resumed.some(
+            (target) =>
+              !requested.has(target.jid) ||
+              (requested.get(target.jid)?.storageToken !== undefined &&
+                requested.get(target.jid)?.storageToken !== target.storageToken) ||
+              (requested.get(target.jid)?.deletionToken !== undefined &&
+                requested.get(target.jid)?.deletionToken !== target.deletionToken) ||
+              (requested.get(target.jid)?.deletedAt !== undefined &&
+                requested.get(target.jid)?.deletedAt !== target.deletedAt),
+          )
+        ) {
+          throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+        }
+        return { batchId, targets: resumed };
+      }
+
+      const targetRows: Array<{
+        jid: string;
+        folder: string;
+        storageToken: string;
+        deletionToken: string;
+      }> = [];
+      const channelStatement = db.prepare(
+        `select jid, folder, storage_token, deletion_token, kind, deleted_at
+         from channels where jid = ?`,
+      );
+      const workStatement = db.prepare(
+        `select 1 from message_queue
+        where channel_jid = ? and status in ('pending', 'processing')
+       union all
+       select 1 from control_queue
+        where channel_jid = ? and status in ('pending', 'processing')
+       union all
+       select 1 from channel_operations where channel_jid = ?
+       union all
+       select 1 from session_title_jobs
+        where channel_jid = ? and status = 'processing'
+       limit 1`,
+      );
+
+      for (const [index, jid] of jids.entries()) {
+        const channel = channelStatement.get(jid) as
+          | {
+              jid: string;
+              folder: string;
+              storage_token: string;
+              deletion_token: string;
+              kind: ChannelKind;
+              deleted_at: string | null;
+            }
+          | undefined;
+        if (
+          !channel ||
+          channel.kind !== 'standard' ||
+          !channel.deleted_at ||
+          (expectedStorageTokens && channel.storage_token !== expectedStorageTokens[index]) ||
+          (expectedDeletionTokens && channel.deletion_token !== expectedDeletionTokens[index]) ||
+          (expectedDeletedAts && channel.deleted_at !== expectedDeletedAts[index])
+        ) {
+          throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+        }
+        try {
+          validateSessionFolder(channel.folder);
+        } catch {
+          // A legacy row that predates reserved-namespace validation must be
+          // rejected before journaling so it remains visible/restorable instead
+          // of becoming permanently purge-fenced.
+          throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+        }
+        if (isChannelQuarantinedForLifeArchive(jid)) {
+          throw new Error(LIFE_ARCHIVE_QUARANTINE_ERROR);
+        }
+        if (workStatement.get(jid, jid, jid, jid)) {
+          throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+        }
+        targetRows.push({
+          jid: channel.jid,
+          folder: channel.folder,
+          storageToken: channel.storage_token,
+          deletionToken: channel.deletion_token,
+        });
+      }
+
+      // Filesystem ownership must be injective across every channel, not merely
+      // across the selected rows. Nested roots, rotation-prefix aliases, or JIDs
+      // that sanitize to the same media directory could otherwise make an exact
+      // target recursively delete a non-target owner's files.
+      const allOwners = db.prepare('select jid, folder from channels').all() as Array<{
+        jid: string;
+        folder: string;
+      }>;
+      for (const target of targetRows) {
+        for (const other of allOwners) {
+          if (other.jid !== target.jid && channelFilesystemOwnershipAliases(target, other)) {
+            throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+          }
+        }
+      }
+
+      const batchId = randomUUID();
+      db.prepare(
+        `insert into session_purge_batches (batch_id, target_count, status)
+       values (?, ?, 'claimed')`,
+      ).run(batchId, targetRows.length);
+      const insert = db.prepare(
+        `insert into session_purge_journal
+        (batch_id, channel_jid, channel_folder)
+       values (?, ?, ?)`,
+      );
+      for (const target of targetRows) insert.run(batchId, target.jid, target.folder);
+      return { batchId, targets: sessionPurgeTargets(batchId) };
+    })
+    .immediate();
+}
+
+export function markSessionPurgeFilesDone(batchId: string, jid: string): boolean {
+  return (
+    db
+      .prepare(
+        `update session_purge_journal
+            set files_done = 1, last_error = '', updated_at = datetime('now')
+          where batch_id = ? and channel_jid = ?`,
+      )
+      .run(batchId, jid).changes > 0
+  );
+}
+
+export function recordSessionPurgeFileError(batchId: string, jid: string, error: string): void {
+  db.prepare(
+    `update session_purge_journal
+        set attempts = attempts + 1, last_error = ?, updated_at = datetime('now')
+      where batch_id = ? and channel_jid = ?`,
+  ).run(error.slice(0, 1000), batchId, jid);
+}
+
+const CHANNEL_OWNED_TABLES = [
+  'web_events',
+  'message_queue',
+  'message_log',
+  'control_queue',
+  'scheduled_tasks',
+  'live_output',
+  'channel_state',
+  'session_title_jobs',
+  'channel_operations',
+] as const;
+
+function deleteChannelOwnedRows(jid: string): void {
+  for (const table of CHANNEL_OWNED_TABLES) {
+    db.prepare(`delete from ${table} where channel_jid = ?`).run(jid);
+  }
+}
+
+/** Commit an entire claimed batch, or none of it. */
+export function finalizeSessionPurgeBatch(batchId: string): SessionPurgeFinalization {
+  return db
+    .transaction((): SessionPurgeFinalization => {
+      const targets = sessionPurgeTargets(batchId);
+      if (targets.length === 0) {
+        const completed = getCompletedSessionPurgeCount(batchId);
+        return completed === undefined
+          ? { status: 'missing', count: 0 }
+          : { status: 'already-purged', count: completed };
+      }
+      if (targets.some((target) => !target.filesDone)) {
+        throw new Error('Session purge filesystem cleanup is still pending');
+      }
+
+      for (const target of targets) {
+        const owner = db
+          .prepare(
+            `select 1 from channels
+            where jid = ? and folder = ? and kind = 'standard' and deleted_at is not null`,
+          )
+          .get(target.jid, target.folder);
+        if (!owner) throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+      }
+
+      for (const target of targets) deleteChannelOwnedRows(target.jid);
+
+      // The channels BEFORE DELETE trigger is the purge fence. Release it only
+      // here, immediately before deleting every exact owner, inside this same
+      // IMMEDIATE transaction. Other connections can observe neither a free path
+      // with a live owner nor a live owner without its guard.
+      db.prepare('delete from session_purge_paths where batch_id = ?').run(batchId);
+      const released = db
+        .prepare('delete from session_purge_journal where batch_id = ?')
+        .run(batchId);
+      if (released.changes !== targets.length) throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+
+      for (const target of targets) {
+        const deleted = db
+          .prepare(
+            `delete from channels
+              where jid = ? and folder = ? and storage_token = ? and deletion_token = ?`,
+          )
+          .run(target.jid, target.folder, target.storageToken, target.deletionToken);
+        if (deleted.changes !== 1) throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+      }
+      const completed = db
+        .prepare(
+          `update session_purge_batches
+            set status = 'completed', completed_at = datetime('now')
+          where batch_id = ? and status = 'claimed' and target_count = ?`,
+        )
+        .run(batchId, targets.length);
+      if (completed.changes !== 1) throw new Error(SESSION_PURGE_CONFLICT_ERROR);
+      return { status: 'purged', count: targets.length };
+    })
+    .immediate();
 }
 
 export interface DeletedSession {
   jid: string;
   name: string;
   folder: string;
+  storageToken: string;
+  deletionToken: string;
   deletedAt: string;
   events: number;
   lastActivity: string | null;
@@ -2059,7 +3267,7 @@ export interface DeletedSession {
 export function listDeletedWebSessions(): DeletedSession[] {
   const rows = db
     .prepare(
-      `select c.jid, c.name, c.folder, c.deleted_at,
+      `select c.jid, c.name, c.folder, c.storage_token, c.deletion_token, c.deleted_at,
               (select count(*) from web_events e where e.channel_jid = c.jid) as events,
               (select max(created_at) from web_events e where e.channel_jid = c.jid) as last_activity,
               -- Newest event that is something to READ: an assistant reply or
@@ -2071,6 +3279,9 @@ export function listDeletedWebSessions(): DeletedSession[] {
                   and e.role <> 'user') as last_reply_id
          from channels c
         where c.jid like 'web:%' and c.kind = 'standard' and c.deleted_at is not null
+          and not exists (
+            select 1 from session_purge_journal p where p.channel_jid = c.jid
+          )
         order by c.deleted_at desc`,
     )
     .all() as any[];
@@ -2078,6 +3289,8 @@ export function listDeletedWebSessions(): DeletedSession[] {
     jid: r.jid,
     name: r.name,
     folder: r.folder,
+    storageToken: r.storage_token,
+    deletionToken: r.deletion_token,
     deletedAt: r.deleted_at,
     events: r.events,
     lastActivity: r.last_activity,

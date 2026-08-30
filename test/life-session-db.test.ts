@@ -175,7 +175,8 @@ describe('Life channel persistence', () => {
     const randomUUID = vi
       .fn()
       .mockReturnValueOnce('deadbeef-0000-4000-8000-000000000000')
-      .mockReturnValueOnce('cafebabe-0000-4000-8000-000000000000');
+      .mockReturnValueOnce('cafebabe-0000-4000-8000-000000000000')
+      .mockReturnValueOnce('feedface-0000-4000-8000-000000000000');
     vi.doMock('node:crypto', () => ({ ...actualCrypto, randomUUID }));
     vi.resetModules();
     const db = await import('../src/db.js');
@@ -183,7 +184,7 @@ describe('Life channel persistence', () => {
 
     try {
       const life = db.getOrCreateLifeChannel();
-      expect(randomUUID).toHaveBeenCalledTimes(2);
+      expect(randomUUID).toHaveBeenCalledTimes(3);
       expect(life.channel.folder).toBe('web_life_cafebabe');
       expect(readdirSync(orphanDir)).toEqual(['unrelated-history.jsonl']);
       expect(readdirSync(resolve(sessionsDir, life.channel.folder))).toEqual([]);

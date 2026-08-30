@@ -61,8 +61,13 @@ replaces **New session** with an extractive title of at most 10 visible characte
 preserves the prompt's original writing system and uses no language model,
 network call, or model context. Sessions can be moved to **Recently deleted**
 from either the drawer row or **Delete session** in the ⋯ menu; both use the
-same restorable soft-delete flow. Use **New pi session** (`/pi new`) when the
-goal is to rotate the agent context without deleting the Piweb session.
+same restorable soft-delete flow. In **Recently deleted**, tap **Select** or
+long-press a row to choose several sessions, then permanently delete the
+selection with one confirmation; **Delete all** deletes every session currently
+shown without catching unseen concurrent changes. The same controls appear in
+a centered desktop dialog, where holding the mouse button also enters selection
+mode. Use **New pi session** (`/pi new`) when the goal is to rotate the agent
+context without deleting the Piweb session.
 
 ### Life mode
 
@@ -211,9 +216,11 @@ also compare rendered pixels with reviewed PNG baselines. Current coverage inclu
 syntax highlighting, persisted light/dark switching, the Japanese-minimal light
 palette, drawer/sheet foreground layering, click-to-expand YouTube embeds with
 external fallback, the in-app video/audio player with real download actions,
-touch transcript selection without Safari's document-wide
-native selection, and a 500-message continuous upward history stress run across
-all nine older-page boundaries without a jump:
+touch transcript selection without Safari's document-wide native selection,
+Recently deleted touch/mouse long-press and button multi-selection, Delete all,
+phone containment, and a centered desktop dialog, plus a 500-message continuous
+upward history stress run across all nine older-page
+boundaries without a jump:
 
 ```bash
 npm run test:e2e                                      # full behavior + visual suite
@@ -221,6 +228,7 @@ npx playwright test test/e2e/media-player.spec.ts    # video/audio player + down
 npx playwright test test/e2e/markdown-links.spec.ts  # inline YouTube open/replace/close workflow
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
 npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine delayed, partially loaded touch boundaries
+npx playwright test test/e2e/life-mode.spec.ts --grep "Recently deleted|purging the active"
 npm run test:e2e:update                               # accept pixels only after review
 ```
 

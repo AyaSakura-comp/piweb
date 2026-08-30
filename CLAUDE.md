@@ -31,11 +31,11 @@ spawns one; the two halves communicate **only** through SQLite.
 
 Both halves ship from one codebase (`dist/cli/piweb.js`):
 
-| mode | runs | used for |
-|---|---|---|
-| `worker` | message loop + control loop + scheduler | host systemd unit |
-| `web` | HTTP/SSE server | container |
-| `all` | both in one process | dev, or an all-in-one container |
+| mode     | runs                                    | used for                        |
+| -------- | --------------------------------------- | ------------------------------- |
+| `worker` | message loop + control loop + scheduler | host systemd unit               |
+| `web`    | HTTP/SSE server                         | container                       |
+| `all`    | both in one process                     | dev, or an all-in-one container |
 
 `WEB_EMBEDDED_WORKER=true` makes `web` also run the worker.
 
@@ -109,7 +109,7 @@ disconnect at any point and resume from its last rowid.
 
 ### Why commands go through `control_queue`
 
-The web tier *cannot* execute them:
+The web tier _cannot_ execute them:
 
 - `/pi status` spawns pi over RPC for token stats
 - `/pi stop` needs the worker's in-memory `AbortController`
@@ -126,17 +126,19 @@ touching `src/commands/catalog.ts` (data) **and** `runCommand()` (implementation
 Every piweb table is at the bottom of `src/db.ts`. The ones that carry state
 between the two processes use an autoincrement `rowid` as a cursor.
 
-| table | role | who writes | who reads |
-|---|---|---|---|
-| `channels` | one row per session (`web:<uuid8>` jid, folder, per-session model/thinking/cwd overrides, `deleted_at`) | both | both |
-| `web_events` | the transcript AND the live stream: user turns, assistant replies, thinking, tool, tool_result, system, error | worker (agent output), web (user turn, command echo) | web (SSE/paging), push |
-| `message_queue` | pending user messages for the worker | web | worker |
-| `control_queue` | command intents the web tier can't run itself | web | worker |
-| `channel_state` | transient `busy` flag per session (typing/spinner) | worker | web |
-| `session_title_jobs` | crash-safe first-prompt title job (normally `waiting` → `done` during enqueue; worker fallback uses `pending` → `processing`); the copied prompt is erased on completion/cancel | web | both |
-| `meta` | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor` | worker (models), web (auth/push) | web |
-| `push_subscriptions` | one row per opted-in device | web | push |
-| `message_log`, `scheduled_tasks` | inherited from piscord; `message_log` duplicates web_events (gap) | worker | — |
+| table                                                                     | role                                                                                                                                                                                                           | who writes                                           | who reads              |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------- |
+| `channels`                                                                | one row per session (`web:<uuid8>` jid, folder, per-session model/thinking/cwd overrides, `deleted_at`)                                                                                                        | both                                                 | both                   |
+| `web_events`                                                              | the transcript AND the live stream: user turns, assistant replies, thinking, tool, tool_result, system, error                                                                                                  | worker (agent output), web (user turn, command echo) | web (SSE/paging), push |
+| `message_queue`                                                           | pending user messages for the worker                                                                                                                                                                           | web                                                  | worker                 |
+| `control_queue`                                                           | command intents the web tier can't run itself                                                                                                                                                                  | web                                                  | worker                 |
+| `channel_state`                                                           | transient `busy` flag per session (typing/spinner)                                                                                                                                                             | worker                                               | web                    |
+| `channel_operations`                                                      | generation-specific durable leases for HTTP requests, active workers, uploads, and warm persistent RPC processes; purge expires abandoned request leases but live owners heartbeat and revalidate before reuse | both                                                 | both                   |
+| `session_title_jobs`                                                      | crash-safe first-prompt title job (normally `waiting` → `done` during enqueue; worker fallback uses `pending` → `processing`); the copied prompt is erased on completion/cancel                                | web                                                  | both                   |
+| `session_purge_journal` / `session_purge_paths` / `session_purge_batches` | durable exact-batch claim, immutable detach manifest, and completion receipt for cross-filesystem permanent deletion; fences owner writes/deletes until tombstone cleanup and atomic DB finalization finish    | both                                                 | both                   |
+| `meta`                                                                    | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor`                                                                                        | worker (models), web (auth/push)                     | web                    |
+| `push_subscriptions`                                                      | one row per opted-in device                                                                                                                                                                                    | web                                                  | push                   |
+| `message_log`, `scheduled_tasks`                                          | inherited from piscord; `message_log` duplicates web_events (gap)                                                                                                                                              | worker                                               | —                      |
 
 `web_events.kind` is the discriminator the UI switches on: `message` (with
 `role` user/assistant) renders a bubble; `thinking`/`tool`/`tool_result` render
@@ -150,48 +152,49 @@ All under `src/web/server.ts`, one flat router. Everything except login/logout/
 me and the static shell requires auth; state-changing methods also pass the CSRF
 origin check.
 
-| route | method | purpose |
-|---|---|---|
-| `/api/login` `/logout` `/me` | POST/POST/GET | token→cookie; `/me` also reports `via` (token/tailscale) and `funnel` |
-| `/api/push/key` `/subscribe` `/unsubscribe` | GET/POST/POST | VAPID public key; save/drop a subscription |
-| `/api/commands` | GET | the `COMMANDS` catalog for autocomplete |
-| `/api/models` | GET | pi's model list (from `meta`, published by the worker) |
-| `/api/life-session` | POST | idempotently create/restore the singleton Life channel and clear its overrides |
-| `/api/life-session/new` | POST | promote current Life into the standard list and create a fresh empty Life singleton |
-| `/api/sessions` | GET/POST | list standard live sessions (with badge, busy, `lastReplyId`); create immediately as `New session` |
-| `/api/sessions/deleted` | GET | the trash (must precede the `:jid` matcher) |
-| `/api/sessions/:jid` | PATCH/DELETE | rename; soft-delete (or `?permanent=1`) |
-| `/api/sessions/:jid/restore` | POST | un-trash |
-| `/api/sessions/:jid/events` | GET | `?after` (SSE catch-up) `?before` (page up) `?around` (jump) or newest page |
-| `/api/sessions/:jid/stream` | GET | SSE tail (polls web_events every 400ms) |
-| `/api/sessions/:jid/search` | GET | `?q=` substring search within the session |
-| `/api/sessions/:jid/messages` | POST | text + base64 attachments → queue |
-| `/api/sessions/:jid/commands` | POST | a `COMMANDS` name → control_queue |
-| `/api/sessions/:jid/clear` | POST | wipe web_events + enqueue `pi new` |
-| `/media/...` | GET | served attachment/output files |
+| route                                       | method        | purpose                                                                                                                                                                                                                          |
+| ------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/login` `/logout` `/me`                | POST/POST/GET | token→cookie; `/me` also reports `via` (token/tailscale) and `funnel`                                                                                                                                                            |
+| `/api/push/key` `/subscribe` `/unsubscribe` | GET/POST/POST | VAPID public key; save/drop a subscription                                                                                                                                                                                       |
+| `/api/commands`                             | GET           | the `COMMANDS` catalog for autocomplete                                                                                                                                                                                          |
+| `/api/models`                               | GET           | pi's model list (from `meta`, published by the worker)                                                                                                                                                                           |
+| `/api/life-session`                         | POST          | idempotently create/restore the singleton Life channel and clear its overrides                                                                                                                                                   |
+| `/api/life-session/new`                     | POST          | promote current Life into the standard list and create a fresh empty Life singleton                                                                                                                                              |
+| `/api/sessions`                             | GET/POST      | list standard live sessions (with badge, busy, `lastReplyId`); create immediately as `New session`                                                                                                                               |
+| `/api/sessions/deleted`                     | GET           | the trash (must precede the `:jid` matcher)                                                                                                                                                                                      |
+| `/api/sessions/deleted/purge`               | POST          | permanently purge the exact non-empty, unique, currently deleted/idle standard-session `{ jids, storageTokens, deletionTokens, deletedAts }` set after atomically matching and claiming the complete displayed deletion episodes |
+| `/api/sessions/:jid`                        | PATCH/DELETE  | rename; soft-delete (or `?permanent=1`)                                                                                                                                                                                          |
+| `/api/sessions/:jid/restore`                | POST          | un-trash                                                                                                                                                                                                                         |
+| `/api/sessions/:jid/events`                 | GET           | `?after` (SSE catch-up) `?before` (page up) `?around` (jump) or newest page                                                                                                                                                      |
+| `/api/sessions/:jid/stream`                 | GET           | SSE tail (polls web_events every 400ms)                                                                                                                                                                                          |
+| `/api/sessions/:jid/search`                 | GET           | `?q=` substring search within the session                                                                                                                                                                                        |
+| `/api/sessions/:jid/messages`               | POST          | text + base64 attachments → queue                                                                                                                                                                                                |
+| `/api/sessions/:jid/commands`               | POST          | a `COMMANDS` name → control_queue                                                                                                                                                                                                |
+| `/api/sessions/:jid/clear`                  | POST          | wipe web_events + enqueue `pi new`                                                                                                                                                                                               |
+| `/media/...`                                | GET           | served attachment/output files                                                                                                                                                                                                   |
 
 ### Feature → code map
 
-| feature | where |
-|---|---|
-| markdown + LaTeX + syntax highlighting | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; loose/nested lists across blank lines, `<ol start="N">` offsets, indented continuations; unlabeled/unknown fences use language auto-detection |
-| inline YouTube player | `public/markdown.js` exact-host/video-ID parsing + lazy privacy-enhanced iframe; `public/app.css` 44px play/open/close targets, 16:9 standard card, and adaptive 200px minimum in narrow user/event columns; `test/e2e/markdown-links.spec.ts` modified-click/open/replace/nested/event/close video workflow; full contract in [`docs/youtube-inline-player.md`](docs/youtube-inline-player.md) |
-| Mermaid flowcharts & diagrams | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy) |
-| search + jump-to-message | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached |
-| text selection & quoting | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar) |
-| image lightbox (swipe + pinch zoom) | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]` |
-| multimedia paste | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents) |
-| Life mode | singleton `channels.kind='life'` + `/api/life-session` and `/api/life-session/new`; right-edge UI in `public/app.js`; full diagrams in [`docs/life-mode.md`](docs/life-mode.md) |
-| thinking & tool physics | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia) |
-| Recently deleted | `deleted_at` soft delete; bottom sheet; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS` |
-| push notifications | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta` |
-| provider badges | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree |
-| unread dot / busy spinner | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen` |
-| session ordering & boot default | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default) |
-| automatic first-prompt title | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/web/server.ts` (apply on message enqueue), `src/worker/session-title.ts` (recovery fallback), `session_title_jobs` in `src/db.ts` |
-| rename / model sheet / edge-swipe drawer | `public/app.js` (all client-side) |
-| topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill |
-| stay signed in | persisted `auth.signingKey` + localStorage `piweb.token` auto-login |
+| feature                                        | where                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| markdown + LaTeX + syntax highlighting         | `public/markdown.js` (`renderRich`), KaTeX and highlight.js in `vendor/`; loose/nested lists across blank lines, `<ol start="N">` offsets, indented continuations; unlabeled/unknown fences use language auto-detection                                                                                                                                                                         |
+| inline YouTube player                          | `public/markdown.js` exact-host/video-ID parsing + lazy privacy-enhanced iframe; `public/app.css` 44px play/open/close targets, 16:9 standard card, and adaptive 200px minimum in narrow user/event columns; `test/e2e/markdown-links.spec.ts` modified-click/open/replace/nested/event/close video workflow; full contract in [`docs/youtube-inline-player.md`](docs/youtube-inline-player.md) |
+| Mermaid flowcharts & diagrams                  | `public/markdown.js` + `public/vendor/mermaid/` (offline vector rendering, shared Japanese palette for all chart types, readable wide Gantt canvas, diagram-type labels, pinch-to-zoom 0.2x–5x, pan, double-tap, fullscreen modal, code copy)                                                                                                                                                   |
+| search + jump-to-message                       | `/search` + `/events?around=`; client `state.atLive` gates SSE while detached                                                                                                                                                                                                                                                                                                                   |
+| text selection & quoting                       | `public/text-selection.js` (iOS lollipop handles, line rect filtering, floating quote toolbar)                                                                                                                                                                                                                                                                                                  |
+| image lightbox (swipe + pinch zoom)            | `public/app.js` `openLightbox`, pinch-to-zoom, pan, double-tap, numbered placeholder filmstrip, sliding-window prefetch `[idx-2..idx+2]`                                                                                                                                                                                                                                                        |
+| multimedia paste                               | `public/app.js` (`btn-paste` + `paste` event; images, audio, video, documents)                                                                                                                                                                                                                                                                                                                  |
+| Life mode                                      | singleton `channels.kind='life'` + `/api/life-session` and `/api/life-session/new`; right-edge UI in `public/app.js`; full diagrams in [`docs/life-mode.md`](docs/life-mode.md)                                                                                                                                                                                                                 |
+| thinking & tool physics                        | `public/app.js` + `public/app.css` (CSS grid `0fr->1fr` accordion, animated chevron, slide-up pop-in inertia)                                                                                                                                                                                                                                                                                   |
+| Recently deleted                               | `deleted_at` soft delete; bottom sheet with Select-button/long-press multi-selection, one-confirmation batch purge, and Delete all; worker `sweepTrash` purges after `WEB_TRASH_RETENTION_DAYS`                                                                                                                                                                                                 |
+| push notifications                             | `src/web/push.ts` + `public/sw.js`; VAPID + cursor in `meta`                                                                                                                                                                                                                                                                                                                                    |
+| provider badges                                | `src/session/model-info.ts` `providerBadge()`; NV/LOCAL/GEM/… plus TERRA/SOL/LUNA for the Codex GPT-5.6 variants. Mirrored client-side by `providerBadgeFor()` for the model-picker rows — change both or the two views disagree                                                                                                                                                                |
+| unread dot / busy spinner                      | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen`                                                                                                                                                                                                                                                                                                                               |
+| session ordering & boot default                | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default)                                                                                                                                                                                                                                                         |
+| automatic first-prompt title                   | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/web/server.ts` (apply on message enqueue), `src/worker/session-title.ts` (recovery fallback), `session_title_jobs` in `src/db.ts`                                                                                                                                        |
+| rename / model sheet / edge-swipe drawer       | `public/app.js` (all client-side)                                                                                                                                                                                                                                                                                                                                                               |
+| topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill                                                                                                                                                                                                                                                |
+| stay signed in                                 | persisted `auth.signingKey` + localStorage `piweb.token` auto-login                                                                                                                                                                                                                                                                                                                             |
 
 ### Context compaction is pi's, not piweb's
 
@@ -202,14 +205,14 @@ runs `_checkCompaction()` before sending and after each assistant message. Proof
 it works here: a live session had 11 `{"type":"compaction"}` entries in its
 JSONL. So do not "add compaction" to piweb — it already happens.
 
-What piweb owns is *showing* it. `--mode json` dumps **every** session event to
+What piweb owns is _showing_ it. `--mode json` dumps **every** session event to
 stdout (`session.subscribe(...)` → `JSON.stringify`), so `compaction_start` /
 `compaction_end` arrive in `createEventStreamer` like any other event. Only
 `compaction_end` with a `result` and `aborted === false` is surfaced, as a
 `system`/`compacted` row; a start marker would just be noise, and pi emits
 `compaction_end` with no `result` when it bails (no model, no auth).
 
-`result.tokensBefore` is the size it compacted away *from*; there is no
+`result.tokensBefore` is the size it compacted away _from_; there is no
 "after" in the payload, so do not compute or imply one.
 
 This also explains a confusing symptom: `/pi status` can read **over 100%**
@@ -224,11 +227,11 @@ compacts. In that very case pi compacted two minutes later with
 The badge must track the model the session **is set to**, so picking one in the
 sheet is reflected immediately. Two sources disagree, and the precedence matters:
 
-- **`channels.model_override`** — passed to pi as `--model` on *every* run
+- **`channels.model_override`** — passed to pi as `--model` on _every_ run
   (`channel-settings.ts` → `queue.ts`), so when set it **is** the session's
   model. It **wins**.
 - **pi's session file** (`model_change` lines, read by `getSessionModel()`) —
-  only records what the *last run happened to use*. It goes stale the moment the
+  only records what the _last run happened to use_. It goes stale the moment the
   model changes and no message has been sent yet. It is the fallback, used for
   sessions following the gateway default, where it is the only honest source.
 
@@ -251,11 +254,11 @@ prepends it, Discord-style, until `hasMore` is false.
 `(channel_jid, rowid)` index as bounded range scans — cost tracks page size, not
 transcript length:
 
-| query | returns | used for |
-|---|---|---|
-| *(none)* | newest `limit` | first open |
-| `?before=<id>` | `limit` older than id | scroll-up paging |
-| `?after=<id>` | newer than id | SSE catch-up / reconnect |
+| query          | returns               | used for                 |
+| -------------- | --------------------- | ------------------------ |
+| _(none)_       | newest `limit`        | first open               |
+| `?before=<id>` | `limit` older than id | scroll-up paging         |
+| `?after=<id>`  | newer than id         | SSE catch-up / reconnect |
 
 `limit` is clamped to 200. Adding a filter on any non-indexed column would turn
 these into table scans — don't.
@@ -278,18 +281,68 @@ so `POST /:jid/restore` brings the session back exactly as it was. The trash is
 listed by `GET /api/sessions/deleted` and previewed read-only (writes to a
 trashed session are refused with 409).
 
-`?permanent=1` is the only destructive path: it drops every row **and** removes
-pi's session directory plus the session's media/uploads. The worker sweeps the
-trash hourly and purges anything older than `WEB_TRASH_RETENTION_DAYS` (30).
+`?permanent=1` permanently destroys one item. The trash sheet's batch endpoint,
+`POST /api/sessions/deleted/purge`, accepts only an exact non-empty unique
+aligned `{ jids, storageTokens, deletionTokens, deletedAts }` object (bounded by the normal 64 MiB request cap). It atomically
+claims every target only while all remain deleted and idle, then fences restore,
+worker, scheduler, request writes, owner-folder reuse, and channel deletion with
+a durable purge journal. Before recursive deletion, each directory source's
+`dev:ino` identity is persisted and revalidated after it is atomically renamed
+to a batch-unique tombstone; a swapped or unrecognized directory remains
+quarantined instead of being traversed. Source parents and entries are checked
+with `lstat`; top-level symlinks and hard links are unlinked without traversal
+or inode modification, archive-enumeration I/O errors fail closed, and the
+cleaned endpoint is replaced by a path-specific authenticated regular-file seal
+using `O_EXCL|O_NOFOLLOW`. Existing seals are opened read-only, verified against
+the journal token, and never unlinked by a competing runner. All per-path work
+settles before target completion, and source/destination parents, new seal
+files, and cleaned tombstone directories are fsynced before `files_done`.
+Concurrent/late recovery therefore touches only the exact recorded tombstone
+payloads, never a new owner reusing the same JID/folder. Claiming uses
+segment-aware canonical paths to reject nested/archive-prefixed session roots
+(including dot-prefixed names such as `..nested`) and sanitized media-name
+aliases owned by any other channel. The root-level `.piweb-purge` tombstone
+namespace is reserved; legacy conflicts are rejected before journaling. Channel registration and Life re-key/create
+run in IMMEDIATE transactions and repeat the same alias check against every
+pending purge, closing the post-claim ownership race. Standard upload staging includes an immutable random channel
+storage token; purge durably replaces the old operation-owner roots with
+regular-file guards, so an expired request cannot recreate data after success
+while an exact JID/folder reuse receives a distinct namespace. Filesystem
+failures return pending rather than success and remain recoverable on startup. Warm idle
+RPC children hold and heartbeat the same durable generation lease as active
+requests, retain it until confirmed child exit, retire when deletion revokes it,
+and revalidate before every reuse. Standard RPC sessions remain warm; Life RPC
+sessions retire before delivering each completed turn so New/archive is never
+blocked by an idle child. Message and command routes acquire their generation
+lease before reading the request body. A durable batch receipt resolves
+concurrent completion, and DB ownership for the
+complete batch is removed in one transaction only after all pi session
+directories, media, and uploads are durably detached and cleaned.
+Delete all submits the identities currently shown to the user, never a
+server-wide wildcard. The worker
+sweeps the trash hourly and purges anything older than
+`WEB_TRASH_RETENTION_DAYS` (30).
+
+The responsive sheet exposes a direct **Select** button and a scroll-safe touch
+or mouse long press on each row. Desktop constrains it to a centered 640 px
+modal; phone layouts remain bottom-aligned. It uses native `dialog.showModal()`
+for composable background isolation, Escape handling, and stacked-modal
+ownership instead of mutating global `inert` flags. Monotonic trash-load tokens
+prevent older GET responses from overwriting a committed purge. Selection mode
+keeps native checkboxes, Select all/Clear all, a live
+selected count, and one **Delete selected** confirmation; **Delete all** has its
+own count-aware confirmation. Purging the session currently open as a read-only
+trash preview closes the sheet and selects a live standard fallback instead of
+leaving dead preview state in the composer.
 
 This also closed the old gap where deleting a session stranded its `.jsonl` on
 disk forever — now it is either restorable or genuinely purged.
 
 ### Storage: two histories, not one
 
-| store | what | cleared by |
-|---|---|---|
-| `web_events` table | what the UI shows | `POST /clear` or permanent delete |
+| store                       | what                       | cleared by                                        |
+| --------------------------- | -------------------------- | ------------------------------------------------- |
+| `web_events` table          | what the UI shows          | `POST /clear` or permanent delete                 |
 | `sessions/<folder>/*.jsonl` | what pi actually remembers | `/pi new` rotates it; permanent delete removes it |
 
 The header's **Delete session** action is deliberately soft and clears neither
@@ -338,7 +391,7 @@ turn under `event["message"]` and its `content` is a list of typed parts
 ## 2. Invariants (break these and it fails confusingly)
 
 1. **`PIWEB_DATA` must be mounted at the same absolute path inside and outside
-   the container.** The web tier stages uploads and records their *absolute*
+   the container.** The web tier stages uploads and records their _absolute_
    paths in SQLite; the host worker opens those exact paths. A different mount
    point (e.g. `/data`) leaves text messages working while every attachment dies
    with ENOENT.
@@ -355,7 +408,7 @@ turn under `event["message"]` and its `content` is a list of typed parts
    app's network namespace, so loopback is sufficient. `tailscaleIdentity()` also
    rejects non-loopback per request.
 
-4. **Identity headers do not prevent CSRF.** serve stamps the *device's* identity
+4. **Identity headers do not prevent CSRF.** serve stamps the _device's_ identity
    onto every request the browser makes, including one a hostile page triggers.
    Every state-changing request is separately checked against `WEB_PUBLIC_ORIGIN`
    via `Origin`/`Sec-Fetch-Site`. Keep that check when adding routes.
@@ -384,41 +437,44 @@ turn under `event["message"]` and its `content` is a list of typed parts
    to `web:abc` and looked for a directory that never existed. Every generated
    image and upload 404'd into a broken-image icon with the file sitting on
    disk. Sanitising to `[A-Za-z0-9._-]` makes encoding a no-op both ways — never
-   reintroduce an encode on one side and a decode on the other.
+   reintroduce an encode on one side and a decode on the other. Standard browser
+   uploads intentionally live under generation/operation-unique `.operations`
+   paths outside durable owner roots; this keeps an expired request from
+   recreating or cleaning a later owner's media.
 
 10. **Attachments use the local-file `AttachmentMeta` variant** (`filePath` set,
-   `url` empty). `session/media.ts` copies instead of fetching, so uploads still
-   get PNG transcoding and Breeze ASR voice transcription.
+    `url` empty). `session/media.ts` copies instead of fetching, so uploads still
+    get PNG transcoding and Breeze ASR voice transcription.
 
 11. **The model registry must be built from an awaited `ModelRuntime`, never
-   from `AuthStorage`.** pi 0.84 replaced the synchronous
-   `new ModelRegistry(authStorage)` construction with an async
-   `ModelRuntime.create()`. The old call still *constructs* — it just returns a
-   facade whose every method throws `this.runtime.refresh is not a function`.
-   Because `listAvailableModels()` sits on the message path
-   (`processMessage` → `computeEffectiveChannelSettings`), that is not a
-   degraded model picker: **every message fails**, and the only symptom the user
-   sees is `Internal error: this.runtime.refresh is not a function`. The worker
-   stays `active (running)` throughout, so restarting fixes nothing. Prime the
-   runtime once at worker startup (`primeModelRegistry()`) and keep
-   `listAvailableModels()` synchronous by reading its snapshot; when it is not
-   primed yet, serve the last catalog rather than throwing, so the model list can
-   never take the message path down with it.
+    from `AuthStorage`.** pi 0.84 replaced the synchronous
+    `new ModelRegistry(authStorage)` construction with an async
+    `ModelRuntime.create()`. The old call still _constructs_ — it just returns a
+    facade whose every method throws `this.runtime.refresh is not a function`.
+    Because `listAvailableModels()` sits on the message path
+    (`processMessage` → `computeEffectiveChannelSettings`), that is not a
+    degraded model picker: **every message fails**, and the only symptom the user
+    sees is `Internal error: this.runtime.refresh is not a function`. The worker
+    stays `active (running)` throughout, so restarting fixes nothing. Prime the
+    runtime once at worker startup (`primeModelRegistry()`) and keep
+    `listAvailableModels()` synchronous by reading its snapshot; when it is not
+    primed yet, serve the last catalog rather than throwing, so the model list can
+    never take the message path down with it.
 
 12. **pi's version is what pins piweb's behaviour — check it first.** A pi
-   release can break piweb at rest, with no piweb change involved; invariant 11
-   is exactly that, 0.74 → 0.84.1. When the worker breaks right after an install
-   or a deploy and nothing in `git log` explains it, check the installed version
-   before reading any piweb code:
+    release can break piweb at rest, with no piweb change involved; invariant 11
+    is exactly that, 0.74 → 0.84.1. When the worker breaks right after an install
+    or a deploy and nothing in `git log` explains it, check the installed version
+    before reading any piweb code:
 
-   ```bash
-   npm ls @earendil-works/pi-coding-agent @earendil-works/pi-ai
-   ```
+```bash
+npm ls @earendil-works/pi-coding-agent @earendil-works/pi-ai
+```
 
-   Do **not** reach for `node -p "require('…/package.json').version"` — pi's
-   `exports` map has no `./package.json` entry, so that throws
-   `ERR_PACKAGE_PATH_NOT_EXPORTED` and looks like a broken install. See
-   "Pinning pi" in §3 for which version belongs there.
+Do **not** reach for `node -p "require('…/package.json').version"` — pi's
+`exports` map has no `./package.json` entry, so that throws
+`ERR_PACKAGE_PATH_NOT_EXPORTED` and looks like a broken install. See
+"Pinning pi" in §3 for which version belongs there.
 
 ---
 
@@ -432,23 +488,23 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 
 **The two must agree** on every path variable — see invariant 1.
 
-| variable | side | notes |
-|---|---|---|
-| `DB_PATH`, `SESSIONS_DIR` | both | the shared state; identical paths |
-| `WEB_MEDIA_DIR`, `WEB_UPLOAD_DIR` | both | uploads staged by web, read by worker |
-| `WEB_AUTH_TOKEN` | both | token login; may be empty if identity auth is on |
-| `WEB_PORT`, `WEB_HOST` | web | `WEB_HOST` stays loopback (invariant 3) |
-| `WEB_TRUST_TAILSCALE_IDENTITY` | web | default true |
-| `WEB_ALLOWED_LOGINS` | web | comma-separated; empty = any tailnet identity |
-| `WEB_PUBLIC_ORIGIN` | web | CSRF origin check (invariant 4) |
-| `WEB_SESSION_TTL_SEC` | web | cookie lifetime |
-| `WEB_EMBEDDED_WORKER` | web | run the worker in-process (all-in-one) |
-| `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING` | worker | pi invocation |
-| `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed |
-| `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE` | worker | mid-run steering / pre-emption |
-| `MAX_CONCURRENCY`, `POLL_INTERVAL_MS` | worker | queue behaviour |
-| `ARCHIVE_RETENTION_DAYS` | worker | archived session cleanup (default 30) |
-| `MAX_ATTACHMENT_BYTES` | both | upload cap |
+| variable                                             | side   | notes                                            |
+| ---------------------------------------------------- | ------ | ------------------------------------------------ |
+| `DB_PATH`, `SESSIONS_DIR`                            | both   | the shared state; identical paths                |
+| `WEB_MEDIA_DIR`, `WEB_UPLOAD_DIR`                    | both   | uploads staged by web, read by worker            |
+| `WEB_AUTH_TOKEN`                                     | both   | token login; may be empty if identity auth is on |
+| `WEB_PORT`, `WEB_HOST`                               | web    | `WEB_HOST` stays loopback (invariant 3)          |
+| `WEB_TRUST_TAILSCALE_IDENTITY`                       | web    | default true                                     |
+| `WEB_ALLOWED_LOGINS`                                 | web    | comma-separated; empty = any tailnet identity    |
+| `WEB_PUBLIC_ORIGIN`                                  | web    | CSRF origin check (invariant 4)                  |
+| `WEB_SESSION_TTL_SEC`                                | web    | cookie lifetime                                  |
+| `WEB_EMBEDDED_WORKER`                                | web    | run the worker in-process (all-in-one)           |
+| `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING`        | worker | pi invocation                                    |
+| `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed                               |
+| `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE`              | worker | mid-run steering / pre-emption                   |
+| `MAX_CONCURRENCY`, `POLL_INTERVAL_MS`                | worker | queue behaviour                                  |
+| `ARCHIVE_RETENTION_DAYS`                             | worker | archived session cleanup (default 30)            |
+| `MAX_ATTACHMENT_BYTES`                               | both   | upload cap                                       |
 
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
 from piscord and unused by the web transport.
@@ -549,7 +605,7 @@ Funnel host on the same tailnet as a control.
 
 `containerboot` runs `tailscale up` with a **60-second timeout**. Interactive
 login cannot finish in human time: the container is SIGTERMed, restarts, and
-generates a *new* node key, so the URL the user clicked is already stale. Symptom:
+generates a _new_ node key, so the URL the user clicked is already stale. Symptom:
 `failed to auth tailscale: tailscale up failed: signal: killed`, restart count
 climbing, `tailscale serve status` → "No serve config".
 
@@ -564,8 +620,8 @@ Two working options:
 **Always redeploy with plain `docker compose up -d`, never `up -d app`.** The
 sidecar is `network_mode: service:app`, so recreating `app` alone orphans its
 netns and the Funnel goes dead — and the sidecar cannot even be restarted back
-into it (`docker restart piweb-ts` → *"joining network namespace of container:
-No such container"*). Only recreating the sidecar too fixes it. `up -d` does
+into it (`docker restart piweb-ts` → _"joining network namespace of container:
+No such container"_). Only recreating the sidecar too fixes it. `up -d` does
 that for you; targeting `app` does not. Verify after every deploy:
 
 ```bash
@@ -591,8 +647,8 @@ Two paths; the server refuses to start with neither:
 
 ## 4. Verification approach
 
-The bugs in this project were mostly *invisible to the checks that looked
-sufficient*. Verify accordingly.
+The bugs in this project were mostly _invisible to the checks that looked
+sufficient_. Verify accordingly.
 
 ### Look at the UI. Do not trust DOM assertions.
 
@@ -606,7 +662,7 @@ state — login, empty, populated, drawer open, autocomplete open, long code blo
 Also assert `document.documentElement.scrollWidth === clientWidth` (the page must
 never scroll sideways; wide content scrolls inside its own box).
 
-A second class of bug survives *both* DOM assertions and a glance at the code:
+A second class of bug survives _both_ DOM assertions and a glance at the code:
 the TERRA badge rendered exactly the label it was asked to and was still
 unusable, because it sat one row away from a near-identical green. Colour,
 contrast and adjacency only fail in the picture — compare elements **against
@@ -625,7 +681,7 @@ live deployment may still land in `~/`; use
 A detector that only ever reports failure is worthless. When adding a check,
 prove it can also say "ok":
 
-- history-query staleness: fed it a conversation that *does* exist → `ok`
+- history-query staleness: fed it a conversation that _does_ exist → `ok`
 - side-panel matching: injected a matching row → `ok (side panel row)`
 - CSRF: `Origin: https://evil.example` → 403 **and** correct origin → 200
 - identity forgery: from another container → connection refused **and** the
@@ -652,8 +708,19 @@ journalctl --user -u piweb-worker -f
 ```
 
 The local Playwright fixture server is `test/e2e/fixture-server.mjs`; it serves
-production files from `public/` without auth or account state. The maintained
-first-prompt naming workflow is `test/e2e/session-auto-title.spec.ts` (`npx
+production files from `public/` without auth or account state. Recently deleted
+batch behavior is maintained in `test/e2e/life-mode.spec.ts` (`npx playwright
+test test/e2e/life-mode.spec.ts --grep "Recently deleted|purging the active"`):
+it covers the Select button, touch/mouse long press, checkbox count, selected
+purge, Delete all, stale-load rejection, native/stacked modal containment,
+active-preview fallback, phone containment, centered desktop layout, hit
+testing, screenshots, and one recorded workflow video. Backend tests also inject
+symlink roots, fsync failure, archive-enumeration failure, concurrent recovery,
+and idle RPC ownership loss. Evidence lands under
+`artifacts/playwright/test-results/`.
+
+The maintained first-prompt naming workflow is
+`test/e2e/session-auto-title.spec.ts` (`npx
 playwright test test/e2e/session-auto-title.spec.ts`); it covers no-dialog
 creation, first prompt, ≤10-character rename, polling, reload durability,
 pointer reachability, viewport containment, and horizontal overflow. The title
@@ -705,7 +772,7 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   and a session with a new message lands on top for free
   (`activityKey()` / `sessionsForDisplay()`). Recomputed on **every** render, and
   `lastActivity` arrives fresh from the 5s `loadSessions()` poll (SSE only
-  carries the *open* session), so a reply in a background session moves it up
+  carries the _open_ session), so a reply in a background session moves it up
   while the drawer is open.
   - Those timestamps are SQLite `'YYYY-MM-DD HH:MM:SS'` UTC — fixed-width and
     zero-padded, so a **string** compare is already chronological. Do not reach
@@ -730,13 +797,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Badge colours must survive being next to each other.** TERRA was first shipped
   mint green and was indistinguishable from the LOCAL/GPT greens one row away —
   the label was "correct" and the UI still failed. It is terracotta now (Sol
-  amber, Luna slate). Check a new badge colour against its *neighbours in situ*,
+  amber, Luna slate). Check a new badge colour against its _neighbours in situ_,
   not on its own.
 - **Timestamps**: SQLite returns `YYYY-MM-DD HH:MM:SS` in UTC with no zone marker.
   Append `Z` before parsing or Safari reads it as local time and every stamp is
   hours off.
 - **The on-screen keyboard changes only the VISUAL viewport.** `vh`/`dvh` track
-  the *layout* viewport, which iOS does not shrink for the keyboard. A popover
+  the _layout_ viewport, which iOS does not shrink for the keyboard. A popover
   sized in `vh` above the composer therefore runs off the top of the screen and
   is clipped rather than scrolling. The autocomplete is a normal flex item
   (not absolutely positioned) so the column bounds it, and `--ac-max` is kept in
@@ -812,17 +879,26 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   crashed lease expires after one hour. Every worker write is additionally fenced
   by the captured folder generation, so a suspended worker that resumes after
   expiry is aborted and cannot touch replacement-Life output, media, partial, or
-  busy state. Scheduled enqueue re-resolves its current DB owner, no-ops when its
-  row was deleted, and skips quarantined tasks without consuming the per-tick
-  budget or starving unrelated due work. Events paging/jump, search, media, and
+  busy state. Scheduled enqueue re-resolves its current active DB owner, no-ops when its
+  row was deleted, and freezes deleted or quarantined owners without consuming
+  the per-tick budget or starving unrelated due work. Worker recovery fails
+  interrupted messages owned by deleted sessions instead of replaying them. Events paging/jump, search, media, and
   SSE require the expected generation, so stale tabs get a conflict before
   replacement rows can mix into old chrome. Processing controls remain an
   authoritative archive blocker regardless of heartbeat age; worker startup fails
   unfinished rows rather than replaying non-idempotent commands. Owner/folder
-  checks still fence asynchronous mutation points and output. The non-authoritative
-  UI busy mirror never gates archive without matching queue work. The lower-level
-  typed `pi new` still rotates only
-  Pi's internal context. Returning or rolling back with no
+  checks still fence asynchronous mutation points and output for both Life and
+  standard sessions using both folder and immutable storage token; exact
+  JID/folder reuse cannot authorize stale request leases, rename/delete/restore/
+  clear mutations, or late stream/typing cleanup after a soft delete completes
+  or a purge finalizes. Clear rejects trashed sessions before transcript mutation. Control claims are one atomic
+  active-owner transaction, so a concurrent delete cannot strand a partially
+  claimed batch. The non-authoritative UI busy mirror never gates archive without matching queue work. The lower-level
+  typed `pi new` still rotates only Pi's internal context. After retiring a
+  warm RPC it rechecks both the in-process active map and the SQLite processing
+  queue and durable request/RPC leases inside the same IMMEDIATE transaction as
+  synchronous directory rotation, so no local or cross-worker owner can run
+  under a moving session path. Returning or rolling back with no
   standard session must clear the active Life JID, stream, transcript, partial,
   busy, and search ownership before showing `no session`, so the composer cannot
   submit to hidden Life state. See [`docs/life-mode.md`](docs/life-mode.md) for
@@ -920,7 +996,6 @@ to copy for a secret that matters.
    "Context overflow recovery failed: Summarization failed: 400"). Rotate the
    session to actually clear it.
 
-
 Not bugs that block anything, but they will surprise someone eventually:
 
 1. **Every attachment is permanently copied to `/tmp/pi-discord-files/<date>/`**
@@ -946,7 +1021,7 @@ skill:
 Consequences worth knowing:
 
 - **The LOCAL badge can lie about vision.** The badge (and pi's `model_change`)
-  records the *alias pi requested* (`qwen3.6-35b-q4`), but llama-server serves
+  records the _alias pi requested_ (`qwen3.6-35b-q4`), but llama-server serves
   whatever it actually loaded on 8001. If gemma is up while pi asks for qwen, an
   image gets `500 image input is not supported … mmproj` even though the badge
   says qwen. The queue appends a plain-language hint for that specific error.
@@ -955,8 +1030,7 @@ Consequences worth knowing:
 - To send images to a local model, `qwen-mtp` must be the one running. It is
   `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
   standalone `llama-server` on 8001.
-- Cloud vision models (Gemini, GPT/openai-codex) work regardless of what is on
-  8001.
+- Cloud vision models (Gemini, GPT/openai-codex) work regardless of what is on 8001.
 
 ## 7b. The Antigravity (agy) bridge — Gemini models
 
@@ -995,20 +1069,20 @@ AGY_BIN=/home/chihmin/.local/bin/agy
 `systemctl --user restart piweb-worker`, then check the catalog published to `meta`
 contains `agy/*` refs. Config knobs (all optional):
 
-| variable | default | meaning |
-|---|---|---|
-| `AGY_ENABLED` | `true` | offer agy models at all |
-| `AGY_BIN` | `agy` | binary path (set it; see above) |
-| `AGY_MODELS_TIMEOUT_MS` | `20000` | `agy models` probe timeout |
-| `AGY_PRINT_TIMEOUT` | `60m` | passed as `--print-timeout` |
-| `AGY_SKIP_PERMISSIONS` | `true` | `--dangerously-skip-permissions` |
+| variable                 | default  | meaning                             |
+| ------------------------ | -------- | ----------------------------------- |
+| `AGY_ENABLED`            | `true`   | offer agy models at all             |
+| `AGY_BIN`                | `agy`    | binary path (set it; see above)     |
+| `AGY_MODELS_TIMEOUT_MS`  | `20000`  | `agy models` probe timeout          |
+| `AGY_PRINT_TIMEOUT`      | `60m`    | passed as `--print-timeout`         |
+| `AGY_SKIP_PERMISSIONS`   | `true`   | `--dangerously-skip-permissions`    |
 | `AGY_TOOL_STALL_WARN_MS` | `120000` | when a stuck tool call is announced |
 
 With no binary, or `AGY_ENABLED=false`, the probe fails soft: no `agy/*` refs are
 offered and every other model behaves exactly as before.
 
-**Two traps worth knowing before touching this code.** agy produces *no output at
-all* if stdin stays open, so `runAgy()` spawns with stdin ignored — an
+**Two traps worth knowing before touching this code.** agy produces _no output at
+all_ if stdin stays open, so `runAgy()` spawns with stdin ignored — an
 `execFile`-style call just looks like a hung binary. And agy blocks forever on its
 interactive permission prompts, which piweb has no UI to answer, which is why
 auto-approval is on by default. That last one is a real trust decision: agy can
@@ -1046,7 +1120,7 @@ The routing test is a plain string check on the model ref, placed **before** the
 branch because agy has no steer mode:
 
 ```ts
-const useAgy = isAgyModelRef(effective.rawModelRef);   // "agy/…"
+const useAgy = isAgyModelRef(effective.rawModelRef); // "agy/…"
 ```
 
 ### Calling workflow, one turn
@@ -1081,13 +1155,13 @@ sequenceDiagram
 
 What each side owns:
 
-| concern | piweb | agy |
-|---|---|---|
-| model choice, inference | — | ✅ |
-| tools, permissions | — | ✅ |
-| conversation history | pointer only (`agy-conversation.json`, 63 bytes) | ✅ the content |
-| transcript shown to user | ✅ `web_events` | — |
-| quota reporting | ✅ `/agy-usage` | — |
+| concern                  | piweb                                            | agy            |
+| ------------------------ | ------------------------------------------------ | -------------- |
+| model choice, inference  | —                                                | ✅             |
+| tools, permissions       | —                                                | ✅             |
+| conversation history     | pointer only (`agy-conversation.json`, 63 bytes) | ✅ the content |
+| transcript shown to user | ✅ `web_events`                                  | —              |
+| quota reporting          | ✅ `/agy-usage`                                  | —              |
 
 Consequences that surprise people:
 
@@ -1115,9 +1189,17 @@ Consequences that surprise people:
   candidate ranker. It uses no language model, network call, translation, or KV
   state. The extractive title preserves the prompt's writing system, is at most
   10 graphemes, the job's prompt copy is erased, and a manual rename cancels any
-  pending result so it cannot be overwritten.
+  pending result so it cannot be overwritten. Jobs and completions carry the
+  immutable channel storage token, so a stale extractor cannot rename an exact
+  JID/folder replacement after purge.
 - **Delete** is soft (`deleted_at`); the pi session dir survives until the trash
-  is purged. See "Deleting is soft".
+  is purged. Pending work is frozen and transient `live_output` is cleared so a
+  partial reply cannot reappear after restore. Every standard turn now retains
+  a durable generation lease through final stream/typing cleanup; restore is
+  rejected until message, control, HTTP, and RPC/worker leases settle. A
+  monotonic ownership epoch increments on both delete and restore, so even a
+  suspended worker resuming after lease expiry cannot pass its old fence or
+  trigger delete→restore ABA revalidation. See "Deleting is soft".
 - pi holds the context itself via `--session-dir <dir> --continue`; piweb never
   replays history into the prompt, it only points pi at the right directory.
 - **A message sent mid-run interrupts it.** piscord did this in its Discord
@@ -1128,14 +1210,14 @@ Consequences that surprise people:
   message sent after the current run started). Gated by `INTERRUPT_ON_NEW_MESSAGE`.
   Without this the new message just queued behind the running one — the spinner
   kept going and nothing interrupted. The interrupt is a Ctrl+C, not a reset:
-  the aborted run is SIGTERMed and the new message continues the *same* session
+  the aborted run is SIGTERMed and the new message continues the _same_ session
   (`--continue`, context preserved — verified a codeword survives an interrupt),
   with a visible `system`/`interrupt` marker appended via the transport's
   optional `sendNotice`.
 - **Interrupted runs self-heal, without losing history.** A run killed mid-tool-loop
-  (INTERRUPT_ON_NEW_MESSAGE, OOM, crash) can leave the session ending on an
+  (INTERRUPT*ON_NEW_MESSAGE, OOM, crash) can leave the session ending on an
   assistant message whose `toolCall` never got a result; pi then refuses the
-  *next* `--continue` with "Cannot continue from message role: assistant".
+  \_next* `--continue` with "Cannot continue from message role: assistant".
   `repairSessionForContinue()` (session/path.ts) runs before every spawn and
   **appends a synthetic `toolResult`** closing each unanswered call, keeping a
   `.prerepair.bak`. Every event — thinking blocks included — is preserved, which
@@ -1146,15 +1228,15 @@ Consequences that surprise people:
     150-event session straight to `pi --session <file> --continue`: it resumed
     and correctly described the interrupted work.
   - **Do not reintroduce truncation.** The original version rewound to the last
-    assistant message with text and no toolCall. *During a tool loop no message
-    qualifies*, so one interrupt discarded the entire loop — a measured case lost
+    assistant message with text and no toolCall. _During a tool loop no message
+    qualifies_, so one interrupt discarded the entire loop — a measured case lost
     98 of 150 events and 45 of 66 thinking blocks, which is what "piweb forgets
     its thinking after a stop" actually was.
   - The UI's own transcript is separate and unaffected: `web_events` thinking rows
     are written on `thinking_end` (`transport/web.ts`), so only a block cut off
     mid-stream is missing there — same as the CLI.
 - **A killed run resumes; it is not lost.** Exit code **143 = SIGTERM** or **137 = SIGKILL**, i.e. pi
-  was *killed*, not crashed — a worker restart (deploys!), a shutdown, or an OOM
+  was _killed_, not crashed — a worker restart (deploys!), a shutdown, or an OOM
   kill (e.g. heavy ROCm/Flux generation). Surfacing the raw "pi exited with code 143" reads as a scary failure, and
   marking the message failed threw away a request the user never got an answer
   to. The 143/137 branch in `queue.ts` instead calls `requeueMessage(rowid)`: the row
@@ -1163,33 +1245,33 @@ Consequences that surprise people:
   `--continue`s the **same session** and re-runs the original message with its
   context intact.
   - Capped at `MAX_SIGTERM_RETRIES` (2) via an in-memory `Map` keyed by message
-    rowid, so a message that *reliably* kills pi (deterministic OOM) cannot loop
+    rowid, so a message that _reliably_ kills pi (deterministic OOM) cannot loop
     forever; past the cap it falls back to `markMessageFailed` + a clear user-facing notice
     (`⚠️ 系統記憶體不足 (OOM / SIGTERM 終止)`). A worker restart resets that counter,
     which is correct — a restart is a one-off, not a loop.
-  - The user-interrupt path (`signal.aborted`) is handled *earlier* and must
+  - The user-interrupt path (`signal.aborted`) is handled _earlier_ and must
     never re-queue: there the old message is deliberately abandoned.
   - Two layers: this covers a killed pi child; `recoverStuckMessages()` at
-    startup covers a killed *worker* (rows stranded in `processing`).
+    startup covers a killed _worker_ (rows stranded in `processing`).
   - **Upstream Google/Agy 502/503 Error Translation**: `formatAgyError()` strips raw HTML
     gateway payloads from upstream Google Cloud backend transient errors and presents clean, friendly notifications.
 - **Do not restart the worker while a run is in flight** — it SIGTERMs the user's
   pi and (before the above) silently dropped their message. Check first:
   `select rowid, channel_jid, status from message_queue where status in
-  ('processing','pending')`. There is no `sqlite3` CLI on this box; use the
+('processing','pending')`. There is no `sqlite3` CLI on this box; use the
   bundled `better-sqlite3` from `node`.
 
 ## 9. This deployment
 
-| | |
-|---|---|
-| URL | `https://piweb.crayfish-monitor.ts.net/` (**Funnel ON** — public internet) |
-| repo | `AyaSakura-comp/piweb` (**private**), remote `ayasakura`; `upstream` = piscord |
-| worker | `systemctl --user status piweb-worker` |
-| containers | `piweb-app` (web) + `piweb-ts` (tailscale sidecar) |
-| data | `~/.local/share/piweb/` |
-| worker config | `~/.config/piweb/config.env` (chmod 600) |
-| compose env | `~/src/piweb/.env` (chmod 600, gitignored) |
+|               |                                                                                |
+| ------------- | ------------------------------------------------------------------------------ |
+| URL           | `https://piweb.crayfish-monitor.ts.net/` (**Funnel ON** — public internet)     |
+| repo          | `AyaSakura-comp/piweb` (**private**), remote `ayasakura`; `upstream` = piscord |
+| worker        | `systemctl --user status piweb-worker`                                         |
+| containers    | `piweb-app` (web) + `piweb-ts` (tailscale sidecar)                             |
+| data          | `~/.local/share/piweb/`                                                        |
+| worker config | `~/.config/piweb/config.env` (chmod 600)                                       |
+| compose env   | `~/src/piweb/.env` (chmod 600, gitignored)                                     |
 
 On the **tailnet** the UI opens with nothing to type (Tailscale identity). Over
 **Funnel** there is no identity, so `WEB_AUTH_TOKEN` is the only thing in front

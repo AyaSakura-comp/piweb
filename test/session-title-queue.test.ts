@@ -277,6 +277,28 @@ describe('session title job queue', () => {
     }
   });
 
+  it('fails interrupted processing work for trashed sessions instead of requeueing it', async () => {
+    const db = await setupSession();
+    try {
+      const rowid = db.enqueueMessage({
+        channelJid: 'web:title1',
+        sender: 'web',
+        senderName: 'web',
+        content: 'do not replay after trashing',
+        timestamp: new Date().toISOString(),
+      });
+      expect(db.claimNextMessage('web:title1')).toMatchObject({ rowid, status: 'processing' });
+      db.softDeleteChannel('web:title1');
+
+      expect(db.recoverStuckMessages()).toBe(1);
+      expect(db.channelsWithPending()).toEqual([]);
+      expect(db.claimNextMessage('web:title1')).toBeUndefined();
+      expect(() => db.claimDeletedSessionsForPurge(['web:title1'])).not.toThrow();
+    } finally {
+      db.closeDb();
+    }
+  });
+
   it('preserves the retry budget across repeated interrupted title runs', async () => {
     const db = await setupSession();
     try {

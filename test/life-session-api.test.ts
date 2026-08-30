@@ -624,11 +624,33 @@ describe('Life session API', () => {
       attachments: [{ name: 'new.png', dataBase64: Buffer.from('new').toString('base64') }],
     });
     expect(resumedMessage.status).toBe(200);
-    expect(readdirSync(mediaDestination)).toEqual(
-      expect.arrayContaining(['old-photo.png', expect.stringMatching(/-new\.png$/)]),
-    );
-    expect(readdirSync(uploadDestination)).toEqual([
-      expect.stringMatching(/-new\.png$/),
-    ]);
+
+    // Standard uploads intentionally publish from generation/operation-unique
+    // global paths. The archived Life root keeps its historical media, while a
+    // lease revoked by purge can no longer recreate or clean that owner root.
+    expect(readdirSync(mediaDestination)).toEqual(['old-photo.png']);
+    expect(existsSync(uploadDestination)).toBe(false);
+    const latestEvent = db.getRecentWebEvents(archived!.jid).at(-1)!;
+    const [newMediaUrl] = JSON.parse(latestEvent.files!) as string[];
+    expect(newMediaUrl).toMatch(/^\/media\/\.operations\/[^/]+\/[0-9a-f-]+\/[^/]+-new\.png$/);
+    expect(existsSync(resolve(mediaRoot, newMediaUrl.slice('/media/'.length)))).toBe(true);
+    const servedUpload = await request(newMediaUrl);
+    expect(servedUpload.status).toBe(200);
+    expect(await servedUpload.text()).toBe('new');
+
+    const queued = new Database(dbPath, { readonly: true });
+    try {
+      const row = queued
+        .prepare(
+          `select attachments from message_queue
+            where channel_jid = ? order by rowid desc limit 1`,
+        )
+        .get(archived!.jid) as { attachments: string };
+      const [attachment] = JSON.parse(row.attachments) as Array<{ filePath: string }>;
+      expect(attachment.filePath).toContain(`${join(uploadRoot, '.operations')}/`);
+      expect(existsSync(attachment.filePath)).toBe(true);
+    } finally {
+      queued.close();
+    }
   });
 });

@@ -55,6 +55,84 @@ describe('/pi new with a warm RPC session', () => {
     expect(order).toEqual(['close', 'rotate']);
   });
 
+  it('rechecks control ownership after RPC retirement and before rotation', async () => {
+    let checks = 0;
+    closeRpcSessionMock.mockResolvedValue(true);
+    const { runCommand } = await loadCommands();
+
+    const result = await runCommand(
+      channel(),
+      'pi new',
+      {},
+      {
+        assertOwnership: () => {
+          checks += 1;
+          if (checks === 2) throw new Error('control ownership changed during RPC retirement');
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(closeRpcSessionMock).toHaveBeenCalledTimes(1);
+    expect(rotateMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses rotation when a message starts while RPC retirement is pending', async () => {
+    let releaseRetirement!: (closed: boolean) => void;
+    closeRpcSessionMock.mockImplementation(
+      () =>
+        new Promise<boolean>((resolveClosed) => {
+          releaseRetirement = resolveClosed;
+        }),
+    );
+    const { runCommand, queue } = await loadCommands();
+    const processing = vi
+      .spyOn(queue, 'isChannelProcessing')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+
+    const pending = runCommand(channel(), 'pi new', {});
+    await vi.waitFor(() => expect(closeRpcSessionMock).toHaveBeenCalledTimes(1));
+    releaseRetirement(true);
+    const result = await pending;
+
+    expect(processing).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    expect(rotateMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses rotation when another worker already claimed a message', async () => {
+    closeRpcSessionMock.mockResolvedValue(true);
+    const { db, runCommand } = await loadCommands();
+    const rowid = db.enqueueMessage({
+      channelJid: channel().jid,
+      sender: 'test',
+      senderName: 'Test',
+      content: 'claimed elsewhere',
+      timestamp: new Date().toISOString(),
+    });
+    expect(db.claimNextMessage(channel().jid)?.rowid).toBe(rowid);
+
+    const result = await runCommand(channel(), 'pi new', {});
+
+    expect(result.ok).toBe(false);
+    expect(rotateMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses rotation while another process owns a durable RPC/request lease', async () => {
+    closeRpcSessionMock.mockResolvedValue(false);
+    const { db, runCommand } = await loadCommands();
+    const owner = db.getChannel(channel().jid)!;
+    const operationId = db.beginChannelOperation(owner.jid, owner.folder, owner.storageToken);
+    expect(operationId).toBeTruthy();
+
+    const result = await runCommand(owner, 'pi new', {});
+
+    expect(result.ok).toBe(false);
+    expect(rotateMock).not.toHaveBeenCalled();
+    db.finishChannelOperation(operationId!);
+  });
+
   it('still succeeds when there is no RPC session to close', async () => {
     closeRpcSessionMock.mockReturnValue(false);
     const { runCommand } = await loadCommands();
@@ -100,5 +178,5 @@ async function loadCommands() {
   db.registerChannel(channel());
   const queue = await import('../src/agent/queue.js');
   const { runCommand } = await import('../src/commands/index.js');
-  return { runCommand, queue };
+  return { db, runCommand, queue };
 }

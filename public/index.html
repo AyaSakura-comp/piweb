@@ -508,18 +508,40 @@
       </div>
     </div>
 
-    <div class="sheet" id="trash-sheet" hidden>
-      <div class="sheet-panel">
+    <dialog class="sheet" id="trash-sheet" aria-labelledby="trash-title" hidden>
+      <div class="sheet-panel trash-panel">
         <header class="sheet-head">
-          <span class="sheet-title">Recently deleted</span>
-          <button class="icon-btn" id="btn-trash-close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <span class="sheet-title" id="trash-title">Recently deleted</span>
+          <div class="sheet-head-actions">
+            <button class="trash-select-toggle" id="btn-trash-select" type="button" hidden>
+              Select
+            </button>
+            <button class="icon-btn" id="btn-trash-close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
         </header>
         <p class="sheet-note" id="trash-note"></p>
         <div class="trash-list" id="trash-list"></div>
+        <div class="trash-bulk-bar" id="trash-bulk-bar" hidden>
+          <button class="trash-bulk-danger" id="btn-trash-delete-all" type="button">
+            Delete all
+          </button>
+          <div class="trash-selection-tools" id="trash-selection-tools" hidden>
+            <button id="btn-trash-select-all" type="button">Select all</button>
+            <span id="trash-selected-count" aria-live="polite">0 selected</span>
+            <button
+              class="trash-bulk-danger"
+              id="btn-trash-delete-selected"
+              type="button"
+              disabled
+            >
+              Delete selected
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </dialog>
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>

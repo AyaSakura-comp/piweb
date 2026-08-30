@@ -10,7 +10,7 @@ const CONFIG_ENV_KEYS = ['PI_BIN', 'PI_CWD', 'RPC_IDLE_TIMEOUT_MS', 'SESSIONS_DI
 afterEach(async () => {
   try {
     const rpc = await import('../src/agent/rpc-session.js');
-    rpc.closeAllRpcSessions();
+    await rpc.closeAllRpcSessions();
   } catch {
     // The module may fail to load while the requested API is still RED.
   }
