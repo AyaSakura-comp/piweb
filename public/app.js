@@ -568,6 +568,9 @@ function setPresentationMode(mode, { persist = true } = {}) {
   $('app').classList.toggle('life-mode', life);
   $('btn-life-back').hidden = !life;
   $('btn-life-new-session').hidden = !life;
+  // Status belongs to a confirmed Life owner. Keep it unavailable while the
+  // Life endpoint and event metadata are still validating the destination.
+  $('btn-status').hidden = true;
   $('life-title-mark').hidden = !life;
   if (life) {
     closeDrawer();
@@ -625,9 +628,10 @@ function clearStandardSelection() {
   setBusy(false);
   $('deleted-banner').hidden = true;
   $('composer-wrap').hidden = false;
-  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
+  for (const id of ['btn-model', 'btn-thinking', 'btn-gpt-usage']) {
     $(id).hidden = false;
   }
+  $('btn-status').hidden = true;
   syncUsageButton();
   renderHeaderBadge();
   renderSessions();
@@ -676,6 +680,10 @@ async function restoreStandardAfterLifeFailure(navigation) {
 async function enterLifeMode({ preserveSwipePreview = false } = {}) {
   if (!preserveSwipePreview) cancelLifePreview();
   cancelDrawerDrag();
+  // Re-entry can be generation recovery for an already visible Life session.
+  // Retire its old shortcut before the endpoint resolves so no stale generation
+  // can be submitted while ownership is being revalidated.
+  $('btn-status').hidden = true;
   const navigation = ++lifeNavigationGeneration;
   const fallback = state.activeJid && state.activeJid !== LIFE_JID ? state.activeJid : null;
   if (fallback && state.sessions.some((s) => s.jid === fallback)) state.lastStandardJid = fallback;
@@ -1040,9 +1048,10 @@ async function selectSession(jid, opts = {}) {
   $('deleted-banner').hidden = !previewingDeleted;
   $('composer-wrap').hidden = previewingDeleted;
   const settingsHidden = previewingDeleted || state.mode === 'life';
-  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
+  for (const id of ['btn-model', 'btn-thinking', 'btn-gpt-usage']) {
     $(id).hidden = settingsHidden;
   }
+  $('btn-status').hidden = previewingDeleted || state.mode !== 'life';
   syncUsageButton();
 
   for (const event of events) appendEvent(event, false);

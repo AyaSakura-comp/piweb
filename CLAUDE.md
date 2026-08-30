@@ -782,9 +782,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
-  holds `/pi status`, `/gpt-usage` and the model picker; search, `/pi new` and
-  soft **Delete session** live in the ⋯ menu. Life uses the pencil immediately before ⋯
-  for **New Life session**: atomically promote the current transcript/Pi folder
+  holds `/gpt-usage` and the model picker; search, `/pi new` and soft **Delete
+  session** live in the ⋯ menu. The `/pi status` icon belongs to Life instead and
+  appears only after its exact generation is confirmed. Life places it before
+  the pencil immediately before ⋯ for **New Life session**: atomically promote
+  the current transcript/Pi folder
   into the standard list, then select a fresh empty Life singleton. The menu is
   a popover anchored under the button, not a bottom
   sheet: these are quick actions and a sheet would feel as heavy as the model
@@ -863,8 +865,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
   escalates to SIGKILL after a bounded grace, and waits for child exit.
   Channel/settings management is rejected server-side; `pi stop` and the typed
-  `pi new` command remain available. Life exposes **New Life session** as the
-  header pencil button; its ⋯ menu keeps Search and Media. That button calls
+  `pi new` command remain available. Life exposes the generation-bound `pi
+  status` shortcut and **New Life session** as header actions; its ⋯ menu keeps
+  Search and Media. The pencil button calls
   `/api/life-session/new`, which compares the caller's Life generation, refuses
   stale generations, active/queued work, or request/worker leases, re-keys the
   current row/transcript/Pi folder and scheduled tasks to a new standard JID,

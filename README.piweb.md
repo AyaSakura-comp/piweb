@@ -85,8 +85,10 @@ During settlement it blocks the underlying session and offers **Cancel**, so a
 delayed load cannot receive accidental input. Life reuses one
 protected channel, resolves Pi's exact runtime-default model and effective
 thinking level before every turn, and hides channel/model management. Its header
-shows **Sessions / Life / DEFAULT**, places a dedicated **New Life session** pencil
-button beside the ⋯ button, and keeps **Search** and **Media** in that menu. New
+shows **Sessions / Life / DEFAULT**, puts the generation-bound **pi status** shortcut
+beside a dedicated **New Life session** pencil and the ⋯ button, and keeps
+**Search** and **Media** in that menu. The status shortcut is intentionally a Life
+control rather than a standard-session header action. New
 Life session promotes the current transcript, media, and Pi folder into the
 ordinary Sessions list under an extractive title, then opens a brand-new empty
 Life session. Tap **Sessions**, or swipe right from the phone's left edge, to

@@ -335,9 +335,9 @@ svg {
   color: var(--text-bright);
 }
 
+.app:not(.life-mode) #btn-status,
 .app.life-mode .drawer,
 .app.life-mode #btn-menu,
-.app.life-mode #btn-status,
 .app.life-mode #btn-gpt-usage,
 .app.life-mode #btn-model,
 .app.life-mode #btn-thinking,
@@ -350,14 +350,16 @@ svg {
   position: relative;
 }
 
-/* Keep the Life reset shortcut, safe overflow, and emergency Stop on the right;
-   the absolutely centered title must never cover these hit targets. */
-.app.life-mode #btn-life-new-session,
+/* Keep Status, Life reset, safe overflow, and emergency Stop on the right;
+   the absolutely centered title must never cover these hit targets. Status is
+   the first right-side action while idle; Stop takes that role while busy. */
+.app.life-mode #btn-status,
 .app.life-mode #btn-stop:not([hidden]) {
   margin-left: auto;
 }
 
-.app.life-mode #btn-stop:not([hidden]) ~ #btn-life-new-session,
+.app.life-mode #btn-stop:not([hidden]) ~ #btn-status,
+.app.life-mode #btn-life-new-session,
 .app.life-mode #btn-more {
   margin-left: 0;
 }
@@ -370,26 +372,48 @@ svg {
   justify-content: center;
 }
 
-/* A 320px busy Life header has three mandatory right-side actions. Let the
-   title use the safe space between action groups, and compact only the labelled
-   back action at the narrowest size, rather than letting Stop cover DEFAULT. */
-@media (max-width: 374px) {
-  .app.life-mode.agent-busy .topbar-title {
-    position: static;
-    left: auto;
-    max-width: none;
-    transform: none;
-  }
+/* Busy Life has four mandatory right-side actions, so it always uses normal
+   flex flow instead of an absolute title. Compact the labelled back action and
+   decorative leaf only where they would squeeze the full “Life” name; idle Life
+   needs normal flow plus the same compaction only at the narrowest width. */
+.app.life-mode.agent-busy .topbar-title {
+  position: static;
+  left: auto;
+  flex: 0 1 auto;
+  max-width: none;
+  transform: none;
 }
 
-@media (max-width: 340px) {
+@media (max-width: 380px) {
   .app.life-mode.agent-busy .life-back {
     width: 34px;
     padding-inline: 0;
     justify-content: center;
   }
 
-  .app.life-mode.agent-busy .life-back span {
+  .app.life-mode.agent-busy .life-back span,
+  .app.life-mode.agent-busy .life-title-mark {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .app.life-mode .topbar-title {
+    position: static;
+    left: auto;
+    flex: 0 1 auto;
+    max-width: none;
+    transform: none;
+  }
+
+  .app.life-mode .life-back {
+    width: 34px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .app.life-mode .life-back span,
+  .app.life-mode .life-title-mark {
     display: none;
   }
 }

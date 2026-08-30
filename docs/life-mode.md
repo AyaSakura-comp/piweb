@@ -38,8 +38,10 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   `pi --continue`.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
 - Rename, delete, clear, restore, model, thinking, cwd, and reset-cwd operations
-  are rejected server-side. Emergency `pi stop` remains available. The dedicated
-  **New Life session** pencil immediately before ⋯ calls
+  are rejected server-side. The header exposes **pi status** only after the exact
+  Life generation is confirmed; the shortcut enqueues `pi status` with that
+  generation, while standard-session headers no longer show it. Emergency
+  `pi stop` remains available. The dedicated **New Life session** pencil immediately before ⋯ calls
   `POST /api/life-session/new`: it saves the current conversation into the
   standard list under an extractive first-prompt title and opens a fresh, empty
   Life session. Rotation is refused while Life has active or queued work. The

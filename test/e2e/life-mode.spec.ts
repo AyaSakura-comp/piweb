@@ -190,6 +190,8 @@ async function installLifeApi(
     : null;
   const messagePaths: string[] = [];
   const messageBodies: unknown[] = [];
+  const commandPaths: string[] = [];
+  const commandBodies: unknown[] = [];
   const trashPurgeBodies: unknown[] = [];
   const lifeReadUrls: string[] = [];
 
@@ -362,7 +364,9 @@ async function installLifeApi(
       if (options.failLifeEvents && isLifeEvents) {
         return route.fulfill({ status: 503, json: { error: 'Life events unavailable' } });
       }
-      const lifeEventState = isLifeEvents && archivedLifeCount === 0 && options.lifeEventState;
+      const lifeEventState = Boolean(
+        isLifeEvents && archivedLifeCount === 0 && options.lifeEventState,
+      );
       const lifeEvents =
         isLifeEvents && archivedLifeCount === 0 && options.lifeEventCount
           ? Array.from({ length: options.lifeEventCount }, (_, index) => ({
@@ -498,6 +502,8 @@ async function installLifeApi(
       if (requestedJid === LIFE_SESSION.jid && body.lifeGeneration !== lifeGeneration) {
         return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
       }
+      commandPaths.push(path);
+      commandBodies.push(body);
       if (commandGate) await commandGate;
       return route.fulfill({ status: 200, json: { ok: true } });
     }
@@ -555,6 +561,8 @@ async function installLifeApi(
     },
     messagePaths,
     messageBodies,
+    commandPaths,
+    commandBodies,
     trashPurgeBodies,
   };
 }
@@ -599,6 +607,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
+  await expect(page.locator('#btn-status')).toBeHidden();
   const edgeHint = page.locator('#life-edge-hint');
   await expect(edgeHint).toBeVisible();
   const edgeHintBox = (await edgeHint.boundingBox())!;
@@ -703,34 +712,51 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.locator('#header-badge')).toHaveText('DEFAULT');
   await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeVisible();
-  for (const selector of [
-    '#btn-menu',
-    '#btn-status',
-    '#btn-gpt-usage',
-    '#btn-model',
-    '#btn-thinking',
-  ]) {
+  for (const selector of ['#btn-menu', '#btn-gpt-usage', '#btn-model', '#btn-thinking']) {
     await expect(page.locator(selector)).toBeHidden();
   }
+  const lifeStatus = page.getByRole('button', { name: 'Show pi status' });
   const lifeNewSession = page.getByRole('button', { name: 'New Life session' });
+  await expect(lifeStatus).toBeVisible();
   await expect(lifeNewSession).toBeVisible();
   const lifeHeaderGeometry = await page.evaluate(() => {
     const title = document.querySelector('.topbar-title').getBoundingClientRect();
+    const status = document.querySelector('#btn-status').getBoundingClientRect();
     const action = document.querySelector('#btn-life-new-session').getBoundingClientRect();
     const more = document.querySelector('#btn-more').getBoundingClientRect();
+    const statusHit = document.elementFromPoint(
+      status.left + status.width / 2,
+      status.top + status.height / 2,
+    );
+    const statusButton = document.querySelector('#btn-status')!;
     return {
-      directTopbarChild: document
-        .querySelector('#btn-life-new-session')
-        .parentElement?.classList.contains('topbar'),
-      clearsCenteredTitle: action.left >= title.right,
+      directTopbarChild: statusButton.parentElement?.classList.contains('topbar'),
+      clearsCenteredTitle: status.left >= title.right,
+      statusPrecedesNewSession: status.right <= action.left,
       precedesOverflow: action.right <= more.left,
+      statusWidth: status.width,
+      statusHeight: status.height,
+      statusPointerReachable:
+        statusHit === statusButton || Boolean(statusHit && statusButton.contains(statusHit)),
     };
   });
-  expect(lifeHeaderGeometry).toEqual({
+  expect(lifeHeaderGeometry).toMatchObject({
     directTopbarChild: true,
     clearsCenteredTitle: true,
+    statusPrecedesNewSession: true,
     precedesOverflow: true,
+    statusPointerReachable: true,
   });
+  expect(lifeHeaderGeometry.statusWidth).toBeGreaterThanOrEqual(34);
+  expect(lifeHeaderGeometry.statusHeight).toBeGreaterThanOrEqual(34);
+  await lifeStatus.click();
+  await expect.poll(() => api.commandBodies.length).toBe(1);
+  expect(api.commandPaths).toEqual([
+    `/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/commands`,
+  ]);
+  expect(api.commandBodies).toEqual([
+    { command: 'pi status', args: {}, lifeGeneration: 'life-generation-1' },
+  ]);
   const newLifeSessionResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith('/api/life-session/new') && response.request().method() === 'POST',
@@ -787,6 +813,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.getByRole('button', { name: 'New Life session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show pi status' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('04-life-mode-reloaded.png') });
 
   const backSwipe = await touchDrag(page, { x: 2, y: 430 }, { x: 150, y: 432 }, { hold: true });
@@ -820,7 +847,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.waitForTimeout(60);
   await page.screenshot({ path: testInfo.outputPath('10-sessions-button-settle.png') });
   await expect(page.locator('#session-name')).toHaveText('Life');
-  await expect(page.locator('#btn-status')).toBeVisible();
+  await expect(page.locator('#btn-status')).toBeHidden();
   await expect(page.locator('#header-badge')).toBeVisible();
   await expect(preview).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('11-button-returned-to-sessions.png') });
@@ -832,6 +859,34 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('Life status stays hidden while revalidating its generation', async ({ page }, testInfo) => {
+  const api = await installLifeApi(page, { delaySecondLife: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  const status = page.getByRole('button', { name: 'Show pi status' });
+  await expect(status).toBeVisible();
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'open-session', jid: 'web:life' } }),
+    );
+  });
+  await expect.poll(api.lifeRequests).toBe(2);
+  await expect(status).toBeHidden();
+  expect(api.commandBodies).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('status-hidden-during-revalidation.png') });
+
+  api.releaseSecondLife();
+  await expect(status).toBeVisible();
+  await status.click();
+  await expect.poll(() => api.commandBodies.length).toBe(1);
+  expect(api.commandBodies[0]).toEqual({
+    command: 'pi status',
+    args: {},
+    lifeGeneration: 'life-generation-1',
+  });
 });
 
 test('a failed New response reconciles to the fresh Life generation', async ({ page }) => {
@@ -853,6 +908,95 @@ test('a failed New response reconciles to the fresh Life generation', async ({ p
   await expect(page.locator('#session-name')).toHaveText('Life');
 });
 
+for (const width of [320, 350, 360, 361, 374, 375]) {
+  test(`fresh idle Life header stays clear at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 700 });
+    await installLifeApi(page);
+    await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+    await page.goto('/');
+    await expect(page.locator('#session-name')).toHaveText('Life');
+    await expect(page.locator('#btn-status')).toBeVisible();
+    await expect(page.locator('#btn-life-new-session')).toBeVisible();
+    await expect(page.locator('#btn-more')).toBeVisible();
+    const geometry = await page.evaluate(() => {
+      const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const back = rect('#btn-life-back');
+      const title = rect('.topbar-title');
+      const status = rect('#btn-status');
+      const newSession = rect('#btn-life-new-session');
+      const more = rect('#btn-more');
+      const name = document.querySelector('#session-name')!;
+      return {
+        backClearsTitle: back.right <= title.left,
+        titleClearsStatus: title.right <= status.left,
+        statusClearsNewSession: status.right <= newSession.left,
+        newSessionClearsMore: newSession.right <= more.left,
+        titleNotTruncated: name.scrollWidth <= name.clientWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        headerRight: more.right,
+      };
+    });
+    expect(geometry).toMatchObject({
+      backClearsTitle: true,
+      titleClearsStatus: true,
+      statusClearsNewSession: true,
+      newSessionClearsMore: true,
+      titleNotTruncated: true,
+      viewportWidth: width,
+    });
+    expect(geometry.headerRight).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`idle-life-header-${width}.png`) });
+  });
+}
+
+test('busy Life header keeps every action clear across phone widths', async ({
+  page,
+}, testInfo) => {
+  await installLifeApi(page, { lifeEventState: true });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Life');
+  await expect(page.locator('#btn-stop')).toBeVisible();
+  await expect(page.locator('#btn-status')).toBeVisible();
+  await expect(page.locator('#btn-life-new-session')).toBeVisible();
+  await expect(page.locator('#btn-more')).toBeVisible();
+
+  for (const width of [375, 390, 430]) {
+    await page.setViewportSize({ width, height: 700 });
+    const geometry = await page.evaluate(() => {
+      const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const back = rect('#btn-life-back');
+      const title = rect('.topbar-title');
+      const stop = rect('#btn-stop');
+      const status = rect('#btn-status');
+      const newSession = rect('#btn-life-new-session');
+      const more = rect('#btn-more');
+      const name = document.querySelector('#session-name')!;
+      return {
+        backClearsTitle: back.right <= title.left,
+        titleClearsStop: title.right <= stop.left,
+        stopClearsStatus: stop.right <= status.left,
+        statusClearsNewSession: status.right <= newSession.left,
+        newSessionClearsMore: newSession.right <= more.left,
+        titleNotTruncated: name.scrollWidth <= name.clientWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        headerRight: more.right,
+      };
+    });
+    expect(geometry, `busy Life header at ${width}px`).toMatchObject({
+      backClearsTitle: true,
+      titleClearsStop: true,
+      stopClearsStatus: true,
+      statusClearsNewSession: true,
+      newSessionClearsMore: true,
+      titleNotTruncated: true,
+      viewportWidth: width,
+    });
+    expect(geometry.headerRight).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`busy-life-header-${width}.png`) });
+  }
+});
+
 test('busy Life header keeps every action clear at 320px', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 700 });
   await installLifeApi(page, { lifeEventState: true });
@@ -861,6 +1005,7 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#btn-stop')).toBeVisible();
+  await expect(page.locator('#btn-status')).toBeVisible();
   await expect(page.locator('#btn-life-new-session')).toBeVisible();
   await expect(page.locator('#btn-more')).toBeVisible();
 
@@ -869,13 +1014,17 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
     const back = rect('#btn-life-back');
     const title = rect('.topbar-title');
     const stop = rect('#btn-stop');
+    const status = rect('#btn-status');
     const newSession = rect('#btn-life-new-session');
     const more = rect('#btn-more');
+    const name = document.querySelector('#session-name')!;
     return {
       backClearsTitle: back.right <= title.left,
       titleClearsStop: title.right <= stop.left,
-      stopClearsNewSession: stop.right <= newSession.left,
+      stopClearsStatus: stop.right <= status.left,
+      statusClearsNewSession: status.right <= newSession.left,
       newSessionClearsMore: newSession.right <= more.left,
+      titleNotTruncated: name.scrollWidth <= name.clientWidth,
       viewportWidth: document.documentElement.clientWidth,
       headerRight: more.right,
     };
@@ -883,8 +1032,10 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
   expect(geometry).toMatchObject({
     backClearsTitle: true,
     titleClearsStop: true,
-    stopClearsNewSession: true,
+    stopClearsStatus: true,
+    statusClearsNewSession: true,
     newSessionClearsMore: true,
+    titleNotTruncated: true,
     viewportWidth: 320,
   });
   expect(geometry.headerRight).toBeLessThanOrEqual(320);
