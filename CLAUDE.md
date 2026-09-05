@@ -123,6 +123,36 @@ it and appends the result as a `system`/`error` event. Command output therefore
 travels the same SSE path as chat and survives reconnects. Adding a command means
 touching `src/commands/catalog.ts` (data) **and** `runCommand()` (implementation).
 
+### Extension Runner & KV Cache Subsystem
+
+Extension commands (e.g. `/kv status`, `/kv save`, `/kv restore`, `/kv prune`, `/kv base-update`) are routed through `src/commands/extension-runner.ts`:
+
+```
+Web Client ──POST /api/channels/:jid/command──▶ web server
+                                                    │
+                                                    ▼ (insert control_queue)
+                                              SQLite (WAL)
+                                                    ▲
+                                                    │ (poll control_queue)
+Worker control loop ────────────────────────────────┴──▶ runExtensionCommand()
+                                                           │
+                                                           ▼ (spawns transient RPC)
+                                                      `pi --mode rpc`
+                                                           │
+                                                           ▼ (Extension API)
+                                                 `pi-kv-cache-manager`
+                                                           │
+                                            ┌──────────────┴──────────────┐
+                                            ▼                             ▼
+                                   llama-server (:8001)        ~/.cache/llama-slots/
+                                   (slot save / restore)       (30 slots, 40GB quota)
+```
+
+1. **Transient RPC Isolation**: Spawns an isolated `pi --mode rpc` with channel environment, executes the extension's registered slash command via the Pi Extension API, and parses the structured response.
+2. **Golden Base System Prompt Cache**: Evaluates `ctx.getSystemPrompt()` hash (including all tools and `<available_skills>`); on cache hit, restores ~28.5k tokens into llama-server slot in ~50ms.
+3. **LRU Quota Management**: Enforces a strict 30-session snapshot quota and 40GB storage limit on NVMe.
+
+
 ### The data model
 
 Every piweb table is at the bottom of `src/db.ts`. The ones that carry state
