@@ -63,7 +63,7 @@ import {
   listSessionMedia,
   getLiveOutput,
 } from '../db.js';
-import { COMMANDS } from '../commands/catalog.js';
+import { COMMANDS, type CommandSpec } from '../commands/catalog.js';
 import {
   mediaDirName,
   mediaFileName,
@@ -366,6 +366,29 @@ function serializeEvent(row: WebEventRow) {
   };
 }
 
+function getMergedCommands(): CommandSpec[] {
+  const raw = getMeta('extension_commands');
+  let dynamicCommands: CommandSpec[] = [];
+  if (raw) {
+    try {
+      dynamicCommands = JSON.parse(raw);
+    } catch {
+      // Ignore parse error
+    }
+  }
+  const seen = new Set(COMMANDS.map((c) => c.name));
+  const merged = [...COMMANDS];
+  if (Array.isArray(dynamicCommands)) {
+    for (const c of dynamicCommands) {
+      if (c && typeof c.name === 'string' && !seen.has(c.name)) {
+        merged.push(c);
+        seen.add(c.name);
+      }
+    }
+  }
+  return merged;
+}
+
 async function permanentlyPurgeDeletedSessions(
   jids: string[],
   expectedStorageTokens?: string[],
@@ -575,7 +598,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (path === '/api/commands' && method === 'GET') {
-    sendJson(res, 200, { commands: COMMANDS });
+    sendJson(res, 200, { commands: getMergedCommands() });
     return;
   }
 
@@ -1241,7 +1264,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           sendJson(res, 409, { error: 'Life always uses default settings' });
           return;
         }
-        if (!COMMANDS.some((c) => c.name === command)) {
+        const allCommands = getMergedCommands();
+        if (!allCommands.some((c) => c.name === command)) {
           sendJson(res, 400, { error: `Unknown command: ${command}` });
           return;
         }

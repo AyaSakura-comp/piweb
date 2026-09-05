@@ -26,12 +26,16 @@ import { startControlLoop, stopControlLoop } from './control.js';
 import { startSessionTitleLoop, stopSessionTitleLoop } from './session-title.js';
 import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
+import { discoverPiExtensionCommands } from '../commands/extension-runner.js';
 
 // Both of these return their own stop function rather than exporting one.
 let stopScheduler: () => void = () => {};
 let stopArchiveCleanup: () => void = () => {};
 let modelRefreshTimer: NodeJS.Timeout | undefined;
+let extCommandRefreshTimer: NodeJS.Timeout | undefined;
 let trashSweepTimer: NodeJS.Timeout | undefined;
+
+const EXT_COMMAND_REFRESH_MS = 60 * 60 * 1000;
 
 const MODEL_REFRESH_MS = 10 * 60 * 1000;
 const TRASH_SWEEP_MS = 60 * 60 * 1000;
@@ -82,6 +86,19 @@ function publishModelCatalog(): void {
   }
 }
 
+/**
+ * Discover and publish pi's extension slash commands for the web UI's autocomplete.
+ */
+async function publishExtensionCommands(): Promise<void> {
+  try {
+    const commands = await discoverPiExtensionCommands();
+    setMeta('extension_commands', JSON.stringify(commands));
+    logger.info({ count: commands.length }, 'Published extension commands');
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed to publish extension commands');
+  }
+}
+
 export async function startWorker(): Promise<void> {
   initDb();
   setTransport(webTransport);
@@ -103,6 +120,8 @@ export async function startWorker(): Promise<void> {
   });
   publishModelCatalog();
   modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
+  void publishExtensionCommands();
+  extCommandRefreshTimer = setInterval(() => void publishExtensionCommands(), EXT_COMMAND_REFRESH_MS);
   void sweepTrash();
   trashSweepTimer = setInterval(() => void sweepTrash(), TRASH_SWEEP_MS);
 
@@ -114,6 +133,7 @@ export async function startWorker(): Promise<void> {
 
 export async function stopWorker(): Promise<void> {
   if (modelRefreshTimer) clearInterval(modelRefreshTimer);
+  if (extCommandRefreshTimer) clearInterval(extCommandRefreshTimer);
   if (trashSweepTimer) clearInterval(trashSweepTimer);
   const controlStopped = stopControlLoop();
   stopScheduler();

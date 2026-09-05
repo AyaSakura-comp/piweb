@@ -55,4 +55,22 @@ export const COMMANDS: CommandSpec[] = [
     arg: { name: 'text', kind: 'text', required: true },
   },
   { name: 'task list', description: 'List scheduled prompts for this session' },
+  { name: 'kv status', description: 'Show KV cache status, active tokens, and snapshot table' },
+  {
+    name: 'kv save',
+    description: 'Save current session KV snapshot (optional custom name)',
+    arg: { name: 'name', kind: 'text', required: false },
+  },
+  {
+    name: 'kv restore',
+    description: 'Restore session or named snapshot',
+    arg: { name: 'name', kind: 'text', required: false },
+  },
+  { name: 'kv prune', description: 'Enforce LRU session count and storage quotas' },
+  { name: 'kv help', description: 'Show KV cache manager help' },
+  {
+    name: 'kv',
+    description: 'Manage llama.cpp slot KV cache snapshots and lifecycle',
+    arg: { name: 'args', kind: 'text', required: false },
+  },
 ];

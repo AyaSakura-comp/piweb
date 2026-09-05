@@ -32,6 +32,7 @@ import {
   clearPendingMessages,
   enqueueMessage,
   getChannel,
+  getMeta,
   listScheduledTasks,
   setChannelCwdOverride,
   setChannelModelOverride,
@@ -58,6 +59,10 @@ import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
 import { getAgyUsageReport } from '../agy-usage.js';
+import {
+  discoverPiExtensionCommands,
+  executePiExtensionCommand,
+} from './extension-runner.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -65,6 +70,10 @@ export interface CommandResult {
 }
 
 export { COMMANDS, type CommandSpec } from './catalog.js';
+export {
+  discoverPiExtensionCommands,
+  executePiExtensionCommand,
+} from './extension-runner.js';
 
 function mutateOwnedChannel<T>(channel: RegisteredChannel, mutate: () => T): T {
   return withChannelGenerationMutation(
@@ -136,8 +145,21 @@ export async function runCommand(
       case 'task list':
         result = cmdTaskList(channel);
         break;
-      default:
-        result = { ok: false, text: `Unknown command: ${command}` };
+      case 'kv status':
+      case 'kv save':
+      case 'kv restore':
+      case 'kv prune':
+      case 'kv help':
+      case 'kv':
+        result = await executePiExtensionCommand(channel, command, args, options.assertOwnership);
+        break;
+      default: {
+        if (isExtensionCommand(command)) {
+          result = await executePiExtensionCommand(channel, command, args, options.assertOwnership);
+        } else {
+          result = { ok: false, text: `Unknown command: ${command}` };
+        }
+      }
     }
     options.assertOwnership?.();
     return result;
@@ -145,6 +167,25 @@ export async function runCommand(
     logger.error({ err: err.message, command }, 'Command failed');
     return { ok: false, text: `⚠️ ${err.message}` };
   }
+}
+
+function isExtensionCommand(command: string): boolean {
+  if (command.startsWith('kv ') || command === 'kv') return true;
+  try {
+    const raw = getMeta('extension_commands');
+    if (raw) {
+      const extList = JSON.parse(raw);
+      if (
+        Array.isArray(extList) &&
+        extList.some((c: any) => c.name === command || command.startsWith(`${c.name} `))
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    // Ignore DB parse error
+  }
+  return false;
 }
 
 // ── session lifecycle ──
