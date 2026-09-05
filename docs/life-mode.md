@@ -93,7 +93,7 @@ flowchart TD
     J --> L[Load newest Life history]
     K --> L
     L --> M[Open Life SSE stream]
-    M --> N[Crossfade underlay into<br/>Sessions / Life / DEFAULT<br/>and save piweb.mode=life]
+    M --> N[Crossfade underlay into<br/>Sessions / Life<br/>and save piweb.mode=life]
     N --> O{Next action}
     O -- Send message --> P[Run one Life turn using<br/>fresh Pi runtime defaults]
     P --> N

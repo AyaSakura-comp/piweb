@@ -787,10 +787,7 @@ function renderHeaderBadge() {
   const host = $('header-badge');
   host.textContent = '';
   if (state.mode === 'life') {
-    host.hidden = false;
-    host.className = 'provider-badge life-default';
-    host.textContent = 'DEFAULT';
-    host.title = 'Fresh Pi runtime default for every turn';
+    host.hidden = true;
     return;
   }
   const session = state.sessions.find((s) => s.jid === state.activeJid);

@@ -728,7 +728,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#session-name')).toHaveText('Life');
-  await expect(page.locator('#header-badge')).toHaveText('DEFAULT');
+  await expect(page.locator('#header-badge')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeVisible();
   for (const selector of ['#btn-menu', '#btn-gpt-usage', '#btn-model']) {
     await expect(page.locator(selector)).toBeHidden();

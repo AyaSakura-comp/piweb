@@ -417,12 +417,6 @@ svg {
   }
 }
 
-@media (max-width: 340px) {
-  .app.life-mode.agent-busy #header-badge {
-    display: none;
-  }
-}
-
 @media (max-width: 380px) {
   .app.life-mode .topbar-title {
     position: static;
@@ -451,10 +445,7 @@ svg {
 }
 
 .app.life-mode #header-badge {
-  margin-left: 0;
-  padding: 1px 4px;
-  font-size: 9.5px;
-  letter-spacing: 0.2px;
+  display: none;
 }
 
 .app.life-mode #session-name:hover,
@@ -491,11 +482,6 @@ svg {
   color: var(--tool);
 }
 
-.provider-badge.life-default {
-  background: rgb(81 137 91 / 0.15);
-  border-color: rgb(81 137 91 / 0.45);
-  color: #9ad4a3;
-}
 
 @media (min-width: 768px) {
   .life-edge-hint,
