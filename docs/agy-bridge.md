@@ -95,13 +95,16 @@ With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 
 ## Verification
 
-Unit (`npm test`, 167 passing — 45 new):
+Unit (`npm test`):
 
-- `test/agy-bridge.test.ts` — ref detection, catalog parsing, every event
-  translation, quota/error formatting, conversation-id round trip and corrupt-store handling.
+- `test/agy-bridge.test.ts` — ref detection, catalog parsing, event translation, quota/error formatting (including SIGTERM/code 143 and elapsed time checking), conversation-id round trip and corrupt-store handling.
 - `test/queue-agy-routing.test.ts` — an `agy/*` model reaches `invokeAgy` and
   **not** `invokeAgent`; every other model stays on the pi path; `RPC_STEER=true`
   does not divert an agy turn.
+
+End to end Playwright:
+
+- `test/e2e/agy-interaction.spec.ts` — mobile E2E test verifying model picker selection, `/agy-usage` command synchronization, SSE streaming (thinking block, tool call, tool result, assistant message), interactive details expansion, and clean SIGTERM/cancellation error rendering.
 
 End to end against the real `agy` binary and real Gemini:
 

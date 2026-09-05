@@ -218,6 +218,18 @@ svg {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   will-change: transform;
+  transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.2, 0, 0, 1), color 0.18s ease;
+}
+
+.life-edge-hint:hover {
+  opacity: 1;
+  color: var(--text-bright);
+  transform: translateX(-3px);
+}
+
+.life-edge-hint:hover .life-edge-drop {
+  fill: color-mix(in srgb, var(--tool) 12%, var(--bg-alt));
+  stroke: color-mix(in srgb, var(--tool) 70%, transparent);
 }
 
 .life-edge-hint svg {
@@ -232,6 +244,7 @@ svg {
   stroke: color-mix(in srgb, var(--tool) 50%, transparent);
   stroke-width: 1.4;
   vector-effect: non-scaling-stroke;
+  transition: fill 0.18s ease, stroke 0.18s ease;
 }
 
 .life-edge-leaf {
@@ -250,6 +263,7 @@ svg {
 
 .life-edge-hint:active {
   color: var(--text-bright);
+  transform: translateX(-1px);
 }
 
 .life-edge-hint:focus-visible {
@@ -296,6 +310,7 @@ svg {
 
 .app.life-page-dragging .life-edge-hint {
   z-index: 55;
+  transition: none;
 }
 
 .life-swipe-mark {
@@ -488,7 +503,6 @@ svg {
 }
 
 @media (min-width: 768px) {
-  .life-edge-hint,
   .life-swipe-preview {
     display: none;
   }

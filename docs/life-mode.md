@@ -109,8 +109,8 @@ flowchart TD
 
 The right-edge water-drop leaf is both a swipe affordance and an accessible
 **Open Life** button; tapping it uses the same inert, cancellable page-settlement
-path as a flick.
-Entry is disabled above 768 px, while Life is already active or settling, and while a menu, sheet, or
+Swipe gestures are disabled above 768 px (where the water-drop button remains
+available to open Life directly on click), while Life is already active or settling, and while a menu, sheet, or
 lightbox owns the foreground. Cancelling settlement—or crossing the desktop
 breakpoint while it is pending—invalidates navigation and preview ownership,
 restores standard mode, and ignores any delayed Life response.

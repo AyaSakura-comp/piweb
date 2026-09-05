@@ -18,6 +18,7 @@ const {
   isAgyModelRef,
   modelIdEncodesEffort,
   parseAgyModels,
+  parseDurationMs,
   readAgyConversationId,
   convertLocalMediaLinks,
   createAgyEventTranslator,
@@ -236,11 +237,58 @@ describe('formatAgyError', () => {
     expect(text).toContain('AGY_PRINT_TIMEOUT');
   });
 
+  it('does not claim print-timeout when agy terminates prematurely before timeout duration', () => {
+    const text = formatAgyError('ERROR', 'timeout waiting for response', {
+      elapsedMs: 3_000,
+      printTimeoutMs: 3_600_000,
+      exitCode: 1,
+    });
+    expect(text).not.toContain('print-timeout');
+    expect(text).not.toContain('AGY_PRINT_TIMEOUT');
+    expect(text).toContain('中斷');
+  });
+
+  it('formats external SIGTERM termination as a process signal error for queue recovery', () => {
+    const text = formatAgyError('exit null', 'timeout waiting for response', {
+      signal: 'SIGTERM',
+      elapsedMs: 3_000,
+      printTimeoutMs: 3_600_000,
+    });
+    expect(text).toContain('SIGTERM');
+    expect(text).toContain('code 143');
+  });
+
+  it('formats worker shutdown termination as a process signal error', () => {
+    const text = formatAgyError('ERROR', 'timeout waiting for response', {
+      isWorkerStopping: true,
+      elapsedMs: 3_000,
+      printTimeoutMs: 3_600_000,
+    });
+    expect(text).toContain('SIGTERM');
+    expect(text).toContain('code 143');
+  });
+
   it('passes other failures through with their status', () => {
     expect(formatAgyError('FAILED', 'model unavailable')).toBe(
       'agy failed (FAILED): model unavailable',
     );
     expect(formatAgyError('exit 1', '')).toBe('agy failed (exit 1)');
+  });
+});
+
+describe('parseDurationMs', () => {
+  it('parses s, m, h, d units correctly', () => {
+    expect(parseDurationMs('30s')).toBe(30_000);
+    expect(parseDurationMs('5m')).toBe(300_000);
+    expect(parseDurationMs('60m')).toBe(3_600_000);
+    expect(parseDurationMs('2h')).toBe(7_200_000);
+    expect(parseDurationMs('1d')).toBe(86_400_000);
+  });
+
+  it('handles invalid or empty inputs gracefully', () => {
+    expect(parseDurationMs(undefined)).toBeUndefined();
+    expect(parseDurationMs('')).toBeUndefined();
+    expect(parseDurationMs('invalid')).toBeUndefined();
   });
 });
 

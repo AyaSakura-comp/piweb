@@ -851,8 +851,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   desktop breakpoint changes cancel it.
   The fixed edge button is outside `.messages`' scroll ancestry, so a vertical lock that
   starts on the button explicitly forwards `dy` to the transcript; test real
-  `scrollTop`, not merely the absence of a Life request. They are disabled above
-  768px and while a lightbox/sheet owns the foreground. **Never
+  `scrollTop`, not merely the absence of a Life request. Swipe gestures are disabled
+  above 768px (where the water-drop button remains available for direct click entry) and
+  while a lightbox/sheet owns the foreground. **Never
   recover a drag position with `getComputedStyle`** — a style flush can return
   stale CSS during a fast event burst. Keep offsets and signed velocity in drag
   state. Post-release settlement makes the underlying main/drawer inert, owns
@@ -1258,10 +1259,12 @@ Consequences that surprise people:
     startup covers a killed _worker_ (rows stranded in `processing`).
   - **Upstream Google/Agy 502/503 Error Translation**: `formatAgyError()` strips raw HTML
     gateway payloads from upstream Google Cloud backend transient errors and presents clean, friendly notifications.
+  - **Agy Termination and Timeout Disambiguation**: When agy exits via `SIGTERM` / `SIGKILL` (or code 143/137), `formatAgyError()` returns `exited with code 143 (SIGTERM)` rather than misreporting a 60m print-timeout, enabling `queue.ts` auto-requeue. `timeout waiting for response` is only attributed to `AGY_PRINT_TIMEOUT` if elapsed turn time actually approached the timeout threshold (`>= 80%`).
+  - **E2E Test**: `test/e2e/agy-interaction.spec.ts` verifies the full agy lifecycle (model selection, `/agy-usage` command, SSE thinking/tool/reply streaming, details toggles, and clean termination handling).
 - **Do not restart the worker while a run is in flight** — it SIGTERMs the user's
   pi and (before the above) silently dropped their message. Check first:
   `select rowid, channel_jid, status from message_queue where status in
-('processing','pending')`. There is no `sqlite3` CLI on this box; use the
+ ('processing','pending')`. There is no `sqlite3` CLI on this box; use the
   bundled `better-sqlite3` from `node`.
 
 ## 9. This deployment

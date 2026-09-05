@@ -4410,16 +4410,23 @@ let lifeTransitioning = false;
 let lifeTransitionDirection = null;
 let lifePreviewGeneration = 0;
 
-function isLifeGestureAllowed() {
-  if (wideDrawer.matches || state.mode === 'life' || lifeTransitioning || !$('login').hidden) {
+function isLifeEntryAllowed() {
+  if (state.mode === 'life' || lifeTransitioning || !$('login').hidden) {
     return false;
   }
-  if ($('drawer').classList.contains('open') || isMenuOpen()) return false;
+  if ((!wideDrawer.matches && $('drawer').classList.contains('open')) || isMenuOpen()) {
+    return false;
+  }
   return (
     $('lightbox').hidden &&
     mediaViewer.element.hidden &&
     !document.querySelector('.sheet:not([hidden])')
   );
+}
+
+function isLifeGestureAllowed() {
+  if (wideDrawer.matches) return false;
+  return isLifeEntryAllowed();
 }
 
 function setLifeSettlementBlocking(blocked) {
@@ -4722,6 +4729,13 @@ async function cancelLifeExit() {
 
 function openSessionsFromLife() {
   if (state.mode !== 'life' || lifeTransitioning) return;
+  if (wideDrawer.matches) {
+    $('btn-life-back').disabled = true;
+    void exitLifeMode().finally(() => {
+      $('btn-life-back').disabled = false;
+    });
+    return;
+  }
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
   showLifeUnderlay('sessions');
   setLifePageOffset(0);
@@ -4729,7 +4743,14 @@ function openSessionsFromLife() {
 }
 
 function openLifeFromEdgeHint() {
-  if (!isLifeGestureAllowed()) return;
+  if (!isLifeEntryAllowed()) return;
+  if (wideDrawer.matches) {
+    $('life-edge-hint').disabled = true;
+    void enterLifeMode().finally(() => {
+      $('life-edge-hint').disabled = false;
+    });
+    return;
+  }
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
   showLifeUnderlay('life');
   setLifePageOffset(0);

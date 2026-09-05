@@ -3455,17 +3455,27 @@ test('a failed Life history load with no standard sessions clears the selected L
   expect(api.messagePaths).toEqual([]);
 });
 
-test('Life edge affordance and gesture are disabled with the permanent desktop drawer', async ({
+test('Life edge affordance is visible on desktop and clicking it enters Life mode', async ({
   page,
 }) => {
   const api = await installLifeApi(page);
   await page.setViewportSize({ width: 800, height: 844 });
   await page.goto('/');
 
-  await expect(page.locator('#life-edge-hint')).toBeHidden();
+  const edgeHint = page.locator('#life-edge-hint');
+  await expect(edgeHint).toBeVisible();
   await touchDrag(page, { x: 798, y: 430 }, { x: 500, y: 432 });
   expect(api.lifeRequests()).toBe(0);
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+
+  await edgeHint.click();
+  await expect.poll(api.lifeRequests).toBe(1);
+  await expect(page.locator('#app')).toHaveClass(/life-mode/);
+  await expect(edgeHint).toBeHidden();
+
+  await page.locator('#btn-life-back').click();
+  await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
+  await expect(edgeHint).toBeVisible();
 });
 
 test('a failed persisted Life entry falls back to the most recent standard session', async ({

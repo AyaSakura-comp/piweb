@@ -419,19 +419,80 @@ export function humanizeDuration(ms: number): string {
   return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
 }
 
+/** Parse Go-style duration strings ('60m', '5m', '30s', '1h') to milliseconds. */
+export function parseDurationMs(duration: string | undefined): number | undefined {
+  if (!duration) return undefined;
+  const match = /^(\d+)(s|m|h|d)?$/.exec(duration.trim());
+  if (!match) return undefined;
+  const val = Number(match[1]);
+  const unit = match[2] || 's';
+  switch (unit) {
+    case 's': return val * 1000;
+    case 'm': return val * 60 * 1000;
+    case 'h': return val * 60 * 60 * 1000;
+    case 'd': return val * 24 * 60 * 60 * 1000;
+    default: return undefined;
+  }
+}
+
+let workerShuttingDown = false;
+process.on('SIGTERM', () => {
+  workerShuttingDown = true;
+});
+process.on('SIGINT', () => {
+  workerShuttingDown = true;
+});
+
+export interface FormatAgyErrorOptions {
+  elapsedMs?: number;
+  printTimeoutMs?: number;
+  signal?: NodeJS.Signals | string | null;
+  exitCode?: number | null;
+  isWorkerStopping?: boolean;
+}
+
 /** Turn an agy failure into a message worth showing the user. */
-export function formatAgyError(status: string, text: string): string {
+export function formatAgyError(
+  status: string,
+  text: string,
+  opts?: FormatAgyErrorOptions,
+): string {
+  // If the process was terminated by SIGTERM / SIGKILL or during worker shutdown
+  if (
+    opts?.signal === 'SIGTERM' ||
+    opts?.signal === 'SIGKILL' ||
+    opts?.exitCode === 143 ||
+    opts?.exitCode === 137 ||
+    opts?.isWorkerStopping
+  ) {
+    const code = opts?.exitCode ?? (opts?.signal === 'SIGKILL' ? 137 : 143);
+    const sig = opts?.signal ?? 'SIGTERM';
+    return `exited with code ${code} (${sig})`;
+  }
+
   const combined = `${status} ${text}`;
 
   // agy's own wording for hitting --print-timeout. On its own it reads like the
   // model stopped responding; in fact the turn was cut off by our own cap, and
   // the conversation survives, so say both.
+  // Note: agy also emits "timeout waiting for response" on context cancellation
+  // (e.g. premature tool exit, process kill or network drop). Only blame print-timeout
+  // if the elapsed time actually approached our timeout budget.
   if (/timeout waiting for response/i.test(combined)) {
-    return (
-      'agy 這一輪超過 print-timeout 被中止（目前上限 ' +
-      `${config.agyPrintTimeout}）。對話本身沒有遺失 —— 直接接著問就會從剛才的進度繼續；` +
-      '若這類長任務很常見，調高 AGY_PRINT_TIMEOUT。'
-    );
+    const isRealPrintTimeout =
+      opts?.elapsedMs === undefined ||
+      opts?.printTimeoutMs === undefined ||
+      opts.elapsedMs >= opts.printTimeoutMs * 0.8;
+
+    if (isRealPrintTimeout) {
+      return (
+        'agy 這一輪超過 print-timeout 被中止（目前上限 ' +
+        `${config.agyPrintTimeout}）。對話本身沒有遺失 —— 直接接著問就會從剛才的進度繼續；` +
+        '若這類長任務很常見，調高 AGY_PRINT_TIMEOUT。'
+      );
+    }
+
+    return `agy 執行過程被中斷或連線超時 (timeout waiting for response, exit ${opts?.exitCode ?? 1})`;
   }
 
   if (/^stalled-tool:/.test(text)) {
@@ -512,6 +573,9 @@ export async function invokeAgy(
     { bin: config.agyBin, model: modelRef, conversationId, channelFolder },
     'Spawning agy',
   );
+
+  const turnStartedAt = Date.now();
+  const printTimeoutMs = parseDurationMs(config.agyPrintTimeout) ?? 3_600_000;
 
   return new Promise<AgentResult>((resolve) => {
     // detached makes agy a process-group leader so the whole group can be
@@ -650,12 +714,12 @@ export async function invokeAgy(
     // hours with no agy process left alive. `exit` fires on process exit
     // regardless, so settle on that and give trailing output a bounded window.
     let settled = false;
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       if (settled) return;
       const finish = () => {
         if (settled) return;
         settled = true;
-        finalize(code);
+        finalize(code, signal);
       };
       let drained = false;
       proc.stdout.once('end', () => {
@@ -673,7 +737,7 @@ export async function invokeAgy(
       }, 2_000).unref();
     });
 
-    const finalize = (code: number | null) => {
+    const finalize = (code: number | null, signal: NodeJS.Signals | null = null) => {
       clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       if (lineBuf.trim()) handleLine(lineBuf);
@@ -701,9 +765,17 @@ export async function invokeAgy(
         return;
       }
 
+      const elapsedMs = Date.now() - turnStartedAt;
       let error = formatAgyError(
         status === 'UNKNOWN' ? `exit ${code}` : status,
         agyErrorText || stderrText || text,
+        {
+          elapsedMs,
+          printTimeoutMs,
+          signal,
+          exitCode: code,
+          isWorkerStopping: workerShuttingDown,
+        },
       );
       // The single most useful fact about a stalled turn is which call never
       // returned; without it the user is left guessing at a wall of tool rows.
