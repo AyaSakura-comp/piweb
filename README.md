@@ -103,6 +103,19 @@ The gateway registers a global `/pi` command on Discord:
 | `/pi new`         | Start a fresh session for this channel                             |
 | `/pi stop`        | Abort the current task and clear queued messages                   |
 
+### KV Cache & Extension Slash Commands
+
+Piweb dynamically discovers and routes extension slash commands, featuring first-class autocomplete for llama.cpp KV cache management:
+
+| Command              | Description                                                          |
+| -------------------- | -------------------------------------------------------------------- |
+| `/kv status`         | Show KV cache snapshot table, active session tokens, and slot status |
+| `/kv save [name]`    | Save current session KV cache snapshot (optional custom name)        |
+| `/kv restore [name]` | Restore session or named snapshot                                    |
+| `/kv prune`          | Enforce LRU session count and storage quotas                         |
+| `/kv base-update`    | Re-evaluate and cache Golden Base System Prompt                      |
+| `/kv help`           | Show KV cache manager help and usage                                 |
+
 ## Tools for Pi
 
 The gateway exposes two capabilities through its CLI that **pi itself can invoke**. You don't type these commands in your terminal — you just tell pi in Discord, and it handles the rest.

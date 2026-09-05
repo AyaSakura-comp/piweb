@@ -59,6 +59,7 @@ piweb's own code:
 src/transport/   index.ts  = Transport interface + setTransport/getTransport
                  web.ts    = the web transport: agent output → web_events (+ media)
 src/commands/    catalog.ts = COMMANDS, pure data, safe for the web tier to import
+                 extension-runner.ts = discovery & runner for Pi extension slash commands (WORKER-only)
                  index.ts   = runCommand() implementations (WORKER-only; pulls in pi deps)
 src/web/         server.ts = node:http router (no framework): API + SSE + static
                  auth.ts   = token cookie, Tailscale identity, CSRF, login throttle
@@ -115,6 +116,7 @@ The web tier _cannot_ execute them:
 - `/pi stop` needs the worker's in-memory `AbortController`
 - `/pi new` must not race an in-flight run (`isChannelProcessing`)
 - `/gpt-usage` reads the host's pi OAuth credentials through `src/gpt-usage.ts`
+- `/kv status`, `/kv save`, `/kv restore`, `/kv prune` execute llama.cpp slot KV cache manager via host Pi RPC in `src/commands/extension-runner.ts`
 
 So web validates against `COMMANDS` and writes an intent row; the worker executes
 it and appends the result as a `system`/`error` event. Command output therefore
@@ -195,6 +197,7 @@ origin check.
 | rename / model sheet / edge-swipe drawer       | `public/app.js` (all client-side)                                                                                                                                                                                                                                                                                                                                                               |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill                                                                                                                                                                                                                                                |
 | stay signed in                                 | persisted `auth.signingKey` + localStorage `piweb.token` auto-login                                                                                                                                                                                                                                                                                                                             |
+| KV cache & extension commands                  | `src/commands/extension-runner.ts` (RPC command probe + run), `src/commands/catalog.ts` (`/kv status`, `/kv save`, `/kv restore`, `/kv prune`, `/kv help`), `src/commands/index.ts`, `src/web/server.ts` (`getMergedCommands()` via `meta.extension_commands`), `src/worker/index.ts` (`publishExtensionCommands()`)                                                                      |
 
 ### Context compaction is pi's, not piweb's
 
