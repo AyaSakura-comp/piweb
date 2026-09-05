@@ -568,9 +568,10 @@ function setPresentationMode(mode, { persist = true } = {}) {
   $('app').classList.toggle('life-mode', life);
   $('btn-life-back').hidden = !life;
   $('btn-life-new-session').hidden = !life;
-  // Status belongs to a confirmed Life owner. Keep it unavailable while the
-  // Life endpoint and event metadata are still validating the destination.
+  // Session controls belong to a confirmed destination. Keep them unavailable
+  // while the Life endpoint and event metadata are validating ownership.
   $('btn-status').hidden = true;
+  $('btn-thinking').hidden = true;
   $('life-title-mark').hidden = !life;
   if (life) {
     closeDrawer();
@@ -1045,12 +1046,14 @@ async function selectSession(jid, opts = {}) {
   $('session-name').textContent = sessionMeta.name || opts.name || session?.name || jid;
   $('session-name').tabIndex = state.mode === 'life' ? -1 : 0;
   renderHeaderBadge();
+  renderThinkingButton();
   $('deleted-banner').hidden = !previewingDeleted;
   $('composer-wrap').hidden = previewingDeleted;
   const settingsHidden = previewingDeleted || state.mode === 'life';
-  for (const id of ['btn-model', 'btn-thinking', 'btn-gpt-usage']) {
+  for (const id of ['btn-model', 'btn-gpt-usage']) {
     $(id).hidden = settingsHidden;
   }
+  $('btn-thinking').hidden = previewingDeleted;
   $('btn-status').hidden = previewingDeleted || state.mode !== 'life';
   syncUsageButton();
 
@@ -1411,15 +1414,19 @@ async function jumpTo(id) {
 
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
 async function runQuickCommand(command, args = {}) {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return false;
   const lifeGeneration = state.activeJid === LIFE_JID ? state.lifeSession?.generation : undefined;
-  await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
-    method: 'POST',
-    body: JSON.stringify({ command, args, ...(lifeGeneration ? { lifeGeneration } : {}) }),
-  }).catch(async (err) => {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
+      method: 'POST',
+      body: JSON.stringify({ command, args, ...(lifeGeneration ? { lifeGeneration } : {}) }),
+    });
+    return true;
+  } catch (err) {
     if (state.mode === 'life' && state.activeJid === LIFE_JID) await enterLifeMode();
     alert(err.message);
-  });
+    return false;
+  }
 }
 
 function newPiSession() {
@@ -1809,6 +1816,7 @@ function providerBadgeFor(provider, modelRef = '') {
   // rather than a flat "GPT", mirroring providerBadge() on the server.
   if (provider === 'openai-codex') {
     const id = modelRef.toLowerCase();
+    if (id.includes('astra')) return el('span', 'provider-badge astra', 'ASTRA');
     if (id.includes('terra')) return el('span', 'provider-badge terra', 'TERRA');
     if (id.includes('sol')) return el('span', 'provider-badge sol', 'SOL');
     if (id.includes('luna')) return el('span', 'provider-badge luna', 'LUNA');
@@ -1874,6 +1882,7 @@ const THINKING_DESCRIPTIONS = {
 };
 
 function currentThinkingLevel() {
+  if (state.activeJid === LIFE_JID) return state.lifeSession?.thinking || '';
   const session = state.sessions.find((s) => s.jid === state.activeJid);
   return session?.thinking || '';
 }
@@ -1916,7 +1925,13 @@ function renderThinkingList() {
     item.addEventListener('click', async () => {
       const jid = state.activeJid;
       closeThinkingSheet();
-      await runQuickCommand('pi thinking', { level });
+      const sent = await runQuickCommand('pi thinking', { level });
+      if (!sent) return;
+      if (jid === LIFE_JID && state.activeJid === jid && state.lifeSession) {
+        state.lifeSession.thinking = level;
+        renderThinkingButton();
+        return;
+      }
       await awaitThinkingOverride(jid, level);
     });
     list.append(item);

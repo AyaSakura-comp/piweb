@@ -861,13 +861,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Life is not a managed session.** It is one protected `channels.kind='life'`
   row, omitted from standard/trash lists and restored on every idempotent entry.
   Every turn probes `PI_BIN --mode rpc --no-session` for Pi's exact runtime
-  model/effective thinking, explicitly applies both to the persistent Life
-  conversation, and always uses `PI_CWD`. Probe completion sends SIGTERM,
-  escalates to SIGKILL after a bounded grace, and waits for child exit.
-  Channel/settings management is rejected server-side; `pi stop` and the typed
-  `pi new` command remain available. Life exposes the generation-bound `pi
-  status` shortcut and **New Life session** as header actions; its ⋯ menu keeps
-  Search and Media. The pencil button calls
+  model/effective thinking, applying an explicit thinking override when set, and
+  always uses `PI_CWD`. Probe completion sends SIGTERM, escalates to SIGKILL after a
+  bounded grace, and waits for child exit. Channel/settings management is rejected
+  server-side, with thinking level configurable through `pi thinking`; `pi stop` and
+  the typed `pi new` command remain available. Life exposes the generation-bound `pi
+  status` shortcut, thinking level picker, and **New Life session** as header actions;
+  its ⋯ menu keeps Search and Media. The pencil button calls
   `/api/life-session/new`, which compares the caller's Life generation, refuses
   stale generations, active/queued work, or request/worker leases, re-keys the
   current row/transcript/Pi folder and scheduled tasks to a new standard JID,

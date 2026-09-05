@@ -596,6 +596,24 @@ async function touchDrag(
   await session.detach();
 }
 
+test('Life mode exposes the thinking level control', async ({ page }) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  const thinking = page.getByRole('button', { name: /Choose thinking level/ });
+  await expect(thinking).toBeVisible();
+  await thinking.click();
+  await expect(page.getByRole('dialog', { name: 'Thinking level' })).toBeVisible();
+  await page.locator('.thinking-item[data-level="high"]').click();
+
+  await expect.poll(() => api.commandBodies.length).toBe(1);
+  expect(api.commandPaths).toEqual([`/api/sessions/${encodeURIComponent(LIFE_SESSION.jid)}/commands`]);
+  expect(api.commandBodies).toEqual([
+    { command: 'pi thinking', args: { level: 'high' }, lifeGeneration: 'life-generation-1' },
+  ]);
+});
+
 test('right-edge swipe enters persistent default-model Life mode', async ({ page }, testInfo) => {
   const api = await installLifeApi(page);
   const pageErrors: string[] = [];
@@ -712,9 +730,10 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.locator('#header-badge')).toHaveText('DEFAULT');
   await expect(page.getByRole('button', { name: 'Return to sessions' })).toBeVisible();
-  for (const selector of ['#btn-menu', '#btn-gpt-usage', '#btn-model', '#btn-thinking']) {
+  for (const selector of ['#btn-menu', '#btn-gpt-usage', '#btn-model']) {
     await expect(page.locator(selector)).toBeHidden();
   }
+  await expect(page.locator('#btn-thinking')).toBeVisible();
   const lifeStatus = page.getByRole('button', { name: 'Show pi status' });
   const lifeNewSession = page.getByRole('button', { name: 'New Life session' });
   await expect(lifeStatus).toBeVisible();
@@ -916,6 +935,7 @@ for (const width of [320, 350, 360, 361, 374, 375]) {
     await page.goto('/');
     await expect(page.locator('#session-name')).toHaveText('Life');
     await expect(page.locator('#btn-status')).toBeVisible();
+    await expect(page.locator('#btn-thinking')).toBeVisible();
     await expect(page.locator('#btn-life-new-session')).toBeVisible();
     await expect(page.locator('#btn-more')).toBeVisible();
     const geometry = await page.evaluate(() => {
@@ -923,12 +943,15 @@ for (const width of [320, 350, 360, 361, 374, 375]) {
       const back = rect('#btn-life-back');
       const title = rect('.topbar-title');
       const status = rect('#btn-status');
+      const thinking = rect('#btn-thinking');
       const newSession = rect('#btn-life-new-session');
       const more = rect('#btn-more');
       const name = document.querySelector('#session-name')!;
       return {
         backClearsTitle: back.right <= title.left,
         titleClearsStatus: title.right <= status.left,
+        statusClearsThinking: status.right <= thinking.left,
+        thinkingClearsNewSession: thinking.right <= newSession.left,
         statusClearsNewSession: status.right <= newSession.left,
         newSessionClearsMore: newSession.right <= more.left,
         titleNotTruncated: name.scrollWidth <= name.clientWidth,
@@ -939,6 +962,8 @@ for (const width of [320, 350, 360, 361, 374, 375]) {
     expect(geometry).toMatchObject({
       backClearsTitle: true,
       titleClearsStatus: true,
+      statusClearsThinking: true,
+      thinkingClearsNewSession: true,
       statusClearsNewSession: true,
       newSessionClearsMore: true,
       titleNotTruncated: true,
@@ -958,6 +983,7 @@ test('busy Life header keeps every action clear across phone widths', async ({
   await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.locator('#btn-stop')).toBeVisible();
   await expect(page.locator('#btn-status')).toBeVisible();
+  await expect(page.locator('#btn-thinking')).toBeVisible();
   await expect(page.locator('#btn-life-new-session')).toBeVisible();
   await expect(page.locator('#btn-more')).toBeVisible();
 
@@ -969,6 +995,7 @@ test('busy Life header keeps every action clear across phone widths', async ({
       const title = rect('.topbar-title');
       const stop = rect('#btn-stop');
       const status = rect('#btn-status');
+      const thinking = rect('#btn-thinking');
       const newSession = rect('#btn-life-new-session');
       const more = rect('#btn-more');
       const name = document.querySelector('#session-name')!;
@@ -976,6 +1003,8 @@ test('busy Life header keeps every action clear across phone widths', async ({
         backClearsTitle: back.right <= title.left,
         titleClearsStop: title.right <= stop.left,
         stopClearsStatus: stop.right <= status.left,
+        statusClearsThinking: status.right <= thinking.left,
+        thinkingClearsNewSession: thinking.right <= newSession.left,
         statusClearsNewSession: status.right <= newSession.left,
         newSessionClearsMore: newSession.right <= more.left,
         titleNotTruncated: name.scrollWidth <= name.clientWidth,
@@ -987,6 +1016,8 @@ test('busy Life header keeps every action clear across phone widths', async ({
       backClearsTitle: true,
       titleClearsStop: true,
       stopClearsStatus: true,
+      statusClearsThinking: true,
+      thinkingClearsNewSession: true,
       statusClearsNewSession: true,
       newSessionClearsMore: true,
       titleNotTruncated: true,
@@ -1006,6 +1037,7 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#btn-stop')).toBeVisible();
   await expect(page.locator('#btn-status')).toBeVisible();
+  await expect(page.locator('#btn-thinking')).toBeVisible();
   await expect(page.locator('#btn-life-new-session')).toBeVisible();
   await expect(page.locator('#btn-more')).toBeVisible();
 
@@ -1015,6 +1047,7 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
     const title = rect('.topbar-title');
     const stop = rect('#btn-stop');
     const status = rect('#btn-status');
+    const thinking = rect('#btn-thinking');
     const newSession = rect('#btn-life-new-session');
     const more = rect('#btn-more');
     const name = document.querySelector('#session-name')!;
@@ -1022,6 +1055,8 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
       backClearsTitle: back.right <= title.left,
       titleClearsStop: title.right <= stop.left,
       stopClearsStatus: stop.right <= status.left,
+      statusClearsThinking: status.right <= thinking.left,
+      thinkingClearsNewSession: thinking.right <= newSession.left,
       statusClearsNewSession: status.right <= newSession.left,
       newSessionClearsMore: newSession.right <= more.left,
       titleNotTruncated: name.scrollWidth <= name.clientWidth,
@@ -1033,6 +1068,8 @@ test('busy Life header keeps every action clear at 320px', async ({ page }, test
     backClearsTitle: true,
     titleClearsStop: true,
     stopClearsStatus: true,
+    statusClearsThinking: true,
+    thinkingClearsNewSession: true,
     statusClearsNewSession: true,
     newSessionClearsMore: true,
     titleNotTruncated: true,

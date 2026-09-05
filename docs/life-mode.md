@@ -27,21 +27,21 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   returns focus to the edge button.
 - Life has the stable JID `web:life` and one randomly named, persistent Pi
   session folder. The partial unique database index permits only one Life row.
-- Re-entry restores the same row and transcript while clearing model, thinking,
-  and cwd overrides. **New Life session** is the deliberate boundary: under an
-  immediate database lock, the old row, transcript, Pi folder, logs, scheduled
-  tasks, and media ownership are re-keyed to a new standard `web:*` JID, while a
-  new empty `web:life` row receives a freshly reserved folder.
+- Re-entry restores the same row and transcript while clearing model and cwd
+  overrides (persisting an explicit thinking level override when chosen). **New Life session**
+  is the deliberate boundary: under an immediate database lock, the old row, transcript,
+  Pi folder, logs, scheduled tasks, and media ownership are re-keyed to a new standard
+  `web:*` JID, while a new empty `web:life` row receives a freshly reserved folder.
 - Every Life turn asks the configured `PI_BIN` for its exact current runtime
-  model and effective thinking level, then passes both explicitly to the
-  persistent Life conversation. It never trusts stale values from
-  `pi --continue`.
+  model and default thinking level, applying an explicit thinking override when
+  chosen. It never trusts stale values from `pi --continue`.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
-- Rename, delete, clear, restore, model, thinking, cwd, and reset-cwd operations
-  are rejected server-side. The header exposes **pi status** only after the exact
-  Life generation is confirmed; the shortcut enqueues `pi status` with that
-  generation, while standard-session headers no longer show it. Emergency
-  `pi stop` remains available. The dedicated **New Life session** pencil immediately before ⋯ calls
+- Rename, delete, clear, restore, model, cwd, and reset-cwd operations
+  are rejected server-side. The header exposes **pi status** and the **thinking level**
+  picker only after the exact Life generation is confirmed; the status shortcut
+  enqueues `pi status` with that generation, while standard-session headers no longer
+  show it. Emergency `pi stop` remains available. The dedicated **New Life session**
+  pencil immediately before ⋯ calls
   `POST /api/life-session/new`: it saves the current conversation into the
   standard list under an extractive first-prompt title and opens a fresh, empty
   Life session. Rotation is refused while Life has active or queued work. The
@@ -89,7 +89,7 @@ flowchart TD
     H --> H2[Page fully covered;<br/>POST /api/life-session]
     H2 --> I{Singleton exists?}
     I -- No --> J[Create web:life with a<br/>new empty session folder]
-    I -- Yes --> K[Restore web:life and clear<br/>model/thinking/cwd overrides]
+    I -- Yes --> K[Restore web:life and clear<br/>model/cwd overrides]
     J --> L[Load newest Life history]
     K --> L
     L --> M[Open Life SSE stream]
@@ -233,7 +233,7 @@ erDiagram
         string folder "random on first creation"
         string kind "life"
         string model_override "always cleared"
-        string thinking_override "always cleared"
+        string thinking_override "optional override"
         string cwd_override "always cleared"
         datetime deleted_at "always restored"
     }

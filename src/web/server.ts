@@ -641,7 +641,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       name: channel.name,
       kind: 'life',
       model: '',
-      thinking: '',
+      thinking: channel.thinkingOverride,
       generation: channel.folder,
       created,
     });
@@ -1236,7 +1236,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const command = (body.command ?? '').trim();
         if (
           channel.kind === 'life' &&
-          ['pi model', 'pi reset-model', 'pi thinking', 'pi cwd', 'pi reset-cwd'].includes(command)
+          ['pi model', 'pi reset-model', 'pi cwd', 'pi reset-cwd'].includes(command)
         ) {
           sendJson(res, 409, { error: 'Life always uses default settings' });
           return;

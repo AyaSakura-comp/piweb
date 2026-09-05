@@ -105,7 +105,7 @@ describe('Life channel persistence', () => {
         folder: first.channel.folder,
         kind: 'life',
         modelOverride: '',
-        thinkingOverride: '',
+        thinkingOverride: 'xhigh',
         cwdOverride: '',
       });
       expect(db.isChannelDeleted(first.channel.jid)).toBe(false);

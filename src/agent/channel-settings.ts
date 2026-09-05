@@ -228,11 +228,13 @@ export async function computeEffectiveChannelSettings(
     Boolean(channel.thinkingOverride) ||
     Boolean(config.piThinking && isThinkingLevel(config.piThinking));
   const desiredThinking =
-    channel.kind === 'life' ? lifeDefaults!.thinking : getDesiredThinkingLevel(channel);
-  // get_state already reports Pi's effective (capability-clamped) Life level.
-  // Standard sessions retain the existing catalog-based override clamping.
+    channel.kind === 'life' && !channel.thinkingOverride
+      ? lifeDefaults!.thinking
+      : getDesiredThinkingLevel(channel);
+  // get_state already reports Pi's capability-clamped Life default. An explicit
+  // Life override uses the same model-aware clamping as an ordinary session.
   const thinkingResolution =
-    channel.kind === 'life'
+    channel.kind === 'life' && !channel.thinkingOverride
       ? { requested: desiredThinking, effective: desiredThinking, adjusted: false }
       : resolveThinkingForModel(modelInfo, desiredThinking);
   const effectiveCwd = channel.kind === 'life' ? config.piCwd : channel.cwdOverride || config.piCwd;
@@ -246,8 +248,8 @@ export async function computeEffectiveChannelSettings(
   else modelSource = 'pi runtime default';
 
   let thinkingSource: EffectiveChannelSettings['thinkingSource'];
-  if (channel.kind === 'life') thinkingSource = 'default';
-  else if (channel.thinkingOverride) thinkingSource = 'override';
+  if (channel.thinkingOverride) thinkingSource = 'override';
+  else if (channel.kind === 'life') thinkingSource = 'default';
   else if (config.piThinking && isThinkingLevel(config.piThinking)) thinkingSource = 'default';
   else thinkingSource = 'pi runtime default';
 

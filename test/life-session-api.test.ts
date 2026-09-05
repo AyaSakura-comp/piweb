@@ -124,7 +124,7 @@ describe('Life session API', () => {
       jid: first.jid,
       kind: 'life',
       model: '',
-      thinking: '',
+      thinking: 'xhigh',
       created: false,
     });
 
@@ -312,11 +312,6 @@ describe('Life session API', () => {
       [
         `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
         'POST',
-        { command: 'pi thinking', lifeGeneration: rotated.life.generation },
-      ],
-      [
-        `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
-        'POST',
         { command: 'pi cwd', lifeGeneration: rotated.life.generation },
       ],
       [
@@ -330,8 +325,21 @@ describe('Life session API', () => {
       expect(response.status, `${method} ${path}`).toBe(409);
     }
 
+    // Life keeps its runtime-default model and cwd, but permits an explicit
+    // thinking level through the same generation-fenced control queue.
+    const thinking = await request(
+      `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
+      'POST',
+      {
+        command: 'pi thinking',
+        args: { level: 'high' },
+        lifeGeneration: rotated.life.generation,
+      },
+    );
+    expect(thinking.status).toBe(200);
+
     // Starting a fresh Pi context is available without making Life itself
-    // renameable, deletable, clearable, or configurable.
+    // renameable, deletable, or clearable.
     const fresh = await request(
       `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
       'POST',

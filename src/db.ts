@@ -2194,7 +2194,7 @@ export function getOrCreateLifeChannel(): {
           db.prepare(
             `update channels
               set jid = 'web:life', name = 'Life', model_override = '',
-                  thinking_override = '', cwd_override = '', deleted_at = null
+                  cwd_override = '', deleted_at = null
             where jid = ?`,
           ).run(existing.jid);
         }

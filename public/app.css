@@ -340,7 +340,6 @@ svg {
 .app.life-mode #btn-menu,
 .app.life-mode #btn-gpt-usage,
 .app.life-mode #btn-model,
-.app.life-mode #btn-thinking,
 .app.life-mode .topbar-title > .hash,
 .app.life-mode .life-edge-hint {
   display: none;
@@ -348,9 +347,10 @@ svg {
 
 .app.life-mode .topbar {
   position: relative;
+  padding-right: max(4px, env(safe-area-inset-right));
 }
 
-/* Keep Status, Life reset, safe overflow, and emergency Stop on the right;
+/* Keep Status, Thinking, Life reset, safe overflow, and emergency Stop on the right;
    the absolutely centered title must never cover these hit targets. Status is
    the first right-side action while idle; Stop takes that role while busy. */
 .app.life-mode #btn-status,
@@ -358,8 +358,17 @@ svg {
   margin-left: auto;
 }
 
+.app.life-mode #btn-status[hidden] ~ #btn-thinking:not([hidden]),
+.app.life-mode #btn-status[hidden] ~ #btn-life-new-session {
+  margin-left: auto;
+}
+
 .app.life-mode #btn-stop:not([hidden]) ~ #btn-status,
-.app.life-mode #btn-life-new-session,
+.app.life-mode #btn-stop:not([hidden]) ~ #btn-thinking,
+.app.life-mode #btn-stop:not([hidden]) ~ #btn-life-new-session,
+.app.life-mode #btn-status:not([hidden]) ~ #btn-thinking,
+.app.life-mode #btn-status:not([hidden]) ~ #btn-life-new-session,
+.app.life-mode #btn-thinking:not([hidden]) ~ #btn-life-new-session,
 .app.life-mode #btn-more {
   margin-left: 0;
 }
@@ -372,10 +381,10 @@ svg {
   justify-content: center;
 }
 
-/* Busy Life has four mandatory right-side actions, so it always uses normal
+/* Busy Life has five mandatory right-side actions, so it always uses normal
    flex flow instead of an absolute title. Compact the labelled back action and
    decorative leaf only where they would squeeze the full “Life” name; idle Life
-   needs normal flow plus the same compaction only at the narrowest width. */
+   needs normal flow plus the same compaction across phone widths. */
 .app.life-mode.agent-busy .topbar-title {
   position: static;
   left: auto;
@@ -384,20 +393,37 @@ svg {
   transform: none;
 }
 
-@media (max-width: 380px) {
+.app.life-mode.agent-busy .life-title-mark {
+  display: none;
+}
+
+@media (max-width: 420px) {
+  .app.life-mode .topbar-title {
+    gap: 3px;
+  }
+
+  .app.life-mode .life-title-mark {
+    display: none;
+  }
+
   .app.life-mode.agent-busy .life-back {
     width: 34px;
     padding-inline: 0;
     justify-content: center;
   }
 
-  .app.life-mode.agent-busy .life-back span,
-  .app.life-mode.agent-busy .life-title-mark {
+  .app.life-mode.agent-busy .life-back span {
     display: none;
   }
 }
 
-@media (max-width: 360px) {
+@media (max-width: 340px) {
+  .app.life-mode.agent-busy #header-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 380px) {
   .app.life-mode .topbar-title {
     position: static;
     left: auto;
@@ -421,6 +447,14 @@ svg {
 .app.life-mode #session-name {
   cursor: default;
   margin-left: 0;
+  padding-inline: 2px;
+}
+
+.app.life-mode #header-badge {
+  margin-left: 0;
+  padding: 1px 4px;
+  font-size: 9.5px;
+  letter-spacing: 0.2px;
 }
 
 .app.life-mode #session-name:hover,
@@ -2932,8 +2966,14 @@ dialog.sheet::backdrop {
   color: #5fd3b8;
 }
 
-/* Codex GPT-5.6 variants — earth / sun / moon, each its own colour so they
+/* Codex variants — star / earth / sun / moon, each its own colour so they
    read apart at a glance (label still carries the meaning without colour). */
+.provider-badge.astra {
+  background: rgb(236 72 153 / 0.2);
+  border-color: rgb(236 72 153 / 0.55);
+  color: #f472b6;
+}
+
 /* Terracotta (clay/earth) — deliberately NOT green, so it reads apart from the
    LOCAL and GPT greens sitting right next to it in the drawer. */
 .provider-badge.terra {
@@ -3646,6 +3686,10 @@ dialog.sheet::backdrop {
 
 :root[data-theme='light'] .provider-badge.gpt {
   color: #087761;
+}
+
+:root[data-theme='light'] .provider-badge.astra {
+  color: #9d174d;
 }
 
 :root[data-theme='light'] .provider-badge.terra {
