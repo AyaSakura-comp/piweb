@@ -352,6 +352,17 @@ $('messages')?.addEventListener('contextmenu', (event) => {
   }
 });
 
+$('messages')?.addEventListener('click', (event) => {
+  const img = event.target.closest('.msg-text img, .msg-inline-media img');
+  if (img && !img.closest('a')) {
+    const src = img.getAttribute('src');
+    if (src) {
+      event.preventDefault();
+      openLightbox(src);
+    }
+  }
+});
+
 clearCustomSelection = bindCustomSelection($('messages'), $('custom-selection-overlay'), {
   onSelection: (text, rect) => {
     customSelectionActive = true;
@@ -2223,11 +2234,13 @@ function renderText(container, raw) {
   renderRich(container, raw);
 }
 
-function renderFiles(container, files) {
+function renderFiles(container, files, content = '') {
   if (!files || files.length === 0) return;
+  const unreferenced = content ? files.filter((url) => !content.includes(url)) : files;
+  if (unreferenced.length === 0) return;
   const wrap = el('div', 'msg-files');
 
-  for (const url of files) {
+  for (const url of unreferenced) {
     const lower = url.toLowerCase();
     if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(lower)) {
       const img = el('img');
@@ -2246,7 +2259,9 @@ function renderFiles(container, files) {
       audio.controls = true;
       wrap.append(audio);
     } else {
-      const link = el('a', 'file-link', decodeURIComponent(url.split('/').pop()));
+      const rawName = decodeURIComponent(url.split('/').pop() || 'file');
+      const displayName = rawName.replace(/^[0-9a-f]{8}-/, '');
+      const link = el('a', 'file-link', displayName);
       link.href = url;
       link.target = '_blank';
       link.rel = 'noopener';
@@ -2442,7 +2457,7 @@ function buildEventNode(event) {
       const textNode = el('div', 'msg-text');
       renderText(textNode, event.content);
       body.append(textNode);
-      renderFiles(body, event.files);
+      renderFiles(body, event.files, event.content);
 
       row.append(body);
       return row;
@@ -2451,7 +2466,7 @@ function buildEventNode(event) {
       const textNode = el('div', 'msg-text');
       renderText(textNode, event.content);
       body.append(textNode);
-      renderFiles(body, event.files);
+      renderFiles(body, event.files, event.content);
 
       row.append(body);
       return row;
@@ -3263,9 +3278,18 @@ function applyLightboxTransform(animate = false) {
 
 /** Every image currently in the transcript, in reading order. */
 function collectTranscriptImages() {
-  return [...document.querySelectorAll('#messages .msg-files img')].map((n) =>
-    n.getAttribute('src'),
-  );
+  const seen = new Set();
+  const urls = [];
+  for (const n of document.querySelectorAll(
+    '#messages .msg-files img, #messages .msg-text img, #messages .msg-inline-media img',
+  )) {
+    const src = n.getAttribute('src');
+    if (src && !seen.has(src)) {
+      seen.add(src);
+      urls.push(src);
+    }
+  }
+  return urls;
 }
 
 function openLightbox(url, urls) {

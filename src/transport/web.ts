@@ -18,6 +18,7 @@ import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { mediaDirName, mediaFileName, mediaUrl } from '../media-path.js';
+import { embedOutboxMediaUrls } from '../agent/outbox.js';
 import { logger } from '../logger.js';
 import {
   appendWebEvent,
@@ -246,17 +247,23 @@ export const webTransport: Transport = {
   ): Promise<boolean> {
     flushLive(jid, true, fence);
     const urls: string[] = [];
+    const published = new Map<string, string>();
     for (const file of files) {
       const url = await publishFile(jid, file, fence);
-      if (url) urls.push(url);
+      if (url) {
+        urls.push(url);
+        published.set(file, url);
+      }
     }
+
+    const content = embedOutboxMediaUrls(text, published);
 
     return writeEvent(
       {
         channelJid: jid,
         kind: 'message',
         role: 'assistant',
-        content: text?.trim() ?? '',
+        content,
         files: urls,
       },
       fence,

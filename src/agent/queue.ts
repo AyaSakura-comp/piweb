@@ -495,10 +495,15 @@ async function processMessage(
 
     if (result.ok) {
       // Method C: extract [[image:/file:]] markers; attach those files, send the rest as text.
-      const { text: outText, files: outFiles } = parseOutboxMarkers(result.text);
+      const { text: outText, files: outFiles, rawText } = parseOutboxMarkers(result.text);
       const sent =
         outFiles.length > 0
-          ? await getTransport().sendFilesResponse(jid, outText, outFiles, writeFence)
+          ? await getTransport().sendFilesResponse(
+              jid,
+              rawText ?? result.text,
+              outFiles,
+              writeFence,
+            )
           : await getTransport().sendResponse(jid, outText, writeFence);
       if (!sent) {
         markMessageFailed(rowid);

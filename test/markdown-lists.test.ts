@@ -116,8 +116,8 @@ describe('markdown rendering', () => {
     const res = await render(md);
     expect(res.olCount).toBe(1);
     expect(res.topLiCount).toBe(2);
-    const startAttr = await page.evaluate(
-      () => document.querySelector('#c ol')?.getAttribute('start'),
+    const startAttr = await page.evaluate(() =>
+      document.querySelector('#c ol')?.getAttribute('start'),
     );
     expect(startAttr).toBe('4');
   });
@@ -141,13 +141,43 @@ describe('markdown rendering', () => {
     const res = await render(md);
     expect(res.olCount).toBe(1);
     expect(res.topLiCount).toBe(2);
-    const hasHeading = await page.evaluate(() =>
-      Boolean(document.querySelector('#c h3')),
-    );
-    const hasP = await page.evaluate(() =>
-      Boolean(document.querySelector('#c p')),
-    );
+    const hasHeading = await page.evaluate(() => Boolean(document.querySelector('#c h3')));
+    const hasP = await page.evaluate(() => Boolean(document.querySelector('#c p')));
     expect(hasHeading).toBe(true);
     expect(hasP).toBe(true);
+  });
+
+  it('renders embedded [[image: /media/...]] block in correct position', async () => {
+    const md = `Title\n\n[[image: /media/web_life/book.jpg]]\n\nFooter note`;
+    await render(md);
+    const media = await page.evaluate(() => {
+      const img = document.querySelector('#c .msg-inline-media img');
+      const p = document.querySelectorAll('#c p');
+      return {
+        found: Boolean(img),
+        src: img?.getAttribute('src'),
+        paragraphs: [...p].map((el) => el.textContent),
+      };
+    });
+    expect(media.found).toBe(true);
+    expect(media.src).toBe('/media/web_life/book.jpg');
+    expect(media.paragraphs).toEqual(['Title', 'Footer note']);
+  });
+
+  it('renders embedded video and file links', async () => {
+    const md = `[[video: /media/demo.mp4]]\n\n[[file: /media/12345678-report.pdf]]`;
+    await render(md);
+    const elements = await page.evaluate(() => {
+      const video = document.querySelector('#c .msg-inline-media .video-file video');
+      const file = document.querySelector('#c .msg-inline-media a.file-link');
+      return {
+        videoSrc: video?.getAttribute('src'),
+        fileHref: file?.getAttribute('href'),
+        fileText: file?.textContent,
+      };
+    });
+    expect(elements.videoSrc).toBe('/media/demo.mp4');
+    expect(elements.fileHref).toBe('/media/12345678-report.pdf');
+    expect(elements.fileText).toBe('report.pdf');
   });
 });

@@ -361,7 +361,10 @@ function attachMermaidGesture(scrollEl, chartEl) {
         const now = Date.now();
 
         // Double-tap to toggle zoom centered around the tap point
-        if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 35) {
+        if (
+          now - lastTap < 300 &&
+          Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 35
+        ) {
           if (e.cancelable) e.preventDefault();
           lastTap = 0;
           if (Math.abs(scale - 1) > 0.15) {
@@ -392,7 +395,7 @@ function attachMermaidGesture(scrollEl, chartEl) {
         }
       }
     },
-    { passive: false }
+    { passive: false },
   );
 
   scrollEl.addEventListener(
@@ -424,7 +427,7 @@ function attachMermaidGesture(scrollEl, chartEl) {
         updateTransform(false);
       }
     },
-    { passive: false }
+    { passive: false },
   );
 
   const endGesture = () => {
@@ -564,7 +567,10 @@ function openMermaidModal(svgHtml) {
           const now = Date.now();
 
           // Double tap zoom toggle centered around the tapped spot
-          if (now - lastTap < 300 && Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 30) {
+          if (
+            now - lastTap < 300 &&
+            Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 30
+          ) {
             if (e.cancelable) e.preventDefault();
             lastTap = 0;
             if (scale > 1.2) {
@@ -593,7 +599,7 @@ function openMermaidModal(svgHtml) {
           panStartY = touch.clientY - y;
         }
       },
-      { passive: false }
+      { passive: false },
     );
 
     body.addEventListener(
@@ -623,7 +629,7 @@ function openMermaidModal(svgHtml) {
           updateTransform(false);
         }
       },
-      { passive: false }
+      { passive: false },
     );
 
     const endTouch = () => {
@@ -666,7 +672,12 @@ export function highlightCode(code, language = '', highlighter = globalThis.wind
   }
 }
 
-export function applySyntaxHighlighting(element, code, language = '', highlighter = globalThis.window?.hljs) {
+export function applySyntaxHighlighting(
+  element,
+  code,
+  language = '',
+  highlighter = globalThis.window?.hljs,
+) {
   const highlighted = highlightCode(code, language, highlighter);
   if (!highlighted) return false;
 
@@ -819,6 +830,48 @@ function renderInline(container, text, code, math) {
   }
 }
 
+const SAFE_MEDIA_URL = /^(?:\/media\/|https?:\/\/|blob:|data:image\/)/i;
+const MEDIA_BLOCK_RE =
+  /^\s*(?:\[\[(image|video|file)\s*:\s*([^\]]+?)\s*\]\]|!\[([^\]]*)\]\(([^)\s]+)\))\s*$/i;
+
+export function renderMediaElement(type, rawUrl, alt = '') {
+  const url = (rawUrl || '').trim();
+  if (!SAFE_MEDIA_URL.test(url)) return null;
+
+  const lower = url.toLowerCase();
+  const kind = (type || '').toLowerCase();
+
+  if (kind === 'video' || /\.(mp4|webm|mov)$/i.test(lower)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'video-file';
+    const video = document.createElement('video');
+    video.src = url;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    wrap.append(video);
+    return wrap;
+  }
+
+  if (kind === 'file' && !/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lower)) {
+    const a = document.createElement('a');
+    a.className = 'file-link';
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    const rawName = decodeURIComponent(url.split('/').pop() || 'file');
+    a.textContent = alt || rawName.replace(/^[0-9a-f]{8}-/, '');
+    return a;
+  }
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = alt || 'image';
+  img.loading = 'lazy';
+  img.className = 'msg-inline-img';
+  return img;
+}
+
 const INLINE_RE = new RegExp(
   [
     '(`+)([\\s\\S]+?)\\1', // `code`
@@ -827,6 +880,8 @@ const INLINE_RE = new RegExp(
     '~~([\\s\\S]+?)~~', // ~~strike~~
     '\\*([^*\\n]+?)\\*', // *italic*
     '(?<![\\w\\\\])_([^_\\n]+?)_(?!\\w)', // _italic_ (not inside identifiers)
+    '\\[\\[(image|video|file)\\s*:\\s*([^\\]]+?)\\s*\\]\\]', // [[image: url]]
+    '!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)', // ![alt](url)
     '\\[([^\\]]+)\\]\\(([^)\\s]+)\\)', // [text](url)
     '(https?://[^\\s<>()]+)', // bare url
   ].join('|'),
@@ -842,7 +897,23 @@ function renderInlineText(container, text) {
 
   while ((m = inlineRe.exec(text)) !== null) {
     if (m.index > last) container.append(document.createTextNode(text.slice(last, m.index)));
-    const [, , codeText, bold1, bold2, strike, ital1, ital2, linkText, linkUrl, bareUrl] = m;
+    const [
+      ,
+      ,
+      codeText,
+      bold1,
+      bold2,
+      strike,
+      ital1,
+      ital2,
+      mediaType,
+      mediaUrl,
+      imgAlt,
+      imgUrl,
+      linkText,
+      linkUrl,
+      bareUrl,
+    ] = m;
 
     if (codeText !== undefined) container.append(tag('code', codeText));
     else if (bold1 !== undefined) container.append(formattedTag('strong', bold1));
@@ -850,7 +921,15 @@ function renderInlineText(container, text) {
     else if (strike !== undefined) container.append(formattedTag('del', strike));
     else if (ital1 !== undefined) container.append(formattedTag('em', ital1));
     else if (ital2 !== undefined) container.append(formattedTag('em', ital2));
-    else if (linkText !== undefined) container.append(link(linkText, linkUrl));
+    else if (mediaType !== undefined) {
+      const node = renderMediaElement(mediaType, mediaUrl);
+      if (node) container.append(node);
+      else container.append(document.createTextNode(m[0]));
+    } else if (imgUrl !== undefined) {
+      const node = renderMediaElement('image', imgUrl, imgAlt);
+      if (node) container.append(node);
+      else container.append(document.createTextNode(m[0]));
+    } else if (linkText !== undefined) container.append(link(linkText, linkUrl));
     else if (bareUrl !== undefined) container.append(link(bareUrl, bareUrl));
 
     last = m.index + m[0].length;
@@ -986,9 +1065,7 @@ const TABLE_SEP_RE = /^\s*\|?[\s:|-]+\|[\s:|-]*$/;
 
 /** A table = a row containing `|` immediately followed by a |---|---| separator. */
 function isTableStart(lines, i) {
-  return (
-    lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])
-  );
+  return lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]);
 }
 
 /**
@@ -1031,7 +1108,9 @@ function renderBlocks(container, text, code, math) {
     }
 
     // a lone placeholder line (fenced code / display math) is its own block
-    const solo = line.trim().match(new RegExp(`^${reEscape(PLACEHOLDER)}([CM])(\\d+)${reEscape(PLACEHOLDER)}$`));
+    const solo = line
+      .trim()
+      .match(new RegExp(`^${reEscape(PLACEHOLDER)}([CM])(\\d+)${reEscape(PLACEHOLDER)}$`));
     if (solo) {
       const index = Number(solo[2]);
       container.append(solo[1] === 'C' ? renderCode(code[index]) : renderMath(math[index]));
@@ -1044,6 +1123,23 @@ function renderBlocks(container, text, code, math) {
       container.append(document.createElement('hr'));
       i += 1;
       continue;
+    }
+
+    // media block (image, video, file, or standalone markdown image)
+    const mediaMatch = line.trim().match(MEDIA_BLOCK_RE);
+    if (mediaMatch) {
+      const type = mediaMatch[1] ? mediaMatch[1].toLowerCase() : 'image';
+      const alt = mediaMatch[3] || '';
+      const url = (mediaMatch[2] || mediaMatch[4] || '').trim();
+      const node = renderMediaElement(type, url, alt);
+      if (node) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg-inline-media';
+        wrap.append(node);
+        container.append(wrap);
+        i += 1;
+        continue;
+      }
     }
 
     // heading
@@ -1097,6 +1193,7 @@ function renderBlocks(container, text, code, math) {
       !BULLET_RE.test(lines[i]) &&
       !ORDERED_RE.test(lines[i]) &&
       !HR_RE.test(lines[i]) &&
+      !MEDIA_BLOCK_RE.test(lines[i]) &&
       // A table often follows a label line with no blank line between them
       // ("**材料：**" then "| a | b |"). Without this the paragraph swallows the
       // whole table and it renders as raw pipes.
