@@ -108,6 +108,7 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       // glance. modelId is the running id (e.g. "gpt-5.6-terra") or a ref like
       // "openai-codex/gpt-5.6-sol" — match on the codename either way.
       const id = modelId.toLowerCase();
+      if (id.includes('astra')) return { label: 'ASTRA', kind: 'astra' };
       if (id.includes('terra')) return { label: 'TERRA', kind: 'terra' };
       if (id.includes('sol')) return { label: 'SOL', kind: 'sol' };
       if (id.includes('luna')) return { label: 'LUNA', kind: 'luna' };
