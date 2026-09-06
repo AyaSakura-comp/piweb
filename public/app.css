@@ -355,7 +355,6 @@ svg {
   color: var(--text-bright);
 }
 
-.app:not(.life-mode) #btn-status,
 .app.life-mode .drawer,
 .app.life-mode #btn-menu,
 .app.life-mode #btn-gpt-usage,

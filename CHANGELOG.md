@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Move the **pi status** header shortcut from standard sessions into Life mode and bind it to the confirmed Life generation
+- Restore the **/pi status** header shortcut to standard sessions while keeping it available in Life mode
 - Replace the overflow menu's **Clean session** action with the same restorable **Delete session** flow used by the Sessions drawer
 
 ### Fixed

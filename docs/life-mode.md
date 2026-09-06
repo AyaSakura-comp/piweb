@@ -39,8 +39,7 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
 - Rename, delete, clear, restore, model, cwd, and reset-cwd operations
   are rejected server-side. The header exposes **pi status** and the **thinking level**
   picker only after the exact Life generation is confirmed; the status shortcut
-  enqueues `pi status` with that generation, while standard-session headers no longer
-  show it. Emergency `pi stop` remains available. The dedicated **New Life session**
+  enqueues `pi status` with that generation. Emergency `pi stop` remains available. The dedicated **New Life session**
   pencil immediately before ⋯ calls
   `POST /api/life-session/new`: it saves the current conversation into the
   standard list under an extractive first-prompt title and opens a fresh, empty

@@ -640,10 +640,9 @@ function clearStandardSelection() {
   setBusy(false);
   $('deleted-banner').hidden = true;
   $('composer-wrap').hidden = false;
-  for (const id of ['btn-model', 'btn-thinking', 'btn-gpt-usage']) {
+  for (const id of ['btn-model', 'btn-thinking', 'btn-status', 'btn-gpt-usage']) {
     $(id).hidden = false;
   }
-  $('btn-status').hidden = true;
   syncUsageButton();
   renderHeaderBadge();
   renderSessions();
@@ -1062,7 +1061,7 @@ async function selectSession(jid, opts = {}) {
     $(id).hidden = settingsHidden;
   }
   $('btn-thinking').hidden = previewingDeleted;
-  $('btn-status').hidden = previewingDeleted || state.mode !== 'life';
+  $('btn-status').hidden = previewingDeleted;
   syncUsageButton();
 
   for (const event of events) appendEvent(event, false);

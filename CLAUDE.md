@@ -815,13 +815,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
-  holds `/gpt-usage` and the model picker; search, `/pi new` and soft **Delete
-  session** live in the ⋯ menu. The `/pi status` icon belongs to Life instead and
-  appears only after its exact generation is confirmed. Life places it before
-  the pencil immediately before ⋯ for **New Life session**: atomically promote
+  holds `/pi status`, `/gpt-usage`, the model picker, and thinking level; search,
+  `/pi new` and soft **Delete session** live in the ⋯ menu. Life uses the pencil
+  immediately before ⋯ for **New Life session**: atomically promote
   the current transcript/Pi folder
-  into the standard list, then select a fresh empty Life singleton. The menu is
-  a popover anchored under the button, not a bottom
+  into the standard list, then select a fresh empty Life singleton. The `/pi status`
+  shortcut is also available in Life mode, bound to the confirmed Life generation.
+  The menu is a popover anchored under the button, not a bottom
   sheet: these are quick actions and a sheet would feel as heavy as the model
   picker. Command rows name the slash command they run; Delete session instead
   names its Recently deleted destination in the confirmation. Dismissal is a

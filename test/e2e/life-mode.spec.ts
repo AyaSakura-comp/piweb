@@ -625,7 +625,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
-  await expect(page.locator('#btn-status')).toBeHidden();
+  await expect(page.locator('#btn-status')).toBeVisible();
   const edgeHint = page.locator('#life-edge-hint');
   await expect(edgeHint).toBeVisible();
   const edgeHintBox = (await edgeHint.boundingBox())!;
@@ -866,7 +866,7 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await page.waitForTimeout(60);
   await page.screenshot({ path: testInfo.outputPath('10-sessions-button-settle.png') });
   await expect(page.locator('#session-name')).toHaveText('Life');
-  await expect(page.locator('#btn-status')).toBeHidden();
+  await expect(page.locator('#btn-status')).toBeVisible();
   await expect(page.locator('#header-badge')).toBeVisible();
   await expect(preview).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('11-button-returned-to-sessions.png') });
