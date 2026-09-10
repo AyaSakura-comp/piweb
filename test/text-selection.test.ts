@@ -88,6 +88,27 @@ describe('transcript text selection', () => {
     expect(app).toContain('customSelectionActive = false;');
   });
 
+  it('lets an active selection own horizontal drags instead of the edge swipes', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
+    const body = (name: string) =>
+      app.match(new RegExp(`function ${name}\\(\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? '';
+
+    // The start handle routinely sits inside the 36px left edge zone, so both
+    // edge gestures must stand down while a selection is on screen.
+    expect(body('isTranscriptSelectionActive')).toContain(
+      "!$('custom-selection-overlay').hidden",
+    );
+    expect(body('isDrawerGestureAllowed')).toContain('isTranscriptSelectionActive()');
+    expect(body('isLifeGestureAllowed')).toContain('isTranscriptSelectionActive()');
+
+    // The long press completes 300ms into a touch that may already have armed an
+    // edge drag, so arming a selection must also drop that drag.
+    const cancelBody = body('cancelEdgeGestures');
+    expect(cancelBody).toContain('cancelLifePreview()');
+    expect(cancelBody).toContain('cancelDrawerDrag()');
+    expect(app).toMatch(/onSelection: \(text, rect\) => \{[\s\S]*?cancelEdgeGestures\(\);/);
+  });
+
   it('triggers custom touch selection on long-press and expands to word', () => {
     vi.useFakeTimers();
     const textNode = { nodeType: 3, textContent: 'hello world test' };

@@ -366,6 +366,7 @@ $('messages')?.addEventListener('click', (event) => {
 clearCustomSelection = bindCustomSelection($('messages'), $('custom-selection-overlay'), {
   onSelection: (text, rect) => {
     customSelectionActive = true;
+    cancelEdgeGestures();
     showSelectionActions(text, rect);
   },
   onClear: () => {
@@ -4231,12 +4232,26 @@ function cancelDrawerDrag() {
   $('btn-menu').setAttribute('aria-expanded', String(wasOpen));
 }
 
+// A live transcript selection owns horizontal drags. Its start handle routinely
+// sits inside the left edge zone, so without this an edge swipe pulls the
+// session drawer out from under the quote gesture the reader is making.
+function isTranscriptSelectionActive() {
+  return !$('custom-selection-overlay').hidden;
+}
+
+// A selection can be armed *after* an edge drag has already started, because the
+// long press completes 300ms into the same touch. Drop the armed drag then.
+function cancelEdgeGestures() {
+  if (lifeDrag) cancelLifePreview();
+  if (drawerDrag) cancelDrawerDrag();
+}
+
 function isDrawerGestureAllowed() {
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
   if (window.matchMedia('(min-width: 768px)').matches || lifeTransitioning) {
     return false;
   }
-  if (!$('login').hidden || isMenuOpen()) return false;
+  if (!$('login').hidden || isMenuOpen() || isTranscriptSelectionActive()) return false;
   return (
     $('lightbox').hidden &&
     mediaViewer.element.hidden &&
@@ -4424,7 +4439,7 @@ function isLifeEntryAllowed() {
 }
 
 function isLifeGestureAllowed() {
-  if (wideDrawer.matches) return false;
+  if (wideDrawer.matches || isTranscriptSelectionActive()) return false;
   return isLifeEntryAllowed();
 }
 
