@@ -1464,6 +1464,25 @@ svg {
   }
 }
 
+/* Touch devices ship the custom transcript selection above, so no part of the
+   shell may start a native selection: iOS otherwise anchors one outside the
+   (user-select:none) transcript and expands it across the entire document. */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'] {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+}
+
 ::selection {
   color: inherit;
   background: rgb(88 101 242 / 0.48);

@@ -69,6 +69,7 @@
       window.clearFixtureSelection = bindCustomSelection(messages, overlay, {
         onSelection(text, rect) {
           selectedText = text;
+          window.__selectedText = text;
           actions.hidden = false;
           actions.style.left = `${Math.max(90, Math.min(innerWidth - 90, rect.left + rect.width / 2))}px`;
           actions.style.top = `${Math.min(innerHeight - 130, rect.bottom + 12)}px`;

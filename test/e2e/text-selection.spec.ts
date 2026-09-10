@@ -99,3 +99,42 @@ test('touch long-press uses only the in-app transcript selection', async ({ page
 
   expect(browserErrors).toEqual([]);
 });
+
+test('swipe selection keeps the anchor block when the finger is dragged back', async ({ page }) => {
+  await page.goto('/fixtures/text-selection.html');
+  const paragraph = page.locator('.msg-text p').nth(1);
+  await expect(paragraph).toBeVisible();
+  const anchorBox = (await paragraph.boundingBox())!;
+  const headingBox = (await page.locator('.msg-text strong').boundingBox())!;
+
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', x = 0, y = 0) =>
+    cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }],
+    });
+  const selectedText = () => page.evaluate(() => (window as any).__selectedText ?? '');
+
+  await touch('touchStart', anchorBox.x + 40, anchorBox.y + 8);
+  await page.waitForTimeout(400);
+  const anchorText = await selectedText();
+  expect(anchorText).toContain('特點');
+
+  // Forward: down to the end of the anchor paragraph.
+  for (let y = anchorBox.y + 8; y <= anchorBox.y + anchorBox.height - 4; y += 8) {
+    await touch('touchMove', anchorBox.x + 200, y);
+  }
+  expect(await selectedText()).toContain('特點');
+
+  // Back: up past the anchor, over the start handle, into the heading.
+  for (let y = anchorBox.y + anchorBox.height - 4; y >= headingBox.y + 4; y -= 8) {
+    await touch('touchMove', headingBox.x + 30, y);
+  }
+  const backwards = await selectedText();
+  expect(backwards).toContain('支援語言');
+  // The long-pressed block must survive the reversal instead of being dropped.
+  expect(backwards).toContain('特點');
+
+  await touch('touchEnd');
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+});

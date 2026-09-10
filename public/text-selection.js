@@ -79,28 +79,48 @@ export function findOffsetInTextNode(document, textNode, x, y) {
   return bestOffset;
 }
 
-export function findTextPoint(document, x, y, rootContainer) {
-  // Temporarily ignore backdrop/overlay elements so caret queries penetrate to the text
-  const backdrop = document?.getElementById ? document.getElementById('sel-backdrop') : null;
-  const prevBackdropPointer = backdrop ? backdrop.style.pointerEvents : null;
-  if (backdrop && prevBackdropPointer !== 'none') {
-    backdrop.style.pointerEvents = 'none';
+/**
+ * Hide the selection overlay (backdrop *and* handles) from hit testing while a
+ * caret query runs. Dragging back over a handle otherwise resolves to the
+ * handle element instead of the text underneath, freezing the selection.
+ */
+function withOverlayTransparent(document, fn) {
+  const ids = ['custom-selection-overlay', 'sel-backdrop'];
+  const restore = [];
+  if (document?.getElementById) {
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && el.style.pointerEvents !== 'none') {
+        restore.push([el, el.style.pointerEvents]);
+        el.style.pointerEvents = 'none';
+      }
+    }
   }
+  try {
+    return fn();
+  } finally {
+    for (const [el, prev] of restore) el.style.pointerEvents = prev;
+  }
+}
 
-  let raw = null;
-  if (document.caretPositionFromPoint) {
-    const pos = document.caretPositionFromPoint(x, y);
-    if (pos?.offsetNode) raw = { node: pos.offsetNode, offset: pos.offset };
-  } else if (document.caretRangeFromPoint) {
-    const range = document.caretRangeFromPoint(x, y);
-    if (range?.startContainer) raw = { node: range.startContainer, offset: range.startOffset };
-  }
+export function findTextPoint(document, x, y, rootContainer) {
+  const probe = withOverlayTransparent(document, () => {
+    let raw = null;
+    if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(x, y);
+      if (pos?.offsetNode) raw = { node: pos.offsetNode, offset: pos.offset };
+    } else if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(x, y);
+      if (range?.startContainer) raw = { node: range.startContainer, offset: range.startOffset };
+    }
+    const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+    return { raw, el };
+  });
+
+  const raw = probe.raw;
 
   // 1. Direct text node match (fast path, <0.01ms)
   if (raw && raw.node && raw.node.nodeType === 3) {
-    if (backdrop && prevBackdropPointer !== 'none') {
-      backdrop.style.pointerEvents = prevBackdropPointer;
-    }
     if (!rootContainer || rootContainer.contains(raw.node.parentNode)) {
       const len = raw.node.textContent?.length ?? 0;
       return { node: raw.node, offset: Math.max(0, Math.min(len, raw.offset)) };
@@ -108,10 +128,7 @@ export function findTextPoint(document, x, y, rootContainer) {
   }
 
   // 2. Element node match: scope search strictly to the hovered message/element
-  const elUnderPoint = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
-  if (backdrop && prevBackdropPointer !== 'none') {
-    backdrop.style.pointerEvents = prevBackdropPointer;
-  }
+  const elUnderPoint = probe.el;
 
   const msgEl = elUnderPoint?.closest?.('.msg-text, .event-body') ||
                 (raw?.node?.nodeType === 1 ? raw.node.closest?.('.msg-text, .event-body') : null) ||
@@ -338,6 +355,23 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     }
   }
 
+  /**
+   * Extend the swipe selection from the long-pressed word. The word stays
+   * selected whichever way the finger travels, so dragging forward and then
+   * back past the anchor keeps growing the selection backwards instead of
+   * collapsing onto the anchor edge.
+   */
+  function extendFromAnchorWord(word, current) {
+    if (!word?.start || !word?.end) return;
+    if (defaultComparePoints(document, current, word.start) < 0) {
+      setRangePoints(current, word.end);
+    } else if (defaultComparePoints(document, current, word.end) > 0) {
+      setRangePoints(word.start, current);
+    } else {
+      setRangePoints(word.start, word.end);
+    }
+  }
+
   function setRangePoints(p1, p2) {
     if (!p1 || !p2) return;
     const isForward = defaultComparePoints(document, p1, p2) <= 0;
@@ -394,7 +428,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       clearNativeSelection();
       const word = expandToWord(point);
       window.navigator?.vibrate?.(12);
-      pending.anchor = word.start;
+      pending.anchor = word;
       setRangePoints(word.start, word.end);
     }, LONG_PRESS_MS);
 
@@ -422,7 +456,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     }
     const current = findTextPoint(document, touch.clientX, touch.clientY, root);
     if (current && pendingGesture.anchor) {
-      setRangePoints(pendingGesture.anchor, current);
+      extendFromAnchorWord(pendingGesture.anchor, current);
     }
   }
 
@@ -494,11 +528,40 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   bindHandle(endHandle, false);
 
   root.addEventListener('touchstart', onTouchStart, { passive: true });
-  root.addEventListener('selectstart', (event) => {
-    // iOS may start its own document-wide selection while our long-press timer
-    // is active. Cancel that selection without cancelling touchstart, which
-    // would also disable normal transcript scrolling.
-    if ((pendingGesture || currentRange) && event.cancelable) event.preventDefault();
+
+  function gestureActive() {
+    return Boolean(pendingGesture || currentRange || isDragging);
+  }
+
+  function isEditableTarget(node) {
+    const el = node?.nodeType === 3 ? node.parentElement : node;
+    return Boolean(el?.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]'));
+  }
+
+  // iOS may start its own document-wide selection while our long-press timer is
+  // active or while a handle is being dragged. Because the transcript is
+  // user-select:none, that native selection escapes to the whole page. Listen on
+  // the document in the capture phase so selections that begin *outside* the
+  // transcript root are cancelled too; cancelling touchstart instead would also
+  // disable normal transcript scrolling.
+  document.addEventListener?.(
+    'selectstart',
+    (event) => {
+      if (!gestureActive() || isEditableTarget(event.target)) return;
+      if (event.cancelable) event.preventDefault();
+    },
+    true,
+  );
+
+  // Last line of defence: if a native selection still slips through (iOS marks
+  // the gesture non-cancelable once its own selection drag has begun), drop it
+  // as soon as it appears so only our highlight is ever visible.
+  document.addEventListener?.('selectionchange', () => {
+    if (!gestureActive()) return;
+    const selection = window?.getSelection?.();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    if (isEditableTarget(selection.anchorNode)) return;
+    selection.removeAllRanges();
   });
   const globalTarget = window || document.defaultView || document;
   globalTarget?.addEventListener?.('touchmove', onTouchMove, { passive: false });

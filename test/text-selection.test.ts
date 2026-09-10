@@ -108,7 +108,10 @@ describe('transcript text selection', () => {
 
     const highlights = new Map();
     const removeAllRanges = vi.fn();
+    const documentListeners = new Map<string, (event: any) => void>();
     const document = {
+      addEventListener: (type: string, listener: (event: any) => void) =>
+        documentListeners.set(type, listener),
       defaultView: {
         CSS: { highlights },
         Highlight: class { constructor(public range: FakeRange) {} },
@@ -161,9 +164,10 @@ describe('transcript text selection', () => {
     });
 
     const preventNativeSelection = vi.fn();
-    listeners.get('selectstart')?.({
+    documentListeners.get('selectstart')?.({
       cancelable: true,
       preventDefault: preventNativeSelection,
+      target: { closest: () => null },
     });
     expect(preventNativeSelection).toHaveBeenCalledOnce();
 
@@ -171,6 +175,13 @@ describe('transcript text selection', () => {
 
     expect(removeAllRanges).toHaveBeenCalled();
     expect(onSelection).toHaveBeenCalledWith('hello', expect.anything());
+
+    // A native selection that slips past selectstart (iOS marks the gesture
+    // non-cancelable once its own drag begins) is scrubbed on selectionchange.
+    removeAllRanges.mockClear();
+    documentListeners.get('selectionchange')?.({});
+    expect(removeAllRanges).toHaveBeenCalled();
+
     expect(overlayEl.hidden).toBe(false);
     expect(startHandle.style.left).toBe('10px');
     expect(endHandle.style.left).toBe('60px');
