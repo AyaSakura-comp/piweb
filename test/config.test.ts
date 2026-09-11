@@ -122,7 +122,7 @@ describe('config loading', () => {
     expect(config.sessionsDir).toBe('/default/sessions');
   });
 
-  it('uses the piscord platform data directory defaults when storage paths are unset', async () => {
+  it('uses the piweb platform data directory defaults when storage paths are unset', async () => {
     const homeDir = createTempDir();
     const workDir = createTempDir();
 
@@ -161,12 +161,12 @@ function expectedDefaultConfigPath(homeDir: string): string {
     case 'win32':
       return resolve(
         process.env.APPDATA || resolve(homeDir, 'AppData/Roaming'),
-        'piscord-gateway/config.env',
+        'piweb/config.env',
       );
     case 'darwin':
-      return resolve(homeDir, 'Library/Application Support/piscord-gateway/config.env');
+      return resolve(homeDir, 'Library/Application Support/piweb/config.env');
     default:
-      return resolve(homeDir, '.config', 'pi-discord-gateway', 'config.env');
+      return resolve(homeDir, '.config', 'piweb', 'config.env');
   }
 }
 
@@ -175,12 +175,12 @@ function expectedDefaultDataDir(homeDir: string): string {
     case 'win32':
       return resolve(
         process.env.LOCALAPPDATA || resolve(homeDir, 'AppData/Local'),
-        'piscord-gateway',
+        'piweb',
       );
     case 'darwin':
-      return resolve(homeDir, 'Library/Application Support/piscord-gateway');
+      return resolve(homeDir, 'Library/Application Support/piweb');
     default:
-      return resolve(homeDir, '.local/share', 'piscord-gateway');
+      return resolve(homeDir, '.local/share', 'piweb');
   }
 }
 

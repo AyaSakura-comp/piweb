@@ -13,12 +13,12 @@ function defaultConfigPath(): string {
     case 'win32':
       return resolve(
         process.env.APPDATA || resolve(homedir(), 'AppData/Roaming'),
-        'piscord-gateway/config.env',
+        'piweb/config.env',
       );
     case 'darwin':
-      return resolve(homedir(), 'Library/Application Support/piscord-gateway/config.env');
+      return resolve(homedir(), 'Library/Application Support/piweb/config.env');
     default:
-      return resolve(homedir(), '.config', 'pi-discord-gateway', 'config.env');
+      return resolve(homedir(), '.config', 'piweb', 'config.env');
   }
 }
 
@@ -27,12 +27,12 @@ export function defaultDataDir(): string {
     case 'win32':
       return resolve(
         process.env.LOCALAPPDATA || resolve(homedir(), 'AppData/Local'),
-        'piscord-gateway',
+        'piweb',
       );
     case 'darwin':
-      return resolve(homedir(), 'Library/Application Support/piscord-gateway');
+      return resolve(homedir(), 'Library/Application Support/piweb');
     default:
-      return resolve(homedir(), '.local/share', 'piscord-gateway');
+      return resolve(homedir(), '.local/share', 'piweb');
   }
 }
 
