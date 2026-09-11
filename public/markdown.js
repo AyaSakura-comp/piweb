@@ -64,22 +64,42 @@ function extractCode(text, store) {
   });
 }
 
+// Inline math: a non-space right after the opening `$` and before the closing
+// one, so prose about money ("$5 and $10") is left alone. The closing `$` must
+// also not run straight into a digit — "$199 | 省$340" is two prices, not a
+// formula, and reading it as one silently ate a table cell boundary.
+const INLINE_MATH_RE = /\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g;
+const TABLE_ROW_RE = /^\s*\|/;
+
 /**
  * Pull math out. Display forms first so `$$…$$` is not consumed by the inline
- * `$…$` rule. Inline `$…$` requires a non-space right after the opening `$` so
- * ordinary prose about money ("$5 and $10") is left alone.
+ * `$…$` rule.
  */
 function extractMath(text, store) {
   const push = (tex, display) => {
     store.push({ tex, display });
     return makePlaceholder('M', store.length - 1);
   };
+  const inline = (s) => s.replace(INLINE_MATH_RE, (_m, tex) => push(tex.trim(), false));
 
   return text
     .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => push(tex.trim(), true))
     .replace(/\\\[([\s\S]+?)\\\]/g, (_m, tex) => push(tex.trim(), true))
     .replace(/\\\(([\s\S]+?)\\\)/g, (_m, tex) => push(tex.trim(), false))
-    .replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, (_m, tex) => push(tex.trim(), false));
+    .split('\n')
+    .map((line) =>
+      // A table cell boundary is a hard edge — markdown requires a literal pipe
+      // inside a cell to be escaped, so every unescaped `|` ends its cell and
+      // math can never span one. Extracting per cell keeps `$P(A | B)$` working
+      // in prose without letting a price swallow the rest of the row.
+      TABLE_ROW_RE.test(line)
+        ? line
+            .split(/(?<!\\)\|/)
+            .map(inline)
+            .join('|')
+        : inline(line),
+    )
+    .join('\n');
 }
 
 function renderMath(item) {

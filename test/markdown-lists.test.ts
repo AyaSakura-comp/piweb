@@ -164,6 +164,69 @@ describe('markdown rendering', () => {
     expect(media.paragraphs).toEqual(['Title', 'Footer note']);
   });
 
+  it('keeps two prices in one table row in their own cells', async () => {
+    // `$199 | 省$340` used to parse as inline math from the first `$` to the
+    // second, swallowing the cell boundary: the price column rendered
+    // "199|省340" and the discount column came out empty.
+    const md =
+      `| 加購品 | 加購價 | 折扣 |\n|---|---|---|\n` +
+      `| **3M 細滑牙線棒雙線分享包** | **$99** | 省$30 |\n` +
+      `| 樂扣樂扣 雙刀組 | $199 | 省$340 |`;
+    await render(md);
+    const rows = await page.evaluate(() =>
+      [...document.querySelectorAll('#c tbody tr')].map((tr) =>
+        [...tr.querySelectorAll('td')].map((td) => td.textContent),
+      ),
+    );
+
+    expect(rows).toEqual([
+      ['3M 細滑牙線棒雙線分享包', '$99', '省$30'],
+      ['樂扣樂扣 雙刀組', '$199', '省$340'],
+    ]);
+    const bold = await page.evaluate(() => document.querySelector('#c td strong')?.textContent);
+    expect(bold).toBe('3M 細滑牙線棒雙線分享包');
+  });
+
+  it('leaves a currency pair in prose alone but still renders real inline math', async () => {
+    await render('**小計：$618**（已折抵 $84）');
+    const subtotal = await page.evaluate(() => ({
+      text: document.querySelector('#c p')?.textContent,
+      bold: document.querySelector('#c strong')?.textContent,
+    }));
+    expect(subtotal.text).toBe('小計：$618（已折抵 $84）');
+    expect(subtotal.bold).toBe('小計：$618');
+
+    // KaTeX is not loaded in this harness, so extracted math falls back to a
+    // <span> holding its own source — which is exactly what tells the two cases
+    // apart: a pipe inside real prose math is still TeX, not a cell boundary.
+    await render('條件機率 $P(A | B)$ 的定義');
+    const math = await page.evaluate(() => ({
+      text: document.querySelector('#c p')?.textContent,
+      mathSpan: document.querySelector('#c p span')?.textContent ?? null,
+    }));
+    expect(math.mathSpan).toBe('$P(A | B)$');
+    expect(math.text).toBe('條件機率 $P(A | B)$ 的定義');
+
+    // CJK prose has no spaces to lean on, so the closing `$` running straight
+    // into a digit is what marks this as two prices rather than a formula.
+    await render('原價$199特價$340');
+    const cjk = await page.evaluate(() => ({
+      text: document.querySelector('#c p')?.textContent,
+      mathSpan: document.querySelector('#c p span')?.textContent ?? null,
+    }));
+    expect(cjk.mathSpan).toBeNull();
+    expect(cjk.text).toBe('原價$199特價$340');
+
+    // The currency pair must NOT have been lifted out as math.
+    await render('小計 $618 與 $84');
+    const prose = await page.evaluate(() => ({
+      text: document.querySelector('#c p')?.textContent,
+      mathSpan: document.querySelector('#c p span')?.textContent ?? null,
+    }));
+    expect(prose.mathSpan).toBeNull();
+    expect(prose.text).toBe('小計 $618 與 $84');
+  });
+
   it('renders embedded video and file links', async () => {
     const md = `[[video: /media/demo.mp4]]\n\n[[file: /media/12345678-report.pdf]]`;
     await render(md);
