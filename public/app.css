@@ -1367,6 +1367,38 @@ svg {
   display: none;
 }
 
+/* Live clock on the tool call still in flight. Stays visible when the row is
+   expanded — that is exactly when the reader is asking "is this thing alive?" */
+.event summary .event-elapsed {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--accent, #5865f2);
+  background: rgb(88 101 242 / 0.14);
+}
+
+.event summary .event-elapsed::before {
+  content: '⏳ ';
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .event summary .event-elapsed {
+    animation: toolElapsedPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes toolElapsedPulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+}
+
 .event-body-wrap {
   display: grid;
   grid-template-rows: 1fr;

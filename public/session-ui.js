@@ -140,3 +140,36 @@ export function setDrawerCollapsed(app, menuButton, collapsed) {
   menuButton.setAttribute('aria-expanded', String(!collapsed));
   menuButton.setAttribute('aria-label', collapsed ? 'Show sessions' : 'Open sessions');
 }
+
+/**
+ * Clock face for a tool call that is still running.
+ *
+ * A wedged tool call looks exactly like a slow one — the row is on screen with
+ * no result and nothing moves — so the elapsed time is the only signal the
+ * reader has. Seconds up to a minute, then m:ss, then h:mm:ss.
+ */
+export function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  const pad = (n) => String(n).padStart(2, '0');
+  if (hours > 0) return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+  if (total >= 60) return `${minutes}:${pad(seconds)}`;
+  return `${seconds}s`;
+}
+
+/**
+ * The tool call currently in flight, or null.
+ *
+ * pi and agy both emit the result as the very next event, so the newest tool
+ * row with nothing after it is the one still running — provided the session is
+ * actually busy, which is what stops the clock on a turn that died.
+ */
+export function runningToolNode(messages, busy) {
+  if (!busy || !messages) return null;
+  const tools = messages.querySelectorAll('.event.tool');
+  const last = tools[tools.length - 1];
+  if (!last || last.nextElementSibling) return null;
+  return last;
+}

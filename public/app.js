@@ -17,10 +17,12 @@ import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
   bindLongPress,
+  formatElapsed,
   isTranscriptNearBottom,
   jumpToLatest,
   needsViewportRecovery,
   recoverViewportShell,
+  runningToolNode,
   setDrawerCollapsed,
   shouldLoadOlderHistory,
   settleTranscriptUpdate,
@@ -2199,9 +2201,53 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
   });
 }
 
+/**
+ * Live clock on the tool call that is still running.
+ *
+ * Until it finishes, a tool row is a dead line of text: the reader cannot tell
+ * a slow command from a wedged one, which is what made a stuck agy call look
+ * like the whole session had died. agy's own stall notice only arrives after
+ * two minutes; this starts counting immediately, and covers pi's tools too.
+ */
+let toolElapsedTimer = null;
+
+function syncRunningTool() {
+  const messages = $('messages');
+  const running = runningToolNode(messages, $('app').classList.contains('agent-busy'));
+
+  for (const badge of messages.querySelectorAll('.event-elapsed')) {
+    if (badge.closest('.event') !== running) badge.remove();
+  }
+  if (!running) return;
+
+  const startedAt = Number(running.dataset.startedAt);
+  if (!Number.isFinite(startedAt)) return;
+  const summary = running.querySelector('summary');
+  if (!summary) return;
+
+  let badge = summary.querySelector('.event-elapsed');
+  if (!badge) {
+    badge = el('span', 'event-elapsed');
+    // Before the peek, so a long command line cannot push the clock off screen.
+    summary.insertBefore(badge, summary.querySelector('.peek'));
+  }
+  badge.textContent = formatElapsed(Date.now() - startedAt);
+}
+
+function setToolElapsedTicking(on) {
+  if (on && !toolElapsedTimer) {
+    toolElapsedTimer = setInterval(syncRunningTool, 1000);
+  } else if (!on && toolElapsedTimer) {
+    clearInterval(toolElapsedTimer);
+    toolElapsedTimer = null;
+  }
+  syncRunningTool();
+}
+
 function setBusy(busy) {
   $('app').classList.toggle('agent-busy', busy);
   $('typing').hidden = !busy;
+  setToolElapsedTicking(busy);
   // Stop only exists while there is something to stop — it would be dead
   // weight in an already crowded header otherwise.
   $('btn-stop').hidden = !busy;
@@ -2287,6 +2333,9 @@ function appendEvent(event, live) {
   const node = buildEventNode(event);
   if (live) node.classList.add('pop-in');
   messages.append(node);
+  // The result arrives as the next event, so the clock has to move off the row
+  // it was on now rather than up to a second later.
+  syncRunningTool();
   // Keep the tail lock synchronous. A smooth scroll can still be in flight when
   // the next stream chunk arrives, making the viewport look "away" from the
   // bottom and incorrectly disabling follow mode.
@@ -2475,6 +2524,16 @@ function buildEventNode(event) {
   {
     const [label, icon] = EVENT_LABELS[event.kind] ?? ['Event', '•'];
     const details = el('details', `event ${event.kind}`);
+    // When the call started, for the running-tool clock. SQLite hands back UTC
+    // with no zone marker; without the Z Safari reads it as local time and the
+    // clock starts hours out.
+    if (event.kind === 'tool' && event.createdAt) {
+      const iso = event.createdAt.includes('T')
+        ? event.createdAt
+        : `${event.createdAt.replace(' ', 'T')}Z`;
+      const startedAt = Date.parse(iso);
+      if (Number.isFinite(startedAt)) details.dataset.startedAt = String(startedAt);
+    }
     // Command output and errors are short and matter; agent chatter stays folded.
     const openByDefault = event.kind === 'system' || event.kind === 'error';
     details.open = openByDefault;
