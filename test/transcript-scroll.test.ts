@@ -143,9 +143,14 @@ describe('running tool call clock', () => {
     // A turn that died leaves the row on screen; the clock must not keep running.
     expect(runningToolNode(messages, false)).toBeNull();
 
-    // The result arrives as the very next event, which ends the call.
+    // Only a result ends the call. agy posts its stall notice as a thinking row
+    // two minutes in; that must not take the clock off screen.
+    const stalled = setupToolTranscript(['tool', 'thinking']);
+    expect(runningToolNode(stalled, true)?.dataset.id).toBe('t0');
+
     const withResult = setupToolTranscript(['tool', 'tool_result']);
     expect(runningToolNode(withResult, true)).toBeNull();
+    expect(runningToolNode(setupToolTranscript(['tool', 'tool_result', 'thinking']), true)).toBeNull();
 
     // A second call after a finished one is the live one.
     const second = setupToolTranscript(['tool', 'tool_result', 'tool']);
@@ -157,13 +162,15 @@ describe('running tool call clock', () => {
 });
 
 function setupToolTranscript(kinds: string[]): any {
-  const nodes = kinds.map((kind, index) => {
-    const node: any = { dataset: { id: `t${index}` }, kind };
-    return node;
-  });
-  for (let i = 0; i < nodes.length; i++) nodes[i].nextElementSibling = nodes[i + 1] ?? null;
+  const nodes = kinds.map((kind, index) => ({
+    dataset: { id: `t${index}` },
+    kind,
+    classList: { contains: (name: string) => name === kind },
+  }));
   return {
-    querySelectorAll: (selector: string) =>
-      selector === '.event.tool' ? nodes.filter((n) => n.kind === 'tool') : [],
+    querySelectorAll: (selector: string) => {
+      const wanted = selector.split(',').map((part) => part.trim().replace('.event.', ''));
+      return nodes.filter((n) => wanted.includes(n.kind));
+    },
   };
 }

@@ -162,14 +162,16 @@ export function formatElapsed(ms) {
 /**
  * The tool call currently in flight, or null.
  *
- * pi and agy both emit the result as the very next event, so the newest tool
- * row with nothing after it is the one still running — provided the session is
- * actually busy, which is what stops the clock on a turn that died.
+ * What ends a call is its result, not merely something being written after it.
+ * Requiring the tool row to be last was wrong: agy's own stall notice arrives
+ * as a thinking row two minutes in, which took the clock off screen at exactly
+ * the moment the reader most wanted it. Only a tool_result stops it — plus the
+ * session's busy flag, which stops the clock on a turn that died.
  */
 export function runningToolNode(messages, busy) {
   if (!busy || !messages) return null;
-  const tools = messages.querySelectorAll('.event.tool');
-  const last = tools[tools.length - 1];
-  if (!last || last.nextElementSibling) return null;
+  const rows = messages.querySelectorAll('.event.tool, .event.tool_result');
+  const last = rows[rows.length - 1];
+  if (!last || !last.classList?.contains('tool')) return null;
   return last;
 }
