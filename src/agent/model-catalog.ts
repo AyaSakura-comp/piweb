@@ -30,11 +30,13 @@ let cache: ModelCache | undefined;
 // snapshot — so prime it at worker startup and reuse it here.
 let registryPromise: Promise<ModelRegistry> | undefined;
 let registryInstance: ModelRegistry | undefined;
+let runtimeInstance: ModelRuntime | undefined;
 
 export async function primeModelRegistry(): Promise<ModelRegistry> {
   if (!registryPromise) {
     registryPromise = ModelRuntime.create({ allowModelNetwork: true })
       .then((runtime) => {
+        runtimeInstance = runtime;
         registryInstance = new ModelRegistry(runtime);
         return registryInstance;
       })
@@ -45,6 +47,12 @@ export async function primeModelRegistry(): Promise<ModelRegistry> {
       });
   }
   return registryPromise;
+}
+
+export async function getModelRuntime(): Promise<ModelRuntime> {
+  await primeModelRegistry();
+  if (!runtimeInstance) throw new Error('Pi model runtime is unavailable');
+  return runtimeInstance;
 }
 
 export function listAvailableModels(options?: { forceRefresh?: boolean }): AvailableModelInfo[] {

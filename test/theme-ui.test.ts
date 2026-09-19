@@ -97,16 +97,19 @@ describe('day mode', () => {
     expect(readTheme(storage)).toBe('dark');
   });
 
-  it('loads the saved theme before CSS and exposes the theme action in the drawer footer', () => {
+  it('loads the saved theme before CSS and exposes the theme action on the settings page', () => {
     const html = readFileSync(resolve(root, 'public/index.html'), 'utf8');
     const css = readFileSync(resolve(root, 'public/app.css'), 'utf8');
     const app = readFileSync(resolve(root, 'public/app.js'), 'utf8');
     const drawerFooter = html.match(/<footer class="drawer-foot">([\s\S]*?)<\/footer>/)?.[1] ?? '';
+    const settings = html.match(/<dialog[^>]+id="settings-dialog"[\s\S]*?<\/dialog>/)?.[0] ?? '';
     const moreMenu = html.match(/<div class="menu-pop"[\s\S]*?<\/div>/)?.[0] ?? '';
 
-    expect(drawerFooter).toContain('id="btn-theme"');
-    expect(drawerFooter).toContain('data-theme-toggle');
-    expect(drawerFooter).toContain('data-theme-label');
+    expect(drawerFooter).toContain('id="btn-settings"');
+    expect(drawerFooter).not.toContain('id="btn-theme"');
+    expect(settings).toContain('id="btn-theme"');
+    expect(settings).toContain('data-theme-toggle');
+    expect(settings).toContain('data-theme-label');
     expect(moreMenu).not.toContain('data-theme-toggle');
     expect(html.indexOf("localStorage.getItem('piweb.theme')")).toBeLessThan(
       html.indexOf('<link rel="stylesheet" href="/app.css"'),

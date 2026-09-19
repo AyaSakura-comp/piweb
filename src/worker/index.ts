@@ -24,6 +24,7 @@ import { webTransport } from '../transport/web.js';
 import { startProcessingLoop, stopProcessingLoop } from '../agent/queue.js';
 import { startControlLoop, stopControlLoop } from './control.js';
 import { startSessionTitleLoop, stopSessionTitleLoop } from './session-title.js';
+import { startSubscriptionLoop, stopSubscriptionLoop } from './subscriptions.js';
 import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
 import { discoverPiExtensionCommands } from '../commands/extension-runner.js';
@@ -34,11 +35,47 @@ let stopArchiveCleanup: () => void = () => {};
 let modelRefreshTimer: NodeJS.Timeout | undefined;
 let extCommandRefreshTimer: NodeJS.Timeout | undefined;
 let trashSweepTimer: NodeJS.Timeout | undefined;
+let subscriptionRetryTimer: NodeJS.Timeout | undefined;
+let subscriptionStartAttempt: Promise<void> | undefined;
+let workerRunning = false;
+let workerLifecycleGeneration = 0;
+let subscriptionRetryDelayMs = 1_000;
 
 const EXT_COMMAND_REFRESH_MS = 60 * 60 * 1000;
 
 const MODEL_REFRESH_MS = 10 * 60 * 1000;
 const TRASH_SWEEP_MS = 60 * 60 * 1000;
+const SUBSCRIPTION_RETRY_INITIAL_MS = 1_000;
+const SUBSCRIPTION_RETRY_MAX_MS = 60_000;
+
+function startSubscriptionManager(generation: number): Promise<void> {
+  if (!workerRunning || generation !== workerLifecycleGeneration) return Promise.resolve();
+  if (subscriptionStartAttempt) return subscriptionStartAttempt;
+
+  const attempt = startSubscriptionLoop()
+    .then(async () => {
+      subscriptionRetryDelayMs = SUBSCRIPTION_RETRY_INITIAL_MS;
+      if (!workerRunning || generation !== workerLifecycleGeneration) {
+        await stopSubscriptionLoop();
+      }
+    })
+    .catch((err: any) => {
+      logger.warn({ err: err.message }, 'Failed to start subscription manager');
+      if (!workerRunning || generation !== workerLifecycleGeneration || subscriptionRetryTimer) return;
+      const delay = subscriptionRetryDelayMs;
+      subscriptionRetryDelayMs = Math.min(delay * 2, SUBSCRIPTION_RETRY_MAX_MS);
+      subscriptionRetryTimer = setTimeout(() => {
+        subscriptionRetryTimer = undefined;
+        void startSubscriptionManager(generation);
+      }, delay);
+      subscriptionRetryTimer.unref?.();
+    })
+    .finally(() => {
+      if (subscriptionStartAttempt === attempt) subscriptionStartAttempt = undefined;
+    });
+  subscriptionStartAttempt = attempt;
+  return attempt;
+}
 
 /**
  * Purge sessions that have sat in the trash past the retention window.
@@ -100,6 +137,9 @@ async function publishExtensionCommands(): Promise<void> {
 }
 
 export async function startWorker(): Promise<void> {
+  workerRunning = true;
+  const lifecycleGeneration = ++workerLifecycleGeneration;
+  subscriptionRetryDelayMs = SUBSCRIPTION_RETRY_INITIAL_MS;
   initDb();
   setTransport(webTransport);
   await recoverPendingSessionPurges();
@@ -118,6 +158,7 @@ export async function startWorker(): Promise<void> {
   await primeModelRegistry().catch((err: any) => {
     logger.warn({ err: err.message }, 'Failed to initialize pi model runtime');
   });
+  await startSubscriptionManager(lifecycleGeneration);
   publishModelCatalog();
   modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
   void publishExtensionCommands();
@@ -132,6 +173,11 @@ export async function startWorker(): Promise<void> {
 }
 
 export async function stopWorker(): Promise<void> {
+  workerRunning = false;
+  workerLifecycleGeneration += 1;
+  if (subscriptionRetryTimer) clearTimeout(subscriptionRetryTimer);
+  subscriptionRetryTimer = undefined;
+  await subscriptionStartAttempt;
   if (modelRefreshTimer) clearInterval(modelRefreshTimer);
   if (extCommandRefreshTimer) clearInterval(extCommandRefreshTimer);
   if (trashSweepTimer) clearInterval(trashSweepTimer);
@@ -139,9 +185,11 @@ export async function stopWorker(): Promise<void> {
   stopScheduler();
   stopArchiveCleanup();
   const titleStopped = stopSessionTitleLoop();
+  const subscriptionStopped = stopSubscriptionLoop();
   const processingStopped = stopProcessingLoop();
   await controlStopped;
   await titleStopped;
+  await subscriptionStopped;
   await processingStopped;
   closeDb();
   logger.info('piweb worker stopped');

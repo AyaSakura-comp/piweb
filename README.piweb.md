@@ -101,12 +101,33 @@ See [`docs/life-mode.md`](docs/life-mode.md) for the user workflow, software
 architecture, per-turn sequence, persistence model, race guards, and verification
 graph.
 
-## Appearance
+## Settings
 
-Piweb starts in dark mode. Open **Sessions** and use the appearance action below
-**Notifications** to switch themes. The choice is saved in `localStorage` under
-`piweb.theme` and applied before the stylesheet loads, so a saved light theme does
-not flash dark during startup.
+Open **Sessions → Settings** to manage Recently deleted sessions, notifications,
+appearance, Pi subscriptions, and the current Piweb login. On phones Settings is a
+full-height page with a native-feeling horizontal transition; on wider screens it
+opens as a centered dialog. Opening Recently deleted from Settings returns to the
+same Settings page and restores keyboard focus when the child sheet closes.
+
+### Notifications
+
+Notifications use a switch in Settings. Web Push on iOS/iPadOS requires Piweb to be
+installed with **Share → Add to Home Screen** and opened from that icon. The
+permission request runs directly from the switch tap, before any asynchronous
+service-worker setup, because WebKit requires notification permission to be
+requested during the original user activation. If permission was previously
+denied, re-enable Piweb under **iOS Settings → Notifications**.
+
+The service worker is intentionally push-only and does not cache the app shell.
+VAPID keys persist in the shared database, while browser subscriptions are stored
+in `push_subscriptions`; expired Apple Push Service subscriptions are removed after
+a 404 or 410 response.
+
+### Appearance
+
+Piweb starts in dark mode. Use **Settings → Appearance** to switch themes. The
+choice is saved in `localStorage` under `piweb.theme` and applied before the
+stylesheet loads, so a saved light theme does not flash dark during startup.
 
 The light appearance uses a Japanese-minimal palette: a white main canvas, warm
 washi-toned secondary surfaces, sumi-like text, fine stone-coloured separators,
@@ -115,6 +136,19 @@ semantic colour limited to quiet edge markers and controls. Fenced code and comm
 output also use a warm paper surface with a dedicated low-saturation syntax palette;
 dark mode keeps its original dark code canvas. If browser storage is unavailable or
 contains an invalid value, Piweb safely falls back to dark mode.
+
+### Pi agent subscriptions
+
+**OpenAI Codex** connects Pi to a ChatGPT Plus/Pro subscription through OpenAI's
+device-code flow. Piweb displays only the temporary verification URL, user code,
+and public job status. The web container queues login/logout work in
+`subscription_jobs`; the host worker performs it through Pi's `ModelRuntime` and
+stores credentials only in Pi's host-side `auth.json`. OAuth access and refresh
+tokens are never written to the Piweb database.
+
+The Settings client polls `GET /api/subscriptions/openai-codex` while a login is
+active, starts one with `POST`, and disconnects with `DELETE`. Closing Settings
+stops polling without cancelling the host-side login job.
 
 ## Authentication
 
@@ -219,6 +253,7 @@ palette, drawer/sheet foreground layering, click-to-expand YouTube embeds with
 external fallback, the in-app video/audio player with real download actions,
 touch transcript selection without Safari's document-wide native selection,
 Recently deleted touch/mouse long-press and button multi-selection, Delete all,
+Settings navigation and the OpenAI device-code connect/copy/complete/disconnect workflow,
 phone containment, and a centered desktop dialog, plus a 500-message continuous
 upward history stress run across all nine older-page
 boundaries without a jump:
@@ -229,6 +264,7 @@ npx playwright test test/e2e/media-player.spec.ts    # video/audio player + down
 npx playwright test test/e2e/markdown-links.spec.ts  # inline YouTube open/replace/close workflow
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
 npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine delayed, partially loaded touch boundaries
+npx playwright test test/e2e/settings-subscription-vision.spec.ts # Settings + OpenAI device-code state machine
 npx playwright test test/e2e/life-mode.spec.ts --grep "Recently deleted|purging the active"
 npm run test:e2e:update                               # accept pixels only after review
 ```

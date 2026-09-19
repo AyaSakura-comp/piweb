@@ -39,6 +39,9 @@ async function installApi(page: Page) {
     if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/push/key') return route.fulfill({ json: { key: '' } });
+    if (path === '/api/subscriptions/openai-codex') {
+      return route.fulfill({ json: { provider: 'openai-codex', connected: false, job: null } });
+    }
     if (path === '/api/sessions/deleted') {
       return route.fulfill({ json: { sessions: deleted } });
     }
@@ -155,8 +158,10 @@ test('overflow Delete session moves the active session to Recently deleted', asy
 
   await expect(page.locator('#session-name')).toHaveText(FALLBACK.name);
   await page.locator('#btn-menu').click();
-  await expect(page.getByRole('button', { name: 'Recently deleted 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
   await expect(page.getByText(PRIMARY.name, { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Recently deleted 1' })).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({ path: testInfo.outputPath('01-session-deleted-fallback.png') });
   await page.waitForTimeout(650);

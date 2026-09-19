@@ -30,9 +30,11 @@ import {
   commitLifeMessageOperation,
   deletePushSubscription,
   enqueueControl,
+  enqueueSubscriptionJob,
   getChannel,
   getFirstUserMessageContent,
   getMeta,
+  getLatestSubscriptionJob,
   getOrCreateLifeChannel,
   getRecentWebEvents,
   getSessionTitleJob,
@@ -606,6 +608,40 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const raw = getMeta('models');
     sendJson(res, 200, { models: raw ? JSON.parse(raw) : [] });
     return;
+  }
+
+  // ── Pi provider subscriptions ──
+  // The web tier never imports pi or sees auth.json. It only queues a host-side
+  // operation and returns the public device code emitted by pi's OAuth flow.
+  if (path === '/api/subscriptions/openai-codex') {
+    if (method === 'GET') {
+      const raw = getMeta('subscription.openai-codex');
+      let connected = false;
+      try {
+        connected = Boolean(raw && JSON.parse(raw).connected);
+      } catch {
+        // A malformed/old status snapshot is safely treated as disconnected.
+      }
+      sendJson(res, 200, {
+        provider: 'openai-codex',
+        connected,
+        job: getLatestSubscriptionJob('openai-codex') ?? null,
+      });
+      return;
+    }
+    if (method === 'POST' || method === 'DELETE') {
+      try {
+        enqueueSubscriptionJob('openai-codex', method === 'POST' ? 'login' : 'logout');
+        sendJson(res, 202, { job: getLatestSubscriptionJob('openai-codex')! });
+      } catch (error: any) {
+        if (error?.message === 'A subscription operation is already active') {
+          sendJson(res, 409, { error: error.message });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
   }
 
   // ── sessions ──

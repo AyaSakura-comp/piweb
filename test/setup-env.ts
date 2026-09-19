@@ -17,8 +17,10 @@ import { resolve } from 'node:path';
 
 const root = mkdtempSync(resolve(tmpdir(), 'piweb-test-'));
 
-process.env.PIDG_CONFIG ??= resolve(root, 'config.env');
-process.env.DB_PATH ??= resolve(root, 'gateway.db');
-process.env.SESSIONS_DIR ??= resolve(root, 'sessions');
-process.env.WEB_MEDIA_DIR ??= resolve(root, 'web-media');
-process.env.WEB_UPLOAD_DIR ??= resolve(root, 'web-uploads');
+// Always override inherited deployment variables. `??=` is not sufficient on
+// developer hosts where these paths are exported by the running piweb service.
+process.env.PIDG_CONFIG = resolve(root, 'config.env');
+process.env.DB_PATH = resolve(root, 'gateway.db');
+process.env.SESSIONS_DIR = resolve(root, 'sessions');
+process.env.WEB_MEDIA_DIR = resolve(root, 'web-media');
+process.env.WEB_UPLOAD_DIR = resolve(root, 'web-uploads');

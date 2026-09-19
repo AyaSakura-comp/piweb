@@ -207,6 +207,11 @@ async function installLifeApi(
     }
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/push/key') return route.fulfill({ json: { key: '' } });
+    if (path === '/api/subscriptions/openai-codex') {
+      return route.fulfill({
+        json: { provider: 'openai-codex', connected: false, job: null },
+      });
+    }
     if (path === '/api/sessions/deleted/purge' && request.method() === 'POST') {
       const body = request.postDataJSON() as {
         jids?: string[];
@@ -2072,6 +2077,29 @@ test('newer standard navigation cancels a delayed swipe settlement', async ({ pa
   await expect(page.locator('#app')).not.toHaveClass(/life-mode/);
 });
 
+async function openSettingsPage(page: Page): Promise<void> {
+  if (await page.locator('#settings-dialog').isVisible()) return;
+  const settingsButton = page.locator('#btn-settings');
+  const buttonInViewport = () =>
+    settingsButton.evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.right > 0 && rect.left < innerWidth && rect.bottom > 0 && rect.top < innerHeight;
+    });
+  const drawerOpening = await page
+    .locator('#drawer')
+    .evaluate((drawer) => drawer.classList.contains('open'));
+  if (!drawerOpening && !(await buttonInViewport())) await page.locator('#btn-menu').click();
+  await expect.poll(buttonInViewport).toBe(true);
+  await settingsButton.click();
+  await expect(page.locator('#settings-dialog')).toBeVisible();
+}
+
+async function openRecentlyDeleted(page: Page): Promise<void> {
+  await openSettingsPage(page);
+  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await expect(page.locator('#trash-sheet')).toBeVisible();
+}
+
 test('Recently deleted supports long-press multi-select and Delete all', async ({
   page,
 }, testInfo) => {
@@ -2087,7 +2115,7 @@ test('Recently deleted supports long-press multi-select and Delete all', async (
 
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await expect(page.locator('.trash-item')).toHaveCount(3);
   await expect(page.locator('#btn-trash-select')).toHaveText('Select');
   await expect(page.locator('#btn-trash-delete-all')).toBeVisible();
@@ -2208,7 +2236,7 @@ test('Recently deleted supports constrained desktop selection and mouse long-pre
     deletedSessions: [DELETED_SESSION, SECOND_DELETED_SESSION, THIRD_DELETED_SESSION],
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
 
   const panel = (await page.locator('#trash-sheet .sheet-panel').boundingBox())!;
   expect(panel.width).toBeLessThanOrEqual(640);
@@ -2238,7 +2266,7 @@ test('Delete all submits only the authoritative identities visible at confirmati
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await expect(page.locator('.trash-item')).toHaveCount(2);
 
   // A different device trashes another session after this sheet loaded. It was
@@ -2268,14 +2296,14 @@ test('closing and reopening during purge reflects completion in the current tras
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete forever' }).first().click();
   await expect.poll(() => api.trashPurgeBodies.length).toBe(1);
   await expect(page.locator('#trash-list')).toHaveAttribute('aria-busy', 'true');
 
   await page.locator('#btn-trash-close').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await expect(page.locator('#trash-list')).toHaveAttribute('aria-busy', 'true');
   await expect(page.getByRole('button', { name: 'Delete forever' }).first()).toBeDisabled();
 
@@ -2296,7 +2324,7 @@ test('Recently deleted is a contained modal with coherent list and checkbox sema
   await page.evaluate(() => {
     document.querySelector('#login')!.inert = true;
   });
-  await page.locator('#btn-menu').click();
+  await openSettingsPage(page);
   const opener = page.getByRole('button', { name: 'Recently deleted' });
   await opener.focus();
   await opener.click();
@@ -2377,7 +2405,7 @@ test('a committed purge updates the sheet even when reconciliation GET fails', a
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete forever' }).first().click();
 
@@ -2395,14 +2423,14 @@ test('a stale trash load cannot overwrite a newer committed purge result', async
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await expect(page.locator('.trash-item')).toHaveCount(2);
 
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete forever' }).first().click();
   await expect.poll(() => api.trashPurgeBodies.length).toBe(1);
   await page.locator('#btn-trash-close').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
 
   api.releaseTrashPurge();
   await expect(page.locator('.trash-item')).toHaveCount(1);
@@ -2426,12 +2454,12 @@ test('active-preview fallback does not wait for post-success trash reconciliatio
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await page.getByRole('button', { name: 'Preview' }).click();
   await expect(page.locator('#deleted-banner')).toBeVisible();
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete forever' }).click();
 
@@ -2446,13 +2474,13 @@ test('purging the active deleted preview falls back to a live session', async ({
   await page.goto('/');
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await page.getByRole('button', { name: 'Preview' }).first().click();
   await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
   await expect(page.locator('#deleted-banner')).toBeVisible();
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#btn-trash-delete-all').click();
 
@@ -2479,7 +2507,7 @@ test('a trash preview started after Life entry keeps navigation ownership', asyn
   await expect.poll(api.lifeRequests).toBe(1);
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await page.getByRole('button', { name: 'Preview' }).click();
   await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
   await expect(page.locator('#deleted-banner')).toBeVisible();
@@ -2514,7 +2542,7 @@ test('a trash restore started after Life entry wins even when its API finishes l
   await expect.poll(api.lifeRequests).toBe(1);
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   const restoreRequest = page.waitForRequest((request) => request.url().endsWith('/restore'));
   await page.getByRole('button', { name: 'Restore' }).click();
   await restoreRequest;
@@ -2655,7 +2683,7 @@ test('a delayed trash load is closed and ignored after Life navigation', async (
   const trashRequest = page.waitForRequest((request) =>
     request.url().endsWith('/api/sessions/deleted'),
   );
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await trashRequest;
   await expect(page.locator('#trash-note')).toHaveText('Loading…');
 
@@ -2897,7 +2925,7 @@ test('boot routing cannot override a newer trash preview', async ({ page }) => {
   await expect(page).toHaveURL('/');
 
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await page.getByRole('button', { name: 'Preview' }).click();
   await expect(page.locator('#session-name')).toHaveText(DELETED_SESSION.name);
 
@@ -3090,7 +3118,7 @@ test('corrupt deleted-preview metadata falls back without enabling the trash tar
   });
   await page.goto('/');
   await page.locator('#btn-menu').click();
-  await page.getByRole('button', { name: 'Recently deleted' }).click();
+  await openRecentlyDeleted(page);
   await page.getByRole('button', { name: 'Preview' }).click();
 
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);

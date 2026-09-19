@@ -163,6 +163,7 @@ $('login-form').addEventListener('submit', async (e) => {
 
 $('btn-logout').addEventListener('click', async () => {
   forgetToken();
+  closeSettings();
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   showLogin();
 });
@@ -436,29 +437,34 @@ function urlBase64ToUint8Array(base64) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-async function refreshNotifyState() {
-  const label = $('notify-label');
-  const badge = $('notify-state');
+function renderNotifyState(state) {
+  const enabled = state === 'on';
+  const control = $('btn-notify');
+  control.setAttribute('aria-checked', String(enabled));
+  control.setAttribute(
+    'aria-label',
+    `Notifications, ${state === 'home-screen' ? 'add to Home Screen' : state}`,
+  );
+  control.dataset.notificationState = state;
+  $('notify-state').dataset.state = state;
+}
 
+async function refreshNotifyState() {
   if (!pushSupported()) {
-    // Safari in a normal tab has no PushManager at all; say why rather than
-    // showing a button that cannot work.
-    badge.textContent = isStandalone() ? 'unsupported' : 'add to Home Screen';
-    badge.className = 'notif-state';
+    // Safari in a normal tab has no PushManager at all; keep the switch off and
+    // expose the reason through its accessible label.
+    renderNotifyState(isStandalone() ? 'unsupported' : 'home-screen');
     return;
   }
 
   if (Notification.permission === 'denied') {
-    badge.textContent = 'blocked';
-    badge.className = 'notif-state blocked';
+    renderNotifyState('blocked');
     return;
   }
 
   const reg = await navigator.serviceWorker.getRegistration();
   const sub = reg ? await reg.pushManager.getSubscription() : null;
-  badge.textContent = sub ? 'on' : 'off';
-  badge.className = `notif-state${sub ? ' on' : ''}`;
-  label.textContent = 'Notifications';
+  renderNotifyState(sub ? 'on' : 'off');
 }
 
 async function toggleNotifications() {
@@ -471,8 +477,23 @@ async function toggleNotifications() {
     return;
   }
 
-  const reg = await navigator.serviceWorker.register('/sw.js');
-  await navigator.serviceWorker.ready;
+  // iOS only accepts the permission prompt while the tap's transient user
+  // activation is still alive. Do this before awaiting service-worker setup or
+  // subscription lookup, both of which previously consumed that activation.
+  if (Notification.permission === 'denied') {
+    await refreshNotifyState();
+    return;
+  }
+  if (Notification.permission === 'default') {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      await refreshNotifyState();
+      return;
+    }
+  }
+
+  await navigator.serviceWorker.register('/sw.js');
+  const reg = await navigator.serviceWorker.ready;
   const existing = await reg.pushManager.getSubscription();
 
   if (existing) {
@@ -481,12 +502,6 @@ async function toggleNotifications() {
       body: JSON.stringify({ endpoint: existing.endpoint }),
     }).catch(() => {});
     await existing.unsubscribe();
-    await refreshNotifyState();
-    return;
-  }
-
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') {
     await refreshNotifyState();
     return;
   }
@@ -508,6 +523,91 @@ async function toggleNotifications() {
 
 $('btn-notify').addEventListener('click', () => {
   toggleNotifications().catch((err) => alert(err.message));
+});
+
+// ── settings + Pi subscriptions ─────────────────────────────────────────
+
+let subscriptionPollTimer;
+
+function stopSubscriptionPolling() {
+  clearTimeout(subscriptionPollTimer);
+  subscriptionPollTimer = undefined;
+}
+
+function renderSubscriptionStatus(status) {
+  const job = status.job;
+  const active = job && ['pending', 'processing', 'waiting'].includes(job.status);
+  const connected = Boolean(status.connected);
+  const action = $('subscription-action');
+  const device = $('subscription-device');
+  const label = $('subscription-status');
+
+  action.disabled = Boolean(active);
+  action.textContent = connected ? 'Disconnect' : active ? 'Connecting…' : 'Connect';
+  label.textContent = connected
+    ? 'Connected to ChatGPT Plus / Pro'
+    : job?.status === 'failed'
+      ? job.error || 'Sign-in failed'
+      : active
+        ? 'Waiting for sign-in'
+        : 'Not connected';
+
+  const hasCode = Boolean(active && job.userCode && job.verificationUri);
+  device.hidden = !hasCode;
+  if (hasCode) {
+    $('subscription-device-code').textContent = job.userCode;
+    $('subscription-verification-link').href = job.verificationUri;
+    $('subscription-progress').textContent = job.message || 'Waiting for authorization…';
+  }
+  return Boolean(active);
+}
+
+async function refreshSubscriptionStatus({ keepPolling = true } = {}) {
+  stopSubscriptionPolling();
+  try {
+    const status = await api('/api/subscriptions/openai-codex');
+    const active = renderSubscriptionStatus(status);
+    if (active && keepPolling && $('settings-dialog').open) {
+      subscriptionPollTimer = setTimeout(() => refreshSubscriptionStatus(), 2000);
+    }
+  } catch (error) {
+    $('subscription-status').textContent = error.message;
+    $('subscription-action').disabled = false;
+  }
+}
+
+async function openSettings() {
+  closeDrawer();
+  const dialog = $('settings-dialog');
+  if (!dialog.open) dialog.showModal();
+  await Promise.all([refreshNotifyState(), refreshSubscriptionStatus()]);
+}
+
+function closeSettings() {
+  stopSubscriptionPolling();
+  if ($('settings-dialog').open) $('settings-dialog').close();
+}
+
+$('btn-settings').addEventListener('click', () => void openSettings());
+$('btn-settings-close').addEventListener('click', closeSettings);
+$('settings-dialog').addEventListener('cancel', () => stopSubscriptionPolling());
+$('settings-dialog').addEventListener('close', stopSubscriptionPolling);
+
+$('subscription-action').addEventListener('click', async () => {
+  const disconnect = $('subscription-action').textContent === 'Disconnect';
+  $('subscription-action').disabled = true;
+  try {
+    await api('/api/subscriptions/openai-codex', { method: disconnect ? 'DELETE' : 'POST' });
+    await refreshSubscriptionStatus();
+  } catch (error) {
+    $('subscription-status').textContent = error.message;
+    $('subscription-action').disabled = false;
+  }
+});
+
+$('subscription-device-code').addEventListener('click', async () => {
+  const copied = await copyText($('subscription-device-code').textContent.trim());
+  showToast(copied ? 'Device code copied' : 'Could not copy device code');
 });
 
 // Tapping a notification asks the open window to switch sessions.
@@ -3733,6 +3833,7 @@ let trashSelectionMode = false;
 let trashSelectedJids = new Set();
 let trashMutationPending = false;
 let trashReturnFocus = null;
+let trashReturnsToSettings = false;
 let trashLoadGeneration = 0;
 
 function showTrashCount(count) {
@@ -4039,7 +4140,7 @@ async function openTrash() {
   }
 }
 
-function closeTrash() {
+function closeTrash({ explicitDismissal = false } = {}) {
   const sheet = $('trash-sheet');
   if (sheet.hidden) return;
   trashLoadGeneration += 1;
@@ -4047,14 +4148,25 @@ function closeTrash() {
   sheet.hidden = true;
   resetTrashSelection();
   const returnFocus = trashReturnFocus;
+  const restoreSettings = explicitDismissal && trashReturnsToSettings;
   trashReturnFocus = null;
-  if (returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[inert]')) {
+  trashReturnsToSettings = false;
+  const anotherModalOwnsFocus = [...document.querySelectorAll('dialog[open]')].some(
+    (dialog) => dialog !== $('settings-dialog'),
+  );
+  if (restoreSettings && !anotherModalOwnsFocus) {
+    void openSettings().then(() => $('btn-trash').focus({ preventScroll: true }));
+  } else if (returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[inert]')) {
     queueMicrotask(() => returnFocus.focus({ preventScroll: true }));
   }
 }
 
-$('btn-trash').addEventListener('click', openTrash);
-$('btn-trash-close').addEventListener('click', closeTrash);
+$('btn-trash').addEventListener('click', () => {
+  trashReturnsToSettings = $('settings-dialog').open;
+  closeSettings();
+  openTrash();
+});
+$('btn-trash-close').addEventListener('click', () => closeTrash({ explicitDismissal: true }));
 $('btn-trash-select').addEventListener('click', () => {
   if (trashSelectionMode) {
     resetTrashSelection();
@@ -4078,16 +4190,16 @@ $('btn-trash-delete-all').addEventListener('click', () => {
   void purgeTrashSessions({ all: true });
 });
 $('trash-sheet').addEventListener('click', (e) => {
-  if (e.target === $('trash-sheet')) closeTrash();
+  if (e.target === $('trash-sheet')) closeTrash({ explicitDismissal: true });
 });
 $('trash-sheet').addEventListener('cancel', (e) => {
   e.preventDefault();
-  closeTrash();
+  closeTrash({ explicitDismissal: true });
 });
 $('trash-sheet').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     e.preventDefault();
-    closeTrash();
+    closeTrash({ explicitDismissal: true });
     return;
   }
   if (e.key !== 'Tab') return;
@@ -4953,10 +5065,9 @@ document.addEventListener('visibilitychange', () => {
   // says you are instead.
   if (me.via === 'tailscale') {
     $('btn-logout').hidden = true;
-    const who = document.createElement('span');
-    who.className = 'text-btn';
-    who.textContent = `signed in as ${me.login}`;
-    $('btn-logout').parentElement.append(who);
+    $('settings-account-identity').textContent = `Signed in as ${me.login}`;
+  } else {
+    $('settings-account-identity').textContent = 'Signed in with access token';
   }
   showApp();
   await boot();

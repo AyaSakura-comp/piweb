@@ -151,6 +151,31 @@ export function initDb(): void {
       updated_at text not null default (datetime('now'))
     );
 
+    -- Provider subscription login/logout is executed by the host worker because
+    -- only it has pi's credential store. Device codes are intentionally the only
+    -- OAuth values mirrored here; access and refresh tokens stay in auth.json.
+    create table if not exists subscription_jobs (
+      id               text primary key,
+      provider         text not null,
+      action           text not null check(action in ('login', 'logout')),
+      status           text not null default 'pending'
+                       check(status in ('pending', 'processing', 'waiting', 'succeeded', 'failed')),
+      user_code        text not null default '',
+      verification_uri text not null default '',
+      message          text not null default '',
+      error             text not null default '',
+      expires_at        text,
+      created_at        text not null default (datetime('now')),
+      updated_at        text not null default (datetime('now')),
+      done_at           text
+    );
+
+    create index if not exists idx_subscription_jobs_pending
+      on subscription_jobs(status, created_at);
+    create unique index if not exists idx_subscription_jobs_one_active_provider
+      on subscription_jobs(provider)
+      where status in ('pending', 'processing', 'waiting');
+
     -- Web Push subscriptions, one row per device that opted in. Keyed by
     -- endpoint because that is what the push service treats as the identity,
     -- and what it returns as 404/410 when the subscription dies.
@@ -2617,6 +2642,148 @@ export function getMeta(key: string): string | undefined {
     | { value: string }
     | undefined;
   return row?.value;
+}
+
+// ── piweb: provider subscription jobs ──
+
+export type SubscriptionJobAction = 'login' | 'logout';
+export type SubscriptionJobStatus =
+  | 'pending'
+  | 'processing'
+  | 'waiting'
+  | 'succeeded'
+  | 'failed';
+
+export interface SubscriptionJob {
+  id: string;
+  provider: string;
+  action: SubscriptionJobAction;
+  status: SubscriptionJobStatus;
+  userCode: string;
+  verificationUri: string;
+  message: string;
+  error: string;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SubscriptionJobRow {
+  id: string;
+  provider: string;
+  action: SubscriptionJobAction;
+  status: SubscriptionJobStatus;
+  user_code: string;
+  verification_uri: string;
+  message: string;
+  error: string;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function subscriptionJobFromRow(row: SubscriptionJobRow | undefined): SubscriptionJob | undefined {
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    provider: row.provider,
+    action: row.action,
+    status: row.status,
+    userCode: row.user_code,
+    verificationUri: row.verification_uri,
+    message: row.message,
+    error: row.error,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function enqueueSubscriptionJob(
+  provider: string,
+  action: SubscriptionJobAction,
+): string {
+  const id = randomUUID();
+  try {
+    db.prepare('insert into subscription_jobs (id, provider, action) values (?, ?, ?)').run(
+      id,
+      provider,
+      action,
+    );
+  } catch (error: any) {
+    if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      throw new Error('A subscription operation is already active', { cause: error });
+    }
+    throw error;
+  }
+  return id;
+}
+
+export function getSubscriptionJob(id: string): SubscriptionJob | undefined {
+  return subscriptionJobFromRow(
+    db.prepare('select * from subscription_jobs where id = ?').get(id) as
+      | SubscriptionJobRow
+      | undefined,
+  );
+}
+
+export function getLatestSubscriptionJob(provider: string): SubscriptionJob | undefined {
+  return subscriptionJobFromRow(
+    db
+      .prepare('select * from subscription_jobs where provider = ? order by created_at desc, rowid desc limit 1')
+      .get(provider) as SubscriptionJobRow | undefined,
+  );
+}
+
+export function claimPendingSubscriptionJob(): SubscriptionJob | undefined {
+  return db.transaction(() => {
+    const row = db
+      .prepare("select id from subscription_jobs where status = 'pending' order by created_at, rowid limit 1")
+      .get() as { id: string } | undefined;
+    if (!row) return undefined;
+    db.prepare(
+      "update subscription_jobs set status = 'processing', updated_at = datetime('now') where id = ? and status = 'pending'",
+    ).run(row.id);
+    return getSubscriptionJob(row.id);
+  }).immediate();
+}
+
+export function updateSubscriptionJobDeviceCode(
+  id: string,
+  device: { userCode: string; verificationUri: string; expiresInSeconds?: number },
+): void {
+  const expiresAt = device.expiresInSeconds
+    ? new Date(Date.now() + device.expiresInSeconds * 1000).toISOString()
+    : null;
+  db.prepare(
+    `update subscription_jobs
+        set status = 'waiting', user_code = ?, verification_uri = ?, expires_at = ?,
+            message = 'Waiting for authorization', updated_at = datetime('now')
+      where id = ? and status in ('processing', 'waiting')`,
+  ).run(device.userCode, device.verificationUri, expiresAt, id);
+}
+
+export function updateSubscriptionJobMessage(id: string, message: string): void {
+  db.prepare(
+    "update subscription_jobs set message = ?, updated_at = datetime('now') where id = ? and status in ('processing', 'waiting')",
+  ).run(message, id);
+}
+
+export function finishSubscriptionJob(id: string, ok: boolean, detail: string): void {
+  db.prepare(
+    `update subscription_jobs
+        set status = ?, message = ?, error = ?, updated_at = datetime('now'), done_at = datetime('now')
+      where id = ? and status in ('pending', 'processing', 'waiting')`,
+  ).run(ok ? 'succeeded' : 'failed', ok ? detail : '', ok ? '' : detail, id);
+}
+
+export function recoverStuckSubscriptionJobs(): number {
+  return db.prepare(
+    `update subscription_jobs
+        set status = 'failed', error = 'Worker restarted during subscription operation',
+            updated_at = datetime('now'), done_at = datetime('now')
+      where status in ('processing', 'waiting')`,
+  ).run().changes;
 }
 
 /**
