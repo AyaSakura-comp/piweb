@@ -32,6 +32,8 @@ import {
   getRpcSession,
   closeAllRpcSessions,
   closeRpcSession,
+  rpcSessionIsStreaming,
+  rpcSessionHasLiveSubagents,
 } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
@@ -62,12 +64,20 @@ const sigtermRetries = new Map<number, number>();
 const MAX_SIGTERM_RETRIES = 2;
 
 export function isChannelProcessing(jid: string): boolean {
-  return activeChannels.has(jid);
+  const channel = getChannel(jid);
+  return (
+    activeChannels.has(jid) ||
+    Boolean(
+      channel &&
+      (rpcSessionIsStreaming(channel.folder) || rpcSessionHasLiveSubagents(channel.folder)),
+    )
+  );
 }
 
 export function abortChannelTask(jid: string): { aborted: boolean; cleared: number } {
   const controller = activeChannelControllers.get(jid);
-  const aborted = Boolean(controller);
+  const channel = getChannel(jid);
+  const aborted = Boolean(controller) || Boolean(channel && abortRpcSession(channel.folder));
   if (controller) {
     controller.abort();
   }
@@ -226,7 +236,8 @@ function dispatch(): void {
   if (activeTaskPromises.size >= config.maxConcurrency) return;
 
   for (const jid of channelsWithPending()) {
-    if (activeChannels.has(jid)) continue;
+    const owner = getChannel(jid);
+    if (activeChannels.has(jid) || (owner && rpcSessionIsStreaming(owner.folder))) continue;
     if (activeTaskPromises.size >= config.maxConcurrency) break;
 
     const msg = claimNextMessage(jid);
@@ -390,6 +401,10 @@ async function processMessage(
     : undefined;
   operationHeartbeat?.unref?.();
   const typingLoop = createTypingLoop(jid, writeFence, renewWorkerLease);
+  let releaseDelivery!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    releaseDelivery = resolve;
+  });
 
   try {
     const supersedesPrevious = supersededChannels.delete(jid);
@@ -434,7 +449,13 @@ async function processMessage(
     // Attachments and until-done use the one-shot process, which writes the
     // same history files as RPC. Retire an idle warm session first so the next
     // text turn reloads those additions instead of following a stale branch.
-    if (!useAgy && !useRpc) await closeRpcSession(channel.folder);
+    if (!useAgy && !useRpc) {
+      if (rpcSessionHasLiveSubagents(channel.folder))
+        throw new Error(
+          'Wait for this parent’s subagents before switching to attachment or one-shot execution.',
+        );
+      await closeRpcSession(channel.folder);
+    }
 
     let result;
     if (useAgy) {
@@ -456,16 +477,22 @@ async function processMessage(
           model: effective.rawModelRef || undefined,
           thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
           cwd: effective.effectiveCwd,
-        }).prompt(prompt, onEvent);
+        }).prompt(prompt, onEvent, delivered);
       } finally {
         // Life folders are archive generations. A warm idle RPC would keep its
         // durable lease until the generic timeout and make New Life appear
         // busy after a completed turn. Standard sessions intentionally remain
         // warm; Life retires and confirms child exit before response delivery.
-        if (channel.kind === 'life') await closeRpcSession(channel.folder);
+        if (
+          channel.kind === 'life' &&
+          !rpcSessionHasLiveSubagents(channel.folder) &&
+          !rpcSessionIsStreaming(channel.folder)
+        )
+          await closeRpcSession(channel.folder);
       }
     } else {
       result = await invokeAgent(channel.folder, prompt, {
+        parentOwner: `${channel.storageToken}:${channel.folder}:${channel.ownershipEpoch}`,
         channelJid: channel.jid,
         model: effective.rawModelRef || undefined,
         thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
@@ -597,8 +624,12 @@ async function processMessage(
       // final writes cannot land on a replacement web:life generation.
       await typingLoop.stop();
     } finally {
-      if (operationHeartbeat) clearInterval(operationHeartbeat);
-      if (workerOperationId) finishChannelOperation(workerOperationId);
+      try {
+        if (operationHeartbeat) clearInterval(operationHeartbeat);
+        if (workerOperationId) finishChannelOperation(workerOperationId);
+      } finally {
+        releaseDelivery();
+      }
     }
   }
 }

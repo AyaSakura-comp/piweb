@@ -77,7 +77,8 @@ describe('Life mode UI contract', () => {
     ]) {
       expect(app).toContain(lifeRead);
     }
-    expect(app.match(/withLifeGeneration\(/g)).toHaveLength(8);
+    expect(app.match(/withLifeGeneration\(/g)).toHaveLength(9);
+    expect(app).toContain('/subagents');
     expect(app).toContain('selectSession(LIFE_JID, {');
     expect(app).toContain(
       "$('btn-life-new-session').addEventListener('click', () => void newLifeSession())",

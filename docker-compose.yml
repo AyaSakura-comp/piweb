@@ -33,6 +33,9 @@ services:
       WEB_AUTH_TOKEN: ${WEB_AUTH_TOKEN:?WEB_AUTH_TOKEN must be set}
       DB_PATH: ${PIWEB_DATA:?PIWEB_DATA must be set}/gateway.db
       SESSIONS_DIR: ${PIWEB_DATA}/sessions
+      # Session header cwd belongs to the HOST worker, not container /home/node.
+      # Keep exact-parent filtering strict; never silently fall back across cwd.
+      PI_CWD: ${PI_CWD:?PI_CWD must match the host worker working directory}
       WEB_MEDIA_DIR: ${PIWEB_DATA}/web-media
       WEB_UPLOAD_DIR: ${PIWEB_DATA}/web-uploads
       LOG_LEVEL: ${LOG_LEVEL:-info}

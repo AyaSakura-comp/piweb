@@ -18,6 +18,10 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
+import { publishParent } from '../session/parent-publication.js';
+import { getTransport, type ChannelWriteFence } from '../transport/index.js';
+import { parseOutboxMarkers } from './outbox.js';
 import { config } from '../config.js';
 import { beginChannelOperation, finishChannelOperation, touchChannelOperation } from '../db.js';
 import { logger } from '../logger.js';
@@ -62,6 +66,13 @@ class RpcSession {
   private killTimer?: NodeJS.Timeout;
   private startBarrier?: Promise<void>;
   private closed = false;
+  private subagentsLive = false;
+  private publication?: ReturnType<typeof publishParent>;
+  private autonomousActive = false;
+  private autonomousText = '';
+  private autonomousStream?: (event: unknown) => Promise<void>;
+  private autonomousDrain = Promise.resolve();
+  private queueDelivery = Promise.resolve();
 
   constructor(
     private readonly folder: string,
@@ -73,11 +84,15 @@ class RpcSession {
 
   get isStreaming(): boolean {
     // A prompt is active as soon as it has been written, before agent_start.
-    return this.streaming || Boolean(this.pending);
+    return this.streaming || Boolean(this.pending) || this.autonomousActive;
   }
 
   get isAlive(): boolean {
     return Boolean(this.proc && this.proc.exitCode === null && this.proc.signalCode === null);
+  }
+
+  get hasLiveSubagents(): boolean {
+    return this.subagentsLive;
   }
 
   get isClosed(): boolean {
@@ -169,6 +184,12 @@ class RpcSession {
       // Heal a session left non-continuable by an interrupted run (see
       // repairSessionForContinue). No pi is writing this folder at spawn time.
       repairSessionForContinue(this.folder);
+      if (this.opts.channelStorageToken)
+        this.publication = publishParent(
+          dir,
+          `${this.opts.channelStorageToken}:${this.folder}:${this.opts.channelOwnershipEpoch}`,
+          this.opts.cwd || config.piCwd,
+        );
       const args = ['--mode', 'rpc', '--session-dir', dir, '--continue'];
       if (this.opts.model) args.push('--model', this.opts.model);
       if (this.opts.thinking) args.push('--thinking', this.opts.thinking);
@@ -189,6 +210,7 @@ class RpcSession {
       });
       this.stdoutBuf = '';
       this.streaming = false;
+      this.subagentsLive = false;
       proc.stdout!.on('data', (d: Buffer) => this.onData(d));
       proc.stderr!.on('data', (d: Buffer) =>
         logger.debug({ folder: this.folder, stderr: d.toString().slice(0, 200) }, 'rpc stderr'),
@@ -202,8 +224,12 @@ class RpcSession {
         // exit: keep the durable lease until the actual `exit` event.
         if (proc.pid === undefined) this.onExit(proc, null);
       });
+      // Capture Pi's actual selected session; a warm RPC can differ from the
+      // cold --continue candidate and session files are persisted lazily.
+      this.send({ type: 'get_state', id: 'piweb-current-parent' });
       logger.info({ folder: this.folder }, 'Started persistent RPC session');
     } catch (error) {
+      this.publication?.close();
       this.releaseOwnership();
       throw error;
     }
@@ -226,10 +252,71 @@ class RpcSession {
     } catch {
       return;
     }
-    // Command acks and extension UI prompts are protocol noise (the latter are
-    // non-blocking — turns complete without a client response).
-    if (event.type === 'response' || event.type === 'extension_ui_request') return;
+    // The public machine widget is emitted even after the parent turn settles.
+    // It is a liveness hint, NOT a complete child-history ledger. Overflow must
+    // keep the owner alive rather than treating omitted children as finished.
+    if (event.type === 'extension_ui_request') {
+      if (event.method === 'setWidget' && event.widgetKey === 'subagent-async') {
+        const line = event.widgetLines?.find(
+          (value: unknown) =>
+            typeof value === 'string' && value.startsWith('PI_SUBAGENT_ASYNC_JSON:'),
+        );
+        if (line) {
+          try {
+            const snapshot = JSON.parse(line.slice('PI_SUBAGENT_ASYNC_JSON:'.length));
+            if (
+              snapshot.kind === 'pi-subagents.async-status-snapshot' &&
+              snapshot.version === 1 &&
+              Array.isArray(snapshot.runs)
+            ) {
+              const live = (nodes: any[]): boolean =>
+                nodes.some(
+                  (node) =>
+                    ['running', 'queued'].includes(node.state) ||
+                    (Array.isArray(node.children) && live(node.children)),
+                );
+              this.subagentsLive =
+                live(snapshot.runs) ||
+                Boolean(
+                  snapshot.omitted?.runs ||
+                  snapshot.omitted?.children ||
+                  snapshot.omitted?.byteLimitExceeded,
+                );
+            }
+          } catch {
+            /* Malformed/unsupported hints never clear known live work. */
+          }
+        }
+      }
+      // Dialog requests are blocking, unlike widgets. Explicitly cancel rather
+      // than silently stranding the model on an unsupported terminal UI.
+      if (['select', 'confirm', 'input', 'editor'].includes(event.method)) {
+        this.send({ type: 'extension_ui_response', id: event.id, cancelled: true });
+      }
+      return;
+    }
+    if (event.type === 'response') {
+      if (
+        event.id === 'piweb-current-parent' &&
+        event.success &&
+        this.opts.channelStorageToken &&
+        this.renewOwnership()
+      ) {
+        const data = event.data;
+        const dir = resolveChannelSessionDir(this.folder);
+        if (
+          typeof data?.sessionFile === 'string' &&
+          dirname(data.sessionFile) === dir &&
+          typeof data.sessionId === 'string'
+        ) {
+          this.publication?.select({ file: basename(data.sessionFile), id: data.sessionId });
+        }
+      }
+      return;
+    }
 
+    if (event.type === 'agent_start' || event.type === 'agent_settled')
+      this.send({ type: 'get_state', id: 'piweb-current-parent' });
     const turn = this.pending?.proc === this.proc ? this.pending : undefined;
     if (turn) {
       // Capture in-stream provider errors (e.g. Codex 429) so an empty turn
@@ -262,6 +349,11 @@ class RpcSession {
       if (turn.onEvent) Promise.resolve(turn.onEvent(event)).catch(() => {});
     }
 
+    // Completion wakes may start an entire new turn after pending was cleared.
+    // Use the RPC's OWN durable lease and a fresh streamer, never the expired
+    // queue turn callback. Serialize delivery so history and typing stay ordered.
+    if (!turn && this.opts.channelJid && this.renewOwnership()) this.deliverAutonomous(event);
+
     if (event.type === 'agent_start' || event.type === 'turn_start') this.streaming = true;
     // agent_end can be followed by retry, compaction, or another low-level run.
     // agent_settled is the durable session-level completion boundary.
@@ -269,6 +361,71 @@ class RpcSession {
       this.streaming = false;
       if (turn) this.finishTurn();
     }
+  }
+
+  private deliverAutonomous(event: any): void {
+    const proc = this.proc;
+    const queueDelivery = this.queueDelivery;
+    if (event.type === 'agent_start') this.autonomousActive = true;
+    this.autonomousDrain = this.autonomousDrain
+      .then(async () => {
+        await queueDelivery;
+        if (proc !== this.proc || !this.renewOwnership()) return;
+        const jid = this.opts.channelJid!;
+        const fence: ChannelWriteFence = {
+          expectedFolder: this.folder,
+          expectedStorageToken: this.opts.channelStorageToken,
+          expectedOwnershipEpoch: this.opts.channelOwnershipEpoch,
+        };
+        const transport = getTransport();
+        if (event.type === 'agent_start') {
+          this.autonomousText = '';
+          this.autonomousStream = transport.createEventStreamer(jid, fence);
+          await transport.setTyping(jid, fence);
+        }
+        if (
+          event.type === 'message_end' &&
+          event.message?.role === 'custom' &&
+          event.message.display
+        ) {
+          const text =
+            typeof event.message.content === 'string'
+              ? event.message.content
+              : (event.message.content || [])
+                  .filter((c: any) => c.type === 'text')
+                  .map((c: any) => c.text)
+                  .join('\n');
+          if (text) await transport.sendNotice?.(jid, text, fence);
+        }
+        if (this.autonomousStream) await this.autonomousStream(event);
+        if (event.type === 'message_end' && event.message?.role === 'assistant') {
+          this.autonomousText = (event.message.content || [])
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
+            .join('');
+        }
+        if (event.type === 'agent_settled') {
+          if (this.renewOwnership() && this.autonomousText) {
+            const output = parseOutboxMarkers(this.autonomousText);
+            if (output.files.length)
+              await transport.sendFilesResponse(
+                jid,
+                output.rawText || this.autonomousText,
+                output.files,
+                fence,
+              );
+            else await transport.sendResponse(jid, output.text, fence);
+          }
+          if (this.renewOwnership()) await transport.clearTyping(jid, fence);
+          this.autonomousStream = undefined;
+          this.autonomousActive = false;
+          this.armIdleTimer();
+        }
+      })
+      .catch((error) => {
+        logger.error({ folder: this.folder, err: String(error) }, 'Autonomous RPC delivery failed');
+        this.autonomousActive = false;
+      });
   }
 
   private finishTurn(): void {
@@ -288,6 +445,8 @@ class RpcSession {
   private onExit(proc: ChildProcess, code: number | null): void {
     if (this.proc !== proc) return;
     logger.info({ folder: this.folder, code }, 'RPC session exited');
+    this.publication?.close();
+    this.publication = undefined;
     this.proc = undefined;
     this.streaming = false;
     this.clearIdleTimer();
@@ -322,7 +481,11 @@ class RpcSession {
   private armIdleTimer(): void {
     this.clearIdleTimer();
     this.idleTimer = setTimeout(() => {
-      if (this.isAlive && !this.streaming && !this.pending) {
+      if (this.isAlive && !this.isStreaming) {
+        if (this.subagentsLive) {
+          this.armIdleTimer();
+          return;
+        }
         logger.info({ folder: this.folder }, 'RPC session idle timeout — shutting down');
         void retireSession(this).then(() => {
           if (sessions.get(keyFor(this.folder)) === this) {
@@ -342,7 +505,15 @@ class RpcSession {
   }
 
   /** Run a new turn. Must only be called when not already streaming. */
-  prompt(message: string, onEvent?: (event: any) => void | Promise<void>): Promise<AgentResult> {
+  prompt(
+    message: string,
+    onEvent?: (event: any) => void | Promise<void>,
+    delivered: Promise<void> = Promise.resolve(),
+  ): Promise<AgentResult> {
+    // The queue owns final file/text delivery AND typing cleanup after Pi settles.
+    // Autonomous events may arrive immediately, but cannot reuse its live buffer
+    // until that entire delivery lifecycle hands ownership back.
+    this.queueDelivery = delivered;
     // ensureProc starts the common no-barrier process path synchronously. Install
     // pending before its resolved promise yields so an immediate /pi stop can
     // mark this prompt for abort before Pi persists the user message.
@@ -386,6 +557,10 @@ class RpcSession {
   /** Abort after Pi has persisted the active user prompt in the session. */
   requestAbort(): boolean {
     const turn = this.pending;
+    if (!turn && this.streaming) {
+      this.send({ type: 'abort' });
+      return true;
+    }
     if (!turn || turn.abortRequested) return false;
     turn.abortRequested = true;
     if (this.isAlive && turn.userPromptPersisted) this.sendAbort(turn);
@@ -454,6 +629,9 @@ export function getRpcSession(folder: string, opts: RpcSessionOpts): RpcSession 
   const key = keyFor(folder);
   let session = sessions.get(key);
   let startBarrier: Promise<void> | undefined;
+  if (session?.isAlive && session.hasLiveSubagents && !session.matchesOptions(opts)) {
+    throw new Error('Wait for this parent’s subagents before changing its RPC settings.');
+  }
   if (
     session &&
     (session.isClosed ||
@@ -469,6 +647,10 @@ export function getRpcSession(folder: string, opts: RpcSessionOpts): RpcSession 
     sessions.set(key, session);
   }
   return session;
+}
+
+export function rpcSessionHasLiveSubagents(folder: string): boolean {
+  return sessions.get(keyFor(folder))?.hasLiveSubagents ?? false;
 }
 
 /** True if a live RPC session for this folder is mid-turn (steer-able). */

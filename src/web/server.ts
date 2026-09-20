@@ -17,6 +17,8 @@ import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { extractSessionTitle } from '../agent/session-title.js';
+import { readSubagents, subagentParentScope, SubagentReadError } from '../session/subagents.js';
+import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
@@ -984,7 +986,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (
       channel.kind === 'life' &&
       method === 'GET' &&
-      ['events', 'media', 'search', 'stream'].includes(sub ?? '')
+      ['events', 'media', 'search', 'stream', 'subagents'].includes(sub ?? '')
     ) {
       expectedLifeGeneration = requireLifeGeneration(res, url.searchParams.get('generation'));
       if (!expectedLifeGeneration) return;
@@ -1037,6 +1039,59 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           deleted: isChannelDeleted(jid),
         },
       });
+      return;
+    }
+
+    if (sub === 'subagents' && method === 'GET') {
+      try {
+        const owner = `${channel.storageToken}:${channel.folder}:${channel.ownershipEpoch}`;
+        const query = {
+          scope: url.searchParams.get('scope') || undefined,
+          child: url.searchParams.get('child') || undefined,
+          before: url.searchParams.has('before')
+            ? Number(url.searchParams.get('before'))
+            : undefined,
+          after: url.searchParams.get('after') || undefined,
+        };
+        if (
+          (query.child && !query.scope) ||
+          (query.before !== undefined && (!Number.isSafeInteger(query.before) || query.before < 1))
+        ) {
+          sendJson(res, 400, {
+            error: 'A child requires its parent scope and a valid history cursor',
+          });
+          return;
+        }
+        const cwd = channel.kind === 'life' ? config.piCwd : channel.cwdOverride || config.piCwd;
+        const result = await readSubagents(resolveChannelSessionDir(channel.folder), owner, {
+          ...query,
+          cwd,
+        });
+        if (
+          (await subagentParentScope(resolveChannelSessionDir(channel.folder), owner, cwd)) !==
+          result.scope
+        ) {
+          throw new SubagentReadError('Parent session changed');
+        }
+        const current = getChannel(jid);
+        if (
+          !current ||
+          current.storageToken !== channel.storageToken ||
+          current.folder !== channel.folder ||
+          current.ownershipEpoch !== channel.ownershipEpoch ||
+          isChannelPurgePending(jid) ||
+          isChannelQuarantinedForLifeArchive(jid)
+        ) {
+          sendJson(res, 409, { error: 'Parent session changed' });
+          return;
+        }
+        sendJson(res, 200, result);
+      } catch (error) {
+        sendJson(res, error instanceof SubagentReadError ? error.status : 503, {
+          error:
+            error instanceof SubagentReadError ? error.message : 'Subagent history is unavailable',
+        });
+      }
       return;
     }
 

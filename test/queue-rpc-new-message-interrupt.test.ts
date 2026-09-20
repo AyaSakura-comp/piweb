@@ -12,6 +12,8 @@ const { abortRpcSessionMock, promptMock } = vi.hoisted(() => ({
 vi.mock('../src/agent/rpc-session.js', () => ({
   abortRpcSession: abortRpcSessionMock,
   closeAllRpcSessions: vi.fn(),
+  rpcSessionIsStreaming: vi.fn(() => false),
+  rpcSessionHasLiveSubagents: vi.fn(() => false),
   getRpcSession: vi.fn(() => ({ prompt: promptMock })),
 }));
 

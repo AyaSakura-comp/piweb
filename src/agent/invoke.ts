@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
+import { publishParent } from '../session/parent-publication.js';
 import { logger } from '../logger.js';
 import { downloadAttachments } from '../session/media.js';
 import { appendVoiceTranscriptions, transcribeVoiceFiles } from '../discord/voice-asr.js';
@@ -144,6 +145,7 @@ export async function invokeAgent(
      * returned in `AgentResult.text` for the caller's normal delivery path.
      */
     onEvent?: (event: any) => void | Promise<void>;
+    parentOwner?: string;
   },
 ): Promise<AgentResult> {
   const sessionDir = resolveChannelSessionDir(channelFolder);
@@ -273,6 +275,9 @@ export async function invokeAgent(
   );
 
   return new Promise<AgentResult>((resolve, reject) => {
+    const publication = opts?.parentOwner
+      ? publishParent(sessionDir, opts.parentOwner, effectiveCwd)
+      : undefined;
     const proc = spawn(effectiveBin, effectiveArgs, {
       cwd: effectiveCwd,
       env: {
@@ -298,6 +303,8 @@ export async function invokeAgent(
     let lastErrorMessage = '';
 
     const handleEvent = (event: any) => {
+      if (event?.type === 'session' && typeof event.id === 'string')
+        publication?.select({ id: event.id });
       try {
         // Record any in-stream error message (message_end/turn_end/agent_end carry
         // message.stopReason==='error' + message.errorMessage; auto_retry_start carries
@@ -396,6 +403,7 @@ export async function invokeAgent(
 
     proc.on('close', (code) => {
       flushLines(true);
+      publication?.close();
       const stderr = Buffer.concat(errChunks).toString('utf-8').trim();
 
       if (code !== 0) {
@@ -435,6 +443,7 @@ export async function invokeAgent(
     });
 
     proc.on('error', (err) => {
+      publication?.close();
       logger.error({ err: err.message }, 'Failed to spawn pi');
       reject(err);
     });

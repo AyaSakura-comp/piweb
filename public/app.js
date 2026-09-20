@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { createSubagentsView } from './subagents.js';
 import { createMediaViewer, createVideoAttachment } from './media-files.js';
 import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
@@ -1068,6 +1069,7 @@ async function createSession() {
 }
 
 async function selectSession(jid, opts = {}) {
+  subagentsView.close();
   const selection = ++sessionSelectionGeneration;
   const navigation = opts.navigation ?? lifeNavigationGeneration;
   const previewingDeleted = Boolean(opts.deleted);
@@ -1628,6 +1630,16 @@ $('btn-gpt-usage').addEventListener('click', () => runQuickCommand(usageCommandF
 function isMenuOpen() {
   return !$('more-menu').hidden;
 }
+
+const subagentsView = createSubagentsView({
+  api,
+  buildEventNode,
+  getParent: () => state.activeJid && !state.selectionPending ? {
+    key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
+    url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/subagents`, state.activeJid),
+  } : null,
+});
+onMenuItem('mi-subagents', () => subagentsView.open());
 
 function openMoreMenu() {
   const life = state.mode === 'life';
