@@ -22,7 +22,9 @@ describe('thinking level picker', () => {
 
   it('visually marks both the button and current picker row', () => {
     expect(app).toContain("button.dataset.level = current || 'default'");
-    expect(app).toContain("`thinking-item${level === current ? ' current' : ''}`");
+    expect(app).toContain(
+      "`thinking-item${isCurrent ? ' current' : ''}${!isSupported ? ' blocked' : ''}`",
+    );
     expect(css).toContain('.thinking-item.current');
     expect(css).toContain('#btn-thinking[data-level');
   });

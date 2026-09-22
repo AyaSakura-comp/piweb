@@ -615,6 +615,15 @@ svg {
   color: var(--accent);
 }
 
+/* Primary turn actions must be reliably tappable on phone layouts. */
+@media (pointer: coarse) {
+  #btn-send,
+  #btn-stop {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* ── drawer ──────────────────────────────────────────────────────────── */
 
 .drawer {
@@ -3392,6 +3401,46 @@ dialog.sheet::backdrop {
   font-size: 12px;
 }
 
+.thinking-description.blocked-desc {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.thinking-item[disabled],
+.thinking-item.blocked {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.thinking-item[disabled]::before,
+.thinking-item.blocked::before {
+  border-color: var(--border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.thinking-item-pill {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.thinking-item-pill.blocked {
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+:root[data-theme='light'] .thinking-item-pill.blocked {
+  background: rgb(0 0 0 / 0.04);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
 /* ── provider badge ──────────────────────────────────────────────────── */
 
 .provider-badge {
@@ -3459,6 +3508,18 @@ dialog.sheet::backdrop {
   background: rgb(66 133 244 / 0.18);
   border-color: rgb(66 133 244 / 0.5);
   color: #8ab4f8;
+}
+
+/* Claude's warm coral stays visually separate from the green local/GPT,
+   blue Gemini, and violet OpenRouter badges around it. */
+.provider-badge.claude,
+.provider-badge.opus,
+.provider-badge.sonnet,
+.provider-badge.haiku,
+.provider-badge.fable {
+  background: rgb(217 119 87 / 0.2);
+  border-color: rgb(217 119 87 / 0.58);
+  color: #f0a58c;
 }
 
 .provider-badge.xai {
@@ -4169,6 +4230,16 @@ dialog.sheet::backdrop {
 
 :root[data-theme='light'] .provider-badge.gem {
   color: #245cb5;
+}
+
+:root[data-theme='light'] .provider-badge.claude,
+:root[data-theme='light'] .provider-badge.opus,
+:root[data-theme='light'] .provider-badge.sonnet,
+:root[data-theme='light'] .provider-badge.haiku,
+:root[data-theme='light'] .provider-badge.fable {
+  background: #fff8f5;
+  border-color: #dba38f;
+  color: #93452e;
 }
 
 :root[data-theme='light'] .provider-badge.xai {

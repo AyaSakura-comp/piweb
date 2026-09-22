@@ -20,6 +20,41 @@ describe('providerBadge', () => {
     expect(providerBadge('openai-codex')).toEqual({ label: 'GPT', kind: 'gpt' });
   });
 
+  it('gives the tmux-backed Claude Code provider model-specific badges', () => {
+    expect(providerBadge('claude-code', 'claude-code/opus')).toEqual({
+      label: 'OPUS',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'opus')).toEqual({
+      label: 'OPUS',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'claude-code/sonnet')).toEqual({
+      label: 'SONNET',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'sonnet')).toEqual({
+      label: 'SONNET',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'claude-code/haiku')).toEqual({
+      label: 'HAIKU',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'haiku')).toEqual({
+      label: 'HAIKU',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code', 'claude-code/fable')).toEqual({
+      label: 'FABLE',
+      kind: 'claude',
+    });
+    expect(providerBadge('claude-code')).toEqual({
+      label: 'CLAUDE',
+      kind: 'claude',
+    });
+  });
+
   it('leaves other providers unchanged', () => {
     expect(providerBadge('local-llama').label).toBe('LOCAL');
     expect(providerBadge('nvim').label).toBe('NV');

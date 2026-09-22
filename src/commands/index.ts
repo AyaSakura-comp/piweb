@@ -54,6 +54,7 @@ import {
 } from '../agent/channel-settings.js';
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { closeRpcSession } from '../agent/rpc-session.js';
+import { closeClaudeTmuxSession } from '../agent/claude-tmux.js';
 import { computeNextRun } from '../agent/scheduler.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
@@ -221,13 +222,17 @@ async function cmdNew(
       text: 'This session started processing a message while the reset was waiting. Try again after it finishes.',
     };
   }
-  const { cleared, archivedSession } = mutateOwnedChannel(channel, () => {
+  const { cleared, archivedSession, closedClaudeTmux } = mutateOwnedChannel(channel, () => {
     // This DB check closes the same race against another worker process. The
     // surrounding IMMEDIATE transaction prevents a new claim until rotation
     // and pending-queue cleanup finish synchronously.
     assertChannelHasNoProcessingMessages(channel.jid);
     assertChannelHasNoActiveOperations(channel.jid);
+    // Kill only after ownership and cross-worker activity checks, while the
+    // transaction prevents another worker from claiming the next Claude turn.
+    const closedClaudeTmux = closeClaudeTmuxSession(channel.folder);
     return {
+      closedClaudeTmux,
       cleared:
         args.keepQueue === 'true'
           ? 0
@@ -242,7 +247,13 @@ async function cmdNew(
   });
 
   logger.info(
-    { jid: channel.jid, cleared, archived: Boolean(archivedSession), closedRpc },
+    {
+      jid: channel.jid,
+      cleared,
+      archived: Boolean(archivedSession),
+      closedRpc,
+      closedClaudeTmux,
+    },
     'Channel session reset',
   );
 

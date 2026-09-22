@@ -1954,6 +1954,14 @@ function providerBadgeFor(provider, modelRef = '') {
     if (id.includes('sol')) return el('span', 'provider-badge sol', 'SOL');
     if (id.includes('luna')) return el('span', 'provider-badge luna', 'LUNA');
   }
+  if (provider === 'claude-code') {
+    const id = modelRef.toLowerCase();
+    if (id.includes('opus')) return el('span', 'provider-badge claude', 'OPUS');
+    if (id.includes('sonnet')) return el('span', 'provider-badge claude', 'SONNET');
+    if (id.includes('haiku')) return el('span', 'provider-badge claude', 'HAIKU');
+    if (id.includes('fable')) return el('span', 'provider-badge claude', 'FABLE');
+    return el('span', 'provider-badge claude', 'CLAUDE');
+  }
   const map = {
     nvim: ['NV', 'nv'],
     'openai-codex': ['GPT', 'gpt'],
@@ -1962,6 +1970,7 @@ function providerBadgeFor(provider, modelRef = '') {
     'ollama-lfm2': ['LOCAL', 'local'],
     ds4: ['LOCAL', 'local'],
     gemini: ['GEM', 'gem'],
+    'claude-code': ['CLAUDE', 'claude'],
     xai: ['XAI', 'xai'],
     openrouter: ['OR', 'or'],
     sakana: ['SAK', 'sak'],
@@ -2037,36 +2046,92 @@ function openThinkingSheet() {
   renderThinkingList();
 }
 
+function currentSessionModelInfo() {
+  const session = state.sessions.find((s) => s.jid === state.activeJid);
+  if (!session) return undefined;
+  const ref = (session.model || session.runningModel || '').trim().toLowerCase();
+  if (!ref) return undefined;
+  return (
+    state.models.find((m) => m.ref.toLowerCase() === ref) ||
+    state.models.find((m) => m.id.toLowerCase() === ref) ||
+    state.models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === ref) ||
+    state.models.find((m) => ref.endsWith(`/${m.id.toLowerCase()}`))
+  );
+}
+
+function supportedThinkingLevelsForCurrentSession() {
+  const model = currentSessionModelInfo();
+  if (!model) return undefined;
+  if (Array.isArray(model.supportedThinkingLevels) && model.supportedThinkingLevels.length > 0) {
+    return model.supportedThinkingLevels;
+  }
+  if (!model.reasoning) {
+    return ['off'];
+  }
+  const levels = ['off', 'minimal', 'low', 'medium', 'high'];
+  if (model.supportsXhigh) levels.push('xhigh');
+  return levels;
+}
+
 function renderThinkingList() {
   const list = $('thinking-list');
   const current = currentThinkingLevel();
+  const supported = supportedThinkingLevelsForCurrentSession();
+  const currentModel = currentSessionModelInfo();
+  const modelName = currentModel?.name || currentModel?.id;
   list.textContent = '';
-  $('thinking-note').textContent = current
-    ? `This session uses ${current}.`
-    : 'This session follows the pi runtime default.';
+  const unsupportedCurrent = current && supported && !supported.includes(current);
+  $('thinking-note').textContent = unsupportedCurrent
+    ? `Configured effort ${current} is unavailable for this model. Choose a supported level.`
+    : current
+      ? `This session uses ${current}.`
+      : 'This session follows the pi runtime default.';
 
   for (const level of THINKING_LEVELS) {
-    const item = el('button', `thinking-item${level === current ? ' current' : ''}`);
+    const isSupported = !supported || supported.includes(level);
+    const isCurrent = isSupported && level === current;
+    const item = el(
+      'button',
+      `thinking-item${isCurrent ? ' current' : ''}${!isSupported ? ' blocked' : ''}`,
+    );
     item.type = 'button';
     item.dataset.level = level;
 
+    if (!isSupported) {
+      item.disabled = true;
+      item.setAttribute('aria-disabled', 'true');
+      item.title = modelName
+        ? `${level} is not supported by ${modelName}`
+        : `${level} is not supported by this model`;
+    }
+
     const copy = el('span', 'thinking-copy');
     copy.append(el('span', 'thinking-name', level));
-    copy.append(el('span', 'thinking-description', THINKING_DESCRIPTIONS[level]));
+    const desc = isSupported
+      ? THINKING_DESCRIPTIONS[level]
+      : (modelName ? `Not supported by ${modelName}` : 'Not supported by this model');
+    copy.append(el('span', `thinking-description${!isSupported ? ' blocked-desc' : ''}`, desc));
     item.append(copy);
 
-    item.addEventListener('click', async () => {
-      const jid = state.activeJid;
-      closeThinkingSheet();
-      const sent = await runQuickCommand('pi thinking', { level });
-      if (!sent) return;
-      if (jid === LIFE_JID && state.activeJid === jid && state.lifeSession) {
-        state.lifeSession.thinking = level;
-        renderThinkingButton();
-        return;
-      }
-      await awaitThinkingOverride(jid, level);
-    });
+    if (!isSupported) {
+      const badge = el('span', 'thinking-item-pill blocked', 'Unavailable');
+      item.append(badge);
+    }
+
+    if (isSupported) {
+      item.addEventListener('click', async () => {
+        const jid = state.activeJid;
+        closeThinkingSheet();
+        const sent = await runQuickCommand('pi thinking', { level });
+        if (!sent) return;
+        if (jid === LIFE_JID && state.activeJid === jid && state.lifeSession) {
+          state.lifeSession.thinking = level;
+          renderThinkingButton();
+          return;
+        }
+        await awaitThinkingOverride(jid, level);
+      });
+    }
     list.append(item);
   }
 }

@@ -3,14 +3,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { closeRpcSessionMock, rotateMock } = vi.hoisted(() => ({
+const { closeRpcSessionMock, closeClaudeMock, rotateMock } = vi.hoisted(() => ({
   closeRpcSessionMock: vi.fn(() => true),
+  closeClaudeMock: vi.fn(() => false),
   rotateMock: vi.fn(() => '/archived/path'),
 }));
 
 vi.mock('../src/agent/rpc-session.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/agent/rpc-session.js')>()),
   closeRpcSession: closeRpcSessionMock,
+}));
+
+vi.mock('../src/agent/claude-tmux.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/agent/claude-tmux.js')>()),
+  closeClaudeTmuxSession: closeClaudeMock,
 }));
 
 vi.mock('../src/session/path.js', async (importOriginal) => ({
@@ -130,7 +136,25 @@ describe('/pi new with a warm RPC session', () => {
 
     expect(result.ok).toBe(false);
     expect(rotateMock).not.toHaveBeenCalled();
+    expect(closeClaudeMock).not.toHaveBeenCalled();
     db.finishChannelOperation(operationId!);
+  });
+
+  it('closes Claude before rotating the directory on an idle owned session', async () => {
+    const order: string[] = [];
+    closeRpcSessionMock.mockResolvedValue(false);
+    closeClaudeMock.mockImplementation(() => {
+      order.push('claude');
+      return true;
+    });
+    rotateMock.mockImplementation(() => {
+      order.push('rotate');
+      return '/archived/path';
+    });
+    const { runCommand } = await loadCommands();
+    expect((await runCommand(channel(), 'pi new', {})).ok).toBe(true);
+    expect(closeClaudeMock).toHaveBeenCalledWith('ch_new');
+    expect(order).toEqual(['claude', 'rotate']);
   });
 
   it('still succeeds when there is no RPC session to close', async () => {

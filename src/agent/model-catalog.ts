@@ -3,6 +3,8 @@ import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
 import { getModelSupportedThinkingLevels } from './pi-ai-compat.js';
 import { cachedAgyModels, listAgyModels } from './agy.js';
+import { config } from '../config.js';
+import { listClaudeTmuxModels } from './claude-tmux.js';
 
 const CACHE_TTL_MS = 30_000;
 
@@ -68,7 +70,9 @@ export function listAvailableModels(options?: { forceRefresh?: boolean }): Avail
     // Not primed yet (or priming failed): kick it off and serve whatever we
     // have instead of throwing, so message processing is never blocked on it.
     void primeModelRegistry().catch(() => undefined);
-    return cache?.models ?? cachedAgyModels();
+    const fallback =
+      cache?.models ?? cachedAgyModels().concat(listClaudeTmuxModels(config.claudeTmuxEnabled));
+    return fallback.slice().sort((a, b) => a.ref.localeCompare(b.ref));
   }
 
   // agy is a separate CLI, so its catalog is fetched out of band and merged
@@ -79,7 +83,7 @@ export function listAvailableModels(options?: { forceRefresh?: boolean }): Avail
   const models = registry
     .getAvailable()
     .map(toAvailableModelInfo)
-    .concat(cachedAgyModels())
+    .concat(cachedAgyModels(), listClaudeTmuxModels(config.claudeTmuxEnabled))
     .sort((a, b) => a.ref.localeCompare(b.ref));
 
   cache = { loadedAt: now, models };
@@ -221,7 +225,9 @@ export function toModelChoiceName(model: AvailableModelInfo): string {
 }
 
 function toAvailableModelInfo(model: Model<any>): AvailableModelInfo {
-  const supportedThinkingLevels = getModelSupportedThinkingLevels(model).filter(isThinkingLevel);
+  const supportedThinkingLevels = model.reasoning
+    ? getModelSupportedThinkingLevels(model).filter(isThinkingLevel)
+    : (['off'] as ThinkingLevel[]);
   return {
     ref: `${model.provider}/${model.id}`,
     provider: model.provider,

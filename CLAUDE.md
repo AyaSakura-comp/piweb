@@ -1211,6 +1211,16 @@ Consequences that surprise people:
 - **`--until-done` has no agy equivalent**; the sentinel is unwrapped into a plain
   autonomous instruction instead of leaking into the prompt.
 
+## 7c. Claude Code tmux bridge
+
+`src/agent/claude-tmux.ts` implements the opt-in `claude-code/*` host-worker
+adapter. Read [`docs/claude-tmux-bridge.md`](docs/claude-tmux-bridge.md) for the
+security boundary, configuration, memory separation, reset/stop behavior and
+exact unit, mobile E2E and opt-in live smoke commands. Never replace transcript
+extraction with answer scraping. Bracketed paste needs a literal typed request
+outside Claude's pasted-content wrapper. Reset must check ownership and active
+operations before closing the pane. Keep this feature disabled by default.
+
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 
 - **`/pi new`** rotates the pi session directory to `<folder>__archived_<ts>` and

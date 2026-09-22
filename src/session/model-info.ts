@@ -121,6 +121,14 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       return { label: 'LOCAL', kind: 'local' };
     case 'gemini':
       return { label: 'GEM', kind: 'gem' };
+    case 'claude-code': {
+      const id = modelId.toLowerCase();
+      if (id.includes('opus')) return { label: 'OPUS', kind: 'claude' };
+      if (id.includes('sonnet')) return { label: 'SONNET', kind: 'claude' };
+      if (id.includes('haiku')) return { label: 'HAIKU', kind: 'claude' };
+      if (id.includes('fable')) return { label: 'FABLE', kind: 'claude' };
+      return { label: 'CLAUDE', kind: 'claude' };
+    }
     case 'xai':
       return { label: 'XAI', kind: 'xai' };
     case 'openrouter':
