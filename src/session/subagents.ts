@@ -24,6 +24,8 @@ export interface ChildSummary {
   model: string;
   state: string;
   eventCount?: number;
+  updatedAt?: number;
+  running?: boolean;
 }
 export interface ChildProjection {
   scope: string;
@@ -267,6 +269,7 @@ interface Parent {
   file?: string;
   id?: string;
   scope: string;
+  activeFiles?: string[];
 }
 async function parentIdentity(root: FileHandle, owner: string, cwd?: string): Promise<Parent> {
   let published: { id?: string; file?: string } | undefined;
@@ -286,7 +289,15 @@ async function parentIdentity(root: FileHandle, owner: string, cwd?: string): Pr
           /^[^/\\]+\.jsonl$/.test(m.file) &&
           typeof m.id === 'string'
         )
-          return { file: m.file, id: m.id, scope: digest(owner + ':' + m.file + ':' + m.id) };
+          return {
+            file: m.file,
+            id: m.id,
+            scope: digest(owner + ':' + m.file + ':' + m.id),
+            activeFiles:
+              m.activity?.expires > Date.now() && Array.isArray(m.activity.files)
+                ? m.activity.files.slice(0, 128).filter((f: unknown) => typeof f === 'string')
+                : [],
+          };
         if (!m.id) return { scope: digest(owner + ':starting:' + m.runtime) };
       }
     } finally {
@@ -485,7 +496,13 @@ async function readProjection(
                 return rest;
               });
               const p = project(preview);
-              summary = { name: p.name, task: p.task, model: p.model, state: p.state };
+              summary = {
+                name: p.name,
+                task: p.task,
+                model: p.model,
+                state: p.state,
+                updatedAt: st.mtimeMs,
+              };
               if (summaries.size >= 10000) summaries.delete(summaries.keys().next().value!);
               summaries.set(cacheKey, summary);
             }
@@ -523,11 +540,23 @@ async function readProjection(
         }
       }
     }
-    children.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
     if (!inventory) {
       if (inventories.size >= 32) inventories.delete(inventories.keys().next().value!);
-      inventories.set(inventoryKey, { expires: Date.now() + 1000, children, paths });
+      inventories.set(inventoryKey, { expires: Date.now() + 1000, children: [...children], paths });
     }
+    // Apply fresh owner activity AFTER inventory caching, never cache a spinner.
+    const activeFiles = new Set(parent.activeFiles || []);
+    for (let i = 0; i < children.length; i++)
+      children[i] = {
+        ...children[i],
+        running: activeFiles.has(paths.get(children[i].id)?.relative.slice(1) || ''),
+      };
+    children.sort(
+      (a, b) =>
+        Number(!!b.running) - Number(!!a.running) ||
+        (b.updatedAt || 0) - (a.updatedAt || 0) ||
+        a.id.localeCompare(b.id),
+    );
     if (query.child && parent.file) {
       const entry = paths.get(query.child);
       if (entry) {

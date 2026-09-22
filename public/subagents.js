@@ -67,6 +67,7 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     return name.charAt(0).toUpperCase() + name.slice(1);
   }
   function stateLabel(child) {
+    if (child.running === true) return 'Running';
     if (/complete/i.test(child.state)) return 'Response ready';
     if (/interrupt|error|unreadable/i.test(child.state)) return 'Needs attention';
     return 'Recorded activity';
@@ -197,6 +198,17 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
             cards.delete(id);
           }
         list.querySelector('.subagents-empty')?.remove();
+        const focusedCard = [...cards.values()].find(
+          (c) => c.button === document.activeElement,
+        )?.button;
+        const anchor =
+          body.scrollTop > 0
+            ? focusedCard ||
+              [...list.children].find(
+                (e) => e.getBoundingClientRect().bottom > body.getBoundingClientRect().top + 8,
+              )
+            : undefined;
+        const anchorTop = anchor?.getBoundingClientRect().top;
         data.children.forEach((child, index) => {
           let card = cards.get(child.id);
           if (!card) {
@@ -229,15 +241,22 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
           );
           card.model.textContent = (child.model || 'Model pending').split('/').at(-1);
           card.status.textContent = stateLabel(child);
-          card.status.dataset.tone = /complete/i.test(child.state)
-            ? 'ready'
-            : /interrupt|error|unreadable/i.test(child.state)
-              ? 'attention'
-              : 'neutral';
+          card.status.dataset.tone =
+            child.running === true
+              ? 'running'
+              : /complete/i.test(child.state)
+                ? 'ready'
+                : /interrupt|error|unreadable/i.test(child.state)
+                  ? 'attention'
+                  : 'neutral';
           // Do not replace or move unchanged buttons on polling: retain focus.
           if (list.children[index] !== card.button)
             list.insertBefore(card.button, list.children[index] || null);
         });
+        if (focusedCard?.isConnected && document.activeElement !== focusedCard)
+          focusedCard.focus({ preventScroll: true });
+        if (anchor?.isConnected && anchorTop !== undefined)
+          body.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
         if (!data.children.length) {
           const empty = make('div', 'subagents-empty');
           empty.append(

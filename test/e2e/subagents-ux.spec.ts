@@ -28,8 +28,10 @@ test('Subagents readable cards, stable polling, animated navigation and reduced 
       name: `subagent-luna-web-b1537602-ba63-4e83-a533-16d55bebcd76-${i + 1}`,
       model: 'openai-codex/gpt-5.6-luna',
       state: updated ? 'Response complete' : 'Activity unconfirmed',
+      running: i === 0 && !updated,
+      updatedAt: 1700000000000 + i,
       task: `Task: ${i === 0 ? '檢查登入流程與錯誤處理，整理測試結果' : 'Review independent module ' + (i + 1)}. ${'Long task detail '.repeat(15)}`,
-    }));
+    })).sort((a, b) => (updated ? b.updatedAt - a.updatedAt : 0));
   await page.route('**/api/**', async (route) => {
     const u = new URL(route.request().url());
     if (holdList && u.pathname.endsWith('/subagents') && !u.searchParams.has('child')) {
@@ -72,22 +74,35 @@ test('Subagents readable cards, stable polling, animated navigation and reduced 
   await expect(dialog.locator('.subagents-count')).toHaveText('12');
   const rows = dialog.locator('.subagent-row');
   await expect(rows).toHaveCount(12);
+  await expect(rows.first().locator('.subagent-state')).toHaveText('Running');
+  await expect(rows.first().locator('.subagent-state')).toHaveAttribute('data-tone', 'running');
+  expect(
+    await rows
+      .first()
+      .locator('.subagent-state')
+      .evaluate((e) => getComputedStyle(e, '::before').animationName),
+  ).toBe('subagent-spin');
   await expect(rows.first().locator('.subagent-name')).toHaveText('Luna web');
   await expect(rows.first().locator('.subagent-model')).toHaveText('gpt-5.6-luna');
   await expect(rows.first()).not.toContainText('b1537602');
   await expect(dialog).toHaveAttribute('data-view', 'list');
   await expect.poll(() => dialog.evaluate((e) => e.getAnimations().length)).toBe(0);
   await page.screenshot({ path: info.outputPath('01-cards.png') });
-  const target = rows.nth(7);
+  const target = rows.filter({ hasText: 'Review independent module 8.' });
   await target.scrollIntoViewIfNeeded();
   await target.focus();
-  const scroll = await dialog.locator('.subagents-body').evaluate((e) => e.scrollTop);
+  const targetTop = await target.evaluate((e) => e.getBoundingClientRect().top);
   updated = true;
   await expect(target.locator('.subagent-state')).toHaveText('Response ready');
+  await expect(dialog.locator('[data-tone="running"]')).toHaveCount(0);
   await expect(target).toBeFocused();
+  await expect(rows.first()).toContainText('Review independent module 12.');
   await expect
-    .poll(() => dialog.locator('.subagents-body').evaluate((e) => e.scrollTop))
-    .toBe(scroll);
+    .poll(async () =>
+      Math.abs((await target.evaluate((e) => e.getBoundingClientRect().top)) - targetTop),
+    )
+    .toBeLessThan(1);
+  const scroll = await dialog.locator('.subagents-body').evaluate((e) => e.scrollTop);
   await target.click();
   await expect(dialog).toHaveAttribute('data-view', 'detail');
   await expect(dialog.locator('.subagents-header h2')).toHaveText('Luna web');

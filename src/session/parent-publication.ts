@@ -3,12 +3,21 @@
 import { readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { readChildActivity } from './subagent-activity.js';
 
 export function publishParent(directory: string, owner: string, cwd: string) {
   const target = join(directory, '.piweb-current-parent.json');
   const runtime = randomUUID();
   let selected: { id?: string; file?: string } = {};
   let closed = false;
+  let scanning = false;
+  let activity: { files: string[]; expires: number } = { files: [], expires: 0 };
+  const runRoot = join(
+    tmpdir(),
+    `pi-subagents-uid-${process.getuid?.() ?? 'unknown'}`,
+    'async-subagent-runs',
+  );
   const owns = () => {
     try {
       return JSON.parse(readFileSync(target, 'utf8')).runtime === runtime;
@@ -20,7 +29,8 @@ export function publishParent(directory: string, owner: string, cwd: string) {
     const temporary = target + '.' + runtime;
     writeFileSync(
       temporary,
-      JSON.stringify({ owner, cwd, runtime, ...selected, expires: Date.now() + 5000 }) + '\n',
+      JSON.stringify({ owner, cwd, runtime, ...selected, activity, expires: Date.now() + 5000 }) +
+        '\n',
       { mode: 0o600 },
     );
     renameSync(temporary, target);
@@ -31,6 +41,21 @@ export function publishParent(directory: string, owner: string, cwd: string) {
       clearInterval(timer);
       closed = true;
       return;
+    }
+    if (selected.file && !scanning) {
+      scanning = true;
+      const file = selected.file;
+      void readChildActivity(runRoot, join(directory, file))
+        .then((files) => {
+          if (!closed && owns() && selected.file === file)
+            activity = { files, expires: Date.now() + 4000 };
+        })
+        .catch(() => {
+          activity = { files: [], expires: 0 };
+        })
+        .finally(() => {
+          scanning = false;
+        });
     }
     try {
       write();
@@ -43,6 +68,7 @@ export function publishParent(directory: string, owner: string, cwd: string) {
   return {
     select(value: { id: string; file?: string }) {
       if (closed || !owns()) return;
+      if (selected.file !== value.file) activity = { files: [], expires: 0 };
       selected = value;
       write();
     },

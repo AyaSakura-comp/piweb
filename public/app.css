@@ -4336,6 +4336,9 @@ dialog.sheet::backdrop {
 .subagent-state { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); margin-left: auto; }
 .subagent-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
 .subagent-state[data-tone='ready']::before { background: var(--tool); }
+.subagent-state[data-tone='running'] { color: var(--text-bright); }
+.subagent-state[data-tone='running']::before { width: 12px; height: 12px; background: transparent; border: 2px solid var(--border); border-top-color: var(--accent-light); animation: subagent-spin .8s linear infinite; }
+@keyframes subagent-spin { to { transform: rotate(360deg); } }
 .subagent-state[data-tone='attention']::before { background: var(--danger); }
 .subagents-empty { text-align: center; padding: clamp(40px, 12vh, 120px) 20px; color: var(--text-2); }
 .subagents-empty-icon { display: grid; place-items: center; margin: 0 auto 20px; width: 56px; height: 56px; border: 1px solid var(--border); border-radius: 18px; font-size: 32px; color: var(--accent-light); background: var(--bg-alt); }
@@ -4345,4 +4348,4 @@ dialog.sheet::backdrop {
 .subagents-dialog[data-view='detail'] .subagents-body { padding-top: 20px; }
 @media (hover: hover) { .subagents-dialog button:hover { background: var(--bg-hover); } .subagents-dialog .subagent-row:hover { border-color: var(--text-dim); } }
 @media (max-width: 767px) { .subagents-dialog { width: 100%; border-radius: 0; height: 100dvh; border: 0; } }
-@media (prefers-reduced-motion: reduce) { .subagents-dialog button { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .subagents-dialog button { transition: none; } .subagent-state[data-tone='running']::before { animation: none; } }

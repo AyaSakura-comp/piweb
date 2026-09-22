@@ -25,6 +25,17 @@ Open/close and list/detail transitions last 140–220ms and respect
 `prefers-reduced-motion`. Polling retains DOM nodes/focus; Back restores the
 list position once, without overriding subsequent keyboard navigation.
 
+Confirmed running native async children appear first, then each group sorts by
+transcript modification time (newest first). A `Running` spinner requires an
+owner-matching host status snapshot, running step/run and live runner PID;
+transcript age alone never starts it. The host publishes only bounded relative
+child names into its expiring parent marker; Docker does not read global `/tmp`.
+Discovery prefers the extension's `.active-runs` index so retained old jobs do
+not consume its budget. Unknown/expired status, cold parents and foreground
+runs without that async status proof retain recorded-response labels without
+spinners. Reduced-motion users get a static ring. A fresh host worker is needed
+for activity publication; changing Web CSS alone cannot enable it.
+
 Limitations:
 
 - Queued/pre-first-response/failed-before-persistence children have no native
@@ -159,6 +170,31 @@ host worker's exact effective value to `.env`. Do not widen cwd filtering or
 mount unrelated host directories to work around this. Presence is enforced;
 operators must verify equality when changing the worker's cwd. The source
 contract is protected by `test/subagents-deployment.test.ts`.
+
+## Background completion lifecycle regression
+
+`test/e2e/subagents-completion-live.spec.ts` verifies more than child browsing:
+parent acknowledges and settles, three real Luna children execute sequentially,
+and the parent autonomously returns a fixture codeword after their completion.
+It checks child models, actual read/sleep tools, three distinct batch keys,
+sequential completion timestamps, one non-partial main answer, and persisted
+reply after reload. It does not accept text from the user's prompt as proof.
+
+Opt-in environment: `PIWEB_COMPLETION_URL`, `PIWEB_COMPLETION_TOKEN`,
+`PIWEB_COMPLETION_FIXTURE`, `PIWEB_COMPLETION_EXPECTED`. Credentials remain
+outside test files/traces. In an isolated worker, set `RPC_IDLE_TIMEOUT_MS=2000`
+and run three children with a 10-second tool delay each, proving that a settled
+parent stays alive well beyond its idle deadline and is retired only after the
+completion response. Production tests use the normal production idle policy.
+
+```sh
+npx playwright test test/e2e/subagents-completion-live.spec.ts
+```
+
+A built or committed worker is not a running deployment: confirm the service's
+actual PID is replaced after a safe drain. Restarting an old worker can stop
+in-process workflow controllers even when children were described as detached.
+Do not replay finance/other mutating batches automatically after interruption.
 
 ## Deployment
 
