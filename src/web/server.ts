@@ -986,7 +986,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (
       channel.kind === 'life' &&
       method === 'GET' &&
-      ['events', 'media', 'search', 'stream', 'subagents'].includes(sub ?? '')
+      ['events', 'media', 'search', 'stream', 'subagents', 'commands-running'].includes(sub ?? '')
     ) {
       expectedLifeGeneration = requireLifeGeneration(res, url.searchParams.get('generation'));
       if (!expectedLifeGeneration) return;
@@ -1038,6 +1038,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           ...(channel.kind === 'life' ? { generation: channel.folder } : {}),
           deleted: isChannelDeleted(jid),
         },
+      });
+      return;
+    }
+
+    if (sub === 'commands-running' && method === 'GET') {
+      const rows = getRecentWebEvents(jid, 1000);
+      const commands = new Map<string, any>();
+      for (const row of rows) {
+        if (row.kind !== 'system' || row.role !== 'agy-command') continue;
+        try {
+          const command = JSON.parse(row.content);
+          if (typeof command.id !== 'string') continue;
+          commands.set(command.id, command);
+        } catch { /* Ignore malformed historic records. */ }
+      }
+      const busy = isChannelBusy(jid);
+      sendJson(res, 200, {
+        commands: [...commands.values()].reverse().map((command) => ({
+          ...command,
+          state: command.state === 'running' && (!busy || Date.now() - command.updatedAt > 120000)
+            ? 'unknown' : command.state,
+        })),
+        limited: rows.length === 1000,
       });
       return;
     }

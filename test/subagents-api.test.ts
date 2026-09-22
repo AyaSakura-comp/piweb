@@ -112,7 +112,19 @@ it('authenticates all child reads, binds exact parent, and requires Life generat
   expect((await request(endpoint + '?scope=' + list.scope + '&child=../../private')).status).toBe(
     404,
   );
+  const commandEndpoint = '/api/sessions/' + encodeURIComponent(parent.jid) + '/commands-running';
+  expect((await fetch(origin + commandEndpoint)).status).toBe(401);
+  db.appendWebEvent({channelJid: parent.jid, kind:'system', role:'agy-command', content:JSON.stringify({id:'turn:1', command:'npm test', state:'running', updatedAt:Date.now()})});
+  expect((await (await request(commandEndpoint)).json()).commands[0].state).toBe('unknown');
+  db.appendWebEvent({channelJid: parent.jid, kind:'system', role:'agy-command', content:JSON.stringify({id:'turn:1', command:'npm test', state:'cancelled', updatedAt:Date.now()})});
+  const commandList = await (await request(commandEndpoint)).json();
+  expect(commandList.commands).toHaveLength(1);
+  expect(commandList.commands[0].state).toBe('cancelled');
+  expect((await (await request('/api/sessions/' + encodeURIComponent(other.jid) + '/commands-running')).json()).commands).toEqual([]);
   const life = (await (await request('/api/life-session', 'POST', {})).json()) as any;
+  expect((await request('/api/sessions/web%3Alife/commands-running')).status).toBe(400);
+  expect((await request('/api/sessions/web%3Alife/commands-running?generation=stale')).status).toBe(400);
+  expect((await request('/api/sessions/web%3Alife/commands-running?generation=' + life.generation)).status).toBe(200);
   expect((await request('/api/sessions/web%3Alife/subagents')).status).toBe(400);
   expect(
     (await request('/api/sessions/web%3Alife/subagents?generation=' + life.generation)).status,

@@ -1,6 +1,9 @@
 # Proposal: Gemini models via the Antigravity (`agy`) CLI
 
-**Status:** prototype, verified end to end on branch `gemini`.
+**Status:** CLI bridge with AGY observability additions under development.
+Earlier bridge verification was performed on branch `gemini`; it does not
+establish deployment or reliability of the newer command manager and child watcher.
+See [current observability status](agy-observability-status.md).
 
 ## The proposal
 
@@ -17,24 +20,29 @@ So the bridge does the minimum that makes agy look like a Piweb model, and
    existing model picker, `/model` command, per-session override, badge, and
    thinking picker all work with no UI change.
 2. A turn on an `agy/*` model spawns
-   `agy --output-format stream-json --print <prompt>` and translates its event
-   stream into the pi-shaped events the transports already render.
+   `agy --input-format stream-json --output-format stream-json` and submits
+   `{ "event": "user", "message": { "content": "…" } }` on stdin. It translates
+   output into the pi-shaped events the transports already render, retaining
+   the same CLI for bounded status reconciliation of unfinished commands.
 
-Nothing in Piweb drives a model, chooses a tool, or stores agy history.
+PiWeb does not drive the AGY model or choose its tools. AGY owns conversation
+history; PiWeb stores observed command events and channel-owned child transcript
+snapshots for read-only display.
 
 ## Why a CLI bridge instead of a pi provider
 
-| | CLI bridge | pi provider |
-|---|---|---|
-| Tools | agy's own (browser, subagents, image gen, web search) | pi's, reimplemented against the Gemini API |
-| Auth / quota | agy's existing Google login | new credential path |
-| Conversation state | agy's store, resumed by id | pi session files |
-| Piweb code | one module + one routing branch | provider, auth, tool plumbing |
+|                    | CLI bridge                                            | pi provider                                |
+| ------------------ | ----------------------------------------------------- | ------------------------------------------ |
+| Tools              | agy's own (browser, subagents, image gen, web search) | pi's, reimplemented against the Gemini API |
+| Auth / quota       | agy's existing Google login                           | new credential path                        |
+| Conversation state | agy's store, resumed by id                            | pi session files                           |
+| Piweb code         | one module + one routing branch                       | provider, auth, tool plumbing              |
 
 The tradeoff is that an agy turn does not share pi's session file, so `/pi
 status` token accounting and `--until-done` do not apply to it. That is inherent
 to delegating the whole turn, and is the price of getting agy's toolchain for
-free.
+free. Piweb mirrors only AGY child transcripts explicitly disclosed by a
+structured `subagent` event; it does not scan AGY's global conversation store.
 
 ## How it works
 
@@ -45,21 +53,25 @@ queue.ts ── model ref is agy/* ? ──▶ invokeAgy()  ──spawn──▶
                  └── otherwise ──▶ RPC session / invokeAgent (pi, unchanged)
 ```
 
-`src/agent/agy.ts` is the whole bridge:
+`src/agent/agy.ts` handles CLI invocation and event translation;
+`agy-subagents.ts` projects child transcripts and `agy-commands.ts` tracks
+command evidence. The command-manager API, persistence and UI are documented
+in [AGY command manager](agy-command-manager.md).
 
-| concern | how |
-|---|---|
-| catalog | `listAgyModels()` runs `agy models`, cached 5 min; merged into `listAvailableModels()` |
-| routing | `isAgyModelRef(ref)` — a single branch in `queue.ts`, placed **before** the RPC branch because agy has no RPC/steer mode |
-| conversation | agy's `conversation_id` from the `init` event, stored per channel in `<session dir>/agy-conversation.json`, replayed as `--conversation <id>` |
-| thinking | Piweb's six levels fold onto agy's `--effort low\|medium\|high`; `supportsXhigh: false` makes `resolveThinkingForModel` downgrade xhigh to high |
-| tools | `step_type: "tool"` → `toolcall_end` (ACTIVE) and a `role=tool` `message_end` (DONE), so tool calls and outputs render exactly like pi's |
-| text | `agent_response` deltas accumulate; the `result` event's `response` is authoritative |
-| attachments | staged by `downloadAttachments` and handed over by absolute path — agy has its own file tools, so nothing is inlined into the prompt |
-| errors | `formatAgyError()` turns the common 429 into "quota exhausted — resets in 4h5m58s" |
-| abort | the signal SIGTERMs agy and returns `aborted`, matching the pi path |
-| outbound media | agy emits markdown (`![c](/abs/chart.png)`); `convertLocalMediaLinks()` rewrites links that resolve to a real local file into pi's `[[file: …]]` marker so the existing attachment pipeline delivers them |
-| `/until goal` | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt |
+| concern        | how                                                                                                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| catalog        | `listAgyModels()` runs `agy models`, cached 5 min; merged into `listAvailableModels()`                                                                                                                                        |
+| routing        | `isAgyModelRef(ref)` — a single branch in `queue.ts`, placed **before** the RPC branch because agy has no RPC/steer mode                                                                                                      |
+| conversation   | agy's `conversation_id` from the `init` event, stored per channel in `<session dir>/agy-conversation.json`, replayed as `--conversation <id>`                                                                                 |
+| thinking       | Piweb's six levels fold onto agy's `--effort low\|medium\|high`; `supportsXhigh: false` makes `resolveThinkingForModel` downgrade xhigh to high                                                                               |
+| tools          | `step_type: "tool"` → `toolcall_end` (ACTIVE) and a `role=tool` `message_end` (DONE), so tool calls and outputs render exactly like pi's                                                                                      |
+| subagents      | `step_type: "subagent"` becomes visible tool activity; completed launch metadata and its validated `log_uri` transcript are copied into the channel generation and appear under **⋯ → Subagents** as read-only `AGY` children |
+| text           | `agent_response` deltas accumulate; the `result` event's `response` is authoritative                                                                                                                                          |
+| attachments    | staged by `downloadAttachments` and handed over by absolute path — agy has its own file tools, so nothing is inlined into the prompt                                                                                          |
+| errors         | `formatAgyError()` turns the common 429 into "quota exhausted — resets in 4h5m58s"                                                                                                                                            |
+| abort          | the signal SIGTERMs agy and returns `aborted`, matching the pi path                                                                                                                                                           |
+| outbound media | agy emits markdown (`![c](/abs/chart.png)`); `convertLocalMediaLinks()` rewrites links that resolve to a real local file into pi's `[[file: …]]` marker so the existing attachment pipeline delivers them                     |
+| `/until goal`  | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt                                           |
 
 ### Three things that will bite anyone editing this
 
@@ -82,13 +94,13 @@ queue.ts ── model ref is agy/* ? ──▶ invokeAgy()  ──spawn──▶
 
 ## Configuration
 
-| variable | default | meaning |
-|---|---|---|
-| `AGY_ENABLED` | `true` | offer agy models at all |
-| `AGY_BIN` | `agy` | binary path |
-| `AGY_MODELS_TIMEOUT_MS` | `20000` | catalog probe timeout |
-| `AGY_PRINT_TIMEOUT` | `15m` | passed as `--print-timeout` (agy's own default is 5m) |
-| `AGY_SKIP_PERMISSIONS` | `true` | `--dangerously-skip-permissions`; see above |
+| variable                | default | meaning                                               |
+| ----------------------- | ------- | ----------------------------------------------------- |
+| `AGY_ENABLED`           | `true`  | offer agy models at all                               |
+| `AGY_BIN`               | `agy`   | binary path                                           |
+| `AGY_MODELS_TIMEOUT_MS` | `20000` | catalog probe timeout                                 |
+| `AGY_PRINT_TIMEOUT`     | `15m`   | passed as `--print-timeout` (agy's own default is 5m) |
+| `AGY_SKIP_PERMISSIONS`  | `true`  | `--dangerously-skip-permissions`; see above           |
 
 With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 `agy/*` refs are offered, and nothing else changes.
@@ -98,6 +110,8 @@ With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 Unit (`npm test`):
 
 - `test/agy-bridge.test.ts` — ref detection, catalog parsing, event translation, quota/error formatting (including SIGTERM/code 143 and elapsed time checking), conversation-id round trip and corrupt-store handling.
+- `test/agy-subagents.test.ts` — transcript projection and delayed refresh, with passing acknowledgement/abort/ownership/deletion/replacement regressions.
+- `test/agy-commands.test.ts` — command state, task-ID correlation, output receipt, continuation and unknown-on-exit behavior.
 - `test/queue-agy-routing.test.ts` — an `agy/*` model reaches `invokeAgy` and
   **not** `invokeAgent`; every other model stays on the pi path; `RPC_STEER=true`
   does not divert an agy turn.
@@ -105,30 +119,43 @@ Unit (`npm test`):
 End to end Playwright:
 
 - `test/e2e/agy-interaction.spec.ts` — mobile E2E test verifying model picker selection, `/agy-usage` command synchronization, SSE streaming (thinking block, tool call, tool result, assistant message), interactive details expansion, and clean SIGTERM/cancellation error rendering.
+- `test/e2e/agy-subagents-live.spec.ts` — opt-in deployed walkthrough using a real AGY model and `invoke_subagent`; requires `PIWEB_AGY_LIVE_URL` and `PIWEB_AGY_LIVE_TOKEN`. It records visible launch activity, the AGY-labelled child list, assistant-only witness output, persisted API projection, geometry, and browser errors without recording authentication traces.
+- `test/e2e/agy-parent-continuation-live.spec.ts` — real sequential proof that a child returns through `send_message`, the parent subsequently performs its own `view_file` work, and PiWeb receives the final main-agent update. It asserts persisted event ordering as well as the recorded mobile UI.
+
+AGY marks `invoke_subagent` DONE when launch finishes, before the child itself
+necessarily answers. The watcher refreshes the channel-owned copy within the
+invoking turn, checking cancellation, queue ownership and directory identity.
+It no longer treats text-only acknowledgements as completion, and is stopped
+before that turn releases its lease. Docker reads only the copy.
+
+The command manager is a separate event-stream projection and does not use that
+watcher. Its real isolated E2E test covers command execution, output, subsequent
+parent tooling and a final main-chat reply. It does **not** verify detached
+completion after the CLI exits. See [verification scope](agy-observability-status.md).
 
 End to end against the real `agy` binary and real Gemini:
 
-| check | result |
-|---|---|
-| catalog merge | 14 agy entries (11 Gemini) inside an 87-model catalog |
-| resolution | bare `gemini-3.1-pro-high` and full `agy/gemini-3.7-flash-low` both resolve |
-| thinking fold | `xhigh` → `high`, `adjusted: true`, reason `xhigh_to_high` |
-| tool use | `echo AGY_BRIDGE_E2E` ran; `toolcall_end` + `tool` events emitted; output reported |
-| conversation persistence | id written to the channel's session dir |
-| **memory across turns** | codeword seeded in turn 1, returned verbatim in turn 2, same conversation id |
+| check                    | result                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| catalog merge            | 14 agy entries (11 Gemini) inside an 87-model catalog                              |
+| resolution               | bare `gemini-3.1-pro-high` and full `agy/gemini-3.7-flash-low` both resolve        |
+| thinking fold            | `xhigh` → `high`, `adjusted: true`, reason `xhigh_to_high`                         |
+| tool use                 | `echo AGY_BRIDGE_E2E` ran; `toolcall_end` + `tool` events emitted; output reported |
+| conversation persistence | id written to the channel's session dir                                            |
+| **memory across turns**  | codeword seeded in turn 1, returned verbatim in turn 2, same conversation id       |
 
 Deployed, through the real HTTPS UI at a 390x844 phone viewport:
 
-| check | result |
-|---|---|
-| picker | `agy/gemini-3.5-flash-low` listed, `AGY` badge, `reasoning` tag |
-| badge adjacency | AGY (grey) sits directly above LOCAL (green) and GEM (blue) and stays tellable apart |
-| selection | `/pi model` round-trips; topbar badge switches to AGY |
-| tool streaming | `run_command` call and its `PIWEB_E2E_OK` result render as tool / tool_result rows |
-| reply | markdown code block renders; no horizontal page scroll (390 == 390) |
-| **continuity** | second turn in the same session returned `SILVER_HERON` |
-| `/until goal` | goal ran autonomously, wrote the probe file, re-read it to verify, and summarised — no sentinel in the prompt |
-| media | asked agy for a matplotlib chart; the PNG arrived as a real 900x600 attachment rendered inline, not a broken `![…]` |
+| check           | result                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| picker          | `agy/gemini-3.5-flash-low` listed, `AGY` badge, `reasoning` tag                                                     |
+| badge adjacency | AGY (grey) sits directly above LOCAL (green) and GEM (blue) and stays tellable apart                                |
+| selection       | `/pi model` round-trips; topbar badge switches to AGY                                                               |
+| tool streaming  | `run_command` call and its `PIWEB_E2E_OK` result render as tool / tool_result rows                                  |
+| reply           | markdown code block renders; no horizontal page scroll (390 == 390)                                                 |
+| **continuity**  | second turn in the same session returned `SILVER_HERON`                                                             |
+| `/until goal`   | goal ran autonomously, wrote the probe file, re-read it to verify, and summarised — no sentinel in the prompt       |
+| media           | asked agy for a matplotlib chart; the PNG arrived as a real 900x600 attachment rendered inline, not a broken `![…]` |
 
 ## Follow-ups not done here
 
@@ -139,3 +166,8 @@ Deployed, through the real HTTPS UI at a 390x844 phone viewport:
 - **`/pi status`** reports pi's context and does not describe an agy session.
 - **Steering** (`RPC_STEER`) does not apply — a running agy turn can be aborted
   but not steered.
+- **Detached `schedule` callbacks cannot open a new Piweb reply after the
+  one-shot AGY CLI exits.** The bridge tells AGY to prefer `invoke_subagent`,
+  collect child results before ending, and never promise a later update it
+  cannot deliver. The Subagents view is persisted read-only visibility, not a
+  live control channel.

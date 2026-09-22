@@ -461,6 +461,7 @@ async function processMessage(
     if (useAgy) {
       result = await invokeAgy(channel.folder, prompt, {
         channelJid: channel.jid,
+        isCurrent: () => renewWorkerLease(true),
         model: effective.rawModelRef,
         thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
         cwd: effective.effectiveCwd,

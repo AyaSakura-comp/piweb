@@ -308,6 +308,11 @@ export const webTransport: Transport = {
       )
         return;
 
+      if (event.type === 'agy_command_update' && event.command?.id) {
+        writeEvent({ channelJid: jid, kind: 'system', role: 'agy-command', content: JSON.stringify(event.command) }, fence);
+        return;
+      }
+
       // Assistant text, token by token. Buffered and throttled by appendLive;
       // the finished message still arrives through sendResponse, which clears
       // the preview so the reply never appears twice.

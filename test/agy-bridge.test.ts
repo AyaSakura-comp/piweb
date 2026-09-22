@@ -14,6 +14,7 @@ vi.mock('../src/session/path.js', async (importOriginal) => ({
 
 const {
   agyModelId,
+  addAgyBridgeGuidance,
   formatAgyError,
   isAgyModelRef,
   modelIdEncodesEffort,
@@ -73,7 +74,8 @@ describe('parseAgyModels', () => {
     );
 
     expect(models).toHaveLength(2);
-    expect(models[0]).toEqual({
+    // Catalogs may add capability metadata; verify the bridge's required fields.
+    expect(models[0]).toMatchObject({
       ref: 'agy/gemini-3.1-pro-high',
       provider: 'agy',
       id: 'gemini-3.1-pro-high',
@@ -136,6 +138,83 @@ describe('translateAgyEvent', () => {
     });
   });
 
+  it('surfaces parallel agy subagents as visible tool activity', () => {
+    const active = translateAgyEvent({
+      event: 'step_update',
+      step_update: {
+        state: 'ACTIVE',
+        step_type: 'subagent',
+        tool_name: 'invoke_subagent',
+        subagent_info: {
+          subagents: [
+            { type_name: 'research', role: 'Tester', initial_prompt: 'Run mobile E2E' },
+            { type_name: 'research', role: 'Reviewer', initial_prompt: 'Review results' },
+          ],
+        },
+      },
+    });
+    expect(active.events).toEqual([
+      {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'toolcall_end',
+          toolCall: {
+            name: 'invoke_subagent',
+            arguments: {
+              Subagents: [
+                { Type: 'research', Role: 'Tester', Prompt: 'Run mobile E2E' },
+                { Type: 'research', Role: 'Reviewer', Prompt: 'Review results' },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const done = translateAgyEvent({
+      event: 'step_update',
+      step_update: {
+        state: 'DONE',
+        step_type: 'subagent',
+        tool_name: 'invoke_subagent',
+        subagent_info: {
+          subagents: [
+            {
+              type_name: 'research',
+              role: 'Tester',
+              initial_prompt: 'Run mobile E2E',
+              conversation_id: 'child-1',
+              log_uri: 'file:///tmp/child-1/transcript.jsonl',
+            },
+          ],
+        },
+      },
+    });
+    expect(done.events).toEqual([
+      {
+        type: 'message_end',
+        message: {
+          role: 'tool',
+          content: [
+            {
+              type: 'text',
+              text: 'Tester · research\nConversation: child-1\nTranscript connected to PiWeb Subagents.',
+            },
+          ],
+        },
+      },
+    ]);
+    expect(done.subagents).toEqual([
+      {
+        type: 'research',
+        role: 'Tester',
+        task: 'Run mobile E2E',
+        conversationId: 'child-1',
+        logUri: 'file:///tmp/child-1/transcript.jsonl',
+      },
+    ]);
+  });
+
   it('accumulates assistant text deltas without emitting events', () => {
     const out = translateAgyEvent({
       event: 'step_update',
@@ -187,9 +266,20 @@ describe('translateAgyEvent', () => {
   });
 
   it('ignores steps it has no mapping for, and junk input', () => {
-    expect(translateAgyEvent({ event: 'step_update', step_update: { step_type: 'checkpoint' } }).events).toEqual([]);
+    expect(
+      translateAgyEvent({ event: 'step_update', step_update: { step_type: 'checkpoint' } }).events,
+    ).toEqual([]);
     expect(translateAgyEvent(null).events).toEqual([]);
     expect(translateAgyEvent({ event: 'mystery' }).events).toEqual([]);
+  });
+});
+
+describe('agy bridge guidance', () => {
+  it('prevents detached schedules from promising an update PiWeb cannot receive', () => {
+    const prompt = addAgyBridgeGuidance('[Web user: web]\nRun the tests');
+    expect(prompt).toContain('[Web user: web]\nRun the tests');
+    expect(prompt).toContain('Prefer invoke_subagent');
+    expect(prompt).toContain('Do not promise a later update');
   });
 });
 

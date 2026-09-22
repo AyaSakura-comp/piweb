@@ -23,6 +23,7 @@ export interface ChildSummary {
   task: string;
   model: string;
   state: string;
+  source?: 'pi' | 'agy';
   eventCount?: number;
   updatedAt?: number;
   running?: boolean;
@@ -375,7 +376,7 @@ export async function readSubagents(
 interface Inventory {
   expires: number;
   children: ChildSummary[];
-  paths: Map<string, { relative: string; sessionId: string }>;
+  paths: Map<string, { relative: string; sessionId: string; source?: 'pi' | 'agy' }>;
 }
 const inventories = new Map<string, Inventory>();
 const histories = new Map<
@@ -440,7 +441,7 @@ async function readProjection(
     const children: ChildSummary[] = inventory ? [...inventory.children] : [];
     const paths = inventory
       ? inventory.paths
-      : new Map<string, { relative: string; sessionId: string }>();
+      : new Map<string, { relative: string; sessionId: string; source?: 'pi' | 'agy' }>();
     let selected: ChildEvent[] | undefined;
     async function scan(fd: FileHandle, prefix: string, depth: number) {
       if (depth > 16) throw new SubagentReadError('Child tree exceeds inspection depth limit', 413);
@@ -506,8 +507,9 @@ async function readProjection(
               if (summaries.size >= 10000) summaries.delete(summaries.keys().next().value!);
               summaries.set(cacheKey, summary);
             }
-            children.push({ id, ...summary });
-            paths.set(id, { relative, sessionId: h.id });
+            const source = h.source === 'agy' ? 'agy' : 'pi';
+            children.push({ id, ...summary, source });
+            paths.set(id, { relative, sessionId: h.id, source });
           } catch (e) {
             // A malformed sibling never prevents access to other children.
             if (e instanceof SubagentReadError) throw e;
@@ -525,18 +527,33 @@ async function readProjection(
         }
       }
     }
-    if (parent.file && !inventory) {
-      let fd: FileHandle | undefined;
+    if (!inventory) {
+      if (parent.file) {
+        let fd: FileHandle | undefined;
+        try {
+          fd = await open(fdPath(root, parent.file.slice(0, -6)), directoryFlags);
+        } catch (e) {
+          if (!missing(e)) throw e;
+        }
+        if (fd) {
+          try {
+            await scan(fd, '', 0);
+          } finally {
+            await fd.close();
+          }
+        }
+      }
+      let agy: FileHandle | undefined;
       try {
-        fd = await open(fdPath(root, parent.file.slice(0, -6)), directoryFlags);
+        agy = await open(fdPath(root, '.agy-subagents'), directoryFlags);
       } catch (e) {
         if (!missing(e)) throw e;
       }
-      if (fd) {
+      if (agy) {
         try {
-          await scan(fd, '', 0);
+          await scan(agy, '/.agy-subagents', 0);
         } finally {
-          await fd.close();
+          await agy.close();
         }
       }
     }
@@ -557,11 +574,14 @@ async function readProjection(
         (b.updatedAt || 0) - (a.updatedAt || 0) ||
         a.id.localeCompare(b.id),
     );
-    if (query.child && parent.file) {
+    if (query.child) {
       const entry = paths.get(query.child);
-      if (entry) {
+      if (entry && (entry.source === 'agy' || parent.file)) {
         // Reopen every ancestor descriptor-relative, including on a cache hit.
-        const parts = [parent.file.slice(0, -6), ...entry.relative.split('/').filter(Boolean)];
+        const parts =
+          entry.source === 'agy'
+            ? entry.relative.split('/').filter(Boolean)
+            : [parent.file!.slice(0, -6), ...entry.relative.split('/').filter(Boolean)];
         let fd = await open(fdPath(root, parts.shift()!), directoryFlags);
         try {
           for (const part of parts.slice(0, -1)) {

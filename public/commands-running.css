@@ -1,0 +1,59 @@
+/* Reuse the Subagents shell; this viewer is edge-to-edge, never a floating sheet. */
+.subagents-dialog.commands-running {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: 100%;
+  max-height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.commands-running .command-row {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  border-radius: 12px;
+  margin: 0 0 12px;
+  padding: 16px;
+  font-size: 14px;
+}
+.command-row pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.command-row summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.command-row summary:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.command-row p {
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+.command-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-light);
+  border-radius: 50%;
+  animation: command-spin 1s linear infinite;
+}
+@keyframes command-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .command-spinner {
+    animation: none;
+  }
+}

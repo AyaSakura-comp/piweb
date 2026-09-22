@@ -34,6 +34,34 @@ That split is why commands take the route they do:
 `AbortController`, and `/pi new` must not race an in-flight run — none of which
 the web tier can do itself, hence the control queue.
 
+## AGY activity viewers
+
+AGY models delegate execution to the Antigravity CLI; PiWeb displays its
+observed events rather than replacing its tools or scheduler.
+
+- **⋯ → Subagents** shows explicitly labelled AGY child transcript snapshots
+  alongside native Pi children. See [Subagents](docs/subagents.md).
+- **⋯ → 背景命令 · AGY** shows commands, a running spinner, output and separately
+  observed AGY follow-up activity. It uses an edge-to-edge full-screen layout
+  with the Subagents theme, not a floating window. See the
+  [command manager](docs/agy-command-manager.md).
+
+The command manager is implemented and tested in an isolated real PiWeb/AGY
+stack but **has not been deployed as part of this work**. CLI exit without a
+completion event is **Unknown**, not success. Stream-input reconciliation and
+child watcher lifecycle guards now have regression coverage; successful
+walkthroughs are not proof that every detached task survives process failure.
+
+See [recent AGY changes and verification status](docs/agy-observability-status.md)
+for test commands, evidence, known blockers and deployment scope.
+
+## Claude Code bridge
+
+An opt-in `claude-code/*` provider runs a persistent Claude Code TUI in tmux on
+the worker host, with HAIKU / SONNET / OPUS model badges. It uses autonomous
+host permissions and separate Claude memory. See [setup, security, lifecycle and
+verification](docs/claude-tmux-bridge.md) before enabling `CLAUDE_TMUX_ENABLED`.
+
 ## Commands
 
 Full parity with piscord. Type `/` in the composer for autocomplete (command

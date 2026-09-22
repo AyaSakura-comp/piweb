@@ -15,6 +15,9 @@
  * Every action is delegated to the agy CLI; nothing here drives a model.
  */
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { createAgyCommandTracker } from './agy-commands.js';
+import { readAgyTaskTranscript } from './agy-task-transcript.js';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +29,7 @@ import { UNTIL_DONE_MARKER } from './invoke.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import type { AvailableModelInfo } from './model-catalog.js';
+import { snapshotAgySubagents, watchAgySubagents } from './agy-subagents.js';
 
 export const AGY_PROVIDER = 'agy';
 
@@ -57,7 +61,11 @@ function runAgy(args: string[], timeoutMs: number): Promise<string> {
         resolve(Buffer.concat(out).toString('utf8'));
         return;
       }
-      reject(new Error(`agy ${args.join(' ')} exited with ${code}: ${Buffer.concat(err).toString('utf8').trim()}`));
+      reject(
+        new Error(
+          `agy ${args.join(' ')} exited with ${code}: ${Buffer.concat(err).toString('utf8').trim()}`,
+        ),
+      );
     });
   });
 }
@@ -131,9 +139,9 @@ export function parseAgyModels(stdout: string): AvailableModelInfo[] {
   return models;
 }
 
-export async function listAgyModels(options?: { forceRefresh?: boolean }): Promise<
-  AvailableModelInfo[]
-> {
+export async function listAgyModels(options?: {
+  forceRefresh?: boolean;
+}): Promise<AvailableModelInfo[]> {
   if (!config.agyEnabled) return [];
 
   const now = Date.now();
@@ -195,6 +203,14 @@ export interface AgyPiEvent {
   [key: string]: unknown;
 }
 
+export interface AgySubagentRecord {
+  type: string;
+  role: string;
+  task: string;
+  conversationId: string;
+  logUri: string;
+}
+
 /**
  * Translate one agy stream-json event into the pi-shaped events the Discord and
  * web transports already know how to render. Returns zero or more events plus
@@ -208,6 +224,7 @@ export function translateAgyEvent(raw: any): {
   finalText?: string;
   status?: string;
   errorText?: string;
+  subagents?: AgySubagentRecord[];
 } {
   if (!raw || typeof raw !== 'object') return { events: [] };
 
@@ -235,6 +252,59 @@ export function translateAgyEvent(raw: any): {
 
   const step = raw.step_update ?? {};
   const events: AgyPiEvent[] = [];
+
+  if (step.step_type === 'subagent') {
+    const records = Array.isArray(step.subagent_info?.subagents)
+      ? step.subagent_info.subagents
+      : [];
+    const argumentsList = records.map((child: any) => ({
+      Type: String(child.type_name || ''),
+      Role: String(child.role || 'Subagent'),
+      Prompt: String(child.initial_prompt || ''),
+    }));
+    if (step.state === 'ACTIVE') {
+      events.push({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'toolcall_end',
+          toolCall: {
+            name: String(step.tool_name || 'invoke_subagent'),
+            arguments: { Subagents: argumentsList },
+          },
+        },
+      });
+      return { events };
+    }
+    if (step.state === 'DONE') {
+      const subagents: AgySubagentRecord[] = records
+        .filter(
+          (child: any) =>
+            typeof child.conversation_id === 'string' && typeof child.log_uri === 'string',
+        )
+        .map((child: any) => ({
+          type: String(child.type_name || ''),
+          role: String(child.role || 'Subagent'),
+          task: String(child.initial_prompt || ''),
+          conversationId: child.conversation_id,
+          logUri: child.log_uri,
+        }));
+      const output = subagents
+        .map(
+          (child) =>
+            `${child.role} · ${child.type || 'agent'}\nConversation: ${child.conversationId}\n` +
+            'Transcript connected to PiWeb Subagents.',
+        )
+        .join('\n\n');
+      if (output) {
+        events.push({
+          type: 'message_end',
+          message: { role: 'tool', content: [{ type: 'text', text: output }] },
+        });
+      }
+      return { events, subagents };
+    }
+    return { events };
+  }
 
   if (step.step_type === 'tool') {
     const info = step.tool_info ?? {};
@@ -333,6 +403,15 @@ export function createAgyEventTranslator() {
   };
 }
 
+const AGY_BRIDGE_GUIDANCE = `
+<PIWEB_BRIDGE>
+PiWeb can display invoke_subagent children and their saved transcripts, but a detached schedule callback cannot initiate a new PiWeb reply after this CLI turn exits. Prefer invoke_subagent for parallel/background agent work. Before ending, collect or summarize available child results. Do not promise a later update unless you deliver it in this turn.
+</PIWEB_BRIDGE>`;
+
+export function addAgyBridgeGuidance(promptText: string): string {
+  return `${promptText.trim()}\n\n${AGY_BRIDGE_GUIDANCE.trim()}`;
+}
+
 /**
  * `/until goal …` prepends UNTIL_DONE_MARKER to the message. agy has no
  * equivalent of pi's --until-done loop, so rather than leaking the sentinel
@@ -427,11 +506,16 @@ export function parseDurationMs(duration: string | undefined): number | undefine
   const val = Number(match[1]);
   const unit = match[2] || 's';
   switch (unit) {
-    case 's': return val * 1000;
-    case 'm': return val * 60 * 1000;
-    case 'h': return val * 60 * 60 * 1000;
-    case 'd': return val * 24 * 60 * 60 * 1000;
-    default: return undefined;
+    case 's':
+      return val * 1000;
+    case 'm':
+      return val * 60 * 1000;
+    case 'h':
+      return val * 60 * 60 * 1000;
+    case 'd':
+      return val * 24 * 60 * 60 * 1000;
+    default:
+      return undefined;
   }
 }
 
@@ -452,11 +536,7 @@ export interface FormatAgyErrorOptions {
 }
 
 /** Turn an agy failure into a message worth showing the user. */
-export function formatAgyError(
-  status: string,
-  text: string,
-  opts?: FormatAgyErrorOptions,
-): string {
+export function formatAgyError(status: string, text: string, opts?: FormatAgyErrorOptions): string {
   // If the process was terminated by SIGTERM / SIGKILL or during worker shutdown
   if (
     opts?.signal === 'SIGTERM' ||
@@ -504,10 +584,16 @@ export function formatAgyError(
       ? `agy (Gemini) quota exhausted — resets in ${resets}.`
       : 'agy (Gemini) quota exhausted; try again later or switch models.';
   }
-  if (/(?:502|503|504|Bad Gateway|Server Error)/i.test(combined) && /(?:Eligibility check failed|request failed)/i.test(combined)) {
+  if (
+    /(?:502|503|504|Bad Gateway|Server Error)/i.test(combined) &&
+    /(?:Eligibility check failed|request failed)/i.test(combined)
+  ) {
     return 'Google 雲端伺服器暫時性異常 (HTTP 502/503 Server Error)，請稍候直接重新發送訊息即可。';
   }
-  const cleanText = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const cleanText = text
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   return cleanText ? `agy failed (${status}): ${cleanText}` : `agy failed (${status})`;
 }
 
@@ -526,13 +612,16 @@ export async function invokeAgy(
     thinking?: ThinkingLevel;
     cwd?: string;
     signal?: AbortSignal;
+    /** Synchronous queue generation/lease fence; checked before each snapshot. */
+    isCurrent?: () => boolean;
     /** Serialized AttachmentMeta[], same contract as invokeAgent. */
     attachments?: string | null;
     onEvent?: (event: any) => void | Promise<void>;
   },
 ): Promise<AgentResult> {
+  if (opts?.signal?.aborted || (opts?.isCurrent && !opts.isCurrent())) return { ok: false, text: '', aborted: true };
   const modelRef = opts?.model || '';
-  const args = ['--output-format', 'stream-json'];
+  const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
 
   const modelId = modelRef ? agyModelId(modelRef) : '';
   if (modelId) args.push('--model', modelId);
@@ -551,7 +640,7 @@ export async function invokeAgy(
 
   // agy has its own file tools, so every upload — images included — is handed
   // over by absolute path rather than inlined into the prompt.
-  let promptText = unwrapUntilDoneGoal(userText);
+  let promptText = addAgyBridgeGuidance(unwrapUntilDoneGoal(userText));
   if (opts?.attachments) {
     try {
       const metas: AttachmentMeta[] = JSON.parse(opts.attachments);
@@ -567,7 +656,8 @@ export async function invokeAgy(
       logger.warn({ err: err.message }, 'Failed to process attachments for agy');
     }
   }
-  args.push('--print', promptText);
+  // Keep stdin open while explicitly disclosed background tasks need reconciliation.
+  // Closing print-mode stdin too early can cancel the AGY task executor.
 
   logger.debug(
     { bin: config.agyBin, model: modelRef, conversationId, channelFolder },
@@ -589,7 +679,7 @@ export async function invokeAgy(
         PIWEB_CHANNEL_JID: opts?.channelJid ?? '',
         PIWEB_CHANNEL_FOLDER: channelFolder,
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
 
@@ -607,6 +697,11 @@ export async function invokeAgy(
     };
 
     const translate = createAgyEventTranslator();
+    const commandTracker = createAgyCommandTracker(randomUUID());
+    let reconciliationTurns = 0;
+    const publishCommands = (commands: ReturnType<typeof commandTracker.consume>) => {
+      for (const command of commands) emit({ type: 'agy_command_update', command });
+    };
     // Which tool call is currently outstanding (ACTIVE with no DONE yet). A
     // wedged command is otherwise invisible — the row is already on screen with
     // no result, and nothing tells "slow" apart from "hung".
@@ -620,14 +715,20 @@ export async function invokeAgy(
     let seenConversationId = conversationId;
     let aborted = false;
     const errChunks: Buffer[] = [];
+    const childWatchAbort = new AbortController();
+    const watchedChildren = new Map<string, AgySubagentRecord>();
+    const ownsTurn = () => !opts?.signal?.aborted && !childWatchAbort.signal.aborted && (opts?.isCurrent?.() ?? true);
 
     const onAbort = () => {
+      childWatchAbort.abort();
       aborted = true;
       killTree('SIGTERM');
       // A grandchild that ignores SIGTERM would otherwise keep the group alive.
       setTimeout(() => killTree('SIGKILL'), 5_000).unref();
     };
     opts?.signal?.addEventListener('abort', onAbort, { once: true });
+    const lifetimeTimer = setTimeout(onAbort, Math.max(1000, printTimeoutMs) * 3);
+    lifetimeTimer.unref();
 
     const emit = (event: AgyPiEvent) => {
       if (!opts?.onEvent) return;
@@ -648,6 +749,7 @@ export async function invokeAgy(
         return;
       }
 
+      publishCommands(commandTracker.consume(parsed));
       const step = parsed?.step_update;
       if (step?.step_type === 'tool') {
         if (step.state === 'ACTIVE') {
@@ -667,11 +769,42 @@ export async function invokeAgy(
       const translated = translate(parsed);
       for (const event of translated.events) emit(event);
       if (translated.conversationId) seenConversationId = translated.conversationId;
+      if (translated.subagents?.length && ownsTurn()) {
+        const children = translated.subagents.filter((child) => !watchedChildren.has(child.conversationId));
+        for (const child of children) watchedChildren.set(child.conversationId, child);
+        if (children.length) void watchAgySubagents(
+          resolveChannelSessionDir(channelFolder),
+          seenConversationId || String(step?.conversation_id || ''),
+          children,
+          { signal: childWatchAbort.signal, isCurrent: ownsTurn },
+        ).catch((err: any) => {
+          logger.warn(
+            { err: err.message, channelFolder },
+            'Failed to watch agy subagent transcript',
+          );
+        });
+      }
       if (translated.textDelta) assistantText += translated.textDelta;
       if (translated.finalText !== undefined) finalText = translated.finalText;
       if (translated.status) status = translated.status;
       if (translated.errorText) agyErrorText = translated.errorText;
+      if (parsed.event === 'result') {
+        if (seenConversationId && ownsTurn()) publishCommands(commandTracker.observeTranscript(readAgyTaskTranscript(seenConversationId)));
+        const pending = commandTracker.pending();
+        if (status === 'SUCCESS' && pending.length && reconciliationTurns < 2 && ownsTurn()) {
+          reconciliationTurns++;
+          proc.stdin.write(JSON.stringify({ event: 'user', message: { content:
+            'PiWeb completion reconciliation. Inspect existing tasks ' + pending.join(', ') +
+            ' using manage_task Action=status. Do not rerun or relaunch any command. Wait for these existing tasks if still running. Report actual output, exit status or cancellation, then continue the original user request where appropriate. Do not promise a later reply.'
+          } }) + '\n');
+        } else proc.stdin.end();
+      }
     };
+    proc.stdin.on('error', (error) => {
+      logger.warn({ error: error.message }, 'AGY input stream closed');
+    });
+    if (opts?.signal?.aborted) onAbort();
+    else proc.stdin.write(JSON.stringify({ event: 'user', message: { content: promptText } }) + '\n');
 
     proc.stdout.on('data', (chunk: Buffer) => {
       lineBuf += chunk.toString('utf8');
@@ -704,6 +837,9 @@ export async function invokeAgy(
     proc.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk));
 
     proc.on('error', (err: any) => {
+      clearTimeout(lifetimeTimer);
+      publishCommands(commandTracker.finish());
+      childWatchAbort.abort();
       clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       resolve({ ok: false, text: '', error: `Failed to spawn agy: ${err.message}` });
@@ -738,13 +874,28 @@ export async function invokeAgy(
     });
 
     const finalize = (code: number | null, signal: NodeJS.Signals | null = null) => {
+      clearTimeout(lifetimeTimer);
       clearInterval(stallTimer);
       opts?.signal?.removeEventListener('abort', onAbort);
       if (lineBuf.trim()) handleLine(lineBuf);
+      if (seenConversationId && ownsTurn()) publishCommands(commandTracker.observeTranscript(readAgyTaskTranscript(seenConversationId)));
+      publishCommands(commandTracker.finish());
+      // The queue still owns this turn here. Flush once, then retire every watcher
+      // before returning and releasing its operation lease. Never infer lifecycle
+      // completion from a child message such as "I will report later".
+      try {
+        if (ownsTurn() && watchedChildren.size) snapshotAgySubagents(
+          resolveChannelSessionDir(channelFolder), seenConversationId || '', [...watchedChildren.values()],
+        );
+      } catch (err: any) {
+        logger.warn({ err: err.message }, 'Final AGY child snapshot unavailable');
+      } finally {
+        childWatchAbort.abort();
+      }
 
       // Persist the conversation id so the next turn in this channel resumes
       // the same agy thread. A brand-new conversation only becomes known here.
-      if (seenConversationId && seenConversationId !== conversationId) {
+      if (!aborted && !opts?.signal?.aborted && (opts?.isCurrent?.() ?? true) && seenConversationId && seenConversationId !== conversationId) {
         try {
           writeAgyConversationId(channelFolder, seenConversationId);
         } catch (err: any) {
@@ -757,7 +908,10 @@ export async function invokeAgy(
         return;
       }
 
-      const text = convertLocalMediaLinks((finalText ?? assistantText).trim(), opts?.cwd || config.piCwd);
+      const text = convertLocalMediaLinks(
+        (finalText ?? assistantText).trim(),
+        opts?.cwd || config.piCwd,
+      );
       const stderrText = Buffer.concat(errChunks).toString('utf8').trim();
 
       if (status === 'SUCCESS' || (code === 0 && text)) {

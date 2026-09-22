@@ -165,9 +165,10 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
         const child = data.children.find((c) => c.id === selected.id);
         const item = child || selected;
         title.textContent = displayName(item);
-        note.textContent = `${(item.model || 'Model pending').split('/').at(-1)} · ${stateLabel(item)} · Read only`;
+        const source = item.source === 'agy' ? 'AGY · ' : '';
+        note.textContent = `${source}${(item.model || 'Model pending').split('/').at(-1)} · ${stateLabel(item)} · Read only`;
         note.title =
-          'Persisted messages, not live process status. Updates appear at message boundaries.';
+          'Saved child messages, not live process status. Updates appear at message boundaries.';
         if (data.reset) {
           body.replaceChildren();
           nodes.clear();
@@ -189,7 +190,7 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
         note.textContent = data.children.length
           ? 'This session · Select an agent to view its work'
           : 'This session';
-        note.title = 'Persisted native subagents only. Updates appear at message boundaries.';
+        note.title = 'Saved Pi and AGY subagents. Updates appear at message boundaries.';
         if (!list.isConnected) body.replaceChildren(list);
         const ids = new Set(data.children.map((child) => child.id));
         for (const [id, card] of cards)
@@ -239,7 +240,9 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
             /^Task:\s*/i,
             '',
           );
-          card.model.textContent = (child.model || 'Model pending').split('/').at(-1);
+          card.model.textContent =
+            (child.source === 'agy' ? 'AGY · ' : '') +
+            (child.model || 'Model pending').split('/').at(-1);
           card.status.textContent = stateLabel(child);
           card.status.dataset.tone =
             child.running === true

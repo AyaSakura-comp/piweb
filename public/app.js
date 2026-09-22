@@ -12,6 +12,7 @@
 
 import { renderRich } from './markdown.js';
 import { createSubagentsView } from './subagents.js';
+import { createCommandsRunningView } from './commands-running.js';
 import { createMediaViewer, createVideoAttachment } from './media-files.js';
 import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
@@ -1070,6 +1071,7 @@ async function createSession() {
 
 async function selectSession(jid, opts = {}) {
   subagentsView.close();
+  commandsRunningView.close();
   const selection = ++sessionSelectionGeneration;
   const navigation = opts.navigation ?? lifeNavigationGeneration;
   const previewingDeleted = Boolean(opts.deleted);
@@ -1640,6 +1642,15 @@ const subagentsView = createSubagentsView({
   } : null,
 });
 onMenuItem('mi-subagents', () => subagentsView.open());
+const commandsRunningView = createCommandsRunningView({
+  api,
+  getParent: () => state.activeJid && !state.selectionPending ? {
+    key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
+    url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands-running`, state.activeJid),
+  } : null,
+});
+onMenuItem('mi-commands-running', () => commandsRunningView.open());
+
 
 function openMoreMenu() {
   const life = state.mode === 'life';
@@ -2601,6 +2612,12 @@ function renderPartial(text, thinking = '') {
 }
 
 function buildEventNode(event) {
+  if (event.role === 'agy-command' && event.kind === 'system') {
+    try {
+      const command = JSON.parse(event.content);
+      event = { ...event, content: `AGY command: ${command.command}\n${command.state} · ${command.agent}`, role: 'background command' };
+    } catch { /* Render malformed historic text without interpreting it. */ }
+  }
   if (event.kind === 'message') {
     const isUser = event.role === 'user';
     const row = el('div', `msg${isUser ? ' msg-user' : ''}`);

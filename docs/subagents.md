@@ -4,15 +4,29 @@ Install the local extension with `pi install /home/chihmin/src/pi-subagents`.
 The tested fork is v0.70.0, b72714de, with Pi 0.84.1. Fresh Pi processes load
 installed packages; an already-running agent is not reloaded by installation.
 
+## AGY status and related command viewer
+
+AGY child snapshots are read-only evidence, not native Pi sessions or proof of
+runner completion. AGY snapshot watchers are now tied to the invoking turn,
+abort signal and queue ownership; acknowledgements do not end observation.
+See [observability status](agy-observability-status.md) for verification scope.
+These qualifications do not replace the native Pi running-state rules below.
+
+Shell commands have a separate **⋯ → 背景命令 · AGY** viewer, documented in
+[AGY command manager](agy-command-manager.md). It reuses this viewer's theme and
+header/body styles in an edge-to-edge layout but tracks commands, not children.
+
 ## UI and scope
 
 Open **⋯ → Subagents**. This read-only modal lists all **persisted native child
-sessions in the current Pi parent's default session tree**, including completed
-foreground/background children and native forks. It is not the capped active
-fleet widget. Select a child to view its current branch, tools, thinking and
-Markdown through the **same `buildEventNode` renderer** as normal chat. Forked
-history is explicitly marked as inherited context. Older history is paged;
-updates use stable native entry/block cursors to fill reconnect gaps.
+sessions in the current Pi parent's default session tree** plus channel-owned
+snapshots of AGY children disclosed by structured `subagent` events. Native
+entries include completed foreground/background children and forks; AGY entries
+are explicitly labelled `AGY` and are never presented as native Pi children.
+It is not the capped active fleet widget. Select a child to view tools, thinking
+and Markdown through the **same `buildEventNode` renderer** as normal chat.
+Forked history is explicitly marked as inherited context. Older history is
+paged; updates use stable entry/block cursors to fill reconnect gaps.
 
 The UI uses numbered cards, short display names (generated UUIDs remain in
 native tooltips), two-line task previews, a model label and recorded-response
@@ -41,7 +55,12 @@ Limitations:
 - Queued/pre-first-response/failed-before-persistence children have no native
   session file yet and cannot appear in this artifact inventory.
 - Custom external `sessionDir`, external CLI/jobs without native transcripts,
-  and deleted artifacts are not reconstructed or traversed.
+  and deleted artifacts are not reconstructed or traversed. AGY is the narrow
+  exception: the worker validates the child conversation ID against AGY's
+  structured `log_uri` and copies that transcript into the channel directory;
+  the Docker web tier reads only the copy. The asynchronous watcher checks
+  queue ownership and channel directory identity before refreshing, stops on
+  cancellation, and is retired before the invoking turn releases its lease.
 - Updates occur at persisted message boundaries, not every text token or tool
   stdout byte. No new media-path authority is granted: binary child attachments
   and local-file outbox markers are not staged by this read-only viewer.
