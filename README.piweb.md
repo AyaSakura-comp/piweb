@@ -34,6 +34,15 @@ That split is why commands take the route they do:
 `AbortController`, and `/pi new` must not race an in-flight run — none of which
 the web tier can do itself, hence the control queue.
 
+## Design and interaction
+
+See [DESIGN.md](DESIGN.md) for viewer layout, theme tokens, horizontal motion
+and Subagents gestures. Swipe right in a child transcript to return to the list;
+swipe right again to return to main chat. Pages follow the finger while held;
+release completes the return or snaps back based on distance and velocity.
+Buttons remain available, and scrolling,
+code blocks and text selection are excluded from the navigation gesture.
+
 ## AGY activity viewers
 
 AGY models delegate execution to the Antigravity CLI; PiWeb displays its

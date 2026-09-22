@@ -27,7 +27,12 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
   const older = make('button', 'subagents-older', 'Load older messages');
   older.type = 'button';
   older.hidden = true;
-  dialog.append(header, note, older, body);
+  const preview = make('div', 'subagents-swipe-preview');
+  preview.inert = true;
+  preview.setAttribute('aria-hidden', 'true');
+  const surface = make('div', 'subagents-surface');
+  surface.append(header, note, older, body);
+  dialog.append(preview, surface);
   document.body.append(dialog);
   let generation = 0,
     timer,
@@ -44,16 +49,84 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
   let listScroll = 0,
     returnId,
     viewAnimation,
-    closeAnimation;
+    closeAnimation,
+    openAnimation;
+  let gesture, dragAnimation;
+  let settling = false,
+    dragEpoch = 0;
+  function resetDrag() {
+    dragEpoch++;
+    dragAnimation?.cancel();
+    dragAnimation = undefined;
+    settling = false;
+    gesture = undefined;
+    surface.inert = false;
+    surface.style.transform = '';
+    delete dialog.dataset.dragging;
+    preview.replaceChildren();
+  }
+  function beginDrag() {
+    viewAnimation?.cancel();
+    openAnimation?.cancel();
+    dialog.dataset.dragging = selected ? 'detail' : 'list';
+    if (selected) {
+      const underHeader = make('header', 'subagents-header');
+      const underHeading = make('div', 'subagents-heading');
+      underHeading.append(
+        make('h2', '', 'Subagents'),
+        make('span', 'subagents-count', String(cards.size)),
+      );
+      underHeader.append(underHeading, make('button', '', '×'));
+      const underBody = make('div', 'subagents-body');
+      underBody.append(list.cloneNode(true));
+      for (const node of underBody.querySelectorAll('[id]')) node.removeAttribute('id');
+      preview.replaceChildren(
+        underHeader,
+        make('p', 'subagents-note', 'This session · Select an agent to view its work'),
+        underBody,
+      );
+      underBody.scrollTop = listScroll;
+    }
+  }
+  function settleDrag(start, commit) {
+    const epoch = ++dragEpoch;
+    settling = true;
+    surface.inert = true;
+    const target = commit ? start.width : 0;
+    const distance = Math.abs(target - start.distance);
+    const duration = reduced()
+      ? 0
+      : Math.max(120, Math.min(280, distance / Math.max(0.6, Math.abs(start.velocity))));
+    const finish = () => {
+      if (epoch !== dragEpoch) return;
+      const valid = current(start.g) && start.view === selected?.id;
+      resetDrag();
+      if (valid && !commit && start.focus?.isConnected) start.focus.focus({ preventScroll: true });
+      if (!valid || !commit) return;
+      if (selected) returnToList(false);
+      else close();
+    };
+    if (!duration) {
+      finish();
+      return;
+    }
+    dragAnimation = surface.animate(
+      [{ transform: `translateX(${start.distance}px)` }, { transform: `translateX(${target}px)` }],
+      { duration, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
+    );
+    dragAnimation.finished.then(finish, () => {});
+  }
+  function cancelDrag() {
+    const start = gesture;
+    gesture = undefined;
+    if (start?.dragging) settleDrag(start, false);
+  }
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   function animateView(direction = 1) {
     viewAnimation?.cancel();
     if (!reduced())
       viewAnimation = body.animate(
-        [
-          { opacity: 0, transform: `translateX(${direction * 12}px)` },
-          { opacity: 1, transform: 'translateX(0)' },
-        ],
+        [{ transform: `translateX(${direction * 100}%)` }, { transform: 'translateX(0)' }],
         { duration: 200, easing: 'cubic-bezier(.2,.8,.2,1)' },
       );
   }
@@ -79,6 +152,8 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     clearTimeout(timer);
     viewAnimation?.cancel();
     closeAnimation?.cancel();
+    openAnimation?.cancel();
+    resetDrag();
     const finish = () => {
       if (generation !== g) return;
       if (dialog.open) dialog.close();
@@ -89,16 +164,14 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     };
     if (animated && dialog.open && !reduced()) {
       closeAnimation = dialog.animate(
-        [
-          { opacity: 1, transform: 'translateY(0)' },
-          { opacity: 0, transform: 'translateY(12px)' },
-        ],
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(100%)' }],
         { duration: 140, easing: 'ease-in' },
       );
       closeAnimation.finished.then(finish, () => {});
     } else finish();
   }
   function selectChild(child, g) {
+    resetDrag();
     listScroll = body.scrollTop;
     returnId = child.id;
     selected = child;
@@ -316,16 +389,15 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     body.replaceChildren(list);
     dialog.showModal();
     if (!reduced())
-      dialog.animate(
-        [
-          { opacity: 0, transform: 'translateY(16px) scale(.985)' },
-          { opacity: 1, transform: 'translateY(0) scale(1)' },
-        ],
+      openAnimation = dialog.animate(
+        [{ transform: 'translateX(100%)' }, { transform: 'translateX(0)' }],
         { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' },
       );
     void refresh(generation);
   }
-  back.addEventListener('click', () => {
+  function returnToList(animated = true) {
+    if (!selected) return;
+    resetDrag();
     clearTimeout(timer);
     request++;
     returnId = selected?.id;
@@ -342,9 +414,118 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     note.textContent = 'This session · Select an agent to view its work';
     cards.get(returnId)?.button.focus({ preventScroll: true });
     returnId = undefined; // Restore once; delayed refresh must not steal subsequent navigation.
-    animateView(-1);
+    if (animated) animateView(-1);
     void refresh(generation);
-  });
+  }
+  back.addEventListener('click', () => returnToList());
+
+  // Finger-following right drag: one level back, never a global browser gesture.
+  // Reserve interactive controls, text selection and horizontally scrollable
+  // content for their native interactions rather than stealing their gestures.
+  dialog.addEventListener(
+    'touchstart',
+    (event) => {
+      if (settling) return;
+      cancelDrag();
+      if (event.touches.length !== 1 || window.getSelection()?.type === 'Range') return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const control = target.closest(
+        'button,a,input,textarea,select,summary,pre,code,[contenteditable]',
+      );
+      // Navigation cards are the main list swipe surface; toolbar controls and
+      // editable/output content retain their own interactions.
+      if (control && !control.matches('button.subagent-row')) return;
+      for (let node = target; node && node !== dialog; node = node.parentElement) {
+        if (
+          node.scrollWidth > node.clientWidth + 1 &&
+          /auto|scroll/.test(getComputedStyle(node).overflowX)
+        )
+          return;
+      }
+      const touch = event.touches[0];
+      gesture = {
+        x: touch.clientX,
+        y: touch.clientY,
+        id: touch.identifier,
+        g: generation,
+        view: selected?.id,
+        width: dialog.getBoundingClientRect().width,
+        dragging: false,
+        distance: 0,
+        velocity: 0,
+        lastX: touch.clientX,
+        lastTime: performance.now(),
+        focus: surface.contains(document.activeElement) ? document.activeElement : undefined,
+      };
+    },
+    { passive: true },
+  );
+  dialog.addEventListener(
+    'touchmove',
+    (event) => {
+      if (!gesture) return;
+      if (event.touches.length !== 1 || window.getSelection()?.type === 'Range') {
+        cancelDrag();
+        return;
+      }
+      const touch = event.touches[0];
+      const dx = touch.clientX - gesture.x;
+      const dy = touch.clientY - gesture.y;
+      if (!gesture.dragging) {
+        if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) {
+          cancelDrag();
+          return;
+        }
+        if (dx <= 12 || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
+        gesture.dragging = true;
+        beginDrag();
+      }
+      if (event.cancelable) event.preventDefault();
+      const now = performance.now();
+      const elapsed = now - gesture.lastTime;
+      if (elapsed > 0)
+        gesture.velocity =
+          0.5 * gesture.velocity +
+          0.5 * Math.max(-3, Math.min(3, (touch.clientX - gesture.lastX) / elapsed));
+      gesture.lastX = touch.clientX;
+      gesture.lastTime = now;
+      gesture.distance = Math.max(0, Math.min(gesture.width, dx));
+      surface.style.transform = `translateX(${gesture.distance}px)`;
+    },
+    { passive: false },
+  );
+  dialog.addEventListener('touchcancel', cancelDrag);
+  dialog.addEventListener(
+    'touchend',
+    (event) => {
+      const start = gesture;
+      gesture = undefined;
+      if (!start?.dragging) return;
+      if (
+        event.touches.length ||
+        !current(start.g) ||
+        start.view !== selected?.id ||
+        window.getSelection()?.type === 'Range'
+      ) {
+        settleDrag(start, false);
+        return;
+      }
+      const touch = [...event.changedTouches].find((t) => t.identifier === start.id);
+      if (!touch) {
+        settleDrag(start, false);
+        return;
+      }
+      const releaseVelocity = performance.now() - start.lastTime > 100 ? 0 : start.velocity;
+      const projected = start.distance + Math.max(0, releaseVelocity) * 180;
+      const commit =
+        start.distance >= start.width * 0.28 ||
+        (start.distance >= 60 && releaseVelocity >= 0.5 && projected >= start.width * 0.28);
+      // Reversing the drag should not fling a nearly restored page away.
+      settleDrag(start, commit && releaseVelocity >= -0.2);
+    },
+    { passive: true },
+  );
   older.addEventListener('click', () => {
     clearTimeout(timer);
     void refresh(generation, earliest);

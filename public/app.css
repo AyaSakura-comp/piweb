@@ -4384,6 +4384,12 @@ dialog.sheet::backdrop {
   overflow: hidden;
 }
 .subagents-dialog[open] { display: flex; flex-direction: column; }
+.subagents-surface { position: relative; z-index: 1; display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; background: var(--bg); }
+.subagents-swipe-preview { display: none; position: absolute; inset: 0; flex-direction: column; background: var(--bg); pointer-events: none; }
+.subagents-dialog[data-dragging='detail'] .subagents-swipe-preview { display: flex; }
+.subagents-dialog[data-dragging] { background: transparent; box-shadow: none; }
+.subagents-dialog[data-dragging] .subagents-surface { will-change: transform; }
+.subagents-dialog[data-dragging='list']::backdrop { background: transparent; backdrop-filter: none; }
 .subagents-dialog::backdrop { background: #0008; backdrop-filter: blur(4px); }
 .subagents-header { display: flex; align-items: center; gap: 8px; padding: max(16px, env(safe-area-inset-top)) 16px 4px; flex-shrink: 0; }
 .subagents-heading { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }

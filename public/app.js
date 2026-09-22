@@ -4512,6 +4512,7 @@ function cancelEdgeGestures() {
 }
 
 function isDrawerGestureAllowed() {
+  if (document.querySelector('dialog[open]')) return false;
   // Above 768px the drawer is a permanent sidebar; overlays own their gestures.
   if (window.matchMedia('(min-width: 768px)').matches || lifeTransitioning) {
     return false;
@@ -4704,6 +4705,7 @@ function isLifeEntryAllowed() {
 }
 
 function isLifeGestureAllowed() {
+  if (document.querySelector('dialog[open]')) return false;
   if (wideDrawer.matches || isTranscriptSelectionActive()) return false;
   return isLifeEntryAllowed();
 }

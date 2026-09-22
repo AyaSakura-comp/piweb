@@ -35,9 +35,24 @@ process exit, gate success, or runner completion. `Recorded activity` never
 claims that an abandoned/crashed tool tail is still running. Updates appear at
 message boundaries. Header hints retain the persisted-history qualification.
 
-Open/close and list/detail transitions last 140–220ms and respect
-`prefers-reduced-motion`. Polling retains DOM nodes/focus; Back restores the
-list position once, without overriding subsequent keyboard navigation.
+Open/close and list/detail transitions are horizontal slides lasting 140–220ms
+and respect `prefers-reduced-motion`. Open/select enters from the right moving
+left; return/close moves right. **Swipe right in a child transcript to return to
+the list; swipe right in the list to close to main chat.** Back and Close buttons
+remain available. Polling retains DOM nodes/focus; Back (including swipe Back)
+restores the list position once, without overriding subsequent navigation.
+
+Right-drag navigation follows the finger in real time after a 12px horizontal
+lock (1.5× vertical dominance), with no hold timeout. Child detail reveals an
+inert saved-list preview; the list reveals main chat. Release at 28% width, or
+with a qualifying rightward flick from at least 60px, completes the return.
+Otherwise the surface settles back from its current position. Cancelled and
+multi-touch gestures also snap back; completion takes 120–280ms (instant with
+reduced motion). Code blocks, horizontal scrollers, toolbar controls and active
+text selections retain their native interactions. See [DESIGN.md](../DESIGN.md) for the complete
+motion, accessibility and gesture contract. Global Life/drawer edge gestures
+are disabled while a native dialog is open, preventing a Subagents exit swipe
+from navigating the underlying chat into Life.
 
 Confirmed running native async children appear first, then each group sorts by
 transcript modification time (newest first). A `Running` spinner requires an
