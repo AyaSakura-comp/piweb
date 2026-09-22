@@ -65,6 +65,12 @@ Safari claim native scrolling first. Vertical-first movement remains uncancelled
 The regression checks a 4px rightward event separately from vertical movement;
 Chromium CDP coverage is not physical iPhone Safari verification.
 
+Validation record: the user reported that dragging did not work on iPhone before
+this early-touch cancellation fix, then gave positive feedback after deployment.
+Treat that as user-reported confirmation, not an automated real-device test matrix;
+the iOS version and Safari/PWA launch mode were not recorded. Keep the small-move
+regression: cancel a 4px rightward move, but do not cancel a vertical-first move.
+
 - In a child transcript, an inert snapshot of the saved list is revealed below
   the moving surface. It cannot receive focus, clicks or screen-reader navigation.
 - In the list, the moving surface reveals the actual main chat. The native

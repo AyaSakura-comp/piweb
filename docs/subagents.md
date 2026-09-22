@@ -54,6 +54,22 @@ motion, accessibility and gesture contract. Global Life/drawer edge gestures
 are disabled while a native dialog is open, preventing a Subagents exit swipe
 from navigating the underlying chat into Life.
 
+### iPhone touch compatibility
+
+Claim a clearly rightward `touchmove` immediately, even before the 12px visual
+movement threshold. Waiting for that threshold can allow Safari to claim native
+scrolling, leaving the custom drag unresponsive. Do not cancel vertical-first
+movement: native scrolling must continue to work.
+
+The regression test covers a 4px initial horizontal move, untouched vertical
+motion, held dragging, cancellation and return navigation. The user gave positive
+feedback after the fix was deployed for the reported iPhone issue. This is
+user-reported confirmation; it does not replace automated real-device coverage
+across iOS versions or Safari/PWA modes. Refresh the page (or reopen the home-screen
+app) after a frontend update before comparing behavior.
+
+### Recorded activity
+
 Confirmed running native async children appear first, then each group sorts by
 transcript modification time (newest first). A `Running` spinner requires an
 owner-matching host status snapshot, running step/run and live runner PID;
