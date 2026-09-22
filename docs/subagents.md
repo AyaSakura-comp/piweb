@@ -16,11 +16,77 @@ Shell commands have a separate **⋯ → 背景命令 · AGY** viewer, documente
 [AGY command manager](agy-command-manager.md). It reuses this viewer's theme and
 header/body styles in an edge-to-edge layout but tracks commands, not children.
 
+## Claude Code child bridge
+
+The same **⋯ → Subagents** viewer supports `claude-code/haiku`, `sonnet` and
+`opus` sessions, without changing AGY behavior. Cards/details carry a `CLAUDE`
+source label and show the child's recorded model, task, thinking, tools/results
+and final response. This observes Claude's own Agent/Task children; it does not
+spawn extra agents or copy AGY's agent definitions into Claude. It remains read
+only: child steering/cancellation buttons are not added.
+
+The host adapter derives child paths only from its known parent transcript and
+session id: `<project>/<parent-id>/subagents/agent-<child-id>.jsonl`. It never
+follows model-authored `outputFile` paths or scans other Claude sessions. Source
+parent/agent ids and sidechain flags must match. Prompt snapshots, environment
+attachments, tool catalogs, signatures and other internal system context are
+not copied into the UI. Only conversation events become atomic Pi-shaped files
+under `sessions/<folder>/.claude-subagents/`.
+
+`Running` means a structured Claude async launch/resume has been observed under
+the current owned turn and its five-second activity heartbeat has not expired;
+it does not assert OS process liveness. `Response ready` still means a recorded
+answer, not a successful job gate. Parent notifications clear running activity.
+Both user-envelope task notifications and in-turn `queued_command` notification
+attachments are supported; assistant/user prose cannot fake completion. Stop,
+lease loss or directory replacement ends observation; Stop does not promise to
+terminate every detached Claude child. Old snapshots remain read-only, with
+activity unconfirmed after expiry. No independent orphan watcher is created.
+
+A parent `turn_duration` with pending background agents is an acknowledgement,
+not the end of the Piweb task. The adapter retains the queue lease and tails the
+later parent continuation until it returns the final answer (or Stop/timeout).
+This avoids losing child-completion replies. The Claude session id is included
+in the opaque viewer scope, so reset/new parent rejects stale child requests.
+
+Limits: at most 128 discovered child files; each source is bounded to 16 MiB /
+20,000 rows, with a 32 MiB per-refresh source budget. Unsafe/incomplete sources
+retain the last good snapshot; files above limits are not newly projected.
+Oversized parent recovery metadata may omit historical launch labels/activity,
+but does not disable bounded child snapshots. Sources and destinations are
+opened descriptor-relative with no-follow checks; links with multiple hardlink
+owners are rejected. Readers may finish a pinned old snapshot after an atomic
+rename (link count zero), then revalidate scope/owner before responding.
+
+Verification:
+
+```sh
+npx vitest run test/claude-subagents.test.ts test/claude-tmux.test.ts
+npx playwright test test/e2e/claude-subagents.spec.ts
+# Isolated real web/worker + Opus parent + two Haiku fixture children; uses quota.
+PIWEB_CLAUDE_SUBAGENTS_LIVE=1 npx playwright test test/e2e/claude-subagents-live.spec.ts
+# Real Opus parent AND two Opus children (transcript model IDs asserted):
+PIWEB_CLAUDE_SUBAGENTS_LIVE=1 PIWEB_CLAUDE_CHILD_MODEL=opus \
+  npx playwright test test/e2e/claude-subagents-live.spec.ts \
+  --output=artifacts/claude-subagents-opus/run
+```
+
+`PIWEB_CLAUDE_CHILD_MODEL` accepts `haiku` (default), `sonnet` or `opus`.
+Use a dedicated output directory when other suites may run concurrently. The
+all-Opus integration passed with recorded parent/child model `claude-opus-5-5`;
+its isolated evidence is `artifacts/claude-subagents-opus-20260923/`.
+
+The live test records a continuous mobile workflow: two running children,
+individual tool/final histories, automatic parent summary, and a stable
+read-only list after reload. It is not a production deployment test. Evidence
+is under `artifacts/claude-subagents/`.
+
 ## UI and scope
 
 Open **⋯ → Subagents**. This read-only modal lists all **persisted native child
 sessions in the current Pi parent's default session tree** plus channel-owned
-snapshots of AGY children disclosed by structured `subagent` events. Native
+snapshots of AGY children disclosed by structured `subagent` events and the
+current Claude Code parent's validated children described above. Native
 entries include completed foreground/background children and forks; AGY entries
 are explicitly labelled `AGY` and are never presented as native Pi children.
 It is not the capped active fleet widget. Select a child to view tools, thinking

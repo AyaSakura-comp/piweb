@@ -62,6 +62,15 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
 - `/pi status`, Pi compaction, Pi subagent controls and Pi extension commands are
   not Claude-native controls. Do not interpret their output as Claude usage.
 
+## Subagents
+
+Open **⋯ → Subagents** to browse this Claude session's child transcripts. The
+worker projects validated child JSONL into channel-owned snapshots; cards are
+labelled `CLAUDE`. Background launch acknowledgements no longer end the parent
+turn before its real completion response. See [scope, status semantics and
+live tests](subagents.md#claude-code-child-bridge). This does not add child
+steering controls or grant Docker access to the host's Claude transcript store.
+
 ## Verification
 
 ```bash

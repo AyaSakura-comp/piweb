@@ -20,6 +20,7 @@ import { downloadAttachments } from '../session/media.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
+import { createClaudeSubagentTracker } from './claude-subagents.js';
 import type { AvailableModelInfo } from './model-catalog.js';
 
 export const CLAUDE_TMUX_PROVIDER = 'claude-code';
@@ -271,6 +272,7 @@ export async function invokeClaudeTmux(
     signal?: AbortSignal;
     attachments?: string | null;
     onEvent?: (event: any) => void | Promise<void>;
+    isCurrent?: () => boolean;
     dependencies?: ClaudeTmuxDependencies;
   },
 ): Promise<AgentResult> {
@@ -288,6 +290,7 @@ export async function invokeClaudeTmux(
   let submitted = false;
   let aborted = Boolean(signal?.aborted);
   let abortPromise: Promise<unknown> | undefined;
+  let childTracker: ReturnType<typeof createClaudeSubagentTracker> | undefined;
 
   const onAbort = () => {
     aborted = true;
@@ -358,6 +361,9 @@ export async function invokeClaudeTmux(
     }
 
     writeState(stateFile, state);
+    childTracker = createClaudeSubagentTracker(sessionDir, state.sessionId, {
+      isCurrent: opts?.isCurrent,
+    });
     pane = await getClaudePane(name, deps);
     ensureNotAborted();
 
@@ -369,6 +375,14 @@ export async function invokeClaudeTmux(
     let finalText = '';
     let turnComplete = false;
     let shouldSubmit = !recoveringTurn;
+    let nextProjectionAt = 0;
+    const refreshChildren = (force = false) => {
+      if (transcriptPath && (force || Date.now() >= nextProjectionAt)) {
+        childTracker?.refresh(transcriptPath);
+        nextProjectionAt = Date.now() + 1000;
+      }
+    };
+    refreshChildren(true);
 
     if (recoveringTurn) {
       const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
@@ -450,12 +464,26 @@ export async function invokeClaudeTmux(
           } catch {
             continue;
           }
+          childTracker.observe(record);
           const translated = translateClaudeTranscriptRecord(record);
           for (const event of translated.events) await opts?.onEvent?.(event);
           if (translated.finalText !== undefined) finalText = translated.finalText;
-          if (translated.turnComplete) turnComplete = true;
+          if (translated.turnComplete) {
+            // Claude may yield an acknowledgement while its background children
+            // run. Keep the queue lease and transcript tail alive for the actual
+            // parent continuation, rather than losing its completion notification.
+            turnComplete = !(record.pendingBackgroundAgentCount > 0 || childTracker.hasPending);
+            if (!turnComplete && finalText) {
+              await opts?.onEvent?.({
+                type: 'message_update',
+                assistantMessageEvent: { type: 'thinking_end', content: finalText },
+              });
+              finalText = '';
+            }
+          }
         }
       }
+      refreshChildren(turnComplete);
       if (!turnComplete) {
         await ensurePaneAlive(pane, deps);
         await deps.sleep(deps.pollMs);
@@ -493,6 +521,7 @@ export async function invokeClaudeTmux(
     logger.warn({ err: err.message, channelFolder }, 'Claude Code tmux bridge failed');
     return { ok: false, text: '', error: `Claude Code tmux bridge failed: ${err.message}` };
   } finally {
+    childTracker?.stop();
     signal?.removeEventListener('abort', onAbort);
     if (abortPromise) await abortPromise;
   }

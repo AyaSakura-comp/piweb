@@ -139,6 +139,9 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
     const name = generated[1].replace(/[-_]+/g, ' ');
     return name.charAt(0).toUpperCase() + name.slice(1);
   }
+  const sourcePrefix = (source) =>
+    source === 'agy' ? 'AGY · ' : source === 'claude-code' ? 'CLAUDE · ' : '';
+
   function stateLabel(child) {
     if (child.running === true) return 'Running';
     if (/complete/i.test(child.state)) return 'Response ready';
@@ -238,7 +241,7 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
         const child = data.children.find((c) => c.id === selected.id);
         const item = child || selected;
         title.textContent = displayName(item);
-        const source = item.source === 'agy' ? 'AGY · ' : '';
+        const source = sourcePrefix(item.source);
         note.textContent = `${source}${(item.model || 'Model pending').split('/').at(-1)} · ${stateLabel(item)} · Read only`;
         note.title =
           'Saved child messages, not live process status. Updates appear at message boundaries.';
@@ -263,7 +266,7 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
         note.textContent = data.children.length
           ? 'This session · Select an agent to view its work'
           : 'This session';
-        note.title = 'Saved Pi and AGY subagents. Updates appear at message boundaries.';
+        note.title = 'Saved Pi, AGY and Claude subagents. Updates appear at message boundaries.';
         if (!list.isConnected) body.replaceChildren(list);
         const ids = new Set(data.children.map((child) => child.id));
         for (const [id, card] of cards)
@@ -314,8 +317,7 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
             '',
           );
           card.model.textContent =
-            (child.source === 'agy' ? 'AGY · ' : '') +
-            (child.model || 'Model pending').split('/').at(-1);
+            sourcePrefix(child.source) + (child.model || 'Model pending').split('/').at(-1);
           card.status.textContent = stateLabel(child);
           card.status.dataset.tone =
             child.running === true

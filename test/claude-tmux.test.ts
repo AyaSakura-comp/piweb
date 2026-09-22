@@ -380,6 +380,61 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(0);
   });
 
+  it('waits beyond a background-child acknowledgement for the resumed parent final', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    let phase = 0;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const result = await tmux(args);
+      if (fixture.submissionCount && phase === 0) {
+        phase = 1;
+        appendFileSync(
+          fixture.transcript,
+          [
+            {
+              type: 'assistant',
+              message: {
+                role: 'assistant',
+                stop_reason: 'end_turn',
+                content: [{ type: 'text', text: 'Child still running.' }],
+              },
+            },
+            { type: 'system', subtype: 'turn_duration', pendingBackgroundAgentCount: 1 },
+          ]
+            .map((row) => JSON.stringify(row))
+            .join('\n') + '\n',
+        );
+      }
+      return result;
+    };
+    fixture.dependencies.sleep = async () => {
+      if (phase === 1) {
+        phase = 2;
+        appendFileSync(
+          fixture.transcript,
+          [
+            {
+              type: 'assistant',
+              message: {
+                role: 'assistant',
+                stop_reason: 'end_turn',
+                content: [{ type: 'text', text: 'Parent received child final.' }],
+              },
+            },
+            { type: 'system', subtype: 'turn_duration', pendingBackgroundAgentCount: 0 },
+          ]
+            .map((row) => JSON.stringify(row))
+            .join('\n') + '\n',
+        );
+      }
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'run child', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toEqual({ ok: true, text: 'Parent received child final.' });
+    expect(fixture.submissionCount).toBe(1);
+  });
+
   it('does not submit when already aborted before startup', async () => {
     const fixture = createRuntimeFixture();
     const controller = new AbortController();

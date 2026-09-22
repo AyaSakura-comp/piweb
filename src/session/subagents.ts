@@ -23,7 +23,7 @@ export interface ChildSummary {
   task: string;
   model: string;
   state: string;
-  source?: 'pi' | 'agy';
+  source?: 'pi' | 'agy' | 'claude-code';
   eventCount?: number;
   updatedAt?: number;
   running?: boolean;
@@ -76,7 +76,11 @@ async function openFile(fd: FileHandle, name: string): Promise<FileHandle | unde
     throw e;
   }
   const st = await file.stat();
-  if (!st.isFile() || st.nlink !== 1) {
+  // Atomic snapshot rename can unlink the inode after open() but before stat().
+  // The descriptor still pins the previously authorized regular file. Reject
+  // multiply-linked files, not an unlinked snapshot (nlink=0); owner/scope are
+  // revalidated by the API before returning it.
+  if (!st.isFile() || st.nlink > 1) {
     await file.close();
     return;
   }
@@ -271,8 +275,64 @@ interface Parent {
   id?: string;
   scope: string;
   activeFiles?: string[];
+  claudeId?: string;
+  claudeActiveIds?: string[];
 }
 async function parentIdentity(root: FileHandle, owner: string, cwd?: string): Promise<Parent> {
+  const parent = await piParentIdentity(root, owner, cwd);
+  const file = await openFile(root, 'claude-tmux-session.json');
+  if (!file) return parent;
+  try {
+    const size = (await file.stat()).size;
+    if (size > 16384) return parent;
+    const state = JSON.parse(await bytes(file, 0, size));
+    if (
+      typeof state.sessionId !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(state.sessionId) ||
+      typeof state.modelRef !== 'string' ||
+      !state.modelRef.startsWith('claude-code/') ||
+      (cwd && state.cwd !== cwd)
+    )
+      return parent;
+    parent.claudeId = state.sessionId;
+    parent.scope = digest(parent.scope + ':claude:' + state.sessionId);
+    let children: FileHandle | undefined;
+    try {
+      children = await open(fdPath(root, '.claude-subagents'), directoryFlags);
+      const marker = await openFile(children, 'parent.json');
+      if (marker) {
+        try {
+          const activity = await header(marker);
+          if (
+            activity?.parentSessionId === parent.claudeId &&
+            activity.expires > Date.now() &&
+            activity.expires <= Date.now() + 10000 &&
+            Array.isArray(activity.activeIds)
+          ) {
+            parent.claudeActiveIds = activity.activeIds
+              .slice(0, 128)
+              .filter(
+                (id: unknown) =>
+                  typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id),
+              );
+          }
+        } finally {
+          await marker.close();
+        }
+      }
+    } catch (error) {
+      if (error instanceof SubagentReadError) throw error;
+    } finally {
+      if (children) await children.close();
+    }
+  } catch (error) {
+    if (error instanceof SubagentReadError) throw error;
+  } finally {
+    await file.close();
+  }
+  return parent;
+}
+async function piParentIdentity(root: FileHandle, owner: string, cwd?: string): Promise<Parent> {
   let published: { id?: string; file?: string } | undefined;
   const marker = await openFile(root, '.piweb-current-parent.json');
   if (marker) {
@@ -376,7 +436,7 @@ export async function readSubagents(
 interface Inventory {
   expires: number;
   children: ChildSummary[];
-  paths: Map<string, { relative: string; sessionId: string; source?: 'pi' | 'agy' }>;
+  paths: Map<string, { relative: string; sessionId: string; source?: ChildSummary['source'] }>;
 }
 const inventories = new Map<string, Inventory>();
 const histories = new Map<
@@ -441,9 +501,14 @@ async function readProjection(
     const children: ChildSummary[] = inventory ? [...inventory.children] : [];
     const paths = inventory
       ? inventory.paths
-      : new Map<string, { relative: string; sessionId: string; source?: 'pi' | 'agy' }>();
+      : new Map<string, { relative: string; sessionId: string; source?: ChildSummary['source'] }>();
     let selected: ChildEvent[] | undefined;
-    async function scan(fd: FileHandle, prefix: string, depth: number) {
+    async function scan(
+      fd: FileHandle,
+      prefix: string,
+      depth: number,
+      source: NonNullable<ChildSummary['source']> = 'pi',
+    ) {
       if (depth > 16) throw new SubagentReadError('Child tree exceeds inspection depth limit', 413);
       for await (const entry of directoryEntries(fd)) {
         const relative = prefix + '/' + entry.name;
@@ -456,7 +521,7 @@ async function readProjection(
             throw e;
           }
           try {
-            await scan(child, relative, depth + 1);
+            await scan(child, relative, depth + 1, source);
           } finally {
             await child.close();
           }
@@ -470,6 +535,11 @@ async function readProjection(
           try {
             const h = await header(file);
             if (h?.type !== 'session' || typeof h.id !== 'string' || h.id === parent.id) continue;
+            if (
+              source === 'claude-code' &&
+              (h.source !== source || h.parentSessionId !== parent.claudeId)
+            )
+              continue;
             // Fork ownership is explicit; never follow parentSession as a path.
             if (
               prefix.endsWith('/forks') &&
@@ -507,7 +577,6 @@ async function readProjection(
               if (summaries.size >= 10000) summaries.delete(summaries.keys().next().value!);
               summaries.set(cacheKey, summary);
             }
-            const source = h.source === 'agy' ? 'agy' : 'pi';
             children.push({ id, ...summary, source });
             paths.set(id, { relative, sessionId: h.id, source });
           } catch (e) {
@@ -551,9 +620,24 @@ async function readProjection(
       }
       if (agy) {
         try {
-          await scan(agy, '/.agy-subagents', 0);
+          await scan(agy, '/.agy-subagents', 0, 'agy');
         } finally {
           await agy.close();
+        }
+      }
+      if (parent.claudeId) {
+        let claude: FileHandle | undefined;
+        try {
+          claude = await open(fdPath(root, '.claude-subagents'), directoryFlags);
+        } catch (error) {
+          if (!missing(error)) throw error;
+        }
+        if (claude) {
+          try {
+            await scan(claude, '/.claude-subagents', 0, 'claude-code');
+          } finally {
+            await claude.close();
+          }
         }
       }
     }
@@ -566,7 +650,10 @@ async function readProjection(
     for (let i = 0; i < children.length; i++)
       children[i] = {
         ...children[i],
-        running: activeFiles.has(paths.get(children[i].id)?.relative.slice(1) || ''),
+        running:
+          children[i].source === 'claude-code'
+            ? (parent.claudeActiveIds || []).includes(paths.get(children[i].id)?.sessionId || '')
+            : activeFiles.has(paths.get(children[i].id)?.relative.slice(1) || ''),
       };
     children.sort(
       (a, b) =>
@@ -576,10 +663,10 @@ async function readProjection(
     );
     if (query.child) {
       const entry = paths.get(query.child);
-      if (entry && (entry.source === 'agy' || parent.file)) {
+      if (entry && (entry.source === 'agy' || entry.source === 'claude-code' || parent.file)) {
         // Reopen every ancestor descriptor-relative, including on a cache hit.
         const parts =
-          entry.source === 'agy'
+          entry.source === 'agy' || entry.source === 'claude-code'
             ? entry.relative.split('/').filter(Boolean)
             : [parent.file!.slice(0, -6), ...entry.relative.split('/').filter(Boolean)];
         let fd = await open(fdPath(root, parts.shift()!), directoryFlags);
@@ -593,7 +680,10 @@ async function readProjection(
           if (file) {
             try {
               const h = await header(file);
-              if (h?.id === entry.sessionId) {
+              if (
+                h?.id === entry.sessionId &&
+                (entry.source !== 'claude-code' || h.parentSessionId === parent.claudeId)
+              ) {
                 const st = await file.stat();
                 selected = await selectedHistory(
                   file,

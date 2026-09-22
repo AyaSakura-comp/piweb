@@ -468,6 +468,7 @@ async function processMessage(
       result = config.claudeTmuxEnabled
         ? await invokeClaudeTmux(channel.folder, prompt, {
             channelJid: channel.jid,
+            isCurrent: () => renewWorkerLease(true),
             turnId: rowid,
             model: effective.rawModelRef,
             thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
