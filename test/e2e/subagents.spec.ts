@@ -150,6 +150,28 @@ test('Subagents uses normal chat rendering, preserves expanded tools, and isolat
   await expect(child).toBeVisible();
   await child.click();
   await expect(dialog.locator('.subagents-note')).toContainText('Response ready');
+  // Safari can hand scrolling to the browser on the first, tiny touchmove.
+  // Exercise that event before the 12px visual drag threshold (CDP otherwise jumps past it).
+  const earlyClaim = await dialog.locator('.subagents-note').evaluate((el) => {
+    const point = (x: number, y: number) => ({ identifier: 41, clientX: x, clientY: y });
+    const send = (type: string, x: number, y = 82) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', {
+        value: type === 'touchcancel' ? [] : [point(x, y)],
+      });
+      Object.defineProperty(event, 'changedTouches', { value: [point(x, y)] });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    send('touchstart', 80);
+    const claimed = send('touchmove', 84);
+    send('touchcancel', 84);
+    send('touchstart', 80);
+    const verticalClaimed = send('touchmove', 80, 86);
+    send('touchcancel', 80, 86);
+    return { claimed, verticalClaimed };
+  });
+  expect(earlyClaim).toEqual({ claimed: true, verticalClaimed: false });
   const touch = await page.context().newCDPSession(page);
   await touch.send('Input.dispatchTouchEvent', {
     type: 'touchStart',

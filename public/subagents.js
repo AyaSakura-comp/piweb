@@ -477,6 +477,10 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
           cancelDrag();
           return;
         }
+        // iOS may latch native scrolling after the first uncancelled move.
+        // Claim clear rightward intent immediately, while retaining the 12px
+        // threshold for visual movement; leave vertical motion to the browser.
+        if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.5 && event.cancelable) event.preventDefault();
         if (dx <= 12 || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
         gesture.dragging = true;
         beginDrag();

@@ -59,6 +59,12 @@ vertical distance), the entire foreground surface tracks the finger 1:1, clamped
 to the viewer width. There is no hold timeout: keeping a finger down does not
 navigate or snap back automatically.
 
+For iOS scroll arbitration, cancel the first clearly rightward touchmove even
+below the 12px visual threshold. Waiting until the visual threshold can let
+Safari claim native scrolling first. Vertical-first movement remains uncancelled.
+The regression checks a 4px rightward event separately from vertical movement;
+Chromium CDP coverage is not physical iPhone Safari verification.
+
 - In a child transcript, an inert snapshot of the saved list is revealed below
   the moving surface. It cannot receive focus, clicks or screen-reader navigation.
 - In the list, the moving surface reveals the actual main chat. The native
