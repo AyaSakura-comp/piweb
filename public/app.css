@@ -1793,6 +1793,41 @@ svg {
 .quote-preview-label {
   flex: none;
   color: var(--accent-light);
+/* Life quick tags: one tap prefixes the next message with a 【label】 card. */
+.life-tags {
+  display: none;
+  gap: 8px;
+  margin: 0 4px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.life-tags::-webkit-scrollbar {
+  display: none;
+}
+
+.app.life-mode .life-tags {
+  display: flex;
+}
+
+.life-tag {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-alt);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.life-tag[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
   font-weight: 700;
 }
 

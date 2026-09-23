@@ -39,6 +39,11 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   stays fast. An explicit thinking override chosen in the picker wins. Both are
   clamped to what the resolved model supports (e.g. `off` for a non-reasoning
   model), and the picker shows `minimal` when no override is set.
+- **Quick tags** (`LIFE_TAGS` in `public/app.js`: 記帳, 生圖, 修圖) sit above the
+  Life composer. Tapping one arms it for the next message only: the draft is sent
+  as plain text with a `【label】` card in front (e.g. `【記帳】晚餐 120 元`). No
+  skill routing is involved; the model reads the card like any other text. Add a
+  tag by appending to `LIFE_TAGS`.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
 - Rename, delete, clear, restore, model, cwd, and reset-cwd operations
   are rejected server-side. The header exposes **pi status** and the **thinking level**

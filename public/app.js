@@ -42,6 +42,14 @@ document.body.append(mediaViewer.element);
 const MODE_KEY = 'piweb.mode';
 const LIFE_JID = 'web:life';
 let lifeNavigationGeneration = 0;
+// Life quick tags: the chosen label is sent as a 【label】 card in front of the
+// next message. Add entries here for more tags.
+const LIFE_TAGS = [
+  { label: '記帳', placeholder: '例如：晚餐 120 元' },
+  { label: '生圖', placeholder: '想畫什麼？' },
+  { label: '修圖', placeholder: '附上照片，說明要怎麼修' },
+];
+const DEFAULT_INPUT_PLACEHOLDER = 'Message pi…';
 let sessionsLoadGeneration = 0;
 let sessionSelectionGeneration = 0;
 let deletingSessionJid = null;
@@ -54,6 +62,7 @@ const state = {
   mode: 'sessions',
   lifeSession: null,
   lastStandardJid: null,
+  lifeTag: null,
   cursor: 0,
   source: null,
   attachments: [],
@@ -683,6 +692,7 @@ function setPresentationMode(mode, { persist = true } = {}) {
   const life = mode === 'life';
   $('app').classList.toggle('life-mode', life);
   $('btn-life-back').hidden = !life;
+  setLifeTag(null);
   $('btn-life-new-session').hidden = !life;
   // Session controls belong to a confirmed destination. Keep them unavailable
   // while the Life endpoint and event metadata are validating ownership.
@@ -2060,6 +2070,32 @@ function currentSessionModelInfo() {
   );
 }
 
+function setLifeTag(tag) {
+  state.lifeTag = tag;
+  if (!$('life-tags').children.length) renderLifeTags();
+  for (const button of $('life-tags').children) {
+    button.setAttribute('aria-pressed', String(button.dataset.label === tag?.label));
+  }
+  // Called during boot, before the module-level `input` binding exists.
+  $('input').placeholder = tag?.placeholder || DEFAULT_INPUT_PLACEHOLDER;
+}
+
+function renderLifeTags() {
+  const wrap = $('life-tags');
+  wrap.replaceChildren();
+  for (const tag of LIFE_TAGS) {
+    const button = el('button', 'life-tag', tag.label);
+    button.type = 'button';
+    button.dataset.label = tag.label;
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('click', () => {
+      setLifeTag(state.lifeTag?.label === tag.label ? null : tag);
+      $('input').focus();
+    });
+    wrap.append(button);
+  }
+}
+
 function supportedThinkingLevelsForCurrentSession() {
   const model = currentSessionModelInfo();
   if (!model) return undefined;
@@ -3206,9 +3242,10 @@ $('composer').addEventListener('submit', async (e) => {
     destinationJid === LIFE_JID ? state.lifeSession?.generation : undefined;
   const destinationSelection = sessionSelectionGeneration;
 
-  const text = input.value.trim();
+  const lifeTag = destinationJid === LIFE_JID && state.mode === 'life' ? state.lifeTag : null;
+  const draft = input.value.trim();
   const quote = state.pendingQuote;
-  if (!text && !quote && state.attachments.length === 0) {
+  if (!draft && !quote && state.attachments.length === 0) {
     abandonComposerSend();
     return;
   }
@@ -3249,6 +3286,8 @@ $('composer').addEventListener('submit', async (e) => {
   renderAttachments();
   autoGrow();
   hideAutocomplete();
+  const text = lifeTag ? `【${lifeTag.label}】${draft}` : draft;
+  if (lifeTag) setLifeTag(null);
 
   const hasAttachments = submittedAttachments.length > 0;
   if (hasAttachments) {

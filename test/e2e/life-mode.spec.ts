@@ -619,6 +619,35 @@ test('Life mode exposes the thinking level control', async ({ page }) => {
   ]);
 });
 
+test('Life quick tags send a label card with the next message', async ({ page }, testInfo) => {
+  const api = await installLifeApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  const ledger = page.getByRole('button', { name: '記帳' });
+  await expect(ledger).toBeVisible();
+  await expect(ledger).toHaveAttribute('aria-pressed', 'false');
+  await ledger.click();
+  await expect(ledger).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#input')).toHaveAttribute('placeholder', '例如：晚餐 120 元');
+  await page.locator('#input').fill('晚餐 120 元');
+  await page.screenshot({ path: testInfo.outputPath('life-tag-selected.png') });
+  await page.locator('#btn-send').click();
+
+  await expect.poll(() => api.messageBodies.length).toBe(1);
+  expect(api.messageBodies[0]).toMatchObject({ text: '【記帳】晚餐 120 元' });
+  // A tag applies to one message only.
+  await expect(ledger).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#input')).toHaveAttribute('placeholder', 'Message pi…');
+});
+
+test('standard sessions hide Life quick tags', async ({ page }) => {
+  await installLifeApi(page);
+  await page.goto('/');
+  await expect(page.locator('#composer')).toBeVisible();
+  await expect(page.locator('#life-tags')).toBeHidden();
+});
+
 test('right-edge swipe enters persistent default-model Life mode', async ({ page }, testInfo) => {
   const api = await installLifeApi(page);
   const pageErrors: string[] = [];
