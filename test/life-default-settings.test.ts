@@ -97,7 +97,7 @@ const lifeChannel = {
 };
 
 describe('Life runtime defaults', () => {
-  it('uses one Pi-resolved model/thinking snapshot while ignoring stored overrides', async () => {
+  it('uses the Pi-resolved model with minimal thinking while ignoring stored overrides', async () => {
     const { computeEffectiveChannelSettings } = await import('../src/agent/channel-settings.js');
     await expect(
       computeEffectiveChannelSettings(lifeChannel, {
@@ -106,8 +106,8 @@ describe('Life runtime defaults', () => {
     ).resolves.toMatchObject({
       rawModelRef: 'openai-codex/gpt-default',
       modelSource: 'default',
-      requestedThinking: 'max',
-      effectiveThinking: 'max',
+      requestedThinking: 'minimal',
+      effectiveThinking: 'minimal',
       hasManagedThinking: true,
       thinkingSource: 'default',
       effectiveCwd: expect.any(String),

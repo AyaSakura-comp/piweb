@@ -2024,7 +2024,8 @@ const THINKING_DESCRIPTIONS = {
 };
 
 function currentThinkingLevel() {
-  if (state.activeJid === LIFE_JID) return state.lifeSession?.thinking || '';
+  // Life runs with minimal thinking unless the user picked a level.
+  if (state.activeJid === LIFE_JID) return state.lifeSession?.thinking || 'minimal';
   const session = state.sessions.find((s) => s.jid === state.activeJid);
   return session?.thinking || '';
 }

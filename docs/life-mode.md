@@ -33,8 +33,12 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   Pi folder, logs, scheduled tasks, and media ownership are re-keyed to a new standard
   `web:*` JID, while a new empty `web:life` row receives a freshly reserved folder.
 - Every Life turn asks the configured `PI_BIN` for its exact current runtime
-  model and default thinking level, applying an explicit thinking override when
-  chosen. It never trusts stale values from `pi --continue`.
+  model. It never trusts stale values from `pi --continue`.
+- Life thinking defaults to **`minimal`** (`LIFE_DEFAULT_THINKING` in
+  `src/agent/channel-settings.ts`), not Pi's runtime default, so everyday chat
+  stays fast. An explicit thinking override chosen in the picker wins. Both are
+  clamped to what the resolved model supports (e.g. `off` for a non-reasoning
+  model), and the picker shows `minimal` when no override is set.
 - Life always runs at `PI_CWD`; it cannot set a per-session cwd.
 - Rename, delete, clear, restore, model, cwd, and reset-cwd operations
   are rejected server-side. The header exposes **pi status** and the **thinking level**
@@ -161,7 +165,7 @@ flowchart LR
     MessageQueue --> Queue
     Queue --> Resolver
     Resolver --> Probe
-    Probe -->|provider/model +<br/>effective thinking| Resolver
+    Probe -->|provider/model| Resolver
     Resolver --> SessionRunner
     SessionRunner --> LifeSession
     LifeSession --> SessionRunner
@@ -198,7 +202,8 @@ sequenceDiagram
     Worker->>DB: Claim next web:life message
     Worker->>Probe: --mode rpc --no-session + get_state
     Note over Worker,Probe: Same PI_BIN, PI_CWD, PI_MODEL, PI_THINKING,<br/>extra flags, environment, trust hooks, providers, and auth
-    Probe-->>Worker: Exact provider/model and effective thinking
+    Probe-->>Worker: Exact provider/model
+    Note over Worker: Thinking = override or minimal,<br/>clamped to the model
     Worker->>Pi: Continue with explicit model, thinking, and PI_CWD
     loop Thinking, tool, result, and final events
         Pi-->>Worker: Structured event

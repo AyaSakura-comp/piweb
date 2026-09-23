@@ -197,6 +197,8 @@ export async function probePiRuntimeDefaults(
   });
 }
 
+export const LIFE_DEFAULT_THINKING: ThinkingLevel = 'minimal';
+
 export function getDesiredThinkingLevel(channel: RegisteredChannel): ThinkingLevel {
   if (channel.thinkingOverride) return channel.thinkingOverride;
   if (config.piThinking && isThinkingLevel(config.piThinking)) return config.piThinking;
@@ -227,16 +229,14 @@ export async function computeEffectiveChannelSettings(
     channel.kind === 'life' ||
     Boolean(channel.thinkingOverride) ||
     Boolean(config.piThinking && isThinkingLevel(config.piThinking));
+  // Life defaults to minimal thinking (quick everyday chat) instead of Pi's
+  // runtime default; both the default and an explicit override are clamped to
+  // what the resolved model supports.
   const desiredThinking =
     channel.kind === 'life' && !channel.thinkingOverride
-      ? lifeDefaults!.thinking
+      ? LIFE_DEFAULT_THINKING
       : getDesiredThinkingLevel(channel);
-  // get_state already reports Pi's capability-clamped Life default. An explicit
-  // Life override uses the same model-aware clamping as an ordinary session.
-  const thinkingResolution =
-    channel.kind === 'life' && !channel.thinkingOverride
-      ? { requested: desiredThinking, effective: desiredThinking, adjusted: false }
-      : resolveThinkingForModel(modelInfo, desiredThinking);
+  const thinkingResolution = resolveThinkingForModel(modelInfo, desiredThinking);
   const effectiveCwd = channel.kind === 'life' ? config.piCwd : channel.cwdOverride || config.piCwd;
   const cwdSource: EffectiveChannelSettings['cwdSource'] =
     channel.kind !== 'life' && channel.cwdOverride ? 'override' : 'default';
