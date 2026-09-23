@@ -537,6 +537,17 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(2);
   });
 
+  it('accepts a multiline paste marker with the appended line count', async () => {
+    const fixture = createRuntimeFixture({ pasteLineCount: true });
+    const result = await invokeClaudeTmux('web_claude1', 'first line\nsecond line', {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.seenPasteMarkers).toEqual(['[Pasted text #1 +1 lines]']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
   it('sends Ctrl-C and preserves the tmux session when aborted', async () => {
     const fixture = createRuntimeFixture({ completeTurns: false });
     const controller = new AbortController();
@@ -670,7 +681,9 @@ describe('Claude transcript translation', () => {
   });
 });
 
-function createRuntimeFixture(options: { completeTurns?: boolean; runningScreen?: boolean } = {}) {
+function createRuntimeFixture(
+  options: { completeTurns?: boolean; runningScreen?: boolean; pasteLineCount?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'piweb-claude-tmux-test-'));
   tempDirs.push(root);
   const sessionDir = join(root, 'sessions', 'web_claude1');
@@ -758,7 +771,7 @@ function createRuntimeFixture(options: { completeTurns?: boolean; runningScreen?
           pasteCaptures += 1;
           if (pasteCaptures >= 2) {
             currentInput = pendingPrompt.includes('\n')
-              ? `[Pasted text #${pasteMarker}]`
+              ? `[Pasted text #${pasteMarker}${options.pasteLineCount ? ' +1 lines' : ''}]`
               : pendingPrompt;
           }
         }

@@ -604,7 +604,7 @@ async function waitForReadyPane(
 }
 
 function pasteMarkers(screen: string): Set<string> {
-  return new Set(screen.match(/\[Pasted text #\d+\]/giu) ?? []);
+  return new Set(screen.match(/\[Pasted text #\d+(?: \+\d+ lines?)?\]/giu) ?? []);
 }
 
 function currentPrompt(screen: string): string {
