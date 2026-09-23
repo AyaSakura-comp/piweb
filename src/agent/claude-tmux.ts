@@ -376,6 +376,7 @@ export async function invokeClaudeTmux(
     let turnComplete = false;
     let shouldSubmit = !recoveringTurn;
     let nextProjectionAt = 0;
+    let nextPromptCheckAt = 0;
     const refreshChildren = (force = false) => {
       if (transcriptPath && (force || Date.now() >= nextProjectionAt)) {
         childTracker?.refresh(transcriptPath);
@@ -486,6 +487,20 @@ export async function invokeClaudeTmux(
       refreshChildren(turnComplete);
       if (!turnComplete) {
         await ensurePaneAlive(pane, deps);
+        if (Date.now() >= nextPromptCheckAt) {
+          const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
+          ensureNotAborted();
+          if (requiresManualConfirmation(screen)) {
+            // Do not approve a dangerous host command, even in bypass mode.
+            await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+            return {
+              ok: false,
+              text: '',
+              error: 'Claude Code requires manual confirmation for a protected operation; turn stopped without approving it',
+            };
+          }
+          nextPromptCheckAt = Date.now() + 1000;
+        }
         await deps.sleep(deps.pollMs);
       }
     }
@@ -569,6 +584,11 @@ async function ensurePaneAlive(pane: string, deps: ClaudeTmuxDependencies): Prom
     throw new Error('Claude Code tmux pane exited');
   }
   if (dead.trim() === '1') throw new Error('Claude Code tmux pane exited');
+}
+
+function requiresManualConfirmation(screen: string): boolean {
+  // Check the dialog footer, not prior terminal history or model/tool output.
+  return /Do you want to proceed\?\s*\n\s*❯\s*1\. Yes\s*\n\s*2\. No\s*\n\s*Esc to cancel(?:\s*·\s*Tab to amend)?\s*$/u.test(screen);
 }
 
 function isReadyPaneScreen(screen: string): boolean {
