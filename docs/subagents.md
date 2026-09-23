@@ -214,9 +214,31 @@ This preserves final transcript order even when autonomous inference settles
 before a slow original media send. Pending user
 messages wait while an autonomous turn is streaming. Life retains an owner
 with live children; its normal retirement remains for child-free turns.
-Incompatible settings/one-shot switches refuse to kill live children silently.
-Ambiguous/overflowed widget state conservatively retains the owner; explicit
-session stop/delete and normal ownership revocation remain authoritative.
+The host worker also consumes the extension's `setWidget` removal event: after
+its last retained async job is removed, the extension sends no JSON snapshot,
+so retaining the previous `running` hint would incorrectly block later model
+changes. PiWeb clears that hint on explicit widget removal, while a PiWeb-driven
+compaction's temporary widget suspension does **not** count as completion.
+Malformed/unsupported snapshots never clear known activity. This is a worker
+lifecycle fix, not a frontend-only label change; the read-only Subagents list
+has its own validated activity projection.
+
+A live parent with running children may apply model/thinking changes through
+Pi RPC `set_model` / `set_thinking_level` without replacing the parent process;
+working-directory/ownership changes and one-shot switches still refuse to kill
+children silently. Once an explicit terminal/clear signal is received, a normal
+settings change can retire the idle parent as before. Ambiguous/overflowed
+widget state conservatively retains the owner; explicit session stop/delete
+and normal ownership revocation remain authoritative.
+
+Regression coverage: `test/rpc-subagent-liveness.test.ts` replays a running
+snapshot followed by a widget-clear event outside the parent turn, and ensures
+compaction suspension does not fake completion. `test/rpc-session-live-settings.test.ts`
+checks in-place parent reconfiguration while a child is running. The isolated
+staged tree passed 563 tests (1 skipped), TypeScript checking and focused lint. Production
+activation must wait for the current request and confirmed child activity to
+drain; a successful service restart alone is not a replay of the affected
+Harness conversation.
 
 ## Maintained tests
 

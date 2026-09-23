@@ -13,6 +13,76 @@ afterEach(async () => {
   }
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
+it('clears stale child liveness when the extension removes its completed widget', async () => {
+  dir = mkdtempSync(join(tmpdir(), 'piweb-widget-clear-'));
+  const script = join(dir, 'pi.mjs');
+  writeFileSync(
+    script,
+    `#!/usr/bin/env node
+import readline from 'node:readline';
+const send=e=>process.stdout.write(JSON.stringify(e)+'\\n');
+readline.createInterface({input:process.stdin}).on('line', line => {
+ if(JSON.parse(line).type!=='prompt')return;
+ send({type:'extension_ui_request',method:'setWidget',widgetKey:'subagent-async',widgetLines:['PI_SUBAGENT_ASYNC_JSON:'+JSON.stringify({kind:'pi-subagents.async-status-snapshot',version:1,runs:[{id:'run',state:'running'}],omitted:{runs:0,children:0,byteLimitExceeded:false}})]});
+ send({type:'agent_settled'});
+ setTimeout(()=>send({type:'extension_ui_request',method:'setWidget',widgetKey:'subagent-async'}),35);
+});`,
+  );
+  chmodSync(script, 0o755);
+  Object.assign(process.env, {
+    PI_BIN: script,
+    PI_CWD: dir,
+    SESSIONS_DIR: join(dir, 'sessions'),
+    RPC_IDLE_TIMEOUT_MS: '60000',
+  });
+  vi.resetModules();
+  const rpc = await import('../src/agent/rpc-session.js');
+  const session = rpc.getRpcSession('parent', { model: 'openai-codex/gpt-5.6-sol', cwd: dir });
+  await session.prompt('start child');
+  expect(session.hasLiveSubagents).toBe(true);
+  await vi.waitFor(() => expect(rpc.rpcSessionHasLiveSubagents('parent')).toBe(false), {
+    timeout: 1200,
+  });
+  expect(session.isAlive).toBe(true);
+  const changed = rpc.getRpcSession('parent', { model: 'openai-codex/gpt-6-sol', cwd: dir });
+  expect(changed).not.toBe(session);
+});
+
+it('does not mistake temporary widget suspension during compaction for child completion', async () => {
+  dir = mkdtempSync(join(tmpdir(), 'piweb-widget-compaction-'));
+  const script = join(dir, 'pi.mjs');
+  writeFileSync(
+    script,
+    `#!/usr/bin/env node
+import readline from 'node:readline';
+const send=e=>process.stdout.write(JSON.stringify(e)+'\\n');
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const command=JSON.parse(line);
+ if(command.type==='prompt') {
+   send({type:'extension_ui_request',method:'setWidget',widgetKey:'subagent-async',widgetLines:['PI_SUBAGENT_ASYNC_JSON:'+JSON.stringify({kind:'pi-subagents.async-status-snapshot',version:1,runs:[{id:'run',state:'running'}],omitted:{runs:0,children:0,byteLimitExceeded:false}})]});
+   send({type:'agent_settled'});
+ }
+ if(command.type==='compact') {
+   send({type:'extension_ui_request',method:'setWidget',widgetKey:'subagent-async'});
+   setTimeout(()=>send({type:'response',id:command.id,command:'compact',success:true,data:{}}),30);
+ }
+});`,
+  );
+  chmodSync(script, 0o755);
+  Object.assign(process.env, {
+    PI_BIN: script,
+    PI_CWD: dir,
+    SESSIONS_DIR: join(dir, 'sessions'),
+    RPC_IDLE_TIMEOUT_MS: '60000',
+  });
+  vi.resetModules();
+  const rpc = await import('../src/agent/rpc-session.js');
+  const session = rpc.getRpcSession('parent', { model: 'openai-codex/gpt-5.6-sol', cwd: dir });
+  await session.prompt('start child');
+  await rpc.compactRpcSession('parent');
+  expect(session.hasLiveSubagents).toBe(true);
+});
+
 it('keeps a settled parent alive for async work and consumes terminal widgets outside a turn', async () => {
   dir = mkdtempSync(join(tmpdir(), 'piweb-live-child-'));
   const script = join(dir, 'pi.mjs');

@@ -38,6 +38,12 @@ export interface RpcSessionOpts {
   cwd?: string;
 }
 
+interface PendingRpcRequest {
+  resolve: (response: any) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
 interface PendingTurn {
   proc?: ChildProcess;
   onEvent?: (event: any) => void | Promise<void>;
@@ -67,16 +73,19 @@ class RpcSession {
   private startBarrier?: Promise<void>;
   private closed = false;
   private subagentsLive = false;
+  private compacting = false;
   private publication?: ReturnType<typeof publishParent>;
   private autonomousActive = false;
   private autonomousText = '';
   private autonomousStream?: (event: unknown) => Promise<void>;
   private autonomousDrain = Promise.resolve();
   private queueDelivery = Promise.resolve();
+  private requestSequence = 0;
+  private readonly pendingRequests = new Map<string, PendingRpcRequest>();
 
   constructor(
     private readonly folder: string,
-    private readonly opts: RpcSessionOpts,
+    private opts: RpcSessionOpts,
     startBarrier?: Promise<void>,
   ) {
     this.startBarrier = startBarrier;
@@ -101,13 +110,57 @@ class RpcSession {
 
   matchesOptions(opts: RpcSessionOpts): boolean {
     return (
+      this.matchesOwnership(opts) &&
+      this.opts.model === opts.model &&
+      this.opts.thinking === opts.thinking
+    );
+  }
+
+  matchesOwnership(opts: RpcSessionOpts): boolean {
+    return (
       this.opts.channelJid === opts.channelJid &&
       this.opts.channelStorageToken === opts.channelStorageToken &&
       this.opts.channelOwnershipEpoch === opts.channelOwnershipEpoch &&
-      this.opts.model === opts.model &&
-      this.opts.thinking === opts.thinking &&
       this.opts.cwd === opts.cwd
     );
+  }
+
+  /** Reconfigure only the parent in-place; children keep their own processes. */
+  async updateLiveSettings(opts: RpcSessionOpts): Promise<void> {
+    if (
+      !this.isAlive ||
+      !this.hasLiveSubagents ||
+      !this.matchesOwnership(opts) ||
+      this.isStreaming ||
+      !opts.model ||
+      (this.opts.thinking && !opts.thinking)
+    )
+      throw new Error('Wait for this parent’s subagents before changing its RPC settings.');
+    const modelChanged = this.opts.model !== opts.model;
+    if (modelChanged) {
+      const slash = opts.model.indexOf('/');
+      if (slash < 1 || slash === opts.model.length - 1)
+        throw new Error('Invalid Pi model reference');
+      const response = await this.request(
+        {
+          type: 'set_model',
+          provider: opts.model.slice(0, slash),
+          modelId: opts.model.slice(slash + 1),
+        },
+        15_000,
+      );
+      if (!response.success) throw new Error(response.error || 'Pi could not switch model');
+      this.opts = { ...this.opts, model: opts.model };
+    }
+    if (opts.thinking && (modelChanged || this.opts.thinking !== opts.thinking)) {
+      const response = await this.request(
+        { type: 'set_thinking_level', level: opts.thinking },
+        15_000,
+      );
+      if (!response.success)
+        throw new Error(response.error || 'Pi could not switch thinking level');
+      this.opts = { ...this.opts, thinking: opts.thinking };
+    }
   }
 
   private acquireOwnership(): void {
@@ -261,7 +314,12 @@ class RpcSession {
           (value: unknown) =>
             typeof value === 'string' && value.startsWith('PI_SUBAGENT_ASYNC_JSON:'),
         );
-        if (line) {
+        if (!line && event.widgetLines === undefined && !this.compacting) {
+          // pi-subagents clears the widget (rather than sending an empty JSON
+          // snapshot) after the last retained job is removed. Ignoring this
+          // leaves the previous running snapshot latched indefinitely.
+          this.subagentsLive = false;
+        } else if (line) {
           try {
             const snapshot = JSON.parse(line.slice('PI_SUBAGENT_ASYNC_JSON:'.length));
             if (
@@ -296,6 +354,14 @@ class RpcSession {
       return;
     }
     if (event.type === 'response') {
+      const pendingRequest =
+        typeof event.id === 'string' ? this.pendingRequests.get(event.id) : undefined;
+      if (pendingRequest) {
+        clearTimeout(pendingRequest.timeout);
+        this.pendingRequests.delete(event.id);
+        pendingRequest.resolve(event);
+        return;
+      }
       if (
         event.id === 'piweb-current-parent' &&
         event.success &&
@@ -465,11 +531,46 @@ class RpcSession {
     const resolveExit = this.resolveProcExit;
     this.resolveProcExit = undefined;
     this.procExit = undefined;
+    for (const [id, request] of this.pendingRequests) {
+      clearTimeout(request.timeout);
+      request.reject(new Error(`pi rpc session exited before ${id} completed (code ${code})`));
+    }
+    this.pendingRequests.clear();
     resolveExit?.();
   }
 
   private send(cmd: object): void {
     this.proc?.stdin?.write(JSON.stringify(cmd) + '\n');
+  }
+
+  private request(command: object, timeoutMs = 600_000): Promise<any> {
+    if (!this.isAlive) return Promise.reject(new Error('Pi RPC session is not running'));
+    const id = `piweb-request-${++this.requestSequence}`;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error('Timed out waiting for Pi RPC response'));
+      }, timeoutMs);
+      timeout.unref?.();
+      this.pendingRequests.set(id, { resolve, reject, timeout });
+      this.send({ ...command, id });
+    });
+  }
+
+  async compact(customInstructions?: string): Promise<any> {
+    if (this.isStreaming)
+      throw new Error('Wait for the current Pi turn to finish before compacting.');
+    this.compacting = true;
+    try {
+      const response = await this.request({
+        type: 'compact',
+        ...(customInstructions ? { customInstructions } : {}),
+      });
+      if (!response.success) throw new Error(response.error || 'Pi could not compact this session');
+      return response.data;
+    } finally {
+      this.compacting = false;
+    }
   }
 
   private sendAbort(turn: PendingTurn): void {
@@ -624,6 +725,15 @@ function keyFor(folder: string): string {
   return folder;
 }
 
+/** Prepare a parent without replacing it while independent subagents are live. */
+export async function prepareRpcSession(folder: string, opts: RpcSessionOpts): Promise<RpcSession> {
+  const session = sessions.get(keyFor(folder));
+  if (session?.isAlive && session.hasLiveSubagents && !session.matchesOptions(opts)) {
+    await session.updateLiveSettings(opts);
+  }
+  return getRpcSession(folder, opts);
+}
+
 /** Get (or lazily create) the persistent RPC session for a channel folder. */
 export function getRpcSession(folder: string, opts: RpcSessionOpts): RpcSession {
   const key = keyFor(folder);
@@ -670,6 +780,16 @@ export function steerRpcSession(folder: string, message: string): boolean {
 export function abortRpcSession(folder: string): boolean {
   const session = sessions.get(keyFor(folder));
   return session?.requestAbort() ?? false;
+}
+
+/** Compact an existing warm RPC session without turning the command into a chat message. */
+export async function compactRpcSession(
+  folder: string,
+  customInstructions?: string,
+): Promise<any | undefined> {
+  const session = sessions.get(keyFor(folder));
+  if (!session || !session.isAlive) return undefined;
+  return session.compact(customInstructions);
 }
 
 /**

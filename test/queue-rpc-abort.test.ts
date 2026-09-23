@@ -11,7 +11,7 @@ vi.mock('../src/agent/rpc-session.js', () => ({
   closeAllRpcSessions: vi.fn(),
   rpcSessionIsStreaming: vi.fn(() => false),
   rpcSessionHasLiveSubagents: vi.fn(() => false),
-  getRpcSession: vi.fn(() => ({ prompt: promptMock })),
+  prepareRpcSession: vi.fn(async () => ({ prompt: promptMock })),
 }));
 
 const originalEnv = { ...process.env };

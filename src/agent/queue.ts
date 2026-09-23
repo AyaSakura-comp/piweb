@@ -30,7 +30,7 @@ import { invokeAgy, isAgyModelRef } from './agy.js';
 import { invokeClaudeTmux, isClaudeTmuxModelRef } from './claude-tmux.js';
 import {
   abortRpcSession,
-  getRpcSession,
+  prepareRpcSession,
   closeAllRpcSessions,
   closeRpcSession,
   rpcSessionIsStreaming,
@@ -497,14 +497,16 @@ async function processMessage(
       });
     } else if (useRpc) {
       try {
-        result = await getRpcSession(channel.folder, {
-          channelJid: channel.jid,
-          channelStorageToken: channel.storageToken,
-          channelOwnershipEpoch: channel.ownershipEpoch,
-          model: effective.rawModelRef || undefined,
-          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
-          cwd: effective.effectiveCwd,
-        }).prompt(prompt, onEvent, delivered);
+        result = await (
+          await prepareRpcSession(channel.folder, {
+            channelJid: channel.jid,
+            channelStorageToken: channel.storageToken,
+            channelOwnershipEpoch: channel.ownershipEpoch,
+            model: effective.rawModelRef || undefined,
+            thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+            cwd: effective.effectiveCwd,
+          })
+        ).prompt(prompt, onEvent, delivered);
       } finally {
         // Life folders are archive generations. A warm idle RPC would keep its
         // durable lease until the generic timeout and make New Life appear
