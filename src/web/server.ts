@@ -1020,7 +1020,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     // handled by the worker holding the persistent main RPC (and pi-btw state).
     // Unlike ordinary controls, the result is private: no main transcript event.
     if (sub === 'btw' && (method === 'GET' || method === 'POST')) {
-      if (!config.rpcSteer || channel.kind !== 'standard') {
+      // RPC_STEER is a WORKER setting (compose does not pass it to this
+      // container); the worker enforces it and its refusal comes back below.
+      if (channel.kind !== 'standard') {
         sendJson(res, 200, { available: false, reason: '此對話未使用長駐 Pi RPC，BTW 未送出' });
         return;
       }

@@ -108,5 +108,28 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
   await expect(page.locator('#btw-messages')).not.toContainText('SIDE_PROOF_731');
   await page.screenshot({ path: info.outputPath('06-other-session-empty.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  // Optional: a non-Pi harness (e.g. agy/…) must close BTW and hide its entry.
+  const nonPiModel = process.env.PIWEB_BTW_LIVE_NONPI_MODEL;
+  if (nonPiModel) {
+    const setModel = await context.request.post(origin! + '/api/sessions/' + encodeURIComponent(other.jid) + '/commands', {
+      headers: { Origin: origin! }, data: { command: 'pi model', args: { model: nonPiModel } },
+    });
+    expect(setModel.ok(), await setModel.text()).toBe(true);
+    await expect(page.locator('#btw-card'), 'drawer poll must leave BTW after the switch').toBeHidden({ timeout: 30_000 });
+    await expect(page.getByText('BTW 僅支援 Pi 模型')).toBeVisible();
+    await page.screenshot({ path: info.outputPath('07-nonpi-left-btw.png') });
+    await page.locator('#btn-more').click();
+    await expect(page.locator('#more-menu')).toBeVisible();
+    await expect(page.locator('#mi-btw')).toBeHidden();
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: info.outputPath('08-nonpi-menu.png') });
+    await page.keyboard.press('Escape');
+    const refused = await (await context.request.get(origin! + '/api/sessions/' + encodeURIComponent(other.jid) + '/btw')).json();
+    expect(refused.available).toBe(false);
+  }
+  for (const jid of [session.jid, other.jid]) {
+    await context.request.delete(origin! + '/api/sessions/' + encodeURIComponent(jid) + '?permanent=1', { headers: { Origin: origin! } });
+  }
   expect(errors).toEqual([]);
 });
