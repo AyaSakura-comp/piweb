@@ -192,7 +192,27 @@ describe('Claude tmux invocation', () => {
     expect(result).toMatchObject({ ok: false });
     expect(result.error).toContain('requires manual confirmation');
     expect(result.error).not.toContain('timed out');
-    expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(true);
+    expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(true);
+  });
+
+  it('clears a stale confirmation dialog on startup so Claude becomes ready', async () => {
+    const fixture = createRuntimeFixture();
+    let promptCleared = false;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && !promptCleared) {
+        return 'Dangerous rm operation on working directory or its ancestor:\n/home/chihmin/src/piweb-repro\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel · Tab to amend';
+      }
+      if (args[0] === 'send-keys' && args.includes('Escape')) {
+        promptCleared = true;
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(promptCleared).toBe(true);
   });
 
   it('reports a dead pane without waiting for the entire turn timeout', async () => {

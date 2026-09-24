@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createCommandsRunningView } from './commands-running.js';
 import { createMediaViewer, createVideoAttachment } from './media-files.js';
@@ -41,7 +42,6 @@ document.body.append(mediaViewer.element);
 
 const MODE_KEY = 'piweb.mode';
 const LIFE_JID = 'web:life';
-let lifeNavigationGeneration = 0;
 // Life quick tags: the chosen label is sent as a 【label】 card in front of the
 // next message. Add entries here for more tags.
 const LIFE_TAGS = [
@@ -50,6 +50,7 @@ const LIFE_TAGS = [
   { label: '修圖', placeholder: '附上照片，說明要怎麼修' },
 ];
 const DEFAULT_INPUT_PLACEHOLDER = 'Message pi…';
+let lifeNavigationGeneration = 0;
 let sessionsLoadGeneration = 0;
 let sessionSelectionGeneration = 0;
 let deletingSessionJid = null;
@@ -61,8 +62,8 @@ const state = {
   activeJid: null,
   mode: 'sessions',
   lifeSession: null,
-  lastStandardJid: null,
   lifeTag: null,
+  lastStandardJid: null,
   cursor: 0,
   source: null,
   attachments: [],
@@ -691,8 +692,8 @@ function setPresentationMode(mode, { persist = true } = {}) {
   if (persist) saveMode(mode);
   const life = mode === 'life';
   $('app').classList.toggle('life-mode', life);
-  $('btn-life-back').hidden = !life;
   setLifeTag(null);
+  $('btn-life-back').hidden = !life;
   $('btn-life-new-session').hidden = !life;
   // Session controls belong to a confirmed destination. Keep them unavailable
   // while the Life endpoint and event metadata are validating ownership.
@@ -909,6 +910,9 @@ async function loadSessions() {
 
 /** Mirror the provider badge next to the title, so it is visible without opening the drawer. */
 function renderHeaderBadge() {
+  syncUsageButton();
+  $('mi-commands-running').hidden = !isAgyCommandSession();
+  syncBtwAvailability();
   const host = $('header-badge');
   host.textContent = '';
   if (state.mode === 'life') {
@@ -1036,9 +1040,9 @@ function renderSessions(force = false) {
     }
     // Busy and unread are different states: a spinner means pi is working
     // right now, the dot means it finished and you have not looked yet.
-    if (session.busy) {
+    if (session.busy || session.subagentsBusy) {
       const spinner = el('span', 'work-spinner');
-      spinner.title = 'pi is working';
+      spinner.title = session.subagentsBusy ? 'Subagent is working' : 'pi is working';
       item.append(spinner);
     } else if (isUnread(session)) {
       const dot = el('span', 'unread-dot');
@@ -1080,6 +1084,7 @@ async function createSession() {
 }
 
 async function selectSession(jid, opts = {}) {
+  btwWorkspace.reset();
   subagentsView.close();
   commandsRunningView.close();
   const selection = ++sessionSelectionGeneration;
@@ -1543,7 +1548,7 @@ async function runQuickCommand(command, args = {}) {
   try {
     await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
       method: 'POST',
-      body: JSON.stringify({ command, args, ...(lifeGeneration ? { lifeGeneration } : {}) }),
+      body: JSON.stringify({ command, args, ...(command.endsWith('-usage') ? { source: 'toolbar' } : {}), ...(lifeGeneration ? { lifeGeneration } : {}) }),
     });
     return true;
   } catch (err) {
@@ -1621,14 +1626,22 @@ $('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
 // draws on Antigravity's Gemini quota, not the ChatGPT/Codex rate limit, so
 // showing GPT usage there would answer a question the user did not ask.
 function usageCommandForSession() {
-  return currentModelRef().startsWith('agy/') ? 'agy-usage' : 'gpt-usage';
+  const session = state.sessions.find((item) => item.jid === state.activeJid);
+  const model = String(session?.model || '').trim().toLowerCase();
+  // Route by execution provider, not the word "Claude": AGY-hosted Claude
+  // consumes Antigravity quota rather than the host Claude Code subscription.
+  const provider = model.includes('/') ? model.split('/')[0] : session?.provider;
+  if (provider === 'agy') return 'agy-usage';
+  if (provider === 'claude-code') return 'claude-usage';
+  return 'gpt-usage';
 }
 
 function syncUsageButton() {
   const command = usageCommandForSession();
   const button = $('btn-gpt-usage');
   button.title = `/${command}`;
-  button.setAttribute('aria-label', command === 'agy-usage' ? 'Show agy usage' : 'Show GPT usage');
+  const label = command === 'claude-usage' ? 'Claude' : command === 'agy-usage' ? 'agy' : 'GPT';
+  button.setAttribute('aria-label', `Show ${label} usage`);
 }
 
 $('btn-gpt-usage').addEventListener('click', () => runQuickCommand(usageCommandForSession()));
@@ -1643,6 +1656,19 @@ function isMenuOpen() {
   return !$('more-menu').hidden;
 }
 
+const btwWorkspace = createBtwWorkspace({
+  api,
+  getSession: () => state.activeJid && !state.selectionPending ? {
+    jid: state.activeJid,
+    key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
+    readOnly: state.previewingDeleted || state.mode === 'life',
+  } : null,
+  notify: (message) => showToast(message),
+  buildMessage: (message) => buildEventNode({
+    kind: 'message', role: message.role, content: message.content,
+    createdAt: message.createdAt || new Date().toISOString(), files: [],
+  }),
+});
 const subagentsView = createSubagentsView({
   api,
   buildEventNode,
@@ -1659,10 +1685,40 @@ const commandsRunningView = createCommandsRunningView({
     url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands-running`, state.activeJid),
   } : null,
 });
-onMenuItem('mi-commands-running', () => commandsRunningView.open());
-
+function isAgyCommandSession() {
+  if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
+  const session = state.sessions.find((item) => item.jid === state.activeJid);
+  if (!session) return false;
+  const model = String(session.model || '').trim().toLowerCase();
+  if (model) return model.startsWith('agy/');
+  return session.provider === 'agy' || String(session.runningModel || '').toLowerCase().startsWith('agy/');
+}
+// BTW runs inside the persistent Pi RPC session, so it exists only for Pi
+// models. AGY and Claude Code sessions are different harnesses: hide the entry
+// instead of offering a control the worker would refuse. No override = Pi's
+// own default model.
+function isPiBtwSession() {
+  if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
+  const session = state.sessions.find((item) => item.jid === state.activeJid);
+  if (!session) return false;
+  const model = String(session.model || '').trim().toLowerCase();
+  return !model.startsWith('agy/') && !model.startsWith('claude-code/');
+}
+function syncBtwAvailability() {
+  const available = isPiBtwSession();
+  $('mi-btw').hidden = !available;
+  if (!available && btwWorkspace.isSide()) {
+    btwWorkspace.close();
+    showToast('BTW 僅支援 Pi 模型，已回主對話');
+  }
+}
+onMenuItem('mi-commands-running', () => {
+  if (isAgyCommandSession()) commandsRunningView.open();
+});
 
 function openMoreMenu() {
+  syncBtwAvailability();
+  $('mi-commands-running').hidden = !isAgyCommandSession();
   const life = state.mode === 'life';
   $('more-menu').hidden = false;
   $('menu-scrim').hidden = false;
@@ -1819,6 +1875,7 @@ $('media-sheet').addEventListener('click', (e) => {
   if (e.target === $('media-sheet')) closeMediaSheet();
 });
 
+onMenuItem('mi-btw', () => { if (isPiBtwSession()) btwWorkspace.open(); });
 onMenuItem('mi-sessions', openDrawer);
 onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());
@@ -2033,6 +2090,32 @@ const THINKING_DESCRIPTIONS = {
   max: 'Maximum model-supported effort',
 };
 
+function setLifeTag(tag) {
+  state.lifeTag = tag;
+  if (!$('life-tags').children.length) renderLifeTags();
+  for (const button of $('life-tags').children) {
+    button.setAttribute('aria-pressed', String(button.dataset.label === tag?.label));
+  }
+  // Called during boot, before the module-level `input` binding exists.
+  $('input').placeholder = tag?.placeholder || DEFAULT_INPUT_PLACEHOLDER;
+}
+
+function renderLifeTags() {
+  const wrap = $('life-tags');
+  wrap.replaceChildren();
+  for (const tag of LIFE_TAGS) {
+    const button = el('button', 'life-tag', tag.label);
+    button.type = 'button';
+    button.dataset.label = tag.label;
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('click', () => {
+      setLifeTag(state.lifeTag?.label === tag.label ? null : tag);
+      $('input').focus();
+    });
+    wrap.append(button);
+  }
+}
+
 function currentThinkingLevel() {
   // Life runs with minimal thinking unless the user picked a level.
   if (state.activeJid === LIFE_JID) return state.lifeSession?.thinking || 'minimal';
@@ -2068,32 +2151,6 @@ function currentSessionModelInfo() {
     state.models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === ref) ||
     state.models.find((m) => ref.endsWith(`/${m.id.toLowerCase()}`))
   );
-}
-
-function setLifeTag(tag) {
-  state.lifeTag = tag;
-  if (!$('life-tags').children.length) renderLifeTags();
-  for (const button of $('life-tags').children) {
-    button.setAttribute('aria-pressed', String(button.dataset.label === tag?.label));
-  }
-  // Called during boot, before the module-level `input` binding exists.
-  $('input').placeholder = tag?.placeholder || DEFAULT_INPUT_PLACEHOLDER;
-}
-
-function renderLifeTags() {
-  const wrap = $('life-tags');
-  wrap.replaceChildren();
-  for (const tag of LIFE_TAGS) {
-    const button = el('button', 'life-tag', tag.label);
-    button.type = 'button';
-    button.dataset.label = tag.label;
-    button.setAttribute('aria-pressed', 'false');
-    button.addEventListener('click', () => {
-      setLifeTag(state.lifeTag?.label === tag.label ? null : tag);
-      $('input').focus();
-    });
-    wrap.append(button);
-  }
 }
 
 function supportedThinkingLevelsForCurrentSession() {
@@ -2714,7 +2771,8 @@ function renderPartial(text, thinking = '') {
 }
 
 function buildEventNode(event) {
-  if (event.role === 'agy-command' && event.kind === 'system') {
+  const isAgyBackgroundCommand = event.kind === 'system' && event.role === 'agy-command';
+  if (isAgyBackgroundCommand) {
     try {
       const command = JSON.parse(event.content);
       event = { ...event, content: `AGY command: ${command.command}\n${command.state} · ${command.agent}`, role: 'background command' };
@@ -2765,8 +2823,8 @@ function buildEventNode(event) {
       const startedAt = Date.parse(iso);
       if (Number.isFinite(startedAt)) details.dataset.startedAt = String(startedAt);
     }
-    // Command output and errors are short and matter; agent chatter stays folded.
-    const openByDefault = event.kind === 'system' || event.kind === 'error';
+    // Keep ordinary notices/errors open, but recurring AGY commands folded.
+    const openByDefault = event.kind === 'error' || (event.kind === 'system' && !isAgyBackgroundCommand);
     details.open = openByDefault;
 
     const summary = el('summary');
@@ -3249,6 +3307,8 @@ $('composer').addEventListener('submit', async (e) => {
     abandonComposerSend();
     return;
   }
+  const text = lifeTag ? `【${lifeTag.label}】${draft}` : draft;
+  if (lifeTag) setLifeTag(null);
   holdComposerBottomForSend(followAfterSend);
 
   // A slash line is a command, not a prompt. A quoted selection always makes
@@ -3286,8 +3346,6 @@ $('composer').addEventListener('submit', async (e) => {
   renderAttachments();
   autoGrow();
   hideAutocomplete();
-  const text = lifeTag ? `【${lifeTag.label}】${draft}` : draft;
-  if (lifeTag) setLifeTag(null);
 
   const hasAttachments = submittedAttachments.length > 0;
   if (hasAttachments) {
@@ -3362,6 +3420,7 @@ async function trySendCommand(
     body: JSON.stringify({
       command: match.name,
       args,
+      ...(match.name === 'gpt-usage' ? { source: 'composer' } : {}),
       ...(destinationLifeGeneration ? { lifeGeneration: destinationLifeGeneration } : {}),
     }),
   }).catch(async (err) => {
@@ -4236,7 +4295,6 @@ function enterTrashModal() {
   if (!sheet.hidden) return;
   trashReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sheet.hidden = false;
-  if (!sheet.open) sheet.showModal();
   $('btn-trash-close').focus({ preventScroll: true });
 }
 
@@ -4278,18 +4336,28 @@ function closeTrash({ explicitDismissal = false } = {}) {
   const sheet = $('trash-sheet');
   if (sheet.hidden) return;
   trashLoadGeneration += 1;
-  if (sheet.open) sheet.close();
   sheet.hidden = true;
   resetTrashSelection();
   const returnFocus = trashReturnFocus;
-  const restoreSettings = explicitDismissal && trashReturnsToSettings;
+  const openedFromSettings = trashReturnsToSettings;
+  const restoreSettings = explicitDismissal && openedFromSettings;
   trashReturnFocus = null;
   trashReturnsToSettings = false;
+
+  // Settings stays open underneath this page so Back reveals it without a
+  // second, wrong-direction entrance animation. Destination navigation closes
+  // both pages instead of leaving Settings over the selected session.
+  if (openedFromSettings && !explicitDismissal && $('settings-dialog').open) closeSettings();
+
   const anotherModalOwnsFocus = [...document.querySelectorAll('dialog[open]')].some(
     (dialog) => dialog !== $('settings-dialog'),
   );
   if (restoreSettings && !anotherModalOwnsFocus) {
-    void openSettings().then(() => $('btn-trash').focus({ preventScroll: true }));
+    if ($('settings-dialog').open) {
+      $('btn-trash').focus({ preventScroll: true });
+    } else {
+      void openSettings().then(() => $('btn-trash').focus({ preventScroll: true }));
+    }
   } else if (returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[inert]')) {
     queueMicrotask(() => returnFocus.focus({ preventScroll: true }));
   }
@@ -4297,7 +4365,7 @@ function closeTrash({ explicitDismissal = false } = {}) {
 
 $('btn-trash').addEventListener('click', () => {
   trashReturnsToSettings = $('settings-dialog').open;
-  closeSettings();
+  if (!trashReturnsToSettings) closeSettings();
   openTrash();
 });
 $('btn-trash-close').addEventListener('click', () => closeTrash({ explicitDismissal: true }));

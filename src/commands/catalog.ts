@@ -18,6 +18,11 @@ export interface CommandSpec {
 export const COMMANDS: CommandSpec[] = [
   { name: 'pi status', description: 'Show model, thinking, cwd, session and token usage' },
   {
+    name: 'pi compact',
+    description: 'Compact the current conversation context',
+    arg: { name: 'instructions', kind: 'text', required: false },
+  },
+  {
     name: 'pi model',
     description: 'Set the model for this session',
     arg: { name: 'model', kind: 'model', required: true },
@@ -49,6 +54,7 @@ export const COMMANDS: CommandSpec[] = [
   },
   { name: 'gpt-usage', description: 'Show ChatGPT/Codex rate-limit usage' },
   { name: 'agy-usage', description: 'Show Antigravity (Gemini) quota usage' },
+  { name: 'claude-usage', description: 'Show Claude Code account session and weekly usage' },
   {
     name: 'task cron',
     description: 'Schedule a recurring agent prompt: name | cron | prompt',

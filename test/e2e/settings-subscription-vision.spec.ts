@@ -217,6 +217,16 @@ test('mobile Settings and OpenAI device-code workflow remains visually usable', 
 
   await page.locator('#btn-trash').click();
   await expect(page.locator('#trash-sheet')).toBeVisible();
+  const trashPanel = page.locator('#trash-sheet .trash-panel');
+  await expect(trashPanel).toHaveCSS('animation-name', 'trash-page-enter');
+  await trashPanel.evaluate((element) =>
+    Promise.all(element.getAnimations().map((animation) => animation.finished)),
+  );
+  const trashGeometry = await trashPanel.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, viewportHeight: innerHeight };
+  });
+  expect(trashGeometry).toEqual({ top: 0, bottom: 844, viewportHeight: 844 });
   await expect(page.locator('#trash-note')).toHaveText('Nothing here. Deleted sessions appear for 30 days.');
   await page.screenshot({ path: testInfo.outputPath('07-recently-deleted.png') });
   await page.locator('#btn-trash-close').click();

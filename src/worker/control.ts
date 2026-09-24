@@ -22,6 +22,11 @@ import {
   touchControlProcessing,
 } from '../db.js';
 import { runCommand } from '../commands/index.js';
+import { activeRpcSessionForBtw, prepareRpcSession } from '../agent/rpc-session.js';
+import { computeEffectiveChannelSettings } from '../agent/channel-settings.js';
+import { isAgyModelRef } from '../agent/agy.js';
+import { isClaudeTmuxModelRef } from '../agent/claude-tmux.js';
+import { config } from '../config.js';
 
 const CONTROL_POLL_MS = 250;
 
@@ -121,11 +126,39 @@ async function tick(): Promise<void> {
 
       let result: { ok: boolean; text: string };
       try {
-        result = await runCommand(channel, owned.command, args, {
-          assertOwnership: () => {
-            if (!renewOwnership()) throw new Error('Control ownership expired');
-          },
-        });
+        if (owned.command === 'btw:web') {
+          if (!renewOwnership() || args.generation !== channel.folder)
+            throw new Error('BTW session generation changed');
+          if (!config.rpcSteer || channel.kind !== 'standard')
+            throw new Error('BTW requires a persistent Pi RPC session');
+          if (args.action !== 'snapshot' && args.action !== 'send')
+            throw new Error('Invalid BTW action');
+          // Check the harness first: a warm Pi RPC can outlive a switch to AGY/Claude.
+          const effective = await computeEffectiveChannelSettings(channel);
+          if (isAgyModelRef(effective.rawModelRef) || isClaudeTmuxModelRef(effective.rawModelRef))
+            throw new Error('BTW is only available with a Pi model');
+          if (!renewOwnership()) throw new Error('BTW session generation changed');
+          let rpc = activeRpcSessionForBtw(channel.folder);
+          if (!rpc) {
+            rpc = await prepareRpcSession(channel.folder, {
+              channelJid: channel.jid,
+              channelStorageToken: channel.storageToken,
+              channelOwnershipEpoch: channel.ownershipEpoch,
+              model: effective.rawModelRef || undefined,
+              thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+              cwd: effective.effectiveCwd,
+            });
+          }
+          const value = await rpc.btw(args.action, args.text);
+          if (!renewOwnership()) throw new Error('BTW session generation changed');
+          result = { ok: true, text: JSON.stringify({ messages: value.messages }) };
+        } else {
+          result = await runCommand(channel, owned.command, args, {
+            assertOwnership: () => {
+              if (!renewOwnership()) throw new Error('Control ownership expired');
+            },
+          });
+        }
       } catch (err: any) {
         result = { ok: false, text: err?.message || 'Control command failed' };
       } finally {
@@ -139,7 +172,7 @@ async function tick(): Promise<void> {
       // Auto-issued controls (e.g. the `pi new` fired when a session is created)
       // pass silent:true — the user did not type them, so echoing their output
       // would just be noise. Failures are still surfaced.
-      const silent = args.silent === 'true' && result.ok;
+      const silent = owned.command === 'btw:web' || (args.silent === 'true' && result.ok);
       try {
         if (!silent) {
           appendWebEvent(

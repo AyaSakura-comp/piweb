@@ -278,8 +278,8 @@ interface Parent {
   claudeId?: string;
   claudeActiveIds?: string[];
 }
-async function parentIdentity(root: FileHandle, owner: string, cwd?: string): Promise<Parent> {
-  const parent = await piParentIdentity(root, owner, cwd);
+async function parentIdentity(root: FileHandle, owner: string, cwd?: string, activityOnly = false): Promise<Parent> {
+  const parent = await piParentIdentity(root, owner, cwd, activityOnly);
   const file = await openFile(root, 'claude-tmux-session.json');
   if (!file) return parent;
   try {
@@ -332,7 +332,7 @@ async function parentIdentity(root: FileHandle, owner: string, cwd?: string): Pr
   }
   return parent;
 }
-async function piParentIdentity(root: FileHandle, owner: string, cwd?: string): Promise<Parent> {
+async function piParentIdentity(root: FileHandle, owner: string, cwd?: string, activityOnly = false): Promise<Parent> {
   let published: { id?: string; file?: string } | undefined;
   const marker = await openFile(root, '.piweb-current-parent.json');
   if (marker) {
@@ -365,6 +365,8 @@ async function piParentIdentity(root: FileHandle, owner: string, cwd?: string): 
       await marker.close();
     }
   }
+  // Sidebar polling needs only publications; do not scan dormant session histories.
+  if (activityOnly) return { scope: digest(owner + ':inactive') };
   // Cold fallback matches Pi's --continue preference: valid session header,
   // newest mtime, not lexicographic timestamp names. A warm owner publishes its
   // exact selected identity above, including before the first persisted reply.
@@ -399,6 +401,27 @@ async function piParentIdentity(root: FileHandle, owner: string, cwd?: string): 
     scope: digest(owner + ':' + (p?.file || 'empty') + ':' + (p?.id || '')),
   };
 }
+/** Sidebar activity uses fresh runtime publications, never child transcript history. */
+export async function hasRunningSubagents(
+  directory: string,
+  owner: string,
+  cwd?: string,
+): Promise<boolean> {
+  return admitted(async () => {
+    let root: FileHandle | undefined;
+    try {
+      root = await openDirectory(directory);
+      const parent = await parentIdentity(root, owner, cwd, true);
+      return !!(parent.activeFiles?.length || parent.claudeActiveIds?.length);
+    } catch {
+      // Missing, unreadable or malformed publications do not establish activity.
+      return false;
+    } finally {
+      await root?.close();
+    }
+  });
+}
+
 /** Cheap identity-only revalidation; never re-scans child transcripts. */
 export async function subagentParentScope(
   directory: string,

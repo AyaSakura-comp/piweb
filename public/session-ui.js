@@ -71,6 +71,30 @@ export function bindLongPress(target, callback, options = {}) {
   const moveTolerance = options.moveTolerance ?? DEFAULT_MOVE_TOLERANCE_PX;
   let press = null;
   let suppressClick = false;
+  let clickGuardTimer = null;
+  let clickGuardX = 0;
+  let clickGuardY = 0;
+  const ownerDocument = target.ownerDocument;
+
+  function clearClickGuard() {
+    if (clickGuardTimer) clearTimeout(clickGuardTimer);
+    clickGuardTimer = null;
+    ownerDocument?.removeEventListener('click', consumeLongPressClick, true);
+  }
+
+  function consumeLongPressClick(event) {
+    if (!suppressClick) return;
+    if (Math.hypot(event.clientX - clickGuardX, event.clientY - clickGuardY) > moveTolerance) {
+      suppressClick = false;
+      clearClickGuard();
+      return;
+    }
+    suppressClick = false;
+    clearClickGuard();
+    event.preventDefault();
+    event.stopImmediatePropagation?.();
+    event.stopPropagation();
+  }
 
   function cancelPress() {
     if (!press) return;
@@ -91,6 +115,20 @@ export function bindLongPress(target, callback, options = {}) {
       if (press !== pending) return;
       press = null;
       suppressClick = true;
+      clickGuardX = pending.x;
+      clickGuardY = pending.y;
+      // The callback may replace `target` (Recently deleted re-renders its
+      // rows when selection mode begins). Capture the synthetic post-hold click
+      // at the document so it cannot land on the replacement row and undo the
+      // selection. The timeout avoids consuming a later intentional tap on
+      // platforms that do not emit a click after long-press.
+      if (ownerDocument) {
+        ownerDocument.addEventListener('click', consumeLongPressClick, true);
+        clickGuardTimer = setTimeout(() => {
+          suppressClick = false;
+          clearClickGuard();
+        }, 1_000);
+      }
       callback(event);
     }, delay);
     press = pending;
@@ -104,10 +142,7 @@ export function bindLongPress(target, callback, options = {}) {
   }
 
   function onClick(event) {
-    if (!suppressClick) return;
-    suppressClick = false;
-    event.preventDefault();
-    event.stopPropagation();
+    consumeLongPressClick(event);
   }
 
   function onContextMenu(event) {
@@ -124,6 +159,8 @@ export function bindLongPress(target, callback, options = {}) {
 
   return () => {
     cancelPress();
+    suppressClick = false;
+    clearClickGuard();
     target.removeEventListener('pointerdown', onPointerDown);
     target.removeEventListener('pointermove', onPointerMove);
     target.removeEventListener('pointerup', cancelPress);

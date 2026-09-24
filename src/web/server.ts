@@ -17,7 +17,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { extractSessionTitle } from '../agent/session-title.js';
-import { readSubagents, subagentParentScope, SubagentReadError } from '../session/subagents.js';
+import { readSubagents, hasRunningSubagents, subagentParentScope, SubagentReadError } from '../session/subagents.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -34,6 +34,7 @@ import {
   enqueueControl,
   enqueueSubscriptionJob,
   getChannel,
+  getControl,
   getFirstUserMessageContent,
   getMeta,
   getLatestSubscriptionJob,
@@ -68,6 +69,7 @@ import {
   getLiveOutput,
 } from '../db.js';
 import { COMMANDS, type CommandSpec } from '../commands/catalog.js';
+import { resolveWebUsageCommand } from '../commands/usage-routing.js';
 import {
   mediaDirName,
   mediaFileName,
@@ -747,7 +749,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         badge: provider ? providerBadge(provider, badgeModelId) : null,
       };
     });
-    sendJson(res, 200, { sessions });
+    // Sequential bounded reads avoid saturating the child-inspection admission limit.
+    // Keep parent busy separate: child work must not enable parent-only Stop controls.
+    const activity = new Map<string, boolean>();
+    for (const session of sessions) {
+      const channel = getChannel(session.jid);
+      if (!channel) continue;
+      const owner = `${channel.storageToken}:${channel.folder}:${channel.ownershipEpoch}`;
+      const running = await hasRunningSubagents(
+        resolveChannelSessionDir(channel.folder), owner, channel.cwdOverride || config.piCwd,
+      ).catch(() => false);
+      const current = getChannel(session.jid);
+      if (current && current.storageToken === channel.storageToken &&
+          current.folder === channel.folder && current.ownershipEpoch === channel.ownershipEpoch) {
+        activity.set(session.jid, running);
+      }
+    }
+    sendJson(res, 200, { sessions: sessions.map((session) => ({
+      ...session, subagentsBusy: activity.get(session.jid) ?? false,
+    })) });
     return;
   }
 
@@ -994,6 +1014,62 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         sendJson(res, 409, { error: 'Life session generation changed' });
         return;
       }
+    }
+
+    // The web process never opens its own Pi process. A private control row is
+    // handled by the worker holding the persistent main RPC (and pi-btw state).
+    // Unlike ordinary controls, the result is private: no main transcript event.
+    if (sub === 'btw' && (method === 'GET' || method === 'POST')) {
+      if (!config.rpcSteer || channel.kind !== 'standard') {
+        sendJson(res, 200, { available: false, reason: '此對話未使用長駐 Pi RPC，BTW 未送出' });
+        return;
+      }
+      // Prefixes spelled inline: the web tier must not import src/agent (invariant 2).
+      const override = (channel.modelOverride || '').trim().toLowerCase();
+      if (override.startsWith('agy/') || override.startsWith('claude-code/')) {
+        sendJson(res, 200, { available: false, reason: 'BTW 僅支援 Pi 模型；此對話目前使用其他 agent' });
+        return;
+      }
+      const generation = channel.folder;
+      let args: Record<string, string> = { generation, action: 'snapshot' };
+      if (method === 'POST') {
+        const body = await readJson<{ text?: unknown; generation?: unknown }>(req);
+        if (body?.generation !== generation) {
+          sendJson(res, 409, { error: 'BTW 對話世代已變更；未送出訊息' });
+          return;
+        }
+        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) {
+          sendJson(res, 400, { error: 'BTW 訊息必須為 1–20000 字元' });
+          return;
+        }
+        args = { generation, action: 'send', text: body.text.trim() };
+      }
+      const rowid = enqueueControl(jid, 'btw:web', args);
+      const deadline = Date.now() + 610_000;
+      while (Date.now() < deadline && !res.destroyed) {
+        const row = getControl(rowid);
+        if (row?.status === 'done' || row?.status === 'failed') {
+          const current = getChannel(jid);
+          if (!current || current.folder !== generation ||
+              current.storageToken !== channel.storageToken ||
+              current.ownershipEpoch !== channel.ownershipEpoch) {
+            sendJson(res, 409, { error: 'BTW 對話世代已變更；請重新開啟' });
+          } else if (row.status === 'failed') {
+            sendJson(res, 409, { error: row.result || 'BTW 執行失敗，草稿已保留' });
+          } else {
+            try {
+              const result = JSON.parse(row.result || '{}');
+              sendJson(res, 200, { available: true, generation, thread: result });
+            } catch {
+              sendJson(res, 502, { error: 'BTW 回應格式錯誤，請重新開啟' });
+            }
+          }
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!res.destroyed) sendJson(res, 504, { error: 'BTW 等待逾時；請重新開啟查看側聊再決定是否重送' });
+      return;
     }
 
     // Four read modes, all index-backed range scans:
@@ -1350,6 +1426,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const body = await readJson<{
           command?: string;
           args?: Record<string, string>;
+          source?: string;
           lifeGeneration?: unknown;
         }>(req);
         if (!operationHeartbeat.renew()) {
@@ -1370,7 +1447,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           }
         }
 
-        const command = (body.command ?? '').trim();
+        const command = resolveWebUsageCommand(
+          (body.command ?? '').trim(),
+          channel.modelOverride || config.piModel || '',
+          body.source,
+        );
         if (
           channel.kind === 'life' &&
           ['pi model', 'pi reset-model', 'pi cwd', 'pi reset-cwd'].includes(command)

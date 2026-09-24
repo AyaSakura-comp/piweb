@@ -9,6 +9,7 @@ test('command list distinguishes running, output, continuation and lost tracking
     jid: 'web:command-test',
     name: 'AGY command test',
     model: 'agy/test',
+    provider: 'agy',
     kind: 'standard',
     deleted: false,
     busy: true,
@@ -47,7 +48,14 @@ test('command list distinguishes running, output, continuation and lost tracking
   await expect(page.locator('#session-name')).toHaveText('AGY command test');
   expect(errors).toEqual([]);
   await page.locator('#btn-more').click();
-  await page.locator('#mi-commands-running').click();
+  const commandMenu = page.locator('#mi-commands-running');
+  await expect(commandMenu).toHaveText('背景命令');
+  await expect(commandMenu.locator('svg')).toBeVisible();
+  await expect
+    .poll(() => page.locator('#more-menu').evaluate((el) => getComputedStyle(el).opacity))
+    .toBe('1');
+  await page.screenshot({ path: info.outputPath('00-agy-menu-icon.png') });
+  await commandMenu.click();
   const dialog = page.getByRole('dialog', { name: '背景命令' });
   await expect(dialog.locator('.command-spinner')).toBeVisible();
   expect(
@@ -84,5 +92,21 @@ test('command list distinguishes running, output, continuation and lost tracking
   ).toBe(true);
   await dialog.getByRole('button', { name: '關閉背景命令' }).click();
   await expect(dialog).not.toBeVisible();
+  session.model = 'openai-codex/test';
+  await page.reload();
+  await expect(page.locator('#input')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(page.locator('#mi-commands-running')).toBeHidden();
+  await page.screenshot({ path: info.outputPath('05-non-agy-menu.png') });
+  session.model = '';
+  await page.reload();
+  await expect(page.locator('#input')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(commandMenu).toBeVisible(); // Runtime provider when no explicit model is selected.
+  session.provider = '';
+  await page.reload();
+  await expect(page.locator('#input')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(commandMenu).toBeHidden();
   expect(errors).toEqual([]);
 });

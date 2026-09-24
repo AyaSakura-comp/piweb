@@ -20,7 +20,7 @@ export function createCommandsRunningView({ api, getParent }) {
   const heading = document.createElement('div');
   heading.className = 'subagents-heading';
   const title = document.createElement('h2');
-  title.textContent = '背景命令 · AGY';
+  title.textContent = '背景命令';
   const closeButton = document.createElement('button');
   closeButton.textContent = '×';
   closeButton.setAttribute('aria-label', '關閉背景命令');

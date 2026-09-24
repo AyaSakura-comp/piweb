@@ -1,48 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Showa-era retro flat design — 萌黄（回路） -->
-  <rect width="64" height="64" rx="14" fill="#A0B088"/>
-  <!-- Screen tone dots -->
-  <g fill="#90A080" opacity="0.15">
-    <circle cx="12" cy="12" r="1"/><circle cx="20" cy="12" r="1"/><circle cx="28" cy="12" r="1"/>
-    <circle cx="36" cy="12" r="1"/><circle cx="44" cy="12" r="1"/><circle cx="52" cy="12" r="1"/>
-    <circle cx="12" cy="20" r="1"/><circle cx="20" cy="20" r="1"/><circle cx="28" cy="20" r="1"/>
-    <circle cx="36" cy="20" r="1"/><circle cx="44" cy="20" r="1"/><circle cx="52" cy="20" r="1"/>
-    <circle cx="12" cy="28" r="1"/><circle cx="20" cy="28" r="1"/><circle cx="28" cy="28" r="1"/>
-    <circle cx="36" cy="28" r="1"/><circle cx="44" cy="28" r="1"/><circle cx="52" cy="28" r="1"/>
-    <circle cx="12" cy="36" r="1"/><circle cx="20" cy="36" r="1"/><circle cx="28" cy="36" r="1"/>
-    <circle cx="36" cy="36" r="1"/><circle cx="44" cy="36" r="1"/><circle cx="52" cy="36" r="1"/>
-    <circle cx="12" cy="44" r="1"/><circle cx="20" cy="44" r="1"/><circle cx="28" cy="44" r="1"/>
-    <circle cx="36" cy="44" r="1"/><circle cx="44" cy="44" r="1"/><circle cx="52" cy="44" r="1"/>
-    <circle cx="12" cy="52" r="1"/><circle cx="20" cy="52" r="1"/><circle cx="28" cy="52" r="1"/>
-    <circle cx="36" cy="52" r="1"/><circle cx="44" cy="52" r="1"/><circle cx="52" cy="52" r="1"/>
+  <rect width="64" height="64" rx="14" fill="#FFFEFA"/>
+  <!-- Sakura petals double as connected agent nodes. -->
+  <g stroke="#23345C" stroke-width="1.8" stroke-linecap="round" fill="none">
+    <path d="M32 13v6M47 22l-6 4M44 43l-6-5M20 43l6-5M17 22l6 4"/>
   </g>
-  <!-- Circuit traces -->
-  <g stroke="#F5F0E8" stroke-width="1.5" opacity="0.5" fill="none">
-    <line x1="26" y1="26" x2="32" y2="28"/>
-    <line x1="38" y1="26" x2="32" y2="28"/>
-    <line x1="22" y1="40" x2="32" y2="36"/>
-    <line x1="42" y1="40" x2="32" y2="36"/>
-    <line x1="28" y1="50" x2="32" y2="44"/>
-    <line x1="36" y1="50" x2="32" y2="44"/>
+  <g>
+    <path d="M32 5c-5 4-6 9 0 14 6-5 5-10 0-14Z" fill="#D94B49"/>
+    <path d="M57 21c-6-2-11 1-12 7 6 3 11 0 12-7Z" fill="#C97566"/>
+    <path d="M51 49c0-6-4-10-10-9-1 6 3 10 10 9Z" fill="#87977B"/>
+    <path d="M13 49c7 1 11-3 10-9-6-1-10 3-10 9Z" fill="#B88A78"/>
+    <path d="M7 21c1 7 6 10 12 7-1-6-6-9-12-7Z" fill="#D47A68"/>
+    <circle cx="21" cy="15" r="3.3" fill="#A9B88B"/>
+    <circle cx="49" cy="13" r="2.7" fill="#4A4B48"/>
+    <circle cx="55" cy="34" r="3" fill="#A9B88B"/>
+    <circle cx="9" cy="34" r="3" fill="#A9B88B"/>
   </g>
-  <!-- Agent nodes -->
-  <g fill="#F5F0E8" opacity="0.6">
-    <circle cx="26" cy="26" r="3.5"/>
-    <circle cx="38" cy="26" r="3.5"/>
-    <circle cx="22" cy="40" r="3"/>
-    <circle cx="42" cy="40" r="3"/>
-    <circle cx="28" cy="50" r="3.5"/>
-    <circle cx="36" cy="50" r="3.5"/>
-  </g>
-  <!-- Hub nodes -->
-  <g fill="#F5F0E8" opacity="0.7">
-    <circle cx="32" cy="28" r="2.5"/>
-    <circle cx="32" cy="36" r="2.5"/>
-    <circle cx="32" cy="44" r="2.5"/>
-  </g>
-  <!-- π -->
-  <text x="32" y="42" text-anchor="middle" font-family="system-ui, sans-serif"
-        font-size="18" font-weight="800" fill="#F5F0E8">π</text>
-  <!-- Outer border -->
-  <rect x="2" y="2" width="60" height="60" rx="12" fill="none" stroke="#F5F0E8" stroke-width="1" opacity="0.15"/>
+  <!-- Coordinating Piweb agent mark. -->
+  <path fill="#1F3158" fill-rule="evenodd" d="M25 20h9c9 0 14 4 14 11 0 6-5 10-13 10h-3v13h-7V20Zm7 6v9h3c4 0 6-1 6-4s-2-5-6-5h-3Z"/>
 </svg>

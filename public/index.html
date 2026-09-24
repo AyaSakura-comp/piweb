@@ -35,15 +35,16 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/piweb/icon-32.png" />
     <!-- Home-screen icon. iOS ignores the manifest for this and needs an opaque
          square it can apply its own corner mask to, hence a PNG per size. -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/piweb/icon-180.png" />
-    <link rel="apple-touch-icon" sizes="167x167" href="/icons/piweb/icon-167.png" />
-    <link rel="apple-touch-icon" sizes="152x152" href="/icons/piweb/icon-152.png" />
-    <link rel="apple-touch-icon" sizes="120x120" href="/icons/piweb/icon-120.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=sakura-network" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/piweb/icon-180.png?v=sakura-network" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/piweb/icon-167.png?v=sakura-network" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/piweb/icon-152.png?v=sakura-network" />
+    <link rel="apple-touch-icon" sizes="120x120" href="/icons/piweb/icon-120.png?v=sakura-network" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="/app.css" />
-    <link rel="stylesheet" href="/commands-running.css" />
-  </head>
+    <link rel="stylesheet" href="/commands-running.css">
+</head>
   <body>
     <!-- Login gate -->
     <div id="login" class="login" hidden>
@@ -285,7 +286,14 @@
             <span class="mi-label">New pi session</span>
             <span class="mi-cmd">/pi new</span>
           </button>
-          <button type="button" class="menu-item" id="mi-commands-running" role="menuitem">背景命令 · AGY</button>
+          <button type="button" class="menu-item" id="mi-commands-running" role="menuitem" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5M6 7l3 3-3 3m6-6h5" /><circle cx="17" cy="17" r="5" /><path d="M17 14v3l2 1" /></svg>
+            <span class="mi-label">背景命令</span>
+          </button>
+          <button type="button" class="menu-item" id="mi-btw" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z" /></svg>
+            <span class="mi-label">BTW 側聊</span>
+          </button>
           <button type="button" class="menu-item" id="mi-subagents" role="menuitem">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v7M5 14v-4h14v4" /><circle cx="12" cy="3" r="2" /><circle cx="5" cy="18" r="3" /><circle cx="19" cy="18" r="3" /></svg>
             <span class="mi-label">Subagents</span>
@@ -329,6 +337,7 @@
         </div>
 
         <div class="messages" id="messages"></div>
+        <div class="messages btw-messages" id="btw-messages" aria-label="BTW 側聊紀錄" hidden></div>
 
         <div class="selection-actions" id="selection-actions" role="toolbar" hidden>
           <button type="button" id="selection-quote">引用</button>
@@ -355,6 +364,10 @@
           <span class="typing-label">pi is working…</span>
         </div>
 
+        <div class="btw-card" id="btw-card" hidden>
+          <div><strong>BTW 側聊</strong><span>這裡的訊息只送到 BTW，不會自動加入主對話</span></div>
+          <button type="button" id="btw-back" aria-label="回主對話">回主對話</button>
+        </div>
         <div class="composer-wrap" id="composer-wrap">
           <div class="autocomplete" id="autocomplete" hidden></div>
           <div
@@ -381,6 +394,7 @@
             <button type="button" id="quote-preview-remove" aria-label="Remove quote">×</button>
           </div>
           <div class="attachments" id="attachments" hidden></div>
+          <div class="life-tags" id="life-tags" role="group" aria-label="快速標籤"></div>
           <form class="composer" id="composer">
             <button type="button" class="icon-btn" id="btn-attach" aria-label="Add attachment">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -394,7 +408,6 @@
             </button>
             <textarea id="input" rows="1" placeholder="Message pi…" aria-label="Message"></textarea>
             <button type="submit" class="icon-btn send" id="btn-send" aria-label="Send">
-          <div class="life-tags" id="life-tags" role="group" aria-label="快速標籤"></div>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 8 6 8z" /></svg>
             </button>
           </form>
@@ -559,18 +572,17 @@
           </section>
         </div>
       </div>
-    </dialog>
 
-    <dialog class="sheet" id="trash-sheet" aria-labelledby="trash-title" hidden>
+      <section class="sheet" id="trash-sheet" role="dialog" aria-labelledby="trash-title" hidden>
       <div class="sheet-panel trash-panel">
         <header class="sheet-head">
+          <button class="icon-btn" id="btn-trash-close" aria-label="Back to Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
           <span class="sheet-title" id="trash-title">Recently deleted</span>
           <div class="sheet-head-actions">
             <button class="trash-select-toggle" id="btn-trash-select" type="button" hidden>
               Select
-            </button>
-            <button class="icon-btn" id="btn-trash-close" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>
           </div>
         </header>
@@ -594,6 +606,7 @@
           </div>
         </div>
       </div>
+      </section>
     </dialog>
 
     <script src="/vendor/katex/katex.min.js"></script>

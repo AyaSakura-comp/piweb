@@ -18,9 +18,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createAgyCommandTracker } from './agy-commands.js';
 import { readAgyTaskTranscript } from './agy-task-transcript.js';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -29,7 +28,9 @@ import { UNTIL_DONE_MARKER } from './invoke.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import type { AvailableModelInfo } from './model-catalog.js';
+import { convertLocalMediaLinks } from './local-media-links.js';
 import { snapshotAgySubagents, watchAgySubagents } from './agy-subagents.js';
+export { convertLocalMediaLinks } from './local-media-links.js';
 
 export const AGY_PROVIDER = 'agy';
 
@@ -134,6 +135,7 @@ export function parseAgyModels(stdout: string): AvailableModelInfo[] {
       reasoning: true,
       // agy caps reasoning at "high"; extended Pi levels fold down.
       supportsXhigh: false,
+      supportedThinkingLevels: ['off', 'minimal', 'low', 'medium', 'high'],
     });
   }
   return models;
@@ -431,48 +433,6 @@ export function unwrapUntilDoneGoal(promptText: string): string {
     'Work autonomously until this goal is done and verified, without pausing to ask ' +
     'for confirmation, then give a brief summary of what you did.'
   ).trim();
-}
-
-/**
- * agy signals produced files the way a chat model naturally would — markdown
- * (`![chart](/home/me/chart.png)`) — while Piweb's attachment pipeline only
- * understands pi's outbox convention (`[[file: …]]`). Without a translation the
- * image silently never arrives and the reply is left with a dangling `!` and a
- * caption, which is exactly what a user reports as "圖片沒辦法傳過來".
- *
- * Only links resolving to a file that actually exists on disk are converted, so
- * ordinary http(s) links and prose survive untouched.
- */
-const MARKDOWN_LINK_RE = /(!?)\[([^\]]*)\]\(([^()]+)\)/g;
-
-export function convertLocalMediaLinks(text: string, baseDir = config.piCwd): string {
-  if (!text) return text;
-
-  return text.replace(MARKDOWN_LINK_RE, (whole, bang: string, label: string, target: string) => {
-    let candidate = target.trim().replace(/^['"<]+|['">]+$/g, '');
-    if (!candidate || /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
-      // Absolute URLs stay as they are; only file:// is unwrapped to a path.
-      if (!/^file:\/\//i.test(candidate)) return whole;
-      try {
-        candidate = fileURLToPath(candidate);
-      } catch {
-        return whole;
-      }
-    }
-
-    const abs = isAbsolute(candidate) ? candidate : resolve(baseDir, candidate);
-    try {
-      if (!existsSync(abs) || !statSync(abs).isFile()) return whole;
-    } catch {
-      return whole;
-    }
-
-    // Keep the caption the model wrote; the marker itself is stripped later by
-    // parseOutboxMarkers, which is what actually attaches the file.
-    const caption = label.trim();
-    const marker = `[[file: ${abs}]]`;
-    return caption && !bang ? `${caption} ${marker}` : marker;
-  });
 }
 
 /** "run_command ./scripts/verify_x.sh" — enough to recognise which call is stuck. */

@@ -56,7 +56,7 @@ import {
   type EffectiveChannelSettings,
 } from '../agent/channel-settings.js';
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
-import { closeRpcSession } from '../agent/rpc-session.js';
+import { closeRpcSession, compactRpcSession, getRpcSessionStats } from '../agent/rpc-session.js';
 import { closeClaudeTmuxSession } from '../agent/claude-tmux.js';
 import { harnessForModel } from '../agent/harness-handoff.js';
 import { computeNextRun } from '../agent/scheduler.js';
@@ -64,10 +64,8 @@ import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
 import { getAgyUsageReport } from '../agy-usage.js';
-import {
-  discoverPiExtensionCommands,
-  executePiExtensionCommand,
-} from './extension-runner.js';
+import { getClaudeUsageText, ClaudeUsageError } from '../claude-usage.js';
+import { discoverPiExtensionCommands, executePiExtensionCommand } from './extension-runner.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -75,10 +73,7 @@ export interface CommandResult {
 }
 
 export { COMMANDS, type CommandSpec } from './catalog.js';
-export {
-  discoverPiExtensionCommands,
-  executePiExtensionCommand,
-} from './extension-runner.js';
+export { discoverPiExtensionCommands, executePiExtensionCommand } from './extension-runner.js';
 
 function mutateOwnedChannel<T>(channel: RegisteredChannel, mutate: () => T): T {
   return withChannelGenerationMutation(
@@ -109,6 +104,9 @@ export async function runCommand(
       case 'pi status':
         result = await cmdStatus(channel);
         break;
+      case 'pi compact':
+        result = await cmdCompact(channel, args.instructions);
+        break;
       case 'pi model':
         result = cmdModelSet(channel, args.model ?? '');
         break;
@@ -137,6 +135,9 @@ export async function runCommand(
         break;
       case 'agy-usage':
         result = await cmdAgyUsage();
+        break;
+      case 'claude-usage':
+        result = await cmdClaudeUsage();
         break;
       case 'until goal':
         result = cmdUntilGoal(channel, args.text ?? '');
@@ -522,11 +523,56 @@ export function cmdThinkingReset(channel: RegisteredChannel): CommandResult {
   return { ok: true, text: 'Thinking level reset to the gateway default.' };
 }
 
-// ── status ──
+// ── status / compaction ──
+
+async function cmdCompact(
+  channel: RegisteredChannel,
+  customInstructions?: string,
+): Promise<CommandResult> {
+  let result;
+  try {
+    result = await compactRpcSession(channel.folder, customInstructions?.trim() || undefined);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'Nothing to compact (session too small)') {
+      return { ok: true, text: 'Nothing to compact (session too small).' };
+    }
+    throw error;
+  }
+  if (!result) {
+    return {
+      ok: false,
+      text: 'No active Pi session is available to compact. Send a message first, then try again.',
+    };
+  }
+
+  const before = Number(result.tokensBefore);
+  const after = Number(result.estimatedTokensAfter);
+  if (Number.isFinite(before) && Number.isFinite(after)) {
+    return {
+      ok: true,
+      text: `Compacted context: ${formatNumber(before)} → approximately ${formatNumber(after)} tokens.`,
+    };
+  }
+  return { ok: true, text: 'Compacted the current conversation context.' };
+}
 
 async function cmdStatus(channel: RegisteredChannel): Promise<CommandResult> {
   const effective = await computeEffectiveChannelSettings(channel);
-  const sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
+  let sessionStatus = await getChannelSessionStatus(channel.folder, effective.effectiveCwd);
+  try {
+    const liveStats = await getRpcSessionStats(channel.folder);
+    if (liveStats) {
+      sessionStatus = {
+        ...sessionStatus,
+        tokens: liveStats.tokens ?? sessionStatus.tokens,
+        contextUsage: liveStats.contextUsage ?? sessionStatus.contextUsage,
+        statsSource: 'rpc',
+      };
+    }
+  } catch (error) {
+    logger.warn({ err: String(error), folder: channel.folder }, 'Failed to query warm RPC stats');
+  }
   return { ok: true, text: buildStatusMessage(effective, sessionStatus) };
 }
 
@@ -535,6 +581,18 @@ async function cmdAgyUsage(): Promise<CommandResult> {
   // or expired agy login reads as an explanation rather than a stack trace.
   const output = await getAgyUsageReport();
   return { ok: true, text: '```text\n' + output.trim() + '\n```' };
+}
+
+async function cmdClaudeUsage(): Promise<CommandResult> {
+  try {
+    return { ok: true, text: '```text\n' + (await getClaudeUsageText()) + '\n```' };
+  } catch (error) {
+    return {
+      ok: false,
+      text:
+        error instanceof ClaudeUsageError ? error.message : '無法取得 Claude usage，請稍後再試。',
+    };
+  }
 }
 
 async function cmdGptUsage(): Promise<CommandResult> {

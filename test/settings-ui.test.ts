@@ -37,6 +37,10 @@ describe('settings page', () => {
     expect(settings).toContain('id="subscription-openai"');
     expect(settings).toContain('id="subscription-device-code"');
     expect(settings).toContain('id="subscription-verification-link"');
+    const trashPage = html.match(/<section[^>]+id="trash-sheet"[\s\S]*?<\/section>/)?.[0] ?? '';
+    expect(trashPage.indexOf('id="btn-trash-close"')).toBeLessThan(
+      trashPage.indexOf('id="trash-title"'),
+    );
     expect(app).toContain("api('/api/subscriptions/openai-codex'");
     expect(app).toContain("$('btn-settings').addEventListener('click'");
     expect(app).toContain("setAttribute('aria-checked'");

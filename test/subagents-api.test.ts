@@ -89,6 +89,33 @@ it('authenticates all child reads, binds exact parent, and requires Life generat
     join(root, 'parent', 'run', 'run-0', 'session.jsonl'),
     JSON.stringify({ type: 'session', id: 'child-id' }) + '\n',
   );
+  // The sidebar tracks child activity separately from the parent's turn state.
+  const channel = db.getChannel(parent.jid)!;
+  const marker = {
+    owner: `${channel.storageToken}:${channel.folder}:${channel.ownershipEpoch}`,
+    cwd: (await import('../src/config.js')).config.piCwd,
+    runtime: 'test-runtime', id: 'parent-id', file: 'parent.jsonl',
+    expires: Date.now() + 60000,
+    activity: { files: ['parent/run/run-0/session.jsonl'], expires: Date.now() + 60000 },
+  };
+  const publish = () => writeFileSync(join(root, '.piweb-current-parent.json'), JSON.stringify(marker) + '\n');
+  const sidebar = async () => (await (await request('/api/sessions')).json()).sessions;
+  publish();
+  const sessions = await sidebar();
+  expect(sessions.find((s: any) => s.jid === parent.jid)).toMatchObject({ busy: false, subagentsBusy: true });
+  expect(sessions.find((s: any) => s.jid === other.jid).subagentsBusy).toBe(false);
+  marker.activity.files = [];
+  publish();
+  expect((await sidebar()).find((s: any) => s.jid === parent.jid).subagentsBusy).toBe(false);
+  marker.activity.files = ['parent/run/run-0/session.jsonl'];
+  marker.activity.expires = 0;
+  publish();
+  expect((await sidebar()).find((s: any) => s.jid === parent.jid).subagentsBusy).toBe(false);
+  marker.activity.expires = Date.now() + 60000;
+  marker.owner = 'previous-owner';
+  publish();
+  expect((await sidebar()).find((s: any) => s.jid === parent.jid).subagentsBusy).toBe(false);
+
   const endpoint = '/api/sessions/' + encodeURIComponent(parent.jid) + '/subagents';
   expect((await fetch(origin + endpoint)).status).toBe(401);
   const list = (await (await request(endpoint)).json()) as any;
@@ -114,19 +141,64 @@ it('authenticates all child reads, binds exact parent, and requires Life generat
   );
   const commandEndpoint = '/api/sessions/' + encodeURIComponent(parent.jid) + '/commands-running';
   expect((await fetch(origin + commandEndpoint)).status).toBe(401);
-  db.appendWebEvent({channelJid: parent.jid, kind:'system', role:'agy-command', content:JSON.stringify({id:'turn:1', command:'npm test', state:'running', updatedAt:Date.now()})});
+  db.appendWebEvent({
+    channelJid: parent.jid,
+    kind: 'system',
+    role: 'agy-command',
+    content: JSON.stringify({
+      id: 'turn:1',
+      command: 'npm test',
+      state: 'running',
+      updatedAt: Date.now(),
+    }),
+  });
   expect((await (await request(commandEndpoint)).json()).commands[0].state).toBe('unknown');
-  db.appendWebEvent({channelJid: parent.jid, kind:'system', role:'agy-command', content:JSON.stringify({id:'turn:1', command:'npm test', state:'cancelled', updatedAt:Date.now()})});
+  db.appendWebEvent({
+    channelJid: parent.jid,
+    kind: 'system',
+    role: 'agy-command',
+    content: JSON.stringify({
+      id: 'turn:1',
+      command: 'npm test',
+      state: 'cancelled',
+      updatedAt: Date.now(),
+    }),
+  });
   const commandList = await (await request(commandEndpoint)).json();
   expect(commandList.commands).toHaveLength(1);
   expect(commandList.commands[0].state).toBe('cancelled');
-  expect((await (await request('/api/sessions/' + encodeURIComponent(other.jid) + '/commands-running')).json()).commands).toEqual([]);
+  expect(
+    (
+      await (
+        await request('/api/sessions/' + encodeURIComponent(other.jid) + '/commands-running')
+      ).json()
+    ).commands,
+  ).toEqual([]);
   const life = (await (await request('/api/life-session', 'POST', {})).json()) as any;
   expect((await request('/api/sessions/web%3Alife/commands-running')).status).toBe(400);
-  expect((await request('/api/sessions/web%3Alife/commands-running?generation=stale')).status).toBe(400);
-  expect((await request('/api/sessions/web%3Alife/commands-running?generation=' + life.generation)).status).toBe(200);
+  expect((await request('/api/sessions/web%3Alife/commands-running?generation=stale')).status).toBe(
+    400,
+  );
+  expect(
+    (await request('/api/sessions/web%3Alife/commands-running?generation=' + life.generation))
+      .status,
+  ).toBe(200);
   expect((await request('/api/sessions/web%3Alife/subagents')).status).toBe(400);
   expect(
     (await request('/api/sessions/web%3Alife/subagents?generation=' + life.generation)).status,
   ).toBe(200);
+  db.setChannelModelOverride(parent.jid, 'claude-code/opus');
+  for (const [source, expected] of [
+    [undefined, 'claude-usage'],
+    ['toolbar', 'claude-usage'],
+    ['composer', 'gpt-usage'],
+  ]) {
+    const response = await request(
+      '/api/sessions/' + encodeURIComponent(parent.jid) + '/commands',
+      'POST',
+      { command: 'gpt-usage', args: {}, ...(source ? { source } : {}) },
+    );
+    expect(response.status).toBe(200);
+    expect(db.getControl((await response.json()).rowid)?.command).toBe(expected);
+  }
 });

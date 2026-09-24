@@ -17,6 +17,7 @@
  * createEventStreamer and final-text extraction are reused verbatim.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { publishParent } from '../session/parent-publication.js';
@@ -82,6 +83,7 @@ class RpcSession {
   private queueDelivery = Promise.resolve();
   private requestSequence = 0;
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
+  private readonly btwRequests = new Map<string, PendingRpcRequest>();
 
   constructor(
     private readonly folder: string,
@@ -309,6 +311,19 @@ class RpcSession {
     // It is a liveness hint, NOT a complete child-history ledger. Overflow must
     // keep the owner alive rather than treating omitted children as finished.
     if (event.type === 'extension_ui_request') {
+      if (event.method === 'notify' && typeof event.message === 'string' &&
+          event.message.startsWith('PIWEB_BTW_JSON:')) {
+        try {
+          const value = JSON.parse(event.message.slice('PIWEB_BTW_JSON:'.length));
+          const pending = this.btwRequests.get(value.id);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            this.btwRequests.delete(value.id);
+            pending.resolve(value);
+          }
+        } catch { /* Malformed extension notification is not a completion. */ }
+        return;
+      }
       if (event.method === 'setWidget' && event.widgetKey === 'subagent-async') {
         const line = event.widgetLines?.find(
           (value: unknown) =>
@@ -536,6 +551,11 @@ class RpcSession {
       request.reject(new Error(`pi rpc session exited before ${id} completed (code ${code})`));
     }
     this.pendingRequests.clear();
+    for (const [id, request] of this.btwRequests) {
+      clearTimeout(request.timeout);
+      request.reject(new Error(`Pi RPC session exited before BTW ${id} completed (code ${code})`));
+    }
+    this.btwRequests.clear();
     resolveExit?.();
   }
 
@@ -557,6 +577,44 @@ class RpcSession {
     });
   }
 
+  /** Execute only the installed pi-btw extension on this persistent parent. */
+  async btw(action: 'snapshot' | 'send', text?: string): Promise<any> {
+    await this.ensureProc();
+    if (!this.renewOwnership()) throw new Error('Session ownership changed');
+    // Never fall back to an ordinary prompt if the extension is absent.
+    const commands = await this.request({ type: 'get_commands' }, 15_000);
+    if (!commands.success || !commands.data?.commands?.some((cmd: any) =>
+      cmd.name === 'btw:web' && cmd.source === 'extension' &&
+      [cmd.path, cmd.sourceInfo?.path].some((path) =>
+        typeof path === 'string' && /(?:^|\/)pi-btw\/extensions\/btw\.ts$/.test(path))))
+      throw new Error('pi-btw extension is not loaded in this Pi RPC session');
+    const id = randomUUID();
+    const encoded = Buffer.from(JSON.stringify({ id, action, text }), 'utf8').toString('base64url');
+    let rejectResult!: (error: Error) => void;
+    const result = new Promise<any>((resolve, reject) => {
+      rejectResult = reject;
+      const timeout = setTimeout(() => {
+        this.btwRequests.delete(id);
+        reject(new Error('Timed out waiting for BTW; reopen to inspect the thread before retrying'));
+      }, 600_000);
+      this.btwRequests.set(id, { resolve, reject, timeout });
+    });
+    try {
+      // Pi may not acknowledge an extension prompt until its side model run
+      // completes; a short preflight timeout would report failure while it is
+      // still running, inviting an unsafe duplicate retry.
+      const response = await this.request({ type: 'prompt', message: `/btw:web ${encoded}` }, 600_000);
+      if (!response.success) throw new Error(response.error || 'BTW command was rejected');
+    } catch (error) {
+      const pending = this.btwRequests.get(id);
+      if (pending) { clearTimeout(pending.timeout); this.btwRequests.delete(id); }
+      rejectResult(error instanceof Error ? error : new Error(String(error)));
+    }
+    const value = await result;
+    if (!value.ok) throw new Error(value.error || 'BTW request failed');
+    return value;
+  }
+
   async compact(customInstructions?: string): Promise<any> {
     if (this.isStreaming)
       throw new Error('Wait for the current Pi turn to finish before compacting.');
@@ -571,6 +629,12 @@ class RpcSession {
     } finally {
       this.compacting = false;
     }
+  }
+
+  async getSessionStats(): Promise<any> {
+    const response = await this.request({ type: 'get_session_stats' }, 15_000);
+    if (!response.success) throw new Error(response.error || 'Pi could not report session stats');
+    return response.data;
   }
 
   private sendAbort(turn: PendingTurn): void {
@@ -759,6 +823,11 @@ export function getRpcSession(folder: string, opts: RpcSessionOpts): RpcSession 
   return session;
 }
 
+export function activeRpcSessionForBtw(folder: string): RpcSession | undefined {
+  const session = sessions.get(keyFor(folder));
+  return session?.isAlive && !session.isClosed && session.renewOwnership() ? session : undefined;
+}
+
 export function rpcSessionHasLiveSubagents(folder: string): boolean {
   return sessions.get(keyFor(folder))?.hasLiveSubagents ?? false;
 }
@@ -780,6 +849,13 @@ export function steerRpcSession(folder: string, message: string): boolean {
 export function abortRpcSession(folder: string): boolean {
   const session = sessions.get(keyFor(folder));
   return session?.requestAbort() ?? false;
+}
+
+/** Read stats from the process that actually owns the live session. */
+export async function getRpcSessionStats(folder: string): Promise<any | undefined> {
+  const session = sessions.get(keyFor(folder));
+  if (!session || !session.isAlive) return undefined;
+  return session.getSessionStats();
 }
 
 /** Compact an existing warm RPC session without turning the command into a chat message. */

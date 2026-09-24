@@ -2127,6 +2127,9 @@ async function openRecentlyDeleted(page: Page): Promise<void> {
   await openSettingsPage(page);
   await page.getByRole('button', { name: 'Recently deleted' }).click();
   await expect(page.locator('#trash-sheet')).toBeVisible();
+  await page.locator('#trash-sheet .trash-panel').evaluate((element) =>
+    Promise.all(element.getAnimations().map((animation) => animation.finished)),
+  );
 }
 
 test('Recently deleted supports long-press multi-select and Delete all', async ({
@@ -2247,7 +2250,8 @@ test('Recently deleted supports long-press multi-select and Delete all', async (
   expect(panel).not.toBeNull();
   expect(panel!.x).toBeGreaterThanOrEqual(0);
   expect(panel!.x + panel!.width).toBeLessThanOrEqual(390);
-  expect(panel!.y + panel!.height).toBeLessThanOrEqual(844);
+  expect(panel!.y).toBe(0);
+  expect(panel!.height).toBe(844);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
@@ -2343,7 +2347,7 @@ test('closing and reopening during purge reflects completion in the current tras
   await expect(page.getByRole('button', { name: 'Delete forever' })).toBeEnabled();
 });
 
-test('Recently deleted is a contained modal with coherent list and checkbox semantics', async ({
+test('Recently deleted is a full Settings subpage with coherent list and checkbox semantics', async ({
   page,
 }) => {
   await installLifeApi(page, {
@@ -2358,11 +2362,12 @@ test('Recently deleted is a contained modal with coherent list and checkbox sema
   await opener.focus();
   await opener.click();
 
-  await expect(page.locator('#trash-sheet')).toHaveJSProperty('open', true);
-  await expect(page.locator('#trash-sheet')).toHaveJSProperty('tagName', 'DIALOG');
+  await expect(page.locator('#trash-sheet')).toHaveJSProperty('tagName', 'SECTION');
+  await expect(page.locator('#settings-dialog #trash-sheet')).toBeVisible();
+  await expect(page.locator('dialog[open]')).toHaveCount(1);
   await expect(page.locator('#btn-trash-close')).toBeFocused();
-  // Native showModal owns background isolation without mutating another
-  // surface's explicit inert property.
+  // The single native Settings modal owns background isolation; Recently
+  // deleted is an in-dialog page, avoiding nested-modal compositor glitches.
   expect(await page.locator('#app').evaluate((element) => element.inert)).toBe(false);
   expect(await page.locator('#login').evaluate((element) => element.inert)).toBe(true);
   await page.evaluate(() => {
@@ -2390,7 +2395,7 @@ test('Recently deleted is a contained modal with coherent list and checkbox sema
   await page.locator('#btn-trash-select').click();
   await page.locator('#btn-trash-select').focus();
   await page.keyboard.press('Shift+Tab');
-  await expect(page.locator('#btn-trash-delete-all')).toBeFocused();
+  await expect(page.locator('#btn-trash-close')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('#trash-sheet')).toBeHidden();
   expect(await page.locator('#app').evaluate((element) => element.inert)).toBe(false);

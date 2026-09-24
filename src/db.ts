@@ -2804,12 +2804,7 @@ export function getMeta(key: string): string | undefined {
 // ── piweb: provider subscription jobs ──
 
 export type SubscriptionJobAction = 'login' | 'logout';
-export type SubscriptionJobStatus =
-  | 'pending'
-  | 'processing'
-  | 'waiting'
-  | 'succeeded'
-  | 'failed';
+export type SubscriptionJobStatus = 'pending' | 'processing' | 'waiting' | 'succeeded' | 'failed';
 
 export interface SubscriptionJob {
   id: string;
@@ -2856,10 +2851,7 @@ function subscriptionJobFromRow(row: SubscriptionJobRow | undefined): Subscripti
   };
 }
 
-export function enqueueSubscriptionJob(
-  provider: string,
-  action: SubscriptionJobAction,
-): string {
+export function enqueueSubscriptionJob(provider: string, action: SubscriptionJobAction): string {
   const id = randomUUID();
   try {
     db.prepare('insert into subscription_jobs (id, provider, action) values (?, ?, ?)').run(
@@ -2887,22 +2879,28 @@ export function getSubscriptionJob(id: string): SubscriptionJob | undefined {
 export function getLatestSubscriptionJob(provider: string): SubscriptionJob | undefined {
   return subscriptionJobFromRow(
     db
-      .prepare('select * from subscription_jobs where provider = ? order by created_at desc, rowid desc limit 1')
+      .prepare(
+        'select * from subscription_jobs where provider = ? order by created_at desc, rowid desc limit 1',
+      )
       .get(provider) as SubscriptionJobRow | undefined,
   );
 }
 
 export function claimPendingSubscriptionJob(): SubscriptionJob | undefined {
-  return db.transaction(() => {
-    const row = db
-      .prepare("select id from subscription_jobs where status = 'pending' order by created_at, rowid limit 1")
-      .get() as { id: string } | undefined;
-    if (!row) return undefined;
-    db.prepare(
-      "update subscription_jobs set status = 'processing', updated_at = datetime('now') where id = ? and status = 'pending'",
-    ).run(row.id);
-    return getSubscriptionJob(row.id);
-  }).immediate();
+  return db
+    .transaction(() => {
+      const row = db
+        .prepare(
+          "select id from subscription_jobs where status = 'pending' order by created_at, rowid limit 1",
+        )
+        .get() as { id: string } | undefined;
+      if (!row) return undefined;
+      db.prepare(
+        "update subscription_jobs set status = 'processing', updated_at = datetime('now') where id = ? and status = 'pending'",
+      ).run(row.id);
+      return getSubscriptionJob(row.id);
+    })
+    .immediate();
 }
 
 export function updateSubscriptionJobDeviceCode(
@@ -2935,12 +2933,14 @@ export function finishSubscriptionJob(id: string, ok: boolean, detail: string): 
 }
 
 export function recoverStuckSubscriptionJobs(): number {
-  return db.prepare(
-    `update subscription_jobs
+  return db
+    .prepare(
+      `update subscription_jobs
         set status = 'failed', error = 'Worker restarted during subscription operation',
             updated_at = datetime('now'), done_at = datetime('now')
       where status in ('processing', 'waiting')`,
-  ).run().changes;
+    )
+    .run().changes;
 }
 
 /**

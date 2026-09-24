@@ -95,6 +95,12 @@ names, then values for the argument — models come from pi's live list).
 `/pi new` · `/pi stop` · `/pi cwd <path>` · `/pi reset-cwd` · `/pi gpt-usage` ·
 `/until goal <text>` · `/until status` · `/until stop` · `/gpt-usage`
 
+For Claude Code **Opus / Sonnet / Haiku**, the header usage button runs
+`/claude-usage` and displays the host Claude subscription's current five-hour
+and weekly utilization with reset times. AGY-hosted Claude continues to use
+Antigravity quota. See [Claude usage](docs/claude-usage.md) for authentication,
+caching and verification scope.
+
 GPT usage is self-contained in this repository (`src/gpt-usage.ts`): it reads
 pi's `~/.pi/agent/auth.json`, refreshes the `openai-codex` OAuth token when
 needed, and aborts its minimal Codex request after receiving the rate-limit
@@ -158,8 +164,10 @@ graph.
 Open **Sessions → Settings** to manage Recently deleted sessions, notifications,
 appearance, Pi subscriptions, and the current Piweb login. On phones Settings is a
 full-height page with a native-feeling horizontal transition; on wider screens it
-opens as a centered dialog. Opening Recently deleted from Settings returns to the
-same Settings page and restores keyboard focus when the child sheet closes.
+opens as a centered dialog. On phones, **Recently deleted** is a separate
+full-height page that slides in from the right over Settings; Back reveals the
+unchanged Settings page and restores keyboard focus. Wider screens retain a
+contained dialog while using the same list and selection workflow.
 
 ### Notifications
 
@@ -296,6 +304,26 @@ node dist/cli/piweb.js web      # web only
 `WEB_EMBEDDED_WORKER=true` makes `web` mode run the worker in-process.
 
 ## Browser E2E, video, and visual regression tests
+
+For the **real pi-btw bridge** (not the mocked UI fixture), start a disposable
+loopback-only PiWeb `all` process using a separate `DB_PATH`, `SESSIONS_DIR`,
+`WEB_MEDIA_DIR`, `WEB_UPLOAD_DIR`, `PI_CWD`, and `WEB_AUTH_TOKEN`, with
+`RPC_STEER=true`, Pi >=0.85.1, and the pi-btw extension installed. Never point
+this test at a normal PiWeb database or publish its token. Then run:
+
+```bash
+PIWEB_BTW_LIVE_URL=http://127.0.0.1:<isolated-port> \
+PIWEB_BTW_LIVE_TOKEN=<isolated-token> \
+npx playwright test --config=playwright.btw-live.config.ts --workers=1
+```
+
+`test/e2e/btw-live-video.spec.ts` verifies a real busy main Pi turn, BTW reply
+through the shared composer without main-stream contamination, page navigation
+recovery, and another session's isolation. It records one mobile WebM; transcode
+with `~/.pi/agent/skills/software-development/playwright-e2e-visual-testing/scripts/webm-to-mp4.sh`.
+Evidence stays in ignored `artifacts/playwright/btw-live-results/`. This test
+uses the configured model, so enable it explicitly only in a disposable
+workspace; it does not cover real-device keyboards or BTW-specific Stop.
 
 The Playwright suite runs end to end against deterministic local fixtures at the
 production phone viewport (390×844). Every test records a WebM video; visual tests

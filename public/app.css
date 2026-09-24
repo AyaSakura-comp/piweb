@@ -1450,6 +1450,57 @@ svg {
   padding-top: 2px;
 }
 
+/* BTW reuses the existing composer. Its small ownership card replaces the
+   main-only typing indicator while the side transcript is selected. */
+.messages[hidden], .btw-card[hidden] { display: none !important; }
+.app.btw-active .typing { display: none !important; }
+.btw-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 6px 10px 6px 16px;
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+}
+.btw-card > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.btw-card strong { font-size: 14px; }
+.btw-card span { color: var(--text-2); font-size: 12px; line-height: 1.3; }
+.btw-card button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.btw-card button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.btw-waiting {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 16px 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.btw-waiting .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: blink 1.2s infinite ease-in-out;
+}
+.btw-waiting .dot:nth-child(2) { animation-delay: 0.2s; }
+.btw-waiting .dot:nth-child(3) { animation-delay: 0.4s; }
+.btw-waiting span:last-child { margin-left: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .btw-waiting .dot { animation: none; opacity: 0.7; }
+}
+
 /* ── typing indicator ────────────────────────────────────────────────── */
 
 .typing {
@@ -1763,36 +1814,6 @@ svg {
   line-height: 1.4;
 }
 
-.quote-preview {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 4px 8px;
-  padding: 6px 6px 6px 12px;
-  border-left: 3px solid var(--accent);
-  border-radius: 8px;
-  background: var(--bg-alt);
-  color: var(--text-dim);
-  font-size: 13px;
-  animation: quoteBannerIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-@keyframes quoteBannerIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.quote-preview-label {
-  flex: none;
-  color: var(--accent-light);
 /* Life quick tags: one tap prefixes the next message with a 【label】 card. */
 .life-tags {
   display: none;
@@ -1828,6 +1849,36 @@ svg {
   color: #fff;
 }
 
+.quote-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 8px;
+  padding: 6px 6px 6px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-size: 13px;
+  animation: quoteBannerIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@keyframes quoteBannerIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.quote-preview-label {
+  flex: none;
+  color: var(--accent-light);
   font-weight: 700;
 }
 
@@ -2781,6 +2832,7 @@ svg {
 @media (prefers-reduced-motion: reduce) {
   .settings-dialog[open],
   .settings-dialog::backdrop,
+  #trash-sheet .trash-panel,
   .notification-toggle,
   .notification-toggle::after {
     animation: none;
@@ -2815,7 +2867,7 @@ svg {
   text-align: center;
 }
 
-/* Bottom sheet: reachable one-handed on a phone, unlike a centred modal. */
+/* Modal surface shared by compact utility sheets and the Recently deleted page. */
 .sheet {
   position: fixed;
   inset: 0;
@@ -2855,6 +2907,35 @@ dialog.sheet::backdrop {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Recently deleted is a destination, not a half-height action sheet. Keep the
+   Settings page underneath and slide this full-height page over it. */
+#trash-sheet {
+  position: absolute;
+  align-items: stretch;
+  background: transparent;
+  overflow: hidden;
+}
+
+#trash-sheet .trash-panel {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding-top: env(safe-area-inset-top);
+  border-radius: 0;
+  background: var(--bg);
+  animation: trash-page-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes trash-page-enter {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 .sheet-head {
   display: flex;
   align-items: center;
@@ -2873,6 +2954,20 @@ dialog.sheet::backdrop {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+#trash-sheet .sheet-head {
+  min-height: 58px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom-color: var(--border);
+}
+
+#trash-sheet .sheet-title {
+  flex: 1;
+  font-size: 19px;
+  font-weight: 650;
 }
 
 .trash-panel .icon-btn {
@@ -3020,17 +3115,27 @@ dialog.sheet::backdrop {
 }
 
 @media (min-width: 768px) {
-  #trash-sheet {
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
+  #trash-sheet .trash-panel {
+    padding-top: 0;
+    padding-bottom: 0;
+    border-radius: 15px;
   }
 
+  @keyframes trash-page-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   #trash-sheet .trash-panel {
-    width: min(640px, 100%);
-    max-height: min(var(--sheet-max, 82dvh), 720px);
-    border-radius: 14px;
-    padding-bottom: 0;
+    animation: none;
   }
 }
 

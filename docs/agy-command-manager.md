@@ -13,6 +13,12 @@ Updates are persisted through the existing fenced web event transport. The authe
 the selected generation. Polling stops and outstanding responses are discarded when the
 viewer closes or its session changes.
 
+In the main conversation, individual `agy-command` status events are folded by
+default so a burst does not obscure the dialogue. Each summary still shows a
+short command/state preview; tap it to expand. Other system notices and errors
+remain open by default. This changes presentation only, not event persistence
+or the separate background-command viewer.
+
 States:
 
 - Running: observed ACTIVE, or an explicit background-task acknowledgement. Spinner shown.
@@ -69,6 +75,7 @@ not command execution or HTML injection. There is no stop/retry/resume button.
 
 - Unit: `npx vitest run test/agy-commands.test.ts`
 - Fixture UI: `PIWEB_E2E_PORT=4191 npx playwright test test/e2e/agy-commands.spec.ts`
+- Inline collapse (iPad + phone): `npx playwright test test/e2e/agy-command-collapse.spec.ts --project chromium-mobile`
 - Real isolated end-to-end: `PIWEB_E2E_PORT=4191 PIWEB_AGY_COMMANDS_LIVE=1 npx playwright test test/e2e/agy-commands-live.spec.ts`
 
 The opt-in live spec starts the actual PiWeb server and queue on loopback with a disposable

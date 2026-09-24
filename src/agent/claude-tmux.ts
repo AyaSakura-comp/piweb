@@ -294,11 +294,15 @@ export async function invokeClaudeTmux(
 
   const onAbort = () => {
     aborted = true;
-    // Ctrl-C is correct only after Enter handed work to Claude. During startup,
+    // Dismiss any active prompt dialog (Escape) and interrupt running commands (C-c).
+    // This is correct only after Enter handed work to Claude. During startup,
     // attachment staging, or paste acknowledgement it could interrupt unrelated
     // pane state and still allow the prompt to be submitted afterward.
     if (submitted && pane && !abortPromise) {
-      abortPromise = deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      abortPromise = (async () => {
+        await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      })();
     }
   };
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -492,7 +496,8 @@ export async function invokeClaudeTmux(
           ensureNotAborted();
           if (requiresManualConfirmation(screen)) {
             // Do not approve a dangerous host command, even in bypass mode.
-            await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+            // In Claude Code (Ink TUI), Escape cancels the prompt dialog (C-c does not).
+            await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
             return {
               ok: false,
               text: '',
@@ -507,6 +512,7 @@ export async function invokeClaudeTmux(
 
     ensureNotAborted();
     if (!turnComplete) {
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
       await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
       return { ok: false, text: '', error: 'Claude Code tmux turn timed out' };
     }
@@ -588,7 +594,11 @@ async function ensurePaneAlive(pane: string, deps: ClaudeTmuxDependencies): Prom
 
 function requiresManualConfirmation(screen: string): boolean {
   // Check the dialog footer, not prior terminal history or model/tool output.
-  return /Do you want to proceed\?\s*\n\s*❯\s*1\. Yes\s*\n\s*2\. No\s*\n\s*Esc to cancel(?:\s*·\s*Tab to amend)?\s*$/u.test(screen);
+  const tail = screen.trimEnd().slice(-1000);
+  return (
+    /Do you want to proceed\?/u.test(tail) &&
+    /Esc to cancel(?:\s*·\s*Tab to amend)?\s*$/u.test(tail)
+  );
 }
 
 function isReadyPaneScreen(screen: string): boolean {
@@ -612,6 +622,9 @@ async function waitForReadyPane(
     if (/Yes, I trust this folder/i.test(lastScreen) && !acceptedTrust) {
       acceptedTrust = true;
       await deps.tmux(['send-keys', '-t', pane, 'Enter']);
+    } else if (requiresManualConfirmation(lastScreen)) {
+      // Clear any stale confirmation dialog left from a previous turn.
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
     } else if (isReadyPaneScreen(lastScreen)) {
       // The status bar appears before Ink has mounted the editable prompt.
       // Sending the tmux paste in that narrow window is silently discarded, so
