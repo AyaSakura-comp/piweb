@@ -1699,9 +1699,11 @@ function isAgyCommandSession() {
 // own default model.
 function isPiBtwSession() {
   if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
+  if (!state.activeJid) return false;
+  // Hide only a KNOWN non-Pi harness. Right after load the session list can
+  // lag the selection; the web and worker still refuse non-Pi BTW requests.
   const session = state.sessions.find((item) => item.jid === state.activeJid);
-  if (!session) return false;
-  const model = String(session.model || '').trim().toLowerCase();
+  const model = String(session?.model || '').trim().toLowerCase();
   return !model.startsWith('agy/') && !model.startsWith('claude-code/');
 }
 function syncBtwAvailability() {

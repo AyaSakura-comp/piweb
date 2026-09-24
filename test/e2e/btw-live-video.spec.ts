@@ -94,6 +94,7 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
   // different previously-created session in a multi-session fixture.
   await page.goto(origin! + '/?session=' + encodeURIComponent(session.jid));
   await expect(page.locator('#messages')).toContainText('MAIN_PROOF_731', { timeout: 15_000 });
+  await expect(page.locator('#session-name')).toHaveText('BTW isolated video parent');
   await page.locator('#btn-more').click();
   await page.locator('#mi-btw').click();
   await expect(page.locator('#btw-messages').getByText('SIDE_PROOF_731', { exact: true })).toBeInViewport();
@@ -101,7 +102,8 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
 
   const other = await makeSession('BTW isolation witness');
   await page.goto(origin! + '/?session=' + encodeURIComponent(other.jid));
-  await expect(page.locator('#input')).toBeVisible();
+  // A menu opened before the selection lands is closed by it; wait for the header.
+  await expect(page.locator('#session-name')).toHaveText('BTW isolation witness');
   await page.locator('#btn-more').click();
   await page.locator('#mi-btw').click();
   await expect(page.locator('#btw-card')).toBeVisible();
@@ -129,7 +131,9 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
     expect(refused.available).toBe(false);
   }
   for (const jid of [session.jid, other.jid]) {
-    await context.request.delete(origin! + '/api/sessions/' + encodeURIComponent(jid) + '?permanent=1', { headers: { Origin: origin! } });
+    const url = origin! + '/api/sessions/' + encodeURIComponent(jid);
+    await context.request.delete(url, { headers: { Origin: origin! } }); // soft delete first
+    await context.request.delete(url + '?permanent=1', { headers: { Origin: origin! } });
   }
   expect(errors).toEqual([]);
 });
