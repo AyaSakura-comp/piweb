@@ -34,12 +34,15 @@ import {
   getChannel,
   getMeta,
   listScheduledTasks,
+  noteHarnessSelection,
+  resetHarnessContext,
   setChannelCwdOverride,
   setChannelModelOverride,
   setChannelThinkingOverride,
   withChannelGenerationMutation,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { config } from '../config.js';
 import {
   isThinkingLevel,
   listAvailableModels,
@@ -55,6 +58,7 @@ import {
 import { isChannelProcessing, stopChannelTask } from '../agent/queue.js';
 import { closeRpcSession } from '../agent/rpc-session.js';
 import { closeClaudeTmuxSession } from '../agent/claude-tmux.js';
+import { harnessForModel } from '../agent/harness-handoff.js';
 import { computeNextRun } from '../agent/scheduler.js';
 import { rotateChannelSessionDir } from '../session/path.js';
 import type { RegisteredChannel } from '../types.js';
@@ -228,6 +232,10 @@ async function cmdNew(
     // and pending-queue cleanup finish synchronously.
     assertChannelHasNoProcessingMessages(channel.jid);
     assertChannelHasNoActiveOperations(channel.jid);
+    resetHarnessContext(
+      getChannel(channel.jid)!,
+      harnessForModel(channel.modelOverride || config.piModel || ''),
+    );
     // Kill only after ownership and cross-worker activity checks, while the
     // transaction prevents another worker from claiming the next Claude turn.
     const closedClaudeTmux = closeClaudeTmuxSession(channel.folder);
@@ -385,6 +393,7 @@ function cmdModelSet(channel: RegisteredChannel, selectedRef: string): CommandRe
     return { ok: false, text: `Model is no longer available: ${selectedRef}` };
   }
 
+  noteHarnessSelection(channel, harnessForModel(channel.modelOverride || config.piModel || ''));
   const thinkingResolution = mutateOwnedChannel(channel, () => {
     setChannelModelOverride(channel.jid, selectedModel.ref);
     const updated = getChannel(channel.jid)!;
@@ -423,6 +432,7 @@ async function cmdModelReset(
   assertOwnership?.();
   const notes = ['Model reset to the gateway default.'];
 
+  noteHarnessSelection(channel, harnessForModel(channel.modelOverride || config.piModel || ''));
   mutateOwnedChannel(channel, () => {
     clearChannelModelOverride(channel.jid);
     const updated = getChannel(channel.jid)!;

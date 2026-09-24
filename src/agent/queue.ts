@@ -22,6 +22,8 @@ import {
   recoverStuckMessages,
   logMessage,
   getChannel,
+  commitHarnessTurn,
+  getLastAssistantWebEventRowid,
   isChannelGenerationCurrent,
   touchChannelOperation,
 } from '../db.js';
@@ -39,6 +41,7 @@ import {
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
+import { harnessForModel, prepareCrossHarnessHandoff } from './harness-handoff.js';
 
 /** Channels currently being processed (per-channel serial lock) */
 const activeChannels = new Set<string>();
@@ -412,7 +415,7 @@ async function processMessage(
     const handoff = supersedesPrevious
       ? '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. Follow only the latest instruction below. If asked for a screenshot, take it and immediately return it using [[file: /absolute/path/to/screenshot.png]].]\n'
       : '';
-    const prompt = `${handoff}[Web user: ${senderName}]\n${content}`;
+    let prompt = `${handoff}[Web user: ${senderName}]\n${content}`;
 
     logMessage(jid, 'user', content, writeFence);
 
@@ -426,6 +429,10 @@ async function processMessage(
       logger.info({ jid, rowid }, 'Message abandoned: shutdown interrupted processing');
       return;
     }
+
+    const targetHarness = harnessForModel(effective.rawModelRef);
+    const crossHarnessContext = prepareCrossHarnessHandoff(channel, targetHarness);
+    if (crossHarnessContext) prompt = crossHarnessContext + prompt;
 
     // Stream pi's intermediate thinking/tool events into the channel live so
     // the user can watch what the agent is doing instead of staring at a
@@ -568,6 +575,9 @@ async function processMessage(
       }
 
       logMessage(jid, 'assistant', result.text, writeFence);
+      if (jid.startsWith('web:')) {
+        commitHarnessTurn(channel, targetHarness, getLastAssistantWebEventRowid(jid));
+      }
       sigtermRetries.delete(rowid);
       markMessageDone(rowid);
       logger.info({ jid, responseLen: result.text.length }, 'Message processed');

@@ -38,9 +38,12 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
 - Each channel gets a stable hashed tmux name and a `claude-tmux-session.json`
   pointer under its Piweb session directory. Claude owns the actual transcript
   under `~/.claude/projects/`; back it up separately if required.
-- Switching between Pi, Agy and Claude **does not transfer agent memory**, even
-  though Piweb's visible chat is continuous. Claude model/effort/cwd changes
-  restart the TUI with the same Claude conversation id.
+- Switching between Pi, AGY and Claude does **not migrate native agent memory**.
+  On the next cross-harness turn PiWeb supplies bounded, quoted visible
+  user/assistant dialogue as context; tools, permissions and native transcripts
+  remain separate. See [cross-harness continuity](cross-harness-context.md).
+  Claude model/effort/cwd changes restart the TUI with the same Claude
+  conversation id.
 - Input uses a tmux buffer with bracketed paste for multiline safety, preceded by
   a literal typed request. Claude Code 2.1.278 wraps bracketed pastes in
   `pasted_content`; without that external request, it can treat the whole task

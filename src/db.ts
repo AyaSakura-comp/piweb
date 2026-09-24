@@ -123,6 +123,15 @@ export function initDb(): void {
 
     create index if not exists idx_web_events_channel on web_events(channel_jid, rowid);
 
+    -- Cross-harness dialogue cursors; never stores or rewrites native Pi/AGY/Claude sessions.
+    create table if not exists harness_context (
+      channel_jid text primary key,
+      storage_token text not null,
+      ownership_epoch integer not null,
+      active text not null,
+      cursors text not null default '{}'
+    );
+
     -- Commands the web server cannot run itself. /pi status spawns pi over RPC,
     -- /pi stop needs the worker's in-memory AbortController, /pi new must not
     -- race an in-flight run — all of that lives in the worker process, so the
@@ -1254,6 +1263,154 @@ export interface WebEventRow {
   /** JSON array of served file URLs, or null */
   files: string | null;
   created_at: string;
+}
+
+export interface HarnessContextState {
+  active: 'pi' | 'agy' | 'claude';
+  cursors: Partial<Record<'pi' | 'agy' | 'claude', number>>;
+}
+
+export function getHarnessContext(channel: RegisteredChannel): HarnessContextState | undefined {
+  const row = db.prepare('select * from harness_context where channel_jid = ?').get(channel.jid) as
+    | {
+        storage_token: string;
+        ownership_epoch: number;
+        active: HarnessContextState['active'];
+        cursors: string;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.storage_token !== channel.storageToken ||
+    row.ownership_epoch !== channel.ownershipEpoch
+  )
+    return undefined;
+  return { active: row.active, cursors: JSON.parse(row.cursors) };
+}
+
+export function getHandoffDialogue(
+  jid: string,
+  afterRowid: number,
+  throughRowid: number,
+  limit = 5000,
+): WebEventRow[] {
+  const rows = db
+    .prepare(
+      "select * from web_events where channel_jid = ? and rowid > ? and rowid <= ? and kind = 'message' and role in ('user','assistant') order by rowid desc limit ?",
+    )
+    .all(jid, afterRowid, throughRowid, limit) as WebEventRow[];
+  return rows.reverse();
+}
+
+export function countHandoffDialogue(
+  jid: string,
+  afterRowid: number,
+  throughRowid: number,
+): number {
+  const row = db
+    .prepare(
+      "select count(*) n from web_events where channel_jid = ? and rowid > ? and rowid <= ? and kind = 'message' and role in ('user','assistant')",
+    )
+    .get(jid, afterRowid, throughRowid) as { n: number };
+  return row.n;
+}
+
+export function getLastAssistantWebEventRowid(jid: string): number {
+  const row = db
+    .prepare(
+      "select rowid from web_events where channel_jid = ? and kind = 'message' and role = 'assistant' order by rowid desc limit 1",
+    )
+    .get(jid) as { rowid: number } | undefined;
+  return row?.rowid ?? 0;
+}
+
+/** Bootstrap an existing channel from the model in use before its first switch. */
+export function noteHarnessSelection(
+  channel: RegisteredChannel,
+  previous: HarnessContextState['active'],
+): void {
+  if (!channel.jid.startsWith('web:')) return;
+  fencedChannelWrite(
+    channel.jid,
+    {
+      expectedFolder: channel.folder,
+      expectedStorageToken: channel.storageToken,
+      expectedOwnershipEpoch: channel.ownershipEpoch,
+    },
+    () => {
+      if (getHarnessContext(channel)) return;
+      db.prepare(
+        'insert into harness_context(channel_jid,storage_token,ownership_epoch,active,cursors) values (?,?,?,?,?) on conflict(channel_jid) do update set storage_token=excluded.storage_token,ownership_epoch=excluded.ownership_epoch,active=excluded.active,cursors=excluded.cursors',
+      ).run(
+        channel.jid,
+        channel.storageToken,
+        channel.ownershipEpoch,
+        previous,
+        JSON.stringify({ [previous]: getLastAssistantWebEventRowid(channel.jid) }),
+      );
+    },
+  );
+}
+
+/** New native session: keep the visible transcript, but never reimport its archived turns. */
+export function resetHarnessContext(
+  channel: RegisteredChannel,
+  harness: HarnessContextState['active'],
+): void {
+  if (!channel.jid.startsWith('web:')) return;
+  fencedChannelWrite(
+    channel.jid,
+    {
+      expectedFolder: channel.folder,
+      expectedStorageToken: channel.storageToken,
+      expectedOwnershipEpoch: channel.ownershipEpoch,
+    },
+    () => {
+      const last = db
+        .prepare('select coalesce(max(rowid),0) n from web_events where channel_jid = ?')
+        .get(channel.jid) as { n: number };
+      const cursors = { pi: last.n, agy: last.n, claude: last.n };
+      db.prepare(
+        'insert into harness_context(channel_jid,storage_token,ownership_epoch,active,cursors) values (?,?,?,?,?) on conflict(channel_jid) do update set storage_token=excluded.storage_token,ownership_epoch=excluded.ownership_epoch,active=excluded.active,cursors=excluded.cursors',
+      ).run(
+        channel.jid,
+        channel.storageToken,
+        channel.ownershipEpoch,
+        harness,
+        JSON.stringify(cursors),
+      );
+    },
+  );
+}
+
+/** Commit a successfully delivered turn; failed/aborted turns do not advance. */
+export function commitHarnessTurn(
+  channel: RegisteredChannel,
+  harness: HarnessContextState['active'],
+  cursor: number,
+): void {
+  if (!channel.jid.startsWith('web:')) return;
+  fencedChannelWrite(
+    channel.jid,
+    {
+      expectedFolder: channel.folder,
+      expectedStorageToken: channel.storageToken,
+      expectedOwnershipEpoch: channel.ownershipEpoch,
+    },
+    () => {
+      const state = getHarnessContext(channel);
+      const cursors = { ...state?.cursors, [harness]: cursor };
+      db.prepare(
+        'insert into harness_context(channel_jid,storage_token,ownership_epoch,active,cursors) values (?,?,?,?,?) on conflict(channel_jid) do update set storage_token=excluded.storage_token,ownership_epoch=excluded.ownership_epoch,active=excluded.active,cursors=excluded.cursors',
+      ).run(
+        channel.jid,
+        channel.storageToken,
+        channel.ownershipEpoch,
+        harness,
+        JSON.stringify(cursors),
+      );
+    },
+  );
 }
 
 export function getFirstUserMessageContent(channelJid: string): string | undefined {

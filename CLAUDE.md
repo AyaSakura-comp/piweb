@@ -162,6 +162,7 @@ between the two processes use an autoincrement `rowid` as a cursor.
 | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------- |
 | `channels`                                                                | one row per session (`web:<uuid8>` jid, folder, per-session model/thinking/cwd overrides, `deleted_at`)                                                                                                        | both                                                 | both                   |
 | `web_events`                                                              | the transcript AND the live stream: user turns, assistant replies, thinking, tool, tool_result, system, error                                                                                                  | worker (agent output), web (user turn, command echo) | web (SSE/paging), push |
+| `harness_context`                                                         | active Pi/AGY/Claude harness and target-specific dialogue rowid cursors, fenced by storage token and ownership epoch                                                                                          | worker                                               | worker                |
 | `message_queue`                                                           | pending user messages for the worker                                                                                                                                                                           | web                                                  | worker                 |
 | `control_queue`                                                           | command intents the web tier can't run itself                                                                                                                                                                  | web                                                  | worker                 |
 | `channel_state`                                                           | transient `busy` flag per session (typing/spinner)                                                                                                                                                             | worker                                               | web                    |
@@ -224,6 +225,7 @@ origin check.
 | unread dot / busy spinner                      | `channel_state.busy` + `lastReplyId` vs localStorage `piweb.seen`                                                                                                                                                                                                                                                                                                                               |
 | session ordering & boot default                | `src/db.ts` (`order by coalesce(last_activity, c.created_at) desc`) + `sessionsForDisplay()` in `public/app.js` (recency-first default)                                                                                                                                                                                                                                                         |
 | automatic first-prompt title                   | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/web/server.ts` (apply on message enqueue), `src/worker/session-title.ts` (recovery fallback), `session_title_jobs` in `src/db.ts`                                                                                                                                        |
+| cross-harness dialogue continuity              | `src/agent/harness-handoff.ts`, `src/db.ts` (`harness_context`), `src/commands/index.ts` (selection/reset), `src/agent/queue.ts` (prepare/commit); see [`docs/cross-harness-context.md`](docs/cross-harness-context.md) |
 | rename / model sheet / edge-swipe drawer       | `public/app.js` (all client-side)                                                                                                                                                                                                                                                                                                                                                               |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill                                                                                                                                                                                                                                                |
 | stay signed in                                 | persisted `auth.signingKey` + localStorage `piweb.token` auto-login                                                                                                                                                                                                                                                                                                                             |
@@ -1202,9 +1204,12 @@ What each side owns:
 
 Consequences that surprise people:
 
-- **Switching model switches agent, and memory does not transfer.** pi's history is
-  in `sessions/<folder>/*.jsonl`; agy's is in its own brain directory. The on-screen
-  transcript is continuous, so the gap is invisible in the UI.
+- **Switching model can switch agent, but native memory is not migrated.** Pi's
+  history is in `sessions/<folder>/*.jsonl`; AGY keeps its own brain directory.
+  When crossing harnesses, PiWeb provides a bounded excerpt of visible
+  user/assistant dialogue on the next actual turn, without copying native
+  sessions or tool state. Pi-to-Pi switches use Pi's original session and do
+  not add a handoff. See [`docs/cross-harness-context.md`](docs/cross-harness-context.md).
 - **`/pi new` does reset agy too** — `agy-conversation.json` lives in the session
   directory and gets archived with it, so the next turn starts a fresh conversation.
 - **`/pi status` describes pi**, not an agy session; use `/agy-usage` for Gemini quota.
@@ -1227,8 +1232,10 @@ operations before closing the pane. Keep this feature disabled by default.
   the next message starts a fresh pi session (new UUID). Past context is NOT
   re-injected — verified: a codeword remembered before `/pi new` returns "NONE"
   after. It does **not** clear `web_events`, so the on-screen transcript stays
-  while pi's memory resets. The header's **Delete session** is a restorable soft
-  delete; `POST /clear` remains a separate compatibility API.
+  while pi's memory resets. All cross-harness cursors move past that old
+  dialogue, so later switches cannot reimport it into the fresh session. The
+  header's **Delete session** is a restorable soft delete; `POST /clear` remains
+  a separate compatibility API.
 - **New session** opens immediately as `New session` (no native naming prompt)
   and auto-issues a silent `pi new` with `keepQueue` (invariant 5). Its first
   normal prompt is captured once in `session_title_jobs`; only after that real
@@ -1247,8 +1254,11 @@ operations before closing the pane. Keep this feature disabled by default.
   monotonic ownership epoch increments on both delete and restore, so even a
   suspended worker resuming after lease expiry cannot pass its old fence or
   trigger delete→restore ABA revalidation. See "Deleting is soft".
-- pi holds the context itself via `--session-dir <dir> --continue`; piweb never
-  replays history into the prompt, it only points pi at the right directory.
+- Pi holds its native context via `--session-dir <dir> --continue`. PiWeb does
+  not replay history for Pi-to-Pi switches; **only a cross-harness turn** may
+  prepend a bounded, quoted excerpt of PiWeb user/assistant dialogue. No native
+  session or provider tool state is replayed. See
+  [`docs/cross-harness-context.md`](docs/cross-harness-context.md).
 - **A message sent mid-run interrupts it.** piscord did this in its Discord
   message handler (fires before enqueue); piweb's web tier only enqueues and is
   a different process from the worker, so the trigger moved into the worker's

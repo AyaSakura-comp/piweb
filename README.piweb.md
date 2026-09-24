@@ -71,6 +71,21 @@ the worker host, with HAIKU / SONNET / OPUS model badges. It uses autonomous
 host permissions and separate Claude memory. See [setup, security, lifecycle and
 verification](docs/claude-tmux-bridge.md) before enabling `CLAUDE_TMUX_ENABLED`.
 
+## Conversation continuity across harnesses
+
+PiWeb can switch a single visible chat between native Pi (`openai-codex/*`,
+`local-llama/*`, etc.), Antigravity (`agy/*`) and Claude Code (`claude-code/*`).
+The **next actual message** after a cross-harness switch receives a bounded,
+source-labelled excerpt of previously completed PiWeb user/assistant dialogue
+and a private read-only dialogue snapshot path. Each harness still owns its
+original session, tools and permissions: this is context handoff, not native
+state migration. Failed/aborted turns can retry without consuming the target's
+cursor. `/pi new` starts fresh without reimporting the old visible chat.
+
+**Switching models within Pi does not invoke this handoff.** It continues Pi's
+own session and therefore keeps Pi's native history. See
+[architecture, exact workflow, limits, reset rules and tests](docs/cross-harness-context.md).
+
 ## Commands
 
 Full parity with piscord. Type `/` in the composer for autocomplete (command
