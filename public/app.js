@@ -1690,8 +1690,8 @@ function isAgyCommandSession() {
   const session = state.sessions.find((item) => item.jid === state.activeJid);
   if (!session) return false;
   const model = String(session.model || '').trim().toLowerCase();
-  if (model) return model.startsWith('agy/');
-  return session.provider === 'agy' || String(session.runningModel || '').toLowerCase().startsWith('agy/');
+  if (model) return model.startsWith('agy/') || model.startsWith('claude-code/');
+  return session.provider === 'agy' || session.provider === 'claude-code' || String(session.runningModel || '').toLowerCase().startsWith('agy/') || String(session.runningModel || '').toLowerCase().startsWith('claude-code/');
 }
 // BTW runs inside the persistent Pi RPC session, so it exists only for Pi
 // models. AGY and Claude Code sessions are different harnesses: hide the entry
@@ -2773,11 +2773,12 @@ function renderPartial(text, thinking = '') {
 }
 
 function buildEventNode(event) {
-  const isAgyBackgroundCommand = event.kind === 'system' && event.role === 'agy-command';
+  const isAgyBackgroundCommand = event.kind === 'system' && (event.role === 'agy-command' || event.role === 'claude-command');
   if (isAgyBackgroundCommand) {
     try {
       const command = JSON.parse(event.content);
-      event = { ...event, content: `AGY command: ${command.command}\n${command.state} · ${command.agent}`, role: 'background command' };
+      const prefix = event.role === 'claude-command' ? 'Claude command' : 'AGY command';
+      event = { ...event, content: `${prefix}: ${command.command}\n${command.state} · ${command.agent}`, role: 'background command' };
     } catch { /* Render malformed historic text without interpreting it. */ }
   }
   if (event.kind === 'message') {

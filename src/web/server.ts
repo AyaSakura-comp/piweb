@@ -17,6 +17,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { extractSessionTitle } from '../agent/session-title.js';
+import { readOutputTail } from '../agent/claude-commands.js';
 import { readSubagents, hasRunningSubagents, subagentParentScope, SubagentReadError } from '../session/subagents.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
@@ -1124,7 +1125,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const rows = getRecentWebEvents(jid, 1000);
       const commands = new Map<string, any>();
       for (const row of rows) {
-        if (row.kind !== 'system' || row.role !== 'agy-command') continue;
+        if (row.kind !== 'system' || (row.role !== 'agy-command' && row.role !== 'claude-command')) continue;
         try {
           const command = JSON.parse(row.content);
           if (typeof command.id !== 'string') continue;
@@ -1133,11 +1134,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
       const busy = isChannelBusy(jid);
       sendJson(res, 200, {
-        commands: [...commands.values()].reverse().map((command) => ({
-          ...command,
-          state: command.state === 'running' && (!busy || Date.now() - command.updatedAt > 120000)
-            ? 'unknown' : command.state,
-        })),
+        commands: [...commands.values()].reverse().map((command) => {
+          let output = command.output;
+          if (command.outputFile && command.state === 'running' && existsSync(command.outputFile)) {
+            const tail = readOutputTail(command.outputFile);
+            if (tail) output = tail;
+          }
+          const isClaude = command.role === 'claude-command';
+          const timeoutMs = command.timeoutMs || (isClaude ? 1800000 : 120000);
+          const stale = Date.now() - command.updatedAt > timeoutMs;
+          const markUnknown = isClaude
+            ? (command.state === 'running' && stale)
+            : (command.state === 'running' && (!busy || stale));
+          return {
+            ...command,
+            output,
+            state: markUnknown ? 'unknown' : command.state,
+          };
+        }),
         limited: rows.length === 1000,
       });
       return;

@@ -309,7 +309,8 @@ export const webTransport: Transport = {
         return;
 
       if (event.type === 'agy_command_update' && event.command?.id) {
-        writeEvent({ channelJid: jid, kind: 'system', role: 'agy-command', content: JSON.stringify(event.command) }, fence);
+        const role = event.command?.role || 'agy-command';
+        writeEvent({ channelJid: jid, kind: 'system', role, content: JSON.stringify(event.command) }, fence);
         return;
       }
 

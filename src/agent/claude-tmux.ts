@@ -21,6 +21,7 @@ import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
 import { createClaudeSubagentTracker } from './claude-subagents.js';
+import { createClaudeCommandTracker, type ClaudeCommand } from './claude-commands.js';
 import type { AvailableModelInfo } from './model-catalog.js';
 
 export const CLAUDE_TMUX_PROVIDER = 'claude-code';
@@ -29,7 +30,9 @@ export const AUTONOMOUS_SYSTEM_PROMPT =
   'Piweb is controlling this session autonomously. Never ask for confirmation or clarification. ' +
   'Make reasonable assumptions and proceed. Only stop when the task is technically impossible or ' +
   'a required credential is missing. When returning a local file or screenshot, include exactly ' +
-  '[[file: /absolute/path/to/file]] in the final response so Piweb can deliver it.';
+  '[[file: /absolute/path/to/file]] in the final response so Piweb can deliver it. ' +
+  'Strict safety rule: Never execute catastrophic destructive commands such as "rm -rf /", deleting ' +
+  'root, home directory, or entire repository folders.';
 
 const CLAUDE_MODELS: AvailableModelInfo[] = [
   {
@@ -368,6 +371,12 @@ export async function invokeClaudeTmux(
     childTracker = createClaudeSubagentTracker(sessionDir, state.sessionId, {
       isCurrent: opts?.isCurrent,
     });
+    const commandTracker = createClaudeCommandTracker(state.sessionId, { cwd });
+    const publishCommands = async (cmds: ClaudeCommand[]) => {
+      for (const cmd of cmds) {
+        await opts?.onEvent?.({ type: 'agy_command_update', command: cmd });
+      }
+    };
     pane = await getClaudePane(name, deps);
     ensureNotAborted();
 
@@ -381,6 +390,8 @@ export async function invokeClaudeTmux(
     let shouldSubmit = !recoveringTurn;
     let nextProjectionAt = 0;
     let nextPromptCheckAt = 0;
+    let lastApprovedPrompt = '';
+    let approvalCountForPrompt = 0;
     const refreshChildren = (force = false) => {
       if (transcriptPath && (force || Date.now() >= nextProjectionAt)) {
         childTracker?.refresh(transcriptPath);
@@ -470,6 +481,8 @@ export async function invokeClaudeTmux(
             continue;
           }
           childTracker.observe(record);
+          const cmdUpdates = commandTracker.observe(record);
+          if (cmdUpdates.length > 0) await publishCommands(cmdUpdates);
           const translated = translateClaudeTranscriptRecord(record);
           for (const event of translated.events) await opts?.onEvent?.(event);
           if (translated.finalText !== undefined) finalText = translated.finalText;
@@ -489,20 +502,45 @@ export async function invokeClaudeTmux(
         }
       }
       refreshChildren(turnComplete);
+      const pollUpdates = commandTracker.pollActiveOutputs();
+      if (pollUpdates.length > 0) await publishCommands(pollUpdates);
       if (!turnComplete) {
         await ensurePaneAlive(pane, deps);
         if (Date.now() >= nextPromptCheckAt) {
           const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
           ensureNotAborted();
           if (requiresManualConfirmation(screen)) {
-            // Do not approve a dangerous host command, even in bypass mode.
-            // In Claude Code (Ink TUI), Escape cancels the prompt dialog (C-c does not).
-            await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
-            return {
-              ok: false,
-              text: '',
-              error: 'Claude Code requires manual confirmation for a protected operation; turn stopped without approving it',
-            };
+            const promptDetail = extractConfirmationPrompt(screen);
+            const promptSuffix = promptDetail ? ` (${promptDetail})` : '';
+
+            if (isCatastrophicPrompt(screen)) {
+              // Block catastrophic destructive commands (e.g. rm -rf /, wiping root/home or workspace ancestor).
+              // In Claude Code (Ink TUI), Escape cancels the prompt dialog.
+              await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+              return {
+                ok: false,
+                text: '',
+                error: `Claude Code requires manual confirmation for a protected operation${promptSuffix}; turn stopped without approving it`,
+              };
+            }
+
+            // Auto-approve non-catastrophic prompts (e.g. temporary file deletion, routine confirmations)
+            if (promptDetail === lastApprovedPrompt) {
+              approvalCountForPrompt++;
+              if (approvalCountForPrompt > 3) {
+                await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+                return {
+                  ok: false,
+                  text: '',
+                  error: `Claude Code confirmation dialog remained stuck after approval${promptSuffix}; turn stopped`,
+                };
+              }
+            } else {
+              lastApprovedPrompt = promptDetail;
+              approvalCountForPrompt = 1;
+            }
+            logger.info({ promptDetail, channelFolder }, 'Auto-approved non-catastrophic Claude Code confirmation prompt');
+            await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
           }
           nextPromptCheckAt = Date.now() + 1000;
         }
@@ -529,6 +567,8 @@ export async function invokeClaudeTmux(
       };
       writeState(stateFile, state);
     }
+    const finalCmdUpdates = commandTracker.pollActiveOutputs();
+    if (finalCmdUpdates.length > 0) await publishCommands(finalCmdUpdates);
     const text = convertLocalMediaLinks(finalText.trim(), cwd);
     if (!text) return { ok: false, text: '', error: 'Claude Code completed without a final reply' };
     return { ok: true, text };
@@ -598,6 +638,31 @@ function requiresManualConfirmation(screen: string): boolean {
   return (
     /Do you want to proceed\?/u.test(tail) &&
     /Esc to cancel(?:\s*·\s*Tab to amend)?\s*$/u.test(tail)
+  );
+}
+
+export function extractConfirmationPrompt(screen: string): string {
+  const tail = screen.trimEnd().slice(-2000);
+  const match = /Do you want to proceed\?/u.exec(tail);
+  if (!match) return '';
+  const beforePrompt = tail.slice(0, match.index).trim();
+  const lines = beforePrompt
+    .split(/\r?\n/u)
+    .map((l) => l.replace(/^[\s│║|┌└├─━❯>]+/u, '').trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return '';
+  const selected = lines.slice(-4);
+  const text = selected.join(' ').replace(/\s{2,}/gu, ' ');
+  return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+}
+
+export function isCatastrophicPrompt(text: string): boolean {
+  return (
+    /Dangerous rm operation on working directory or its ancestor/iu.test(text) ||
+    /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(['"]?\/(?:\*|\.\*)?['"]?|~|\$HOME|\$\{HOME\}|\/home(?:\/)?['"]?|\/root(?:\/)?['"]?)(?:\s|$)/u.test(
+      text,
+    ) ||
+    /\b(mkfs|dd\s+if=.*of=\/dev\/[snumv]|--no-preserve-root)\b/u.test(text)
   );
 }
 

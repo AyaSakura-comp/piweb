@@ -11,6 +11,11 @@ const agents = {
   'output-received': '輸出已回到 AGY 工具事件；尚未觀察到後續動作',
   continued: '已觀察到 AGY 後續動作',
 };
+const claudeAgents = {
+  'not-observed': '尚未觀察到 Claude 收到完成輸出',
+  'output-received': '輸出已回到 Claude 工具事件；尚未觀察到後續動作',
+  continued: '已觀察到 Claude 後續動作',
+};
 export function createCommandsRunningView({ api, getParent }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'subagents-dialog commands-running';
@@ -78,8 +83,9 @@ export function createCommandsRunningView({ api, getParent }) {
         const code = document.createElement('pre');
         code.textContent = command.command;
         const status = document.createElement('p');
+        const agentMap = command.role === 'claude-command' ? claudeAgents : agents;
         status.textContent =
-          (agents[command.agent] || agents['not-observed']) +
+          (agentMap[command.agent] || agentMap['not-observed']) +
           (command.nextAction ? `：${command.nextAction}` : '');
         const metadata = document.createElement('p');
         metadata.textContent =

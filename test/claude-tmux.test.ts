@@ -13,6 +13,8 @@ import {
   AUTONOMOUS_SYSTEM_PROMPT,
   buildClaudeArgs,
   claudeModelId,
+  extractConfirmationPrompt,
+  isCatastrophicPrompt,
   isClaudeTmuxModelRef,
   invokeClaudeTmux,
   listClaudeTmuxModels,
@@ -177,7 +179,7 @@ describe('Claude tmux invocation', () => {
     expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(true);
   });
 
-  it('stops promptly on a dangerous-operation confirmation instead of timing out', async () => {
+  it('stops promptly on a dangerous-operation confirmation and reports the operation', async () => {
     const fixture = createRuntimeFixture({ completeTurns: false });
     const tmux = fixture.dependencies.tmux;
     fixture.dependencies.tmux = async (args) => {
@@ -191,8 +193,128 @@ describe('Claude tmux invocation', () => {
     });
     expect(result).toMatchObject({ ok: false });
     expect(result.error).toContain('requires manual confirmation');
+    expect(result.error).toContain('Dangerous rm operation on working directory or its ancestor: /home/chihmin/src/piweb-repro');
     expect(result.error).not.toContain('timed out');
     expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(true);
+  });
+
+  it('auto-approves non-catastrophic confirmation prompts and continues the turn', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: true });
+    let promptShown = true;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && promptShown) {
+        return 'Run shell command\n\n │ Delete temporary file:\n │ /tmp/deploycheck/report.json\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend';
+      }
+      if (args[0] === 'send-keys' && args.includes('Enter') && fixture.submissionCount) {
+        promptShown = false;
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.sentKeys.some((keys) => keys.includes('Enter'))).toBe(true);
+    expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(false);
+  });
+
+  it('emits agy_command_update events when Claude runs a background command', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    const events: any[] = [];
+    const tmux = fixture.dependencies.tmux;
+    let appended = false;
+    fixture.dependencies.tmux = async (args) => {
+      const res = await tmux(args);
+      if (args[0] === 'send-keys' && args.includes('Enter') && fixture.submissionCount && !appended) {
+        appended = true;
+        appendFileSync(
+          fixture.transcript,
+          [
+            JSON.stringify({ type: 'user', message: { role: 'user', content: 'run in bg' } }),
+            JSON.stringify({
+              type: 'assistant',
+              message: {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'tool_use',
+                    id: 'toolu_bg_1',
+                    name: 'Bash',
+                    input: { command: 'node test.js', run_in_background: true },
+                  },
+                ],
+              },
+            }),
+            JSON.stringify({
+              type: 'user',
+              toolUseResult: { backgroundTaskId: 'bg_99' },
+              message: {
+                role: 'user',
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'toolu_bg_1',
+                    content: 'Command running in background with ID: bg_99',
+                  },
+                ],
+              },
+            }),
+            JSON.stringify({
+              type: 'assistant',
+              message: {
+                role: 'assistant',
+                stop_reason: 'end_turn',
+                content: [{ type: 'text', text: 'Task is running in background.' }],
+              },
+            }),
+            JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 12 }),
+          ].join('\n') + '\n',
+          'utf8',
+        );
+      }
+      return res;
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', 'run in bg', {
+      dependencies: fixture.dependencies,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, text: 'Task is running in background.' });
+    const commandEvents = events.filter((e) => e.type === 'agy_command_update');
+    expect(commandEvents.length).toBeGreaterThan(0);
+    expect(commandEvents[0].command).toMatchObject({
+      id: 'bg_99',
+      command: 'node test.js',
+      role: 'claude-command',
+      state: 'running',
+    });
+  });
+
+  it('detects catastrophic prompts accurately', () => {
+    expect(
+      isCatastrophicPrompt(
+        'Dangerous rm operation on working directory or its ancestor: /home/chihmin/src/piweb-repro',
+      ),
+    ).toBe(true);
+    expect(isCatastrophicPrompt('Run command: rm -rf /')).toBe(true);
+    expect(isCatastrophicPrompt('Run command: rm -rf ~')).toBe(true);
+    expect(isCatastrophicPrompt('Run command: rm -rf /home/')).toBe(true);
+    expect(isCatastrophicPrompt('Run command: rm -rf $HOME')).toBe(true);
+    expect(isCatastrophicPrompt('Run command: rm -f /tmp/deploycheck/*.webm')).toBe(false);
+    expect(isCatastrophicPrompt('Edit file: /tmp/test.js')).toBe(false);
+  });
+
+  it('extracts confirmation prompt details cleanly from captured pane screens', () => {
+    const screen =
+      'Run shell command\n\n │ Dangerous rm operation on working directory or its ancestor:\n │ /home/chihmin/src/piweb-repro\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend';
+    expect(extractConfirmationPrompt(screen)).toBe(
+      'Run shell command Dangerous rm operation on working directory or its ancestor: /home/chihmin/src/piweb-repro',
+    );
+    expect(extractConfirmationPrompt('plain terminal without dialog')).toBe('');
   });
 
   it('clears a stale confirmation dialog on startup so Claude becomes ready', async () => {
