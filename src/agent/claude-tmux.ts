@@ -120,6 +120,7 @@ export function buildClaudeArgs(options: {
 export interface ClaudeTranslatedRecord {
   events: any[];
   finalText?: string;
+  informationalText?: string;
   turnComplete?: boolean;
 }
 
@@ -147,6 +148,13 @@ export function translateClaudeTranscriptRecord(raw: any): ClaudeTranslatedRecor
   const message = raw.message;
   const parts = Array.isArray(message?.content) ? message.content : [];
   const events: any[] = [];
+
+  if (raw.type === 'system' && raw.subtype === 'informational' && typeof raw.content === 'string') {
+    const text = raw.content.trim();
+    if (text) {
+      return { events: [], informationalText: text };
+    }
+  }
 
   if (raw.type === 'assistant' && message?.role === 'assistant') {
     const hasToolUse = parts.some((part: any) => part?.type === 'tool_use');
@@ -178,14 +186,23 @@ export function translateClaudeTranscriptRecord(raw: any): ClaudeTranslatedRecor
       }
     }
 
-    const finalText =
-      message.stop_reason === 'end_turn' && !hasToolUse
+    let finalText =
+      !hasToolUse && message.stop_reason !== 'tool_use'
         ? parts
             .filter((part: any) => part?.type === 'text')
             .map((part: any) => String(part.text ?? ''))
             .join('\n')
             .trim()
         : '';
+
+    if (!finalText && (raw.error === 'rate_limit' || raw.apiErrorStatus === 429)) {
+      if (raw.quotaLimits?.resetsAt) {
+        finalText = `You've hit your session limit · resets at ${new Date(raw.quotaLimits.resetsAt * 1000).toLocaleTimeString()}`;
+      } else {
+        finalText = "You've hit your session limit";
+      }
+    }
+
     return { events, ...(finalText ? { finalText } : {}) };
   }
 
@@ -386,6 +403,7 @@ export async function invokeClaudeTmux(
     let offset = activeTurn?.transcriptOffset ?? fileSize(transcriptPath);
     let remainder: Buffer = Buffer.alloc(0);
     let finalText = '';
+    let informationalFallback = '';
     let turnComplete = false;
     let shouldSubmit = !recoveringTurn;
     let nextProjectionAt = 0;
@@ -485,6 +503,9 @@ export async function invokeClaudeTmux(
           if (cmdUpdates.length > 0) await publishCommands(cmdUpdates);
           const translated = translateClaudeTranscriptRecord(record);
           for (const event of translated.events) await opts?.onEvent?.(event);
+          if (translated.informationalText && !finalText) {
+            informationalFallback = translated.informationalText;
+          }
           if (translated.finalText !== undefined) finalText = translated.finalText;
           if (translated.turnComplete) {
             // Claude may yield an acknowledgement while its background children
@@ -569,7 +590,18 @@ export async function invokeClaudeTmux(
     }
     const finalCmdUpdates = commandTracker.pollActiveOutputs();
     if (finalCmdUpdates.length > 0) await publishCommands(finalCmdUpdates);
-    const text = convertLocalMediaLinks(finalText.trim(), cwd);
+    let replyText = finalText.trim();
+    if (!replyText && informationalFallback) {
+      replyText = informationalFallback.trim();
+    }
+    if (!replyText && pane) {
+      const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+      const limitMatch = /(?:Usage limit reached[^\n]*|You've hit your session limit[^\n]*)/i.exec(screen);
+      if (limitMatch) {
+        replyText = limitMatch[0].trim();
+      }
+    }
+    const text = convertLocalMediaLinks(replyText, cwd);
     if (!text) return { ok: false, text: '', error: 'Claude Code completed without a final reply' };
     return { ok: true, text };
   } catch (err: any) {

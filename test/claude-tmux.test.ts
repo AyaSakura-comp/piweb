@@ -839,6 +839,53 @@ describe('Claude transcript translation', () => {
       }),
     ).toEqual({ events: [] });
   });
+
+  it('maps rate limit messages and stop_sequence replies without dropping them', () => {
+    const rateLimit = translateClaudeTranscriptRecord({
+      type: 'assistant',
+      error: 'rate_limit',
+      apiErrorStatus: 429,
+      message: {
+        role: 'assistant',
+        stop_reason: 'stop_sequence',
+        content: [
+          { type: 'text', text: "You've hit your session limit · resets 11:40am (Asia/Taipei)" },
+        ],
+      },
+    });
+
+    expect(rateLimit.finalText).toBe("You've hit your session limit · resets 11:40am (Asia/Taipei)");
+    expect(rateLimit.events).toEqual([]);
+  });
+
+  it('extracts informational system messages as fallback text', () => {
+    const info = translateClaudeTranscriptRecord({
+      type: 'system',
+      subtype: 'informational',
+      content: 'Usage limit reached · continuing automatically at 11:40am',
+    });
+
+    expect(info.informationalText).toBe('Usage limit reached · continuing automatically at 11:40am');
+    expect(info.events).toEqual([]);
+  });
+
+  it('extracts rate_limit error details when assistant message content is empty', () => {
+    const errorRecord = translateClaudeTranscriptRecord({
+      type: 'assistant',
+      error: 'rate_limit',
+      apiErrorStatus: 429,
+      quotaLimits: {
+        resetsAt: 1790307600,
+      },
+      message: {
+        role: 'assistant',
+        stop_reason: 'stop_sequence',
+        content: [],
+      },
+    });
+
+    expect(errorRecord.finalText).toContain("You've hit your session limit · resets at");
+  });
 });
 
 function createRuntimeFixture(
