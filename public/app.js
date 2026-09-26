@@ -2777,8 +2777,7 @@ function buildEventNode(event) {
   if (isAgyBackgroundCommand) {
     try {
       const command = JSON.parse(event.content);
-      const prefix = event.role === 'claude-command' ? 'Claude command' : 'AGY command';
-      event = { ...event, content: `${prefix}: ${command.command}\n${command.state} · ${command.agent}`, role: 'background command' };
+      event = { ...event, content: `${command.command}\n${command.state} · ${command.agent}` };
     } catch { /* Render malformed historic text without interpreting it. */ }
   }
   if (event.kind === 'message') {
@@ -2832,10 +2831,18 @@ function buildEventNode(event) {
 
     const summary = el('summary');
     summary.append(el('span', 'event-chevron', '›'));
-    summary.append(el('span', 'label', `${icon} ${event.role || label}`));
+    // Background commands are self-evident from the command line itself; a
+    // "background command" label on every row was just noise.
+    summary.append(
+      isAgyBackgroundCommand
+        ? el('span', 'label label-command', '$')
+        : el('span', 'label', `${icon} ${event.role || label}`),
+    );
     // A peek would just repeat the body verbatim when it is already expanded.
     if (!openByDefault) {
-      const peek = event.content
+      // Keep the command visually separate from its state on the one-line peek.
+      const peekSource = isAgyBackgroundCommand ? event.content.replace('\n', ' · ') : event.content;
+      const peek = peekSource
         .replace(/```\w*\n?/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()

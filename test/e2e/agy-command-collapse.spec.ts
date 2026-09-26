@@ -70,7 +70,8 @@ test('AGY background command cards start collapsed, remain expandable, and leave
   await expect(page.locator('#session-name')).toHaveText(session.name);
   const cards = page
     .locator('#messages details.event.system')
-    .filter({ has: page.locator('summary .label', { hasText: /agy-command|background command/ }) });
+    .filter({ has: page.locator('summary .label-command') });
+  await expect(page.locator('#messages')).not.toContainText(/background command|AGY command/);
   await expect(cards).toHaveCount(10);
   await expect(cards.locator('summary .peek').first()).toContainText('git status -s');
   await expect(cards.nth(1).locator('summary .peek')).toContainText('running');
