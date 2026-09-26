@@ -525,6 +525,49 @@ describe('createAgyEventTranslator', () => {
     expect(thinkingTexts(translate(toolCall('a')).events)).toEqual([]);
   });
 
+  // Real shape from conversation fda3b5c3 (step 1400): agy stores a finished
+  // background task's notice as the text of an agent_response step.
+  const notice = (task: string, stdout: string) =>
+    `<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-27T16:59:12Z sender=conv/${task} ` +
+    `priority=MESSAGE_PRIORITY_MEDIUM content=[Task Completed] conv/${task}\n\nStdout:\n${stdout}\n`;
+  const indexed = (step_index: number, text: string) => ({
+    event: 'step_update',
+    step_update: { state: 'DONE', step_type: 'agent_response', step_index, text_delta: text },
+  });
+
+  it('drops agy task-completion notices from narration, even when split across deltas', () => {
+    const translate = createAgyEventTranslator();
+    const body = notice('task-1399', 'README.md:119: lock probe');
+    expect(translate(indexed(10, body.slice(0, 30))).textDelta).toBe('');
+    expect(translate(indexed(10, body.slice(30))).textDelta).toBe('');
+    translate(indexed(12, '接著檢查 worker'));
+    expect(thinkingTexts(translate(toolCall('view_file')).events)).toEqual(['接著檢查 worker']);
+  });
+
+  it('cuts the notices agy concatenates into result.response out of the final answer', () => {
+    const translate = createAgyEventTranslator();
+    const a = notice('task-1399', 'README.md:119: lock probe');
+    const b = notice('task-1429', 'Stream healthy: state=live');
+    translate(indexed(20, a));
+    translate(indexed(21, b));
+    translate(indexed(22, 'Xvfb 已修復。'));
+    const out = translate(result(`${a}${b}Xvfb 已修復。`));
+    expect(out.finalText).toBe('Xvfb 已修復。');
+    expect(thinkingTexts(out.events)).toEqual([]);
+  });
+
+  it('drops an unindexed notice and leaves ordinary answers untouched', () => {
+    const translate = createAgyEventTranslator();
+    const a = notice('task-7', 'ok');
+    expect(translate(response(a)).textDelta).toBe('');
+    expect(translate(result(`${a}答案`)).finalText).toBe('答案');
+    const plain = createAgyEventTranslator();
+    plain(response('提到 <SYSTEM_MESSAGE> 這個字的答案'));
+    expect(plain(result('提到 <SYSTEM_MESSAGE> 這個字的答案')).finalText).toBe(
+      '提到 <SYSTEM_MESSAGE> 這個字的答案',
+    );
+  });
+
   it('still passes tool events through untouched when there is no narration', () => {
     const translate = createAgyEventTranslator();
     const out = translate(toolCall('run_command')).events;

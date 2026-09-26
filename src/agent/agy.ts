@@ -366,8 +366,32 @@ export function translateAgyEvent(raw: any): {
  * held back and only flushed once something else follows it, and whatever is
  * still held when `result` arrives is dropped.
  */
+/**
+ * agy delivers a finished background task back to the model as a
+ * `<SYSTEM_MESSAGE>[Task Completed] … Stdout: …` notice, and records that
+ * notice as the *text of an agent_response step* — so it arrives exactly like
+ * the model's own narration and is even concatenated into `result.response`.
+ * It is not something the model said; the command's output is already shown by
+ * the background-command card. A step whose text opens with the marker is
+ * therefore dropped from narration and cut out of the final answer.
+ */
+const AGY_NOTICE_MARKER = '<SYSTEM_MESSAGE>';
+
+export function stripAgyNotices(text: string, notices: readonly string[]): string {
+  let out = text;
+  for (const notice of notices) {
+    const body = notice.trim();
+    if (body) out = out.split(body).join('');
+  }
+  return out === text ? text : out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function createAgyEventTranslator() {
   let pending = '';
+  // Text per agent_response step, so a notice split across deltas is caught.
+  const stepText = new Map<number, string>();
+  const noticeSteps = new Set<number>();
+  const notices: string[] = [];
 
   const flushInto = (events: AgyPiEvent[]) => {
     const text = pending.trim();
@@ -386,10 +410,23 @@ export function createAgyEventTranslator() {
     if (translated.finalText !== undefined) {
       // The held text is the final answer; the caller delivers it.
       pending = '';
-      return translated;
+      const noticeTexts = [...notices, ...[...noticeSteps].map((i) => stepText.get(i) ?? '')];
+      return { ...translated, finalText: stripAgyNotices(translated.finalText, noticeTexts) };
     }
 
     if (translated.textDelta !== undefined) {
+      const index = raw?.step_update?.step_index;
+      if (Number.isInteger(index)) {
+        const text = (stepText.get(index) ?? '') + translated.textDelta;
+        stepText.set(index, text);
+        if (noticeSteps.has(index) || text.trimStart().startsWith(AGY_NOTICE_MARKER)) {
+          noticeSteps.add(index);
+          return { ...translated, textDelta: '' };
+        }
+      } else if (translated.textDelta.trimStart().startsWith(AGY_NOTICE_MARKER)) {
+        notices.push(translated.textDelta);
+        return { ...translated, textDelta: '' };
+      }
       pending += translated.textDelta;
       return translated;
     }
