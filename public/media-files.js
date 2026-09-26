@@ -314,16 +314,34 @@ function bindIosVideoSave(button, url, name, runtime) {
   });
 }
 
-/** Build a native inline player with an explicit, mobile-friendly download. */
-export function createVideoAttachment(url, doc = document, runtime = globalThis) {
+/**
+ * Build an inline video card with an explicit, mobile-friendly download.
+ * With `onOpen`, the card is a poster that opens the media album (where the
+ * video plays) instead of a native inline player.
+ */
+export function createVideoAttachment(url, doc = document, runtime = globalThis, onOpen) {
   const name = downloadNameFromMediaUrl(url);
   const card = doc.createElement('div');
   card.className = 'video-file';
 
   const video = doc.createElement('video');
   video.src = url;
-  video.controls = true;
   video.playsInline = true;
+  let open;
+  if (onOpen) {
+    // Poster only: metadata gives the first frame without buffering the file.
+    // iOS paints nothing for an unplayed video unless a start time is given.
+    video.src = `${url}#t=0.1`;
+    video.preload = 'metadata';
+    video.muted = true;
+    open = doc.createElement('button');
+    open.type = 'button';
+    open.className = 'video-open';
+    open.setAttribute('aria-label', `Open video ${name}`);
+    open.addEventListener('click', () => onOpen(url));
+  } else {
+    video.controls = true;
+  }
 
   let download;
   if (isIosHomeScreenApp(runtime)) {
@@ -343,6 +361,7 @@ export function createVideoAttachment(url, doc = document, runtime = globalThis)
   }
   download.className = 'video-download';
 
-  card.append(video, download);
+  if (open) card.append(video, open, download);
+  else card.append(video, download);
   return card;
 }

@@ -948,7 +948,13 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   oldest first) keeping the tapped image current — so swiping reaches images in
   history that has not been paged in. The widening never reloads or re-animates
   the visible image, and a stale response (closed viewer, switched session) is
-  dropped. The overlay sets `touch-action: none` and handles its own
+  dropped. Videos are album items too: a chat video renders as a
+  poster (`createVideoAttachment(..., onOpen)`, `#t=0.1` so iOS paints a frame)
+  that opens the album, where `#lb-video` plays it with native controls. On a
+  video the viewer skips pinch/double-tap zoom and ignores touches that start in
+  the bottom 72px control band, so scrubbing never pages; paging away or closing
+  releases the video (pause + drop `src`). The ⋯ → Media sheet opens images and
+  videos in the same album; audio still uses the separate media player. The overlay sets `touch-action: none` and handles its own
   gestures: multi-touch pinch-to-zoom scales with transform matrix bounds, double-tap toggles
   2.5x zoom, horizontal swipe pages at 1x scale, and downward drag dismisses. Small images are shown at native size rather than
   upscaled — an icon blown up to fill the screen just looks blurry.

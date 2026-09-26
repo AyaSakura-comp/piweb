@@ -1,4 +1,5 @@
 import { expect, test } from 'playwright/test';
+import { readFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 
 const session = {
@@ -73,6 +74,21 @@ const album = ['new.png', 'middle.png', 'old.png'].map((name, i) => ({
   type: 'image',
 }));
 
+/** Real touch swipes over the viewer, the way the phone pages through the album. */
+async function touchSwiper(page: import('playwright/test').Page, y = 420) {
+  const cdp = await page.context().newCDPSession(page);
+  return async (dx: number) => {
+    const x0 = dx < 0 ? 300 : 90;
+    const point = (x: number) => [{ x, y, id: 1 }];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(x0) });
+    for (let i = 1; i <= 8; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x0 + (dx * i) / 8) });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(500);
+  };
+}
+
 test('tapping a transcript image opens the whole session album at that image', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -106,20 +122,7 @@ test('tapping a transcript image opens the whole session album at that image', a
   await page.screenshot({ path: info.outputPath('01-opened-at-tapped-image.png') });
   await page.waitForTimeout(800);
 
-  // Real touch swipes, the way the phone pages through the album.
-  const cdp = await page.context().newCDPSession(page);
-  const swipe = async (dx: number) => {
-    const y = 420;
-    const x0 = dx < 0 ? 300 : 90;
-    const point = (x: number) => [{ x, y, id: 1 }];
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(x0) });
-    for (let i = 1; i <= 8; i++) {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x0 + (dx * i) / 8) });
-    }
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForTimeout(500);
-  };
-
+  const swipe = await touchSwiper(page);
   await swipe(-200);
   await expect(page.locator('#lb-count')).toHaveText('3 / 3');
   await expect(page.locator('#lb-img')).toHaveAttribute('src', /new\.png$/);
@@ -131,5 +134,93 @@ test('tapping a transcript image opens the whole session album at that image', a
   await expect(page.locator('#lb-img')).toHaveAttribute('src', /old\.png$/);
   await page.screenshot({ path: info.outputPath('02-paged-to-oldest.png') });
   await page.waitForTimeout(800);
+  expect(errors).toEqual([]);
+});
+
+const clip = readFileSync(new URL('./fixtures/media/demo-loop.webm', import.meta.url));
+
+test('tapping a chat video opens it in the same album, between the images', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.route('**/media/web_lightbox-album/*', (route) => {
+    const name = new URL(route.request().url()).pathname.split('/').pop()!;
+    if (name === 'clip.webm') return route.fulfill({ contentType: 'video/webm', body: clip });
+    return route.fulfill({ contentType: 'image/png', body: colours[name] });
+  });
+  const videoEvents = [
+    ...events,
+    {
+      id: 2,
+      kind: 'message',
+      role: 'assistant',
+      content: 'And the clip.',
+      files: ['/media/web_lightbox-album/clip.webm'],
+      createdAt: '2026-09-26T09:01:00Z',
+    },
+  ];
+  // Newest first, as the API returns it: new, clip, middle, old.
+  const mixed = ['new.png', 'clip.webm', 'middle.png', 'old.png'].map((name, i) => ({
+    url: `/media/web_lightbox-album/${name}`,
+    name,
+    eventId: 4 - i,
+    createdAt: '2026-09-26T09:00:00Z',
+    type: name.endsWith('.webm') ? 'video' : 'image',
+  }));
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/me') return route.fulfill({ json: { authed: true } });
+    if (path === '/api/sessions') return route.fulfill({ json: { sessions: [session] } });
+    if (path.endsWith('/events'))
+      return route.fulfill({ json: { events: videoEvents, busy: false, session, hasMore: false, partial: null } });
+    if (path.endsWith('/media')) return route.fulfill({ json: { items: mixed } });
+    if (path.endsWith('/stream'))
+      return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
+    return route.fulfill({ json: { commands: [], models: [], sessions: [] } });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText(session.name);
+  const poster = page.getByRole('button', { name: 'Open video clip.webm' });
+  await expect(poster).toBeVisible();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: info.outputPath('01-chat-video-poster.png') });
+  await poster.click();
+
+  // Opens on the video, inside the full album.
+  const lbVideo = page.locator('#lb-video');
+  await expect(page.locator('#lightbox')).toBeVisible();
+  await expect(page.locator('#lb-count')).toHaveText('3 / 4');
+  await expect(lbVideo).toBeVisible();
+  await expect(page.locator('#lb-img')).toBeHidden();
+  await expect(lbVideo).toHaveAttribute('src', /clip\.webm$/);
+  await expect.poll(() => lbVideo.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThan(0);
+  await expect(page.locator('#lb-strip .lb-thumb-play')).toHaveCount(1);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: info.outputPath('02-video-in-album.png') });
+
+  // Swipe (above the control band) to the newer image; the video stops.
+  const swipe = await touchSwiper(page, 200);
+  await swipe(-200);
+  await expect(page.locator('#lb-count')).toHaveText('4 / 4');
+  await expect(page.locator('#lb-img')).toBeVisible();
+  await expect(page.locator('#lb-img')).toHaveAttribute('src', /new\.png$/);
+  await expect(lbVideo).toBeHidden();
+  expect(await lbVideo.getAttribute('src')).toBeNull();
+  await page.screenshot({ path: info.outputPath('03-swiped-to-image.png') });
+
+  await swipe(200);
+  await swipe(200);
+  await expect(page.locator('#lb-count')).toHaveText('2 / 4');
+  await expect(page.locator('#lb-img')).toHaveAttribute('src', /middle\.png$/);
+  await swipe(-200);
+  await expect(page.locator('#lb-count')).toHaveText('3 / 4');
+  await expect(lbVideo).toBeVisible();
+  await page.waitForTimeout(600);
+
+  await page.locator('#lb-close').click();
+  await expect(page.locator('#lightbox')).toBeHidden();
+  expect(await lbVideo.getAttribute('src')).toBeNull();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });

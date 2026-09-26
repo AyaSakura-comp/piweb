@@ -1816,17 +1816,21 @@ async function openMediaSheet() {
     return;
   }
 
-  const images = items.filter((i) => i.type === 'image').map((i) => i.url);
+  // Oldest first, like the transcript and the album opened from a chat tap.
+  const album = items
+    .filter((i) => i.type === 'image' || i.type === 'video')
+    .map((i) => i.url)
+    .reverse();
   note.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}`;
 
   const frag = document.createDocumentFragment();
   for (const item of items) {
-    frag.append(buildMediaTile(item, images));
+    frag.append(buildMediaTile(item, album));
   }
   grid.append(frag);
 }
 
-function buildMediaTile(item, images) {
+function buildMediaTile(item, album) {
   const tile = el('button', 'media-tile');
   tile.type = 'button';
   tile.title = item.name;
@@ -1859,9 +1863,9 @@ function buildMediaTile(item, images) {
   }
 
   tile.addEventListener('click', () => {
-    if (item.type === 'image') {
+    if (item.type === 'image' || item.type === 'video') {
       closeMediaSheet();
-      openLightbox(item.url, images);
+      openLightbox(item.url, album);
     } else {
       // Keep the gallery in place underneath the player so Close returns to the
       // same scroll position rather than navigating Piweb to the original file.
@@ -2582,7 +2586,7 @@ function renderFiles(container, files, content = '') {
       img.addEventListener('click', () => openLightbox(url));
       wrap.append(img);
     } else if (/\.(mp4|webm|mov)$/.test(lower)) {
-      wrap.append(createVideoAttachment(url));
+      wrap.append(createVideoAttachment(url, document, globalThis, (u) => openLightbox(u)));
     } else if (/\.(wav|mp3|ogg|m4a)$/.test(lower)) {
       const audio = el('audio');
       audio.src = url;
@@ -3613,6 +3617,27 @@ const lb = {
   lastTapY: 0,
 };
 
+const LB_VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
+
+function isLightboxVideo(url) {
+  return LB_VIDEO_RE.test(String(url || '').split(/[?#]/)[0]);
+}
+
+/** The element currently shown in the viewer: the video for a video item. */
+function lbMedia() {
+  const video = $('lb-video');
+  return video && !video.hidden ? video : $('lb-img');
+}
+
+function releaseLightboxVideo() {
+  const video = $('lb-video');
+  if (!video) return;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.hidden = true;
+}
+
 function resetLightboxTransform(animate = false) {
   lb.scale = 1;
   lb.x = 0;
@@ -3620,7 +3645,7 @@ function resetLightboxTransform(animate = false) {
   lb.drag = null;
   lb.isPinching = false;
   lb.isPanning = false;
-  const img = $('lb-img');
+  const img = lbMedia();
   if (img) {
     if (animate) {
       img.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)';
@@ -3632,20 +3657,21 @@ function resetLightboxTransform(animate = false) {
 }
 
 function applyLightboxTransform(animate = false) {
-  const img = $('lb-img');
+  const img = lbMedia();
   if (!img) return;
   img.style.transition = animate ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
   img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale})`;
 }
 
-/** Every image currently in the transcript, in reading order. */
-function collectTranscriptImages() {
+/** Every image and video currently in the transcript, in reading order. */
+function collectTranscriptMedia() {
   const seen = new Set();
   const urls = [];
   for (const n of document.querySelectorAll(
-    '#messages .msg-files img, #messages .msg-text img, #messages .msg-inline-media img',
+    '#messages .msg-files img, #messages .msg-text img, #messages .msg-inline-media img, #messages .video-file video',
   )) {
-    const src = n.getAttribute('src');
+    // Chat video posters carry a `#t=` start-time fragment; the album keys on the file.
+    const src = n.getAttribute('src')?.replace(/#t=[\d.]+$/, '');
     if (src && !seen.has(src)) {
       seen.add(src);
       urls.push(src);
@@ -3658,7 +3684,7 @@ let lightboxAlbumGeneration = 0;
 
 function openLightbox(url, urls) {
   const generation = ++lightboxAlbumGeneration;
-  lb.urls = urls && urls.length ? urls : collectTranscriptImages();
+  lb.urls = urls && urls.length ? urls : collectTranscriptMedia();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
   $('lightbox').classList.toggle('single', lb.urls.length < 2);
@@ -3690,7 +3716,10 @@ async function widenLightboxToAlbum(url, jid, generation) {
   }
   if (generation !== lightboxAlbumGeneration || $('lightbox').hidden || state.activeJid !== jid) return;
   // The API lists newest first; the transcript reads oldest first.
-  const album = items.filter((i) => i.type === 'image').map((i) => i.url).reverse();
+  const album = items
+    .filter((i) => i.type === 'image' || i.type === 'video')
+    .map((i) => i.url)
+    .reverse();
   // Follow whichever image is showing now, which may differ from the one tapped.
   const current = lb.urls[lb.index] ?? url;
   const index = album.findIndex((u) => sameMediaUrl(u, current));
@@ -3723,10 +3752,21 @@ function buildFilmstrip() {
     const num = el('span', 'lb-thumb-num', String(i + 1));
     btn.append(num);
 
-    const img = el('img');
-    img.alt = '';
-    img.onload = () => img.classList.add('loaded');
-    btn.append(img);
+    if (isLightboxVideo(url)) {
+      // First frame as the thumbnail, plus a play mark so it reads as video.
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.addEventListener('loadeddata', () => video.classList.add('loaded'));
+      btn.append(video, el('span', 'lb-thumb-play', '▶'));
+      btn.setAttribute('aria-label', `Video ${i + 1}`);
+    } else {
+      const img = el('img');
+      img.alt = '';
+      img.onload = () => img.classList.add('loaded');
+      btn.append(img);
+    }
 
     btn.addEventListener('click', () => {
       const dir = i > lb.index ? 1 : -1;
@@ -3753,10 +3793,10 @@ function syncFilmstrip() {
 
     // Only load thumbnail image if within the active +/- 2 window
     if (i >= start && i <= end) {
-      const img = btn.querySelector('img');
+      const thumb = btn.querySelector('img, video');
       const url = lb.urls[i];
-      if (img && !img.src && url) {
-        img.src = url;
+      if (thumb && !thumb.getAttribute('src') && url) {
+        thumb.src = thumb.tagName === 'VIDEO' ? `${url}#t=0.1` : url;
       }
     }
   });
@@ -3764,6 +3804,7 @@ function syncFilmstrip() {
 
 function closeLightbox() {
   lightboxAlbumGeneration++;
+  releaseLightboxVideo();
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
   resetLightboxTransform(false);
@@ -3774,8 +3815,17 @@ function closeLightbox() {
  * side, so paging reads as movement through a sequence instead of a hard cut.
  */
 function showLightboxImage(direction = 0) {
-  const img = $('lb-img');
   const url = lb.urls[lb.index];
+  const isVideo = isLightboxVideo(url);
+  // Leaving a video must stop it; landing on one swaps the visible element.
+  releaseLightboxVideo();
+  $('lb-img').hidden = isVideo;
+  if (isVideo) {
+    const video = $('lb-video');
+    video.src = url;
+    video.hidden = false;
+  }
+  const img = lbMedia();
 
   resetLightboxTransform(false);
 
@@ -3783,9 +3833,10 @@ function showLightboxImage(direction = 0) {
   img.style.transform = direction ? `translateX(${direction * 36}px)` : 'translateX(0)';
   img.style.opacity = direction ? '0' : '1';
   img.classList.remove('fit-up');
-  img.src = url;
+  if (!isVideo) img.src = url;
+  $('lb-download').setAttribute('aria-label', isVideo ? 'Download video' : 'Download image');
 
-  img.onload = () => {
+  if (!isVideo) img.onload = () => {
     const stage = $('lb-stage').getBoundingClientRect();
     const small = img.naturalWidth < stage.width * 0.6 && img.naturalHeight < stage.height * 0.6;
     img.classList.toggle('fit-up', small);
@@ -3806,7 +3857,7 @@ function showLightboxImage(direction = 0) {
   // Background prefetch window: preload +/- 2 images (lb.index - 2, -1, +1, +2)
   for (const offset of [-2, -1, 1, 2]) {
     const targetIdx = lb.index + offset;
-    if (targetIdx >= 0 && targetIdx < lb.urls.length) {
+    if (targetIdx >= 0 && targetIdx < lb.urls.length && !isLightboxVideo(lb.urls[targetIdx])) {
       new Image().src = lb.urls[targetIdx];
     }
   }
@@ -3861,7 +3912,7 @@ $('lb-download')?.addEventListener('click', async (e) => {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
-    showToast('圖片下載完成');
+    showToast(isLightboxVideo(url) ? '影片下載完成' : '圖片下載完成');
   } catch {
     const a = document.createElement('a');
     a.href = url;
@@ -3895,6 +3946,22 @@ lightboxEl.addEventListener(
   (e) => {
     if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip'))
       return;
+
+    // A video keeps its native gestures: no zoom, and the bottom control band
+    // (scrubber, play, fullscreen) must not start a page swipe.
+    const video = $('lb-video');
+    if (!video.hidden) {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const box = video.getBoundingClientRect();
+      const inControls =
+        touch.clientX >= box.left && touch.clientX <= box.right &&
+        touch.clientY >= box.bottom - 72 && touch.clientY <= box.bottom;
+      if (inControls) return;
+      lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
+      video.style.transition = 'none';
+      return;
+    }
 
     // 1. Two-finger pinch gesture
     if (e.touches.length === 2) {
@@ -3953,7 +4020,7 @@ lightboxEl.addEventListener(
       } else {
         lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
       }
-      $('lb-img').style.transition = 'none';
+      lbMedia().style.transition = 'none';
     }
   },
   { passive: false },
@@ -4003,7 +4070,7 @@ lightboxEl.addEventListener(
         lb.drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
       }
 
-      const img = $('lb-img');
+      const img = lbMedia();
       if (lb.drag.axis === 'x') {
         const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
         img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
@@ -4037,7 +4104,7 @@ function endLightboxTouch(e) {
   }
 
   if (lb.drag) {
-    const img = $('lb-img');
+    const img = lbMedia();
     const drag = lb.drag;
     lb.drag = null;
 
