@@ -943,8 +943,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   submit to hidden Life state. See [`docs/life-mode.md`](docs/life-mode.md) for
   the workflow, software architecture, persistence, and race-ownership diagrams.
 - **Image lightbox (Swipe, Pinch-to-zoom & Pan)**: tapping an image opens an in-app viewer (`openLightbox`)
-  rather than a new tab, collecting every image in the transcript so swiping
-  pages through them. The overlay sets `touch-action: none` and handles its own
+  rather than a new tab. It opens instantly on the images already in the loaded
+  transcript, then widens to the whole session album (`/api/sessions/:jid/media`,
+  oldest first) keeping the tapped image current — so swiping reaches images in
+  history that has not been paged in. The widening never reloads or re-animates
+  the visible image, and a stale response (closed viewer, switched session) is
+  dropped. The overlay sets `touch-action: none` and handles its own
   gestures: multi-touch pinch-to-zoom scales with transform matrix bounds, double-tap toggles
   2.5x zoom, horizontal swipe pages at 1x scale, and downward drag dismisses. Small images are shown at native size rather than
   upscaled — an icon blown up to fill the screen just looks blurry.

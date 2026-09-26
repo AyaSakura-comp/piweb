@@ -3654,7 +3654,10 @@ function collectTranscriptImages() {
   return urls;
 }
 
+let lightboxAlbumGeneration = 0;
+
 function openLightbox(url, urls) {
+  const generation = ++lightboxAlbumGeneration;
   lb.urls = urls && urls.length ? urls : collectTranscriptImages();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
@@ -3663,6 +3666,45 @@ function openLightbox(url, urls) {
   resetLightboxTransform(false);
   buildFilmstrip();
   showLightboxImage();
+  // A tap in the transcript only sees the loaded page of images; widen it to
+  // the whole session album (the ⋯ → Media list) once that arrives.
+  if (!urls && state.activeJid) void widenLightboxToAlbum(url, state.activeJid, generation);
+}
+
+function sameMediaUrl(a, b) {
+  try {
+    const x = new URL(a, location.href);
+    const y = new URL(b, location.href);
+    return x.origin === y.origin && x.pathname === y.pathname && x.search === y.search;
+  } catch {
+    return a === b;
+  }
+}
+
+async function widenLightboxToAlbum(url, jid, generation) {
+  let items;
+  try {
+    ({ items } = await api(withLifeGeneration(`/api/sessions/${encodeURIComponent(jid)}/media`, jid)));
+  } catch {
+    return; // The transcript-only album keeps working.
+  }
+  if (generation !== lightboxAlbumGeneration || $('lightbox').hidden || state.activeJid !== jid) return;
+  // The API lists newest first; the transcript reads oldest first.
+  const album = items.filter((i) => i.type === 'image').map((i) => i.url).reverse();
+  // Follow whichever image is showing now, which may differ from the one tapped.
+  const current = lb.urls[lb.index] ?? url;
+  const index = album.findIndex((u) => sameMediaUrl(u, current));
+  if (index < 0 || album.length <= lb.urls.length) return;
+  lb.urls = album;
+  lb.index = index;
+  $('lightbox').classList.toggle('single', lb.urls.length < 2);
+  buildFilmstrip();
+  // Only the counter/strip/neighbours change; do not reload or re-animate the
+  // image the user is already looking at (or zooming into).
+  $('lb-count').textContent = `${lb.index + 1} / ${lb.urls.length}`;
+  $('lb-prev').disabled = lb.index === 0;
+  $('lb-next').disabled = lb.index === lb.urls.length - 1;
+  syncFilmstrip();
 }
 
 /** Thumbnail strip: jumping to image 12 of 16 should not need 11 swipes. */
@@ -3721,6 +3763,7 @@ function syncFilmstrip() {
 }
 
 function closeLightbox() {
+  lightboxAlbumGeneration++;
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
   resetLightboxTransform(false);
