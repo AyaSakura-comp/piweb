@@ -59,6 +59,50 @@ class FakeElement {
 }
 
 describe('sendJsonWithUploadProgress', () => {
+  it('reports timings and sizes without attachment content or names', async () => {
+    const request = new FakeRequest();
+    const report = vi.fn();
+    let clock = 100;
+    const result = sendJsonWithUploadProgress(
+      '/api/messages',
+      {
+        text: 'private',
+        attachments: [{ name: 'secret.png', dataBase64: 'YWJj' }],
+      },
+      { createRequest: () => request, now: () => clock, report },
+    );
+    clock = 1100;
+    request.upload.emit('load');
+    clock = 1400;
+    request.emit('load');
+    await result;
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileBytes: 3,
+        fileCount: 1,
+        uploadMs: 1000,
+        totalMs: 1300,
+        status: 200,
+        outcome: 'response',
+      }),
+    );
+    expect(JSON.stringify(report.mock.calls)).not.toMatch(/private|secret|YWJj/);
+  });
+
+  it('records network failures without interfering with rejection', async () => {
+    const request = new FakeRequest();
+    const report = vi.fn();
+    const result = sendJsonWithUploadProgress(
+      '/api/messages',
+      {},
+      { createRequest: () => request, report },
+    );
+    request.emit('error');
+    await expect(result).rejects.toThrow('Upload failed');
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'error', uploadMs: null }),
+    );
+  });
   it('uploads JSON with same-origin credentials and reports byte progress', async () => {
     const request = new FakeRequest();
     const onProgress = vi.fn();

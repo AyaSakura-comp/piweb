@@ -22,6 +22,7 @@ import { readSubagents, hasRunningSubagents, subagentParentScope, SubagentReadEr
 import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { parseUploadMetrics } from './upload-metrics.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
   archiveLifeSessionAndStartNew,
@@ -557,6 +558,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       'Rejected cross-origin state-changing request',
     );
     sendJson(res, 403, { error: 'Cross-origin request refused' });
+    return;
+  }
+
+  if (method === 'POST' && path === '/api/upload-metrics') {
+    const metrics = parseUploadMetrics(await readJson<unknown>(req));
+    if (!metrics) {
+      sendJson(res, 400, { error: 'Invalid upload metrics' });
+      return;
+    }
+    // Route belongs to this telemetry request; it cannot establish direct vs DERP.
+    const route = isFunnelRequest(req.headers) ? 'funnel'
+      : tailscaleIdentity(req.headers, req.socket.remoteAddress) ? 'tailscale' : 'unknown';
+    logger.info({ ...metrics, route, source: 'browser' }, 'Upload metrics');
+    sendJson(res, 200, { ok: true });
     return;
   }
 

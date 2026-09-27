@@ -29,6 +29,54 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
   const createRequest = options.createRequest ?? (() => new XMLHttpRequest());
   const onProgress = options.onProgress ?? (() => {});
   const request = createRequest();
+  const now = options.now ?? (() => performance.now());
+  const report =
+    options.report ??
+    ((record) =>
+      fetch('/api/upload-metrics', {
+        method: 'POST',
+        credentials: 'same-origin',
+        keepalive: true,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(record),
+      }).catch(() => {}));
+  const serialized = JSON.stringify(payload);
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const fileBytes = attachments.reduce((sum, item) => {
+    const data = typeof item.dataBase64 === 'string' ? item.dataBase64 : '';
+    return (
+      sum +
+      Math.max(
+        0,
+        Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0),
+      )
+    );
+  }, 0);
+  let started = 0;
+  let uploadMs = null;
+  let reported = false;
+  const finish = (outcome) => {
+    if (reported) return;
+    reported = true;
+    try {
+      Promise.resolve(
+        report({
+          fileBytes,
+          fileCount: attachments.length,
+          bodyBytes: new TextEncoder().encode(serialized).length,
+          uploadMs,
+          totalMs: Math.max(0, now() - started),
+          status: request.status,
+          outcome,
+        }),
+      ).catch(() => {});
+    } catch {
+      /* Telemetry must never affect sending a message. */
+    }
+  };
+  request.upload.addEventListener('load', () => {
+    uploadMs = Math.max(0, now() - started);
+  });
 
   return new Promise((resolve, reject) => {
     request.open('POST', path, true);
@@ -41,6 +89,7 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
     });
 
     request.addEventListener('load', () => {
+      finish('response');
       const succeeded = request.status >= 200 && request.status < 300;
       let body = null;
       if (request.responseText) {
@@ -65,12 +114,17 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
       resolve(body);
     });
 
-    request.addEventListener('error', () =>
-      reject(new Error('Upload failed. Check your connection.')),
-    );
-    request.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+    request.addEventListener('error', () => {
+      finish('error');
+      reject(new Error('Upload failed. Check your connection.'));
+    });
+    request.addEventListener('abort', () => {
+      finish('abort');
+      reject(new Error('Upload cancelled'));
+    });
 
     onProgress(0);
-    request.send(JSON.stringify(payload));
+    started = now();
+    request.send(serialized);
   });
 }
