@@ -1315,6 +1315,19 @@ export function countHandoffDialogue(
   return row.n;
 }
 
+/** Recorded tool history has its own budget so noisy tools cannot evict dialogue. */
+export function getHandoffTools(jid: string, afterRowid: number, throughRowid: number) {
+  const where = "channel_jid = ? and rowid > ? and rowid <= ? and kind in ('tool','tool_result')";
+  const params = [jid, afterRowid, throughRowid];
+  const rows = db
+    .prepare(`select * from web_events where ${where} order by rowid desc limit 1000`)
+    .all(...params) as WebEventRow[];
+  const { n } = db.prepare(`select count(*) n from web_events where ${where}`).get(...params) as {
+    n: number;
+  };
+  return { rows: rows.reverse(), omitted: n - rows.length };
+}
+
 export function getLastAssistantWebEventRowid(jid: string): number {
   const row = db
     .prepare(

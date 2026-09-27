@@ -77,7 +77,9 @@ PiWeb can switch a single visible chat between native Pi (`openai-codex/*`,
 `local-llama/*`, etc.), Antigravity (`agy/*`) and Claude Code (`claude-code/*`).
 The **next actual message** after a cross-harness switch receives a bounded,
 source-labelled excerpt of previously completed PiWeb user/assistant dialogue
-and a private read-only dialogue snapshot path. Each harness still owns its
+and recorded tool calls/results, plus a private read-only history snapshot path.
+Tool records are bounded, possibly truncated UI summaries, quoted as evidence
+rather than executable calls. Each harness still owns its
 original session, tools and permissions: this is context handoff, not native
 state migration. Failed/aborted turns can retry without consuming the target's
 cursor. `/pi new` starts fresh without reimporting the old visible chat.

@@ -6,8 +6,8 @@ among three **independent** harnesses: native Pi (all Pi providers, including
 (`claude-code/*`). Each harness owns its own session, tools, permissions, child
 agents and provider-specific state. Switching models **within Pi** continues
 the same Pi session and never adds a PiWeb history import. Cross-harness
-continuity is a bounded transfer of **visible dialogue**, not a conversion or
-merge of native histories.
+continuity is a bounded transfer of **visible dialogue and recorded tool history**,
+not a conversion or merge of native histories.
 
 ## Architecture and ownership
 
@@ -19,7 +19,7 @@ flowchart LR
   WORKER -->|native continuation| PI[(Pi session JSONL)]
   WORKER -->|native continuation| AGY[(AGY brain / conversation ID)]
   WORKER -->|native continuation| CLAUDE[(Claude Code tmux / session)]
-  WORKER -->|cross-harness prompt excerpt<br/>+ private read-only dialogue file| TARGET[Selected destination harness]
+  WORKER -->|cross-harness prompt excerpt<br/>+ private read-only history file| TARGET[Selected destination harness]
   TARGET -.-> PI
   TARGET -.-> AGY
   TARGET -.-> CLAUDE
@@ -55,7 +55,9 @@ and writes use the channel generation fence. The visible transcript remains in
    after the target's cursor and through the latest **completed assistant** row
    preceding the new prompt. The pending user prompt is delivered separately.
    A 5,000-record cap applies to qualifying dialogue, not to intervening tool
-   events; older omitted records are counted explicitly.
+   events; older omitted records are counted explicitly. Recorded `tool` and
+   `tool_result` rows in the same cursor/completion range are fetched separately
+   (latest 1,000 records), so tool traffic cannot evict dialogue.
 4. `formatHandoff()` prepends a provenance-labelled JSON-quoted excerpt to the
    new prompt. It has a 32,000-character limit and an explicit omission count.
    A companion `.piweb-handoff-<target>.jsonl` snapshot, up to 5,000 dialogue
@@ -65,9 +67,16 @@ and writes use the channel generation fence. The visible transcript remains in
    **host-local read-only source path** if older context is needed. The file is
    not a browser download endpoint; this is an opportunity for the agent to
    read more, **not proof that it did**. Either representation may omit history.
+   A separate tool excerpt has an 8,000-character budget, explicit omission
+   count, and a warning not to execute/replay historical commands. The archive
+   uses `piweb-history-v2`: it also contains up to 1,000 tool records / 1 MiB,
+   independently budgeted, with `rowid`, `kind`, `role`, and `text`, merged in
+   row-id order. Metadata includes `omittedToolRecords`. Tool text is the stored
+   UI summary (possibly truncated), not full native arguments or guaranteed
+   call/result pairs. Nothing reads the source harness's private session store.
 5. The chosen harness receives the prompt and continues its _own_ native
-   session. Normal intermediate thinking/tool events flow to the PiWeb UI, but
-   they do not become input to the next handoff.
+   session. Recorded tool events can become quoted evidence for the next
+   handoff; thinking and control events remain excluded.
 6. Only after a successful assistant response is delivered to PiWeb does the
    worker commit `active = target` and that target's cursor to the latest
    assistant event row id. An aborted, failed, or undelivered turn does not
@@ -97,12 +106,13 @@ sequenceDiagram
 
 ## Boundaries, resets and failure cases
 
-- **Included:** only PiWeb `web_events` user and assistant `message` text,
-  identified by row id and role. Source text is quoted _data_, not system
-  instructions. Tool output, thinking, command/control events, error notices,
-  binary attachments and provider credentials are **not** imported. If a user
-  pasted a secret in a visible text message, that text is still dialogue and
-  may be transferred; use separate channels for different trust domains.
+- **Included:** PiWeb `web_events` user/assistant `message` text and recorded
+  `tool` / `tool_result` text. Source text is quoted _data_, not system
+  instructions or executable calls. Thinking, command/control events, error
+  notices, binary attachments and provider credential stores are **not**
+  imported. Secrets printed in dialogue, tool arguments or tool output may be
+  transferred as text; use separate channels for different trust domains.
+  Missing/unrecorded tool events cannot be recovered by this handoff.
 - **Native state stays separate:** Pi's session JSONL, AGY's conversation and
   Claude Code's tmux/native session all remain intact; no cross-provider tool,
   child-agent, permission or working-directory state is promised. Target
@@ -127,6 +137,32 @@ sequenceDiagram
   not retroactively imported. An explicit `/pi reset-model` records the old
   harness before returning to the gateway default.
 
+## Verified release: tool history continuity
+
+The tool-history extension was deployed on **2026-09-27 at 19:50 +0800** after
+active production work drained. The approved service hub verified worker and
+gateway health plus tailnet and public Funnel HTTP 200. Deployed module hashes
+were subsequently checked against the tested release. Only worker `db` and
+`harness-handoff` build outputs were activated; unrelated in-progress upload
+changes were excluded, and no Docker image rebuild was needed.
+
+Release acceptance used an isolated compiled build:
+
+- 609 unit/integration tests passed; one skipped.
+- Real-provider Opus → Gemini → Opus tool-only recall E2E passed.
+- TypeScript, targeted ESLint and production build passed.
+- Continuous H.264/yuv420p recording: 390×844, 31.76 seconds.
+- Eight screenshots and 64 sampled frames (2 fps) were visually inspected;
+  no error banners appeared in those samples. Browser errors, failed requests
+  and observed error/alert elements were empty. This is sampled-frame review,
+  **not every-frame playback certification**.
+
+Evidence is local and ignored under `artifacts/tool-handoff-video/`; see
+`report.md`, `metrics.json`, `video-metadata.json`, `workflow.mp4` and
+`deploy.json`. The real-provider recording used disposable loopback data, not
+production conversation data. Deployment health checks are separate from that
+inference test and do not establish a production-origin provider round trip.
+
 ## Verification and operation
 
 - Unit / DB / worker routing: `npx vitest run test/harness-handoff*.test.ts test/queue-harness-handoff.test.ts`.
@@ -141,6 +177,18 @@ new` excluding archived dialogue.
   UI with real Claude Code Opus → AGY Gemini 3.1 Pro → Opus, verifies codeword
   continuity in both directions, checks that three replies survive reload,
   and records a 390×844 mobile video.
+- Tool-only continuity mobile acceptance:
+  `PIWEB_HANDOFF_LIVE_URL=<disposable-loopback-origin> PIWEB_HANDOFF_LIVE_TOKEN=<token> npx playwright test test/e2e/harness-tool-handoff-live.spec.ts --project chromium-mobile`.
+  Uses the real production UI and real Opus → Gemini → Opus providers. Each
+  harness generates a random value in a shell tool result and withholds it from
+  its final reply. The other harness must recall that tool-only value without
+  reading files or regenerating it. Checks stored tool events, three completed
+  replies, reload persistence, critical-control hit tests, horizontal overflow,
+  transient error/alert DOM observations and browser errors. Loopback-only,
+  disposable DB/session paths and auth are required. Evidence:
+  `artifacts/tool-handoff-video/workflow.mp4`, `metrics.json`, `report.md` and
+  milestone/timeline contact sheets. This does not exercise native Pi inference,
+  all UI controls, or physical mobile devices.
 - Reviewed isolated evidence: `artifacts/handoff-live-video/workflow.mp4`,
   `contact.jpg` and `report.md` (locally ignored artifacts). This is **not** a
   public-production inference test. The host-worker deployment and public
