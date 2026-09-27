@@ -388,9 +388,11 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
 - **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
-  Voice notes and audio files receive automatic Breeze ASR transcription. Media gallery video and audio tiles open in a
-  responsive in-app player instead of navigating to the raw file; its top bar provides a 44px download icon and close action.
-  The image lightbox features numbered placeholder thumbnails and dynamic +/-2 sliding-window background prefetching.
+  Voice notes and audio files receive automatic Breeze ASR transcription. Tapping an image or video opens a shared
+  session album at that item, including attachments outside the loaded transcript page. Videos use poster cards in chat
+  and native playback controls in the album; leaving a video or closing the viewer unloads it. Audio keeps its separate
+  in-app player. Image prefetch is limited to a sliding window, not the whole album.
+  See [image/video album behavior and verification](docs/media-album.md).
 - **Markdown & List Rendering**: Rich typography supporting secure clickable links nested inside bold/italic/strike text, loose ordered and unordered lists (preserving continuous numbering across blank lines and custom `<ol start="N">` offsets), indented multi-line item continuations, and deeply nested sub-bullets, rendered safely from text nodes without raw HTML injection. YouTube watch, short, Shorts, live, and embed links get a 44px play affordance; a normal click lazily opens one privacy-enhanced inline player per message with `playsinline=1`, **Open in YouTube**, and **Close** controls. The standard assistant card is 16:9; narrower user/event columns keep YouTube's 200px minimum player height instead of clipping controls. Modified clicks keep normal external navigation, channel/lookalike URLs never embed, and replacing or closing a player destroys its iframe so playback stops. See [`docs/youtube-inline-player.md`](docs/youtube-inline-player.md) for the complete validation, security, lifecycle, accessibility, and verification contract.
 - **Syntax-highlighted Code Blocks**: Fenced code uses the declared language when available and highlight.js auto-detection when the language tag is omitted or unknown. The browser build is vendored, so highlighting works without a CDN.
 - **Mermaid Diagram Rendering & Touch Gestures**: Markdown code blocks with `mermaid` (`flowchart`, `pie`, `sequenceDiagram`, `stateDiagram`, `classDiagram`, `gantt`, `gitGraph`, `mindmap`, etc.)
@@ -400,4 +402,6 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
 - **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
   automatically requeue and resume with session context preserved.
 - **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON
-  rather than multipart to keep the container dependency-free.
+  rather than multipart to keep the container dependency-free. Browser-reported size, upload time and response time
+  are logged as `Upload metrics`, without filenames or content. Timings are not yet displayed in the UI;
+  refresh the page after deployment to enable recording. See [upload diagnostics](docs/upload-metrics.md).

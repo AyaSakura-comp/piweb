@@ -73,6 +73,22 @@ in [AGY command manager](agy-command-manager.md).
 | outbound media | agy emits markdown (`![c](/abs/chart.png)`); `convertLocalMediaLinks()` rewrites links that resolve to a real local file into pi's `[[file: …]]` marker so the existing attachment pipeline delivers them                     |
 | `/until goal`  | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt                                           |
 
+### Background-task notices are not assistant prose
+
+AGY can emit `<SYSTEM_MESSAGE>[Task Completed] … Stdout: …` as the text of
+an `agent_response` step and repeat it in `result.response`. The bridge tracks
+step text across deltas, suppresses steps identified by the leading system marker
+from narration, and strips the observed notice text from the final response.
+Normal prose merely mentioning the marker is not treated as a notice. Background
+command evidence continues through the command tracker; the filter does not
+execute or reinterpret stdout.
+
+This is a worker-side filter (`src/agent/agy.ts`, commit `d6c21d9`). It applies to
+newly processed responses, not old persisted messages. A web-only deployment does
+not activate worker changes; restart the worker safely after active work drains.
+See `test/agy-bridge.test.ts` for split-notice, final-response and unindexed-notice
+regressions.
+
 ### Three things that will bite anyone editing this
 
 - **agy model ids already encode the reasoning effort.** `gemini-3.5-flash-low`
