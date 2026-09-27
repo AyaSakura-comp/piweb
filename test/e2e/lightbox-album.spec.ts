@@ -196,6 +196,10 @@ test('tapping a chat video opens it in the same album, between the images', asyn
   await expect(lbVideo).toHaveAttribute('src', /clip\.webm$/);
   await expect.poll(() => lbVideo.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThan(0);
   await expect(page.locator('#lb-strip .lb-thumb-play')).toHaveCount(1);
+  // Metadata alone does not prove the clip decodes and actually plays.
+  await lbVideo.evaluate((v: HTMLVideoElement) => { v.muted = true; return v.play(); });
+  await expect.poll(() => lbVideo.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(0.1);
+  expect(await lbVideo.evaluate((v: HTMLVideoElement) => v.error)).toBeNull();
   await page.waitForTimeout(800);
   await page.screenshot({ path: info.outputPath('02-video-in-album.png') });
 
