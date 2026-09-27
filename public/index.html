@@ -394,6 +394,13 @@
             <button type="button" id="quote-preview-remove" aria-label="Remove quote">×</button>
           </div>
           <div class="attachments" id="attachments" hidden></div>
+          <div class="image-compression-options" id="image-compression-options" hidden>
+            <label for="compress-images">
+              <input id="compress-images" type="checkbox" checked aria-label="壓縮圖片" aria-describedby="image-compression-hint" />
+              <span>壓縮圖片</span>
+            </label>
+            <span id="image-compression-hint">JPEG／PNG ≤541,200 像素（528×1025），保持比例；取消傳原檔</span>
+          </div>
           <div class="life-tags" id="life-tags" role="group" aria-label="快速標籤"></div>
           <form class="composer" id="composer">
             <button type="button" class="icon-btn" id="btn-attach" aria-label="Add attachment">

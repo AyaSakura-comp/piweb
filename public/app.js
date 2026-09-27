@@ -15,6 +15,11 @@ import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createCommandsRunningView } from './commands-running.js';
 import { createMediaViewer, createVideoAttachment } from './media-files.js';
+import {
+  IMAGE_COMPRESSION_KEY,
+  prepareImageUpload,
+  readCompressionPreference,
+} from './image-compression.js';
 import { bindThemeToggle } from './theme.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
@@ -3020,10 +3025,21 @@ const uploadProgress = {
   percent: $('upload-progress-percent'),
 };
 
+const imageCompressionCheckbox = $('compress-images');
+imageCompressionCheckbox.checked = readCompressionPreference();
+imageCompressionCheckbox.addEventListener('change', () => {
+  try {
+    localStorage.setItem(IMAGE_COMPRESSION_KEY, String(imageCompressionCheckbox.checked));
+  } catch {
+    // The current page preference still works with storage blocked.
+  }
+});
+
 function setUploading(uploading) {
   state.uploading = uploading;
   $('btn-send').disabled = uploading;
   $('btn-attach').disabled = uploading;
+  imageCompressionCheckbox.disabled = uploading;
   if (!uploading) hideUploadProgress(uploadProgress);
 }
 
@@ -3255,6 +3271,7 @@ function renderAttachments() {
   const wrap = $('attachments');
   wrap.textContent = '';
   wrap.hidden = state.attachments.length === 0;
+  $('image-compression-options').hidden = !state.attachments.some((a) => a.isImage);
 
   state.attachments.forEach((attachment, i) => {
     const isImg = attachment.isImage;
@@ -3352,6 +3369,7 @@ $('composer').addEventListener('submit', async (e) => {
   // time on phone-sized media; later pastes and a newer destination must own a
   // separate attachment array and composer state.
   const submittedAttachments = state.attachments;
+  const compressImages = imageCompressionCheckbox.checked;
   state.attachments = [];
   input.value = '';
   state.pendingQuote = '';
@@ -3370,7 +3388,12 @@ $('composer').addEventListener('submit', async (e) => {
   try {
     const attachments = [];
     for (const attachment of submittedAttachments) {
-      attachments.push({ name: attachment.name, dataBase64: await fileToBase64(attachment.file) });
+      const prepared = await prepareImageUpload(attachment.file, compressImages);
+      if (prepared.warning) showToast(`${prepared.warning}：${attachment.name}`);
+      attachments.push({
+        name: prepared.resized ? prepared.file.name : attachment.name,
+        dataBase64: await fileToBase64(prepared.file),
+      });
     }
 
     const path = `/api/sessions/${encodeURIComponent(destinationJid)}/messages`;

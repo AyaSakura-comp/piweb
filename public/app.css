@@ -1927,6 +1927,43 @@ svg {
   padding: 8px 4px;
 }
 
+.image-compression-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  padding: 0 4px 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.image-compression-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.image-compression-options input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.image-compression-options input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+#image-compression-hint {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
 .upload-progress {
   padding: 8px 4px 6px;
   color: var(--text-dim);
