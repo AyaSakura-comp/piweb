@@ -7,11 +7,20 @@ const payload = {
 };
 describe('Claude account usage', () => {
   it('formats actual utilization and optional model limits without inventing missing values', () => {
-    const text = formatClaudeUsage(payload, 0);
-    expect(text).toContain('目前時段（5 小時）：4%');
-    expect(text).toContain('本週：23%');
+    const now = Date.parse('2026-09-23T00:15:00Z');
+    const text = formatClaudeUsage(payload, now);
+    expect(text).toContain('已用 4%  剩 96%  ░░░░░░░░░░');
+    expect(text).toContain('🟢 5 小時窗');
+    expect(text).toContain('（還有 1 小時 45 分）');
+    expect(text).toContain('已用 23%  剩 77%  ██░░░░░░░░');
+    expect(text).toContain('重置 未提供');
     expect(text).not.toContain('Sonnet');
     expect(formatClaudeUsage({}, 0)).toContain('未提供');
+  });
+  it('shows a full red bar near the limit', () => {
+    const text = formatClaudeUsage({ seven_day: { utilization: 94, resets_at: null } }, 0);
+    expect(text).toContain('🔴 週窗');
+    expect(text).toContain('已用 94%  剩 6%  █████████░');
   });
   it('uses only the fixed OAuth endpoint and coalesces repeated requests', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(payload)));

@@ -8,7 +8,7 @@ import { runCommand, COMMANDS } from '../src/commands/index.js';
 import { ClaudeUsageError } from '../src/claude-usage.js';
 it('registers and executes Claude usage without invoking the conversation agent', async () => {
   expect(COMMANDS.some((c) => c.name === 'claude-usage')).toBe(true);
-  getUsage.mockResolvedValue('Claude current status / usage\n目前時段（5 小時）：4% 已使用');
+  getUsage.mockResolvedValue('🤖 Claude Code 用量\n🟢 5 小時窗  已用 4%');
   const channel = { jid: 'web:usage', folder: 'usage' } as any;
   expect(await runCommand(channel, 'claude-usage')).toMatchObject({
     ok: true,

@@ -68,12 +68,13 @@ test('deployed Claude usage button returns real quota for Opus, Sonnet and Haiku
     expect((await submitted).ok()).toBe(true);
     const reports = page
       .locator('#messages details.event.system')
-      .filter({ hasText: 'Claude current status / usage' });
+      .filter({ hasText: 'Claude Code 用量' });
     await expect(reports).toHaveCount(++reportCount, { timeout: 30000 });
     const report = reports.last();
-    await expect(report).toContainText(/目前時段（5 小時）：[0-9.]+% 已使用/);
-    await expect(report).toContainText(/本週：[0-9.]+% 已使用/);
-    await expect(report).toContainText('重置：');
+    await expect(report).toContainText(/5 小時窗 +已用 [0-9.]+%/);
+    await expect(report).toContainText(/週窗 +已用 [0-9.]+%/);
+    await expect(report).toContainText(/[█░]{10}/);
+    await expect(report).toContainText('重置 ');
     await expect(report).not.toContainText('ChatGPT');
     await report.scrollIntoViewIfNeeded();
     await expect(page.locator('#messages .event.error')).toHaveCount(0);
@@ -95,7 +96,7 @@ test('deployed Claude usage button returns real quota for Opus, Sonnet and Haiku
   await expect(page.locator('#btn-gpt-usage')).toHaveAttribute('title', '/claude-usage');
   const saved = page
     .locator('#messages details.event.system')
-    .filter({ hasText: 'Claude current status / usage' });
+    .filter({ hasText: 'Claude Code 用量' });
   await expect(saved).toHaveCount(3);
   await saved.last().scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath('07-reconnected.png') });

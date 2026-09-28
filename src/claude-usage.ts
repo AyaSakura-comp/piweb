@@ -7,34 +7,61 @@ import { createHash } from 'node:crypto';
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 export class ClaudeUsageError extends Error {}
 
-function timestamp(value: unknown): string {
-  if (typeof value !== 'string') return '未提供';
+function resetDate(value: unknown): Date | undefined {
+  if (typeof value !== 'string') return undefined;
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '未提供';
-  return (
-    new Intl.DateTimeFormat('zh-TW', {
-      timeZone: 'Asia/Taipei',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(date) + ' 台北時間'
-  );
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function taipei(date: Date): string {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+/** "還有 1 天 3 小時" / "還有 42 分" — the same phrasing /gpt-usage and /agy-usage use. */
+function remaining(until: Date, now: number): string {
+  const minutes = Math.max(0, Math.round((until.getTime() - now) / 60_000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days) return `還有 ${days} 天 ${hours} 小時`;
+  if (hours) return `還有 ${hours} 小時 ${mins} 分`;
+  return `還有 ${mins} 分`;
+}
+
+/** Ten-cell bar matching /gpt-usage and /agy-usage. */
+function bar(percent: number): string {
+  const filled = Math.min(10, Math.max(0, Math.round(percent / 10)));
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+
+/** Monospace columns: CJK characters take two cells. */
+function cells(text: string): number {
+  return [...text].reduce((n, ch) => n + (/[\u2E80-\uFFEF]/.test(ch) ? 2 : 1), 0);
+}
+
+function light(percent: number): string {
+  if (percent >= 90) return '🔴';
+  if (percent >= 60) return '🟠';
+  return '🟢';
 }
 
 export function formatClaudeUsage(data: unknown, now = Date.now()): string {
-  const lines = [
-    'Claude current status / usage',
-    '來源：主機 Claude Code 登入帳號（非單一對話 token 統計）',
-  ];
+  const lines = ['🤖 Claude Code 用量（主機登入帳號，非單一對話）', ''];
   const labels = [
-    ['five_hour', '目前時段（5 小時）'],
-    ['seven_day', '本週'],
-    ['seven_day_sonnet', 'Sonnet 本週'],
-    ['seven_day_opus', 'Opus 本週'],
+    ['five_hour', '5 小時窗'],
+    ['seven_day', '週窗'],
+    ['seven_day_sonnet', 'Sonnet 週窗'],
+    ['seven_day_opus', 'Opus 週窗'],
   ];
+  const present = labels.filter(([key]) => Number.isFinite((data as any)?.[key]?.utilization));
+  const width = Math.max(0, ...present.map(([, label]) => cells(label)));
   let found = false;
   for (const [key, label] of labels) {
     const bucket = (data as any)?.[key];
@@ -45,13 +72,15 @@ export function formatClaudeUsage(data: unknown, now = Date.now()): string {
     )
       continue;
     found = true;
+    const percent = Math.round(bucket.utilization * 10) / 10;
+    const reset = resetDate(bucket.resets_at);
     lines.push(
-      `${label}：${Math.round(bucket.utilization * 10) / 10}% 已使用`,
-      `  重置：${timestamp(bucket.resets_at)}`,
+      `${light(percent)} ${label}${' '.repeat(width - cells(label) + 2)}已用 ${percent}%  剩 ${Math.max(0, Math.round((100 - percent) * 10) / 10)}%  ${bar(percent)}`,
+      `   重置 ${reset ? `${taipei(reset)}（${remaining(reset, now)}）` : '未提供'}`,
     );
   }
   if (!found) lines.push('服務未提供可用的額度資料；不代表使用量為零。');
-  lines.push(`查詢：${timestamp(new Date(now).toISOString())}`, '結果最多快取 60 秒。');
+  lines.push('', `查詢 ${taipei(new Date(now))} 台北時間 · 結果最多快取 60 秒`);
   return lines.join('\n');
 }
 
