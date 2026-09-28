@@ -20,7 +20,9 @@ it('routes BTW to the warm parent even when side completion takes longer than 15
   const dir = mkdtempSync(join(tmpdir(), 'piweb-btw-rpc-'));
   dirs.push(dir);
   const fake = join(dir, 'pi.mjs');
-  writeFileSync(fake, `#!/usr/bin/env node
+  writeFileSync(
+    fake,
+    `#!/usr/bin/env node
 import readline from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 let busy = false;
@@ -44,7 +46,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     }, 16_000);
   }
 });
-`);
+`,
+  );
   chmodSync(fake, 0o755);
   process.env.PI_BIN = fake;
   process.env.PI_CWD = dir;
@@ -58,3 +61,43 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     messages: [{ role: 'assistant', content: 'side only' }],
   });
 }, 25_000);
+
+it.each([true, false])(
+  'clears only through the installed native extension (clear loaded: %s)',
+  async (clearLoaded) => {
+    const dir = mkdtempSync(join(tmpdir(), 'piweb-btw-clear-'));
+    dirs.push(dir);
+    const fake = join(dir, 'pi.mjs');
+    writeFileSync(
+      fake,
+      `#!/usr/bin/env node
+import readline from 'node:readline';
+const emit = x => process.stdout.write(JSON.stringify(x) + '\\n');
+let cleared = false;
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const c = JSON.parse(line);
+  if (c.type === 'get_state') emit({ type: 'response', id: c.id, success: true, data: {} });
+  if (c.type === 'get_commands') emit({ type: 'response', id: c.id, success: true, data: { commands: ${JSON.stringify(clearLoaded ? ['btw:web', 'btw:clear'] : ['btw:web'])}.map(name => ({ name, source: 'extension', sourceInfo: { path: '/tmp/pi-btw/extensions/btw.ts' } })) } });
+  if (c.type === 'prompt') {
+    if (c.message === '/btw:clear') cleared = true;
+    else if (c.message.startsWith('/btw:web ')) {
+      const input = JSON.parse(Buffer.from(c.message.slice(9), 'base64url').toString());
+      emit({ type: 'extension_ui_request', method: 'notify', message: 'PIWEB_BTW_JSON:' + JSON.stringify({ id: input.id, ok: true, messages: cleared ? [] : [{ role: 'assistant', content: 'old side' }] }) });
+    } else throw new Error('Unexpected model prompt');
+    emit({ type: 'response', id: c.id, success: true });
+  }
+});
+`,
+    );
+    chmodSync(fake, 0o755);
+    process.env.PI_BIN = fake;
+    process.env.PI_CWD = dir;
+    process.env.SESSIONS_DIR = join(dir, 'sessions');
+    vi.resetModules();
+    const rpc = await import('../src/agent/rpc-session.js');
+    const parent = rpc.getRpcSession('web_btw_clear', { cwd: dir });
+    if (clearLoaded) await expect(parent.btw('clear')).resolves.toMatchObject({ messages: [] });
+    else
+      await expect(parent.btw('clear')).rejects.toThrow('Native BTW clear command is not loaded');
+  },
+);

@@ -131,7 +131,7 @@ async function tick(): Promise<void> {
             throw new Error('BTW session generation changed');
           if (!config.rpcSteer || channel.kind !== 'standard')
             throw new Error('BTW requires a persistent Pi RPC session');
-          if (args.action !== 'snapshot' && args.action !== 'send')
+          if (args.action !== 'snapshot' && args.action !== 'send' && args.action !== 'clear')
             throw new Error('Invalid BTW action');
           // Check the harness first: a warm Pi RPC can outlive a switch to AGY/Claude.
           const effective = await computeEffectiveChannelSettings(channel);

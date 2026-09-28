@@ -1452,7 +1452,11 @@ svg {
 
 /* BTW reuses the existing composer. Its small ownership card replaces the
    main-only typing indicator while the side transcript is selected. */
-.messages[hidden], .btw-card[hidden] { display: none !important; }
+.messages[hidden], .btw-card[hidden], .btw-switcher[hidden] { display: none !important; }
+.btw-switcher { display: flex; flex: 0 0 auto; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.btw-switcher button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text-2); font: inherit; font-size: 13px; }
+.btw-switcher button[aria-pressed="true"] { color: var(--text); background: var(--bg-alt); border-color: var(--accent, #7274ff); }
+#btw-clear:disabled { opacity: .45; }
 .app.btw-active .typing { display: none !important; }
 .btw-card {
   display: flex;

@@ -1051,16 +1051,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const generation = channel.folder;
       let args: Record<string, string> = { generation, action: 'snapshot' };
       if (method === 'POST') {
-        const body = await readJson<{ text?: unknown; generation?: unknown }>(req);
+        const body = await readJson<{ text?: unknown; generation?: unknown; action?: unknown }>(req);
         if (body?.generation !== generation) {
           sendJson(res, 409, { error: 'BTW 對話世代已變更；未送出訊息' });
           return;
         }
-        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) {
-          sendJson(res, 400, { error: 'BTW 訊息必須為 1–20000 字元' });
-          return;
+        if (body.action === 'clear') {
+          args = { generation, action: 'clear' };
+        } else {
+          if (body.action !== undefined && body.action !== 'send') {
+            sendJson(res, 400, { error: 'Invalid BTW action' }); return;
+          }
+          if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) {
+            sendJson(res, 400, { error: 'BTW 訊息必須為 1–20000 字元' });
+            return;
+          }
+          args = { generation, action: 'send', text: body.text.trim() };
         }
-        args = { generation, action: 'send', text: body.text.trim() };
       }
       const rowid = enqueueControl(jid, 'btw:web', args);
       const deadline = Date.now() + 610_000;
