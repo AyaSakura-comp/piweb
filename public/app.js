@@ -3405,6 +3405,9 @@ $('composer').addEventListener('submit', async (e) => {
     setUploading(true);
     showUploadProgress(uploadProgress, 0);
   }
+  // Dismiss immediately on a valid send; retained photos outlive the preview
+  // and are cleared only after acknowledgement, so failures remain retryable.
+  if (cameraWasOpen) cameraComposer.dismiss();
 
   try {
     const attachments = [];
@@ -3431,7 +3434,6 @@ $('composer').addEventListener('submit', async (e) => {
       : await api(path, { method: 'POST', body: JSON.stringify(payload) });
     state.attachments = state.attachments.filter(a => !submittedAttachments.includes(a));
     renderAttachments();
-    if (cameraWasOpen && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) cameraComposer.dismiss();
     applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
   } catch (err) {
     if (submittedAttachments.some(a => a.isCamera) && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {

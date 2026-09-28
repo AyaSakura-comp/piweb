@@ -64,10 +64,10 @@ test('shutter stages a removable batch; Send alone uploads; failure preserves ph
   await chips.nth(1).locator('button').click();
   await expect(chips).toHaveCount(2);
   await page.waitForTimeout(700);
-  await page.locator('#camera-close').click();
+  await page.locator('#camera-send').click();
+  // The HTTP response remains held: dismissal must not wait for upload success.
   await expect(page.locator('#camera-pane')).toBeHidden();
   await expect(chips).toHaveCount(2);
-  await page.locator('#btn-send').click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].text).toBe(prompt);
   expect(sent[0].attachments).toHaveLength(2);
@@ -91,8 +91,8 @@ test('shutter stages a removable batch; Send alone uploads; failure preserves ph
     await chips.locator('img').evaluate((i: HTMLImageElement) => i.naturalWidth),
   ).toBeGreaterThan(0);
   fail = false;
-  await expect(page.locator('#camera-pane')).toBeVisible();
-  await page.locator('#camera-send').click();
+  await expect(page.locator('#camera-pane')).toBeHidden();
+  await page.locator('#btn-send').click();
   await expect.poll(() => sent.length).toBe(3);
   expect(sent[2].text).toBe('只回答我的問題');
   expect(sent[2].attachments).toHaveLength(1);

@@ -49,9 +49,10 @@ to avoid duplicates. Pending photos are in-memory drafts, not reload-persistent.
 
 While the camera is open, a real **送出** button beside the shutter replaces the
 composer's normal send button. It submits the same form (including draft text),
-without an extra snapshot. Confirmed success slides/rebounds the camera downward
-and closes it; failure keeps the camera and staged photos open. Completion is
-selection-fenced so it cannot close a different session's camera.
+without an extra snapshot. A valid Send immediately starts the downward rebound
+and closes the camera, before conversion/upload completes. Photos clear only on
+confirmed success; failure retains them in the composer for retry and does not
+reopen the camera. No delayed response closes another session's camera.
 Closing/session selection/BTW/page hiding
 stops tracks; pending permission acquisition is fenced. Permission failure leaves
 an explanation and the normal attachment picker available. HTTPS and camera
@@ -96,13 +97,13 @@ tracks, text-only send, denied and late permissions.
 `test/e2e/camera-send-live.spec.ts`: opt-in disposable loopback web-only PiWeb,
 real authentication/upload/SSE/history/media serving; two photos are submitted
 in one batch, then a third with user text. All three JPEGs persist after reload.
-Both successful sends rebound the camera closed. No production conversation or
+Both sends immediately rebound the camera closed. No production conversation or
 model worker. Fake camera only. Latest recording:
 `artifacts/camera-shutter-send/workflow.mp4`.
 
 `test/e2e/camera-batch.spec.ts` verifies shutter/no-upload, removal, preservation
 on manual camera close, pending-upload immutability, success clearing, HTTP 503
-retention/retry, the adjacent Send control and success-only auto-close.
+retention/retry, the adjacent Send control and immediate dismissal while the upload response is held.
 
 `test/camera-effects.test.ts` covers blur math, aperture response and lens labels.
 `test/e2e/camera-effects-render.spec.ts` verifies actual saved-frame pixel changes

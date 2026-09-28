@@ -945,8 +945,8 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Camera composer** (`public/camera-composer.js`, `.css`, `camera-effects.js`): bottom 2:3 portrait pane,
   direct drag and bounded rebound settling; close/flick stops tracks. The shutter stages `isCamera` attachments;
   it never submits. The adjacent Send proxies the real composer and never takes another snapshot. Preserve
-  staged camera photos and object URLs on failure; clear only acknowledged batch objects. Only the original
-  destination/selection may auto-dismiss its camera after success. `setBusy`, `setCount`, and a composer resize
+  staged camera photos and object URLs on failure; clear only acknowledged batch objects. Dismiss the camera
+  synchronously on valid Send, before upload awaits—not on delayed response completion. `setBusy`, `setCount`, and a composer resize
   observer keep controls and available preview height synchronized. Fuji radial blur is simulated, defaults off
   at f/16, and is composited into capture; pinch must not fall through to resize/dismiss. See
   [`docs/camera-composer.md`](docs/camera-composer.md) for the default research prompt and mobile test limitations.

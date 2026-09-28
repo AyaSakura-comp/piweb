@@ -396,7 +396,7 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
 - **Camera & Photo Batches**: Drag Send upward for a bottom camera pane that follows the finger and settles to a
   2:3 portrait preview. A separate shutter stages removable photos; the Send button beside it uploads the batch
-  and text, then rebounds the camera closed only on success. Failed uploads retain the photos. Fuji-style simulated
+  and text. Send immediately rebounds the camera closed; photos clear only on success and remain retryable on failure. Fuji-style simulated
   focus/aperture and pinch zoom are available; simulated blur is off by default. See
   [camera controls, privacy, retry behavior and verification limits](docs/camera-composer.md).
 - **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
