@@ -31,7 +31,8 @@ This change does not rewrite pi-btw or share native sessions between harnesses.
 - `test/rpc-session-btw.test.ts`: fake RPC executable verifies native clear plus
   empty snapshot; missing clear command is refused. Existing long-running side
   completion test remains covered.
-- Isolated full unit suite: 623 passed, 1 skipped. BTW + Life E2E: 108 passed.
+- BTW-only branch full unit suite: 616 passed, 1 skipped. The local baseline
+  including the separate image-compression change passed 623 tests. BTW + Life E2E: 108 passed.
   TypeScript and targeted ESLint passed. Mobile Chromium is not an iPhone test.
 
 Frontend, web route and host worker must be deployed together. Do not activate
