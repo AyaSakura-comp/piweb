@@ -388,6 +388,11 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   and pop-in slide-up inertia, keeping intermediate chatter neatly contained.
 - **Apple-Style Text Selection & Quoting**: Custom selection overlays with iOS lollipop handles
   and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
+- **Camera & Photo Batches**: Drag Send upward for a bottom camera pane that follows the finger and settles to a
+  2:3 portrait preview. A separate shutter stages removable photos; the Send button beside it uploads the batch
+  and text, then rebounds the camera closed only on success. Failed uploads retain the photos. Fuji-style simulated
+  focus/aperture and pinch zoom are available; simulated blur is off by default. See
+  [camera controls, privacy, retry behavior and verification limits](docs/camera-composer.md).
 - **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
   Voice notes and audio files receive automatic Breeze ASR transcription. Tapping an image or video opens a shared

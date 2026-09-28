@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { createCameraComposer } from './camera-composer.js';
 import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createCommandsRunningView } from './commands-running.js';
@@ -1089,6 +1090,7 @@ async function createSession() {
 }
 
 async function selectSession(jid, opts = {}) {
+  cameraComposer.close();
   btwWorkspace.reset();
   subagentsView.close();
   commandsRunningView.close();
@@ -1886,7 +1888,7 @@ $('media-sheet').addEventListener('click', (e) => {
   if (e.target === $('media-sheet')) closeMediaSheet();
 });
 
-onMenuItem('mi-btw', () => { if (isPiBtwSession()) btwWorkspace.open(); });
+onMenuItem('mi-btw', () => { if (isPiBtwSession()) { cameraComposer.close(); btwWorkspace.open(); } });
 onMenuItem('mi-sessions', openDrawer);
 onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());
@@ -3040,6 +3042,8 @@ function setUploading(uploading) {
   $('btn-send').disabled = uploading;
   $('btn-attach').disabled = uploading;
   imageCompressionCheckbox.disabled = uploading;
+  cameraComposer.setBusy(uploading);
+  renderAttachments();
   if (!uploading) hideUploadProgress(uploadProgress);
 }
 
@@ -3238,7 +3242,7 @@ $('file-input').addEventListener('change', (e) => {
  * it. Object URLs back the thumbnails and are revoked when the chip is removed
  * or the message sends, so previewing images does not leak memory.
  */
-function addFiles(fileList) {
+function addFiles(fileList, { camera = false } = {}) {
   let added = 0;
   for (const file of fileList) {
     if (!file) continue;
@@ -3254,6 +3258,7 @@ function addFiles(fileList) {
       isImage,
       isAudio,
       isVideo,
+      isCamera: camera,
       url: isImage ? URL.createObjectURL(file) : null,
     });
     added += 1;
@@ -3262,6 +3267,7 @@ function addFiles(fileList) {
 }
 
 function removeAttachment(i) {
+  if (state.uploading) return;
   const [gone] = state.attachments.splice(i, 1);
   if (gone?.url) URL.revokeObjectURL(gone.url);
   renderAttachments();
@@ -3295,11 +3301,13 @@ function renderAttachments() {
 
     const remove = el('button', 'chip-remove', '×');
     remove.type = 'button';
+    remove.disabled = state.uploading;
     remove.setAttribute('aria-label', `Remove ${attachment.name}`);
     remove.addEventListener('click', () => removeAttachment(i));
     chip.append(remove);
     wrap.append(chip);
   });
+  cameraComposer.setCount(state.attachments.filter(a => a.isCamera).length, state.attachments.length);
 }
 
 function fileToBase64(file) {
@@ -3310,6 +3318,12 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
   });
 }
+
+const cameraComposer = createCameraComposer({
+  send: $('btn-send'), anchor: $('messages'),
+  canOpen: () => Boolean(state.activeJid && !state.selectionPending && !state.uploading && !input.disabled && !btwWorkspace.isSide()),
+  onCapture: file => addFiles([file], { camera: true }),
+});
 
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -3332,7 +3346,12 @@ $('composer').addEventListener('submit', async (e) => {
   const destinationSelection = sessionSelectionGeneration;
 
   const lifeTag = destinationJid === LIFE_JID && state.mode === 'life' ? state.lifeTag : null;
-  const draft = input.value.trim();
+  const cameraWasOpen = cameraComposer.active;
+  const rawDraft = input.value;
+  let draft = rawDraft.trim();
+  if (!draft && state.attachments.some(a => a.isCamera)) {
+    draft = '請幫我辨識並說明這些照片裡的內容。如果需要更多資訊，可以使用以圖搜尋或上網查證，並附上來源；無法確定的部分請明確說明，不要猜測。';
+  }
   const quote = state.pendingQuote;
   if (!draft && !quote && state.attachments.length === 0) {
     abandonComposerSend();
@@ -3370,7 +3389,9 @@ $('composer').addEventListener('submit', async (e) => {
   // separate attachment array and composer state.
   const submittedAttachments = state.attachments;
   const compressImages = imageCompressionCheckbox.checked;
-  state.attachments = [];
+  // Camera photos remain visible until acknowledged; later attachments are
+  // separate objects and cannot be removed by this batch's completion.
+  state.attachments = state.attachments.filter(a => a.isCamera);
   input.value = '';
   state.pendingQuote = '';
   renderQuotePreview();
@@ -3408,16 +3429,25 @@ $('composer').addEventListener('submit', async (e) => {
           onProgress: (percent) => showUploadProgress(uploadProgress, percent),
         })
       : await api(path, { method: 'POST', body: JSON.stringify(payload) });
+    state.attachments = state.attachments.filter(a => !submittedAttachments.includes(a));
+    renderAttachments();
+    if (cameraWasOpen && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) cameraComposer.dismiss();
     applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
   } catch (err) {
+    if (submittedAttachments.some(a => a.isCamera) && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {
+      if (!input.value) { input.value = rawDraft; autoGrow(); }
+      if (!state.pendingQuote) { state.pendingQuote = quote; renderQuotePreview(); }
+    }
     if (err.status === 401) showLogin();
     if (destinationJid === LIFE_JID && state.mode === 'life' && state.activeJid === LIFE_JID) {
       await enterLifeMode();
     }
-    alert(err.message);
+    alert(submittedAttachments.some(a => a.isCamera)
+      ? `${err.message}\n照片已保留；若連線中斷，請先確認對話是否已收到，避免重複送出。`
+      : err.message);
   } finally {
     for (const attachment of submittedAttachments) {
-      if (attachment.url) URL.revokeObjectURL(attachment.url);
+      if (attachment.url && !state.attachments.includes(attachment)) URL.revokeObjectURL(attachment.url);
     }
     if (hasAttachments) setUploading(false);
   }
