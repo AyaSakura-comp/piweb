@@ -578,7 +578,7 @@ class RpcSession {
   }
 
   /** Execute only the installed pi-btw extension on this persistent parent. */
-  async btw(action: 'snapshot' | 'send', text?: string): Promise<any> {
+  async btw(action: 'snapshot' | 'send' | 'clear', text?: string): Promise<any> {
     await this.ensureProc();
     if (!this.renewOwnership()) throw new Error('Session ownership changed');
     // Never fall back to an ordinary prompt if the extension is absent.
@@ -588,6 +588,19 @@ class RpcSession {
       [cmd.path, cmd.sourceInfo?.path].some((path) =>
         typeof path === 'string' && /(?:^|\/)pi-btw\/extensions\/btw\.ts$/.test(path))))
       throw new Error('pi-btw extension is not loaded in this Pi RPC session');
+    if (action === 'clear') {
+      if (this.btwRequests.size) throw new Error('Wait for the BTW answer before clearing');
+      const installedClear = commands.data.commands.some((cmd: any) =>
+        cmd.name === 'btw:clear' && cmd.source === 'extension' &&
+        [cmd.path, cmd.sourceInfo?.path].some((path: unknown) =>
+          typeof path === 'string' && /(?:^|\/)pi-btw\/extensions\/btw\.ts$/.test(path)));
+      if (!installedClear) throw new Error('Native BTW clear command is not loaded');
+      const cleared = await this.request({ type: 'prompt', message: '/btw:clear' }, 30_000);
+      if (!cleared.success) throw new Error(cleared.error || 'BTW clear failed');
+      const snapshot = await this.btw('snapshot');
+      if (!Array.isArray(snapshot.messages) || snapshot.messages.length) throw new Error('BTW clear was not confirmed');
+      return snapshot;
+    }
     const id = randomUUID();
     const encoded = Buffer.from(JSON.stringify({ id, action, text }), 'utf8').toString('base64url');
     let rejectResult!: (error: Error) => void;

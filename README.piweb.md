@@ -327,6 +327,12 @@ Evidence stays in ignored `artifacts/playwright/btw-live-results/`. This test
 uses the configured model, so enable it explicitly only in a disposable
 workspace; it does not cover real-device keyboards or BTW-specific Stop.
 
+BTW now has direct **主對話 / BTW** recipient buttons: the main composer remains
+usable during a side answer, and switching back preserves the pending side view.
+**清除 BTW** confirms before clearing the native side thread, without deleting main
+messages; it is disabled while answering. See [BTW workspace](docs/btw-workspace.md)
+for API/generation safeguards, tests and the coordinated web/worker deployment requirement.
+
 The Playwright suite runs end to end against deterministic local fixtures at the
 production phone viewport (390×844). Every test records a WebM video; visual tests
 also compare rendered pixels with reviewed PNG baselines. Current coverage includes

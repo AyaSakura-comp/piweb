@@ -21,6 +21,43 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
   let sideScroll = 0;
   let sending = false;
   let opening = false;
+  let clearing = false;
+  let runEpoch = 0;
+  const tabs = document.createElement('div');
+  tabs.id = 'btw-switcher';
+  tabs.className = 'btw-switcher';
+  tabs.hidden = true;
+  tabs.setAttribute('role', 'group');
+  tabs.setAttribute('aria-label', '對話收件對象');
+  const mainTab = Object.assign(document.createElement('button'), {
+    id: 'btw-switch-main',
+    type: 'button',
+    textContent: '主對話',
+  });
+  const sideTab = Object.assign(document.createElement('button'), {
+    id: 'btw-switch-side',
+    type: 'button',
+    textContent: 'BTW',
+  });
+  tabs.append(mainTab, sideTab);
+  main.before(tabs);
+  const clear = Object.assign(document.createElement('button'), {
+    id: 'btw-clear',
+    type: 'button',
+    textContent: '清除 BTW',
+  });
+  clear.setAttribute('aria-label', '清除 BTW 訊息');
+  back.before(clear);
+  const mainBlocked = () =>
+    Boolean(byId('upload-progress') && !byId('upload-progress').hidden) || textarea.disabled;
+  function renderControls() {
+    send.disabled = target === 'btw' ? sending || clearing : mainBlocked();
+    clear.disabled = sending || clearing || opening;
+    mainTab.setAttribute('aria-pressed', String(target === 'main'));
+    sideTab.setAttribute('aria-pressed', String(target === 'btw'));
+    sideTab.textContent = sending ? 'BTW · 回答中' : clearing ? 'BTW · 清除中' : 'BTW';
+    tabs.hidden = !owner;
+  }
   const status = card.querySelector('span');
   const typing = byId('typing');
 
@@ -30,8 +67,13 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     if (sending) status.textContent = 'BTW 回答中…主對話不受影響';
     else if (typing && !typing.hidden) status.textContent = '主對話仍在執行 · 這裡的訊息只送到 BTW';
     else status.textContent = '這裡的訊息只送到 BTW，不會自動加入主對話';
+    renderControls();
   }
-  if (typing) new MutationObserver(renderStatus).observe(typing, { attributes: true, attributeFilter: ['hidden'] });
+  if (typing)
+    new MutationObserver(renderStatus).observe(typing, {
+      attributes: true,
+      attributeFilter: ['hidden'],
+    });
 
   function pendingNodes(text) {
     const question = buildMessage({ role: 'user', content: text });
@@ -39,7 +81,8 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     const waiting = document.createElement('div');
     waiting.className = 'btw-waiting';
     waiting.setAttribute('role', 'status');
-    waiting.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    waiting.innerHTML =
+      '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
     waiting.append(Object.assign(document.createElement('span'), { textContent: 'BTW 回答中…' }));
     return [question, waiting];
   }
@@ -48,8 +91,13 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
   const snapshot = () => ({ target, owner });
   function setTarget(next) {
     if (next === target) return;
-    if (target === 'main') { mainDraft = textarea.value; mainScroll = main.scrollTop; }
-    else { sideDraft = textarea.value; sideScroll = side.scrollTop; }
+    if (target === 'main') {
+      mainDraft = textarea.value;
+      mainScroll = main.scrollTop;
+    } else {
+      sideDraft = textarea.value;
+      sideScroll = side.scrollTop;
+    }
     target = next;
     textarea.value = next === 'main' ? mainDraft : sideDraft;
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -58,21 +106,28 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     card.hidden = next !== 'btw';
     byId('app').classList.toggle('btw-active', next === 'btw');
     // An inactive target cannot inherit the main composer attachments/clipboard.
-    attach.disabled = next === 'btw';
-    paste.disabled = next === 'btw';
+    attach.disabled = next === 'btw' || mainBlocked();
+    paste.disabled = next === 'btw' || mainBlocked();
     attach.title = next === 'btw' ? 'BTW currently supports text only' : 'Add attachment';
     textarea.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Message');
     textarea.placeholder = next === 'btw' ? 'Message BTW…' : 'Message pi…';
     send.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Send');
     (next === 'main' ? main : side).scrollTop = next === 'main' ? mainScroll : sideScroll;
+    renderStatus();
   }
 
-  async function open() {
+  async function open({ cached = false } = {}) {
     const session = getSession();
     if (!session || session.readOnly) return notify('先選擇可操作的 Pi 對話');
     if (target === 'btw' && owner === session.key) return;
+    if (opening) return;
     if (byId('attachments')?.childElementCount || !byId('quote-preview').hidden) {
       return notify('請先移除主對話附件或引用，再切到 BTW');
+    }
+    if (owner === session.key && generation && (sending || clearing || cached)) {
+      setTarget('btw');
+      renderStatus();
+      return;
     }
     const ticket = ++request;
     opening = true;
@@ -84,7 +139,10 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
         return notify('BTW 回應缺少會話世代；未切換收件對象');
       }
       if (owner !== session.key || generation !== data.generation) {
-        owner = session.key; generation = data.generation; sideDraft = ''; sideScroll = 0;
+        owner = session.key;
+        generation = data.generation;
+        sideDraft = '';
+        sideScroll = 0;
       }
       side.replaceChildren();
       for (const message of data.thread?.messages || []) {
@@ -99,7 +157,10 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     } catch (error) {
       if (ticket === request) notify(error.message || '無法開啟 BTW');
     } finally {
-      if (ticket === request) opening = false;
+      if (ticket === request) {
+        opening = false;
+        renderControls();
+      }
     }
   }
 
@@ -108,9 +169,10 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     event.preventDefault();
     event.stopImmediatePropagation();
     const session = getSession();
-    if (!session || session.key !== owner || sending) return;
+    if (!session || session.key !== owner || sending || clearing || opening) return;
     const text = textarea.value.trim();
     if (!text) return;
+    const epoch = runEpoch;
     sending = true;
     send.disabled = true;
     // Show the question immediately and free the composer; the draft is put
@@ -126,17 +188,20 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     try {
       // There is deliberately no fallback to /messages or /commands.
       const response = await api(`/api/sessions/${encodeURIComponent(session.jid)}/btw`, {
-        method: 'POST', body: JSON.stringify({ text, generation }),
+        method: 'POST',
+        body: JSON.stringify({ text, generation }),
       });
       delivered = true;
-      if (key() !== session.key || owner !== session.key) return;
+      if (epoch !== runEpoch || key() !== session.key || owner !== session.key) return;
       if (response?.thread?.messages) {
-        side.replaceChildren(...response.thread.messages
-          .filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
-          .map(buildMessage));
+        side.replaceChildren(
+          ...response.thread.messages
+            .filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
+            .map(buildMessage),
+        );
       }
     } catch (error) {
-      if (key() === session.key && owner === session.key) {
+      if (epoch === runEpoch && key() === session.key && owner === session.key) {
         // Restore without clobbering anything typed meanwhile.
         if (target === 'btw') {
           if (!textarea.value.trim()) {
@@ -149,31 +214,89 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
         notify(error.message || 'BTW 送出失敗，草稿已保留');
       }
     } finally {
-      sending = false;
-      send.disabled = false;
-      if (!delivered) pending.forEach((node) => node.remove());
-      else pending.forEach((node) => node.isConnected && node.classList.contains('btw-waiting') && node.remove());
-      renderStatus();
+      if (epoch === runEpoch) {
+        sending = false;
+        if (!delivered) pending.forEach((node) => node.remove());
+        else
+          pending.forEach(
+            (node) => node.isConnected && node.classList.contains('btw-waiting') && node.remove(),
+          );
+        renderStatus();
+      }
     }
   }
 
-  item.addEventListener('click', open);
-  back.addEventListener('click', () => { setTarget('main'); item.focus({ preventScroll: true }); });
+  clear.addEventListener('click', async () => {
+    const session = getSession();
+    if (sending || clearing || opening || !session || session.key !== owner) return;
+    if (!confirm('清除這個 BTW 側聊的訊息與脈絡？主對話不受影響。')) return;
+    const epoch = runEpoch;
+    clearing = true;
+    renderStatus();
+    try {
+      const response = await api(`/api/sessions/${encodeURIComponent(session.jid)}/btw`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'clear', generation }),
+      });
+      if (epoch !== runEpoch || key() !== session.key) return;
+      if (
+        !response?.available ||
+        !Array.isArray(response.thread?.messages) ||
+        response.thread.messages.length
+      ) {
+        throw new Error('尚未確認 BTW 已清除，請稍後重試');
+      }
+      side.replaceChildren();
+      sideScroll = 0;
+      notify('BTW 已清除，主對話保持不變');
+    } catch (error) {
+      if (epoch === runEpoch && key() === session.key) notify(error.message || 'BTW 清除失敗');
+    } finally {
+      if (epoch === runEpoch) {
+        clearing = false;
+        renderStatus();
+      }
+    }
+  });
+  function goMain() {
+    ++request;
+    opening = false;
+    setTarget('main');
+    renderControls();
+  }
+  mainTab.addEventListener('click', goMain);
+  sideTab.addEventListener('click', () => {
+    void open({ cached: true });
+  });
+  item.addEventListener('click', () => {
+    void open();
+  });
+  back.addEventListener('click', () => {
+    goMain();
+    item.focus({ preventScroll: true });
+  });
   byId('composer').addEventListener('submit', submit, true);
   // Capture before the main editor's keyboard slash/submit handlers run.
-  textarea.addEventListener('keydown', (event) => {
-    if ((target !== 'btw' && !opening) || event.isComposing) return;
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      byId('composer').requestSubmit();
-    }
-  }, true);
+  textarea.addEventListener(
+    'keydown',
+    (event) => {
+      if ((target !== 'btw' && !opening) || event.isComposing) return;
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        byId('composer').requestSubmit();
+      }
+    },
+    true,
+  );
   return {
     open,
     snapshot,
     reset() {
       ++request;
+      ++runEpoch;
+      sending = false;
+      clearing = false;
       opening = false;
       setTarget('main');
       owner = null;
@@ -181,8 +304,9 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
       sideDraft = '';
       side.replaceChildren();
       mainDraft = '';
+      renderControls();
     },
     isSide: () => target === 'btw',
-    close: () => setTarget('main'),
+    close: goMain,
   };
 }
