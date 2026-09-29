@@ -25,11 +25,30 @@ arbitrary third-party providers or native Pi Anthropic credentials.
 
 ## Output
 
-Reports the account's current five-hour utilization and weekly utilization,
-reset times and query timestamp. Optional Sonnet/Opus weekly limits appear only
-when supplied. Percentages mean **used**, not remaining. Missing data is not
-reported as zero. Times are explicitly labelled Asia/Taipei. This is account
-quota, not the selected conversation's token count or cost estimate.
+Formatted like `/gpt-usage` and `/agy-usage` so the three reports read the same:
+
+```text
+🤖 Claude Code 用量（主機登入帳號，非單一對話）
+
+🟢 5 小時窗   已用 32%  剩 68%  ███░░░░░░░
+   重置 09/29 03:20（還有 2 小時 42 分）
+🟠 週窗       已用 84%  剩 16%  ████████░░
+   重置 09/29 14:00（還有 13 小時 22 分）
+
+查詢 09/29 00:38 台北時間 · 結果最多快取 60 秒
+```
+
+- One row per window: five-hour, weekly, and the optional Sonnet/Opus weekly
+  limits (shown only when the service supplies them).
+- Light: 🟢 below 60 %, 🟠 60–89 %, 🔴 90 % and above. The ten-cell bar rounds
+  to the nearest 10 %; the exact used and remaining percentages are printed
+  beside it. Percentages mean **used**, not remaining, as reported by Claude.
+- Reset shows the Asia/Taipei date/time and the time left (`還有 N 天 M 小時`,
+  `還有 H 小時 M 分`, or `還有 M 分`); a missing reset reads `未提供`.
+- Labels are padded by display width (CJK = two cells) so the columns line up
+  in the monospace report.
+- Missing data is never reported as zero. This is account quota, not the
+  selected conversation's token count or cost estimate.
 
 ## Worker-only implementation
 
