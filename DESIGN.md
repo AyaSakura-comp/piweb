@@ -106,6 +106,10 @@ exclusions preserve native scrolling, selection and tool-output interactions.
 - While any native dialog is open, global Life and Sessions-drawer gestures
   cannot begin. A swipe inside Subagents must never open Life underneath it.
 
+## Image annotation
+
+The image lightbox exposes a pencil action for writable main conversations. It opens a native modal above the viewer: fullscreen on mobile, bounded to 1100px with 24px desktop margins. Header Cancel/Confirm, colour swatches, brush width, Undo and Clear have at least 44px targets. Actions reuse the image viewer’s transparent monochrome outline-icon buttons (no accent-filled Confirm or boxed text actions); brush width uses a dark capsule and colour selection uses a circular white ring. Icon actions retain accessible names and tooltips. The canvas fits inside the remaining space without cropping and owns pointer gestures; the viewer beneath stays inert. Confirm adds a flattened PNG to the existing composer, preserves the draft and never sends automatically. See [image annotation](docs/image-annotation.md) for limits and browser regression coverage.
+
 ## Verification
 
 ```sh

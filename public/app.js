@@ -12,6 +12,7 @@
 
 import { renderRich } from './markdown.js';
 import { createCameraComposer } from './camera-composer.js';
+import { createImageAnnotator } from './image-annotator.js';
 import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createCommandsRunningView } from './commands-running.js';
@@ -1090,6 +1091,7 @@ async function createSession() {
 }
 
 async function selectSession(jid, opts = {}) {
+  closeLightbox();
   cameraComposer.close();
   btwWorkspace.reset();
   subagentsView.close();
@@ -3293,7 +3295,13 @@ function renderAttachments() {
       const thumb = el('img', 'chip-thumb');
       thumb.src = attachment.url;
       thumb.alt = attachment.name;
-      chip.append(thumb);
+      const preview = el('button', 'chip-preview');
+      preview.type = 'button';
+      preview.disabled = state.uploading;
+      preview.setAttribute('aria-label', `Preview ${attachment.name}`);
+      preview.addEventListener('click', () => openLightbox(attachment.url, [attachment.url]));
+      preview.append(thumb);
+      chip.append(preview);
     } else {
       const icon = isAud ? '🎵 ' : isVid ? '🎬 ' : '📎 ';
       chip.append(el('span', 'chip-name', `${icon}${attachment.name}`));
@@ -3737,6 +3745,28 @@ function collectTranscriptMedia() {
 
 let lightboxAlbumGeneration = 0;
 
+function canAnnotateImage() {
+  return Boolean(state.activeJid && !state.previewingDeleted && !state.selectionPending &&
+    !state.uploading && !input.disabled && !btwWorkspace.isSide());
+}
+
+const imageAnnotator = createImageAnnotator({
+  onError: showToast,
+  onConfirm: (file, destination) => {
+    if (!canAnnotateImage() || state.activeJid !== destination.jid ||
+      sessionSelectionGeneration !== destination.selection) return false;
+    addFiles([file]);
+    closeLightbox();
+    return true;
+  },
+});
+$('lb-annotate').addEventListener('click', () => {
+  const url = lb.urls[lb.index];
+  if (!url || isLightboxVideo(url) || !canAnnotateImage()) return;
+  resetLightboxTransform(false);
+  void imageAnnotator.open(url, { jid: state.activeJid, selection: sessionSelectionGeneration });
+});
+
 function openLightbox(url, urls) {
   const generation = ++lightboxAlbumGeneration;
   lb.urls = urls && urls.length ? urls : collectTranscriptMedia();
@@ -3858,6 +3888,7 @@ function syncFilmstrip() {
 }
 
 function closeLightbox() {
+  imageAnnotator.close();
   lightboxAlbumGeneration++;
   releaseLightboxVideo();
   $('lightbox').hidden = true;
@@ -3872,6 +3903,7 @@ function closeLightbox() {
 function showLightboxImage(direction = 0) {
   const url = lb.urls[lb.index];
   const isVideo = isLightboxVideo(url);
+  $('lb-annotate').hidden = isVideo || !canAnnotateImage();
   // Leaving a video must stop it; landing on one swaps the visible element.
   releaseLightboxVideo();
   $('lb-img').hidden = isVideo;
@@ -3984,7 +4016,7 @@ $('lightbox').addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if ($('lightbox').hidden) return;
+  if ($('lightbox').hidden || imageAnnotator.active) return;
   if (e.key === 'Escape') closeLightbox();
   else if (e.key === 'ArrowLeft') stepLightbox(-1);
   else if (e.key === 'ArrowRight') stepLightbox(1);

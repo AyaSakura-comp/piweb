@@ -61,7 +61,7 @@ test('shutter stages a removable batch; Send alone uploads; failure preserves ph
   await expect(page.locator('#camera-batch-count')).toContainText('3');
   expect(sent).toHaveLength(0);
   await page.screenshot({ path: info.outputPath('01-three-photos-staged.png') });
-  await chips.nth(1).locator('button').click();
+  await chips.nth(1).locator('.chip-remove').click();
   await expect(chips).toHaveCount(2);
   await page.waitForTimeout(700);
   await page.locator('#camera-send').click();
@@ -72,7 +72,7 @@ test('shutter stages a removable batch; Send alone uploads; failure preserves ph
   expect(sent[0].text).toBe(prompt);
   expect(sent[0].attachments).toHaveLength(2);
   await expect(chips).toHaveCount(2);
-  await expect(chips.first().locator('button')).toBeDisabled();
+  await expect(chips.first().locator('.chip-remove')).toBeDisabled();
   releaseUpload();
   await expect(chips).toHaveCount(0);
   await page.locator('#btn-send').focus();
