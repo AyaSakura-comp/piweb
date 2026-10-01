@@ -187,6 +187,164 @@ test('cancel fences a delayed image load and a delayed PNG export', async ({ pag
   expect(requests).toHaveLength(0);
 });
 
+test('two-finger zoom preserves strokes and resumes drawing only after every finger lifts', async ({
+  page,
+}, info) => {
+  await setup(page);
+  await page.getByRole('button', { name: '畫筆標註', exact: true }).click();
+  const canvas = page.locator('#annotation-canvas');
+  await expect(canvas).toBeVisible();
+  await draw(page, true);
+  const original = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+  const base = (await canvas.boundingBox())!;
+  const stage = (await page.locator('.annotation-stage').boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  const y = base.y + base.height * 0.35;
+  const first = { x: base.x + base.width * 0.35, y, id: 1 };
+  const second = { x: base.x + base.width * 0.65, y, id: 2 };
+  await present(page);
+  await page.screenshot({ path: info.outputPath('01-before-pinch.png') });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first, second] });
+  const spread = [
+    { ...first, x: 50, y: y + 30 },
+    { ...second, x: 340, y: y + 30 },
+  ];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: spread });
+  await expect
+    .poll(async () => (await canvas.boundingBox())!.width)
+    .toBeGreaterThan(base.width * 2);
+  await present(page);
+  await page.screenshot({ path: info.outputPath('02-zoomed.png') });
+  const zoomed = (await canvas.boundingBox())!;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: spread.map((p) => ({ ...p, x: p.x + 20 })),
+  });
+  await expect.poll(async () => (await canvas.boundingBox())!.x).toBeGreaterThan(zoomed.x + 15);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [spread[0]] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ ...spread[0], x: 100 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  expect(await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(original);
+  await page.getByRole('button', { name: '藍色', exact: true }).click();
+  const start = { x: stage.x + stage.width * 0.35, y: stage.y + stage.height * 0.45, id: 1 };
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ ...start, x: start.x + 60 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const drawn = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+  expect(drawn).not.toBe(original);
+  await present(page);
+  await page.screenshot({ path: info.outputPath('03-drawn-while-zoomed.png') });
+  await page.getByRole('button', { name: '復原', exact: true }).click();
+  expect(await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(original);
+  // Pinching back below 1× restores fit without changing bitmap or strokes.
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: 90, y: stage.y + stage.height / 2, id: 1 },
+      { x: 300, y: stage.y + stage.height / 2, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: 190, y: stage.y + stage.height / 2, id: 1 },
+      { x: 200, y: stage.y + stage.height / 2, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect
+    .poll(async () => Math.round((await canvas.boundingBox())!.width))
+    .toBe(Math.round(base.width));
+  expect(await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(original);
+  await present(page);
+  await page.screenshot({ path: info.outputPath('04-back-to-fit.png') });
+  // Export while zoomed: the complete bitmap, not the cropped viewport, is queued.
+  const centerY = stage.y + stage.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: 150, y: centerY, id: 1 },
+      { x: 240, y: centerY, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: 50, y: centerY, id: 1 },
+      { x: 340, y: centerY, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect
+    .poll(async () => (await canvas.boundingBox())!.width)
+    .toBeGreaterThan(base.width * 2);
+  await present(page);
+  await cdp.detach();
+  await page.getByRole('button', { name: '確定加入附件', exact: true }).click();
+  await expect(page.locator('#attachments .chip')).toHaveCount(1);
+  const exported = await page
+    .locator('#attachments img')
+    .evaluate(async (node: HTMLImageElement) => {
+      await node.decode();
+      const result = document.createElement('canvas');
+      result.width = node.naturalWidth;
+      result.height = node.naturalHeight;
+      result.getContext('2d')!.drawImage(node, 0, 0);
+      return result.toDataURL();
+    });
+  expect(exported).toBe(original);
+  await present(page);
+  await page.screenshot({ path: info.outputPath('05-full-image-export.png') });
+});
+
+test('pinch zoom is bounded and a cancelled gesture does not survive reopening the editor', async ({
+  page,
+}) => {
+  await setup(page);
+  const edit = page.getByRole('button', { name: '畫筆標註', exact: true });
+  const canvas = page.locator('#annotation-canvas');
+  await edit.click();
+  await expect(canvas).toBeVisible();
+  const base = (await canvas.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  const y = base.y + base.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: 180, y, id: 1 },
+      { x: 200, y, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: 40, y, id: 1 },
+      { x: 350, y, id: 2 },
+    ],
+  });
+  await expect
+    .poll(async () => Math.round((await canvas.boundingBox())!.width))
+    .toBe(Math.round(base.width * 8));
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await edit.click();
+  await expect(canvas).toBeVisible();
+  await expect
+    .poll(async () => Math.round((await canvas.boundingBox())!.width))
+    .toBe(Math.round(base.width));
+  expect(await centerPixel(canvas)).toEqual([255, 255, 255, 255]);
+  await draw(page, true);
+  expect(await centerPixel(canvas)).not.toEqual([255, 255, 255, 255]);
+  await cdp.detach();
+});
+
 test('Undo during an active touch cannot erase the previous completed stroke on cancellation', async ({
   page,
 }) => {

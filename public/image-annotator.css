@@ -76,8 +76,11 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  touch-action: none;
 }
 #annotation-canvas {
+  flex: none;
+  transform-origin: center;
   touch-action: none;
   cursor: crosshair;
   background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 / 16px 16px;
