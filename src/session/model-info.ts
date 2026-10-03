@@ -121,6 +121,8 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       return { label: 'LOCAL', kind: 'local' };
     case 'gemini':
       return { label: 'GEM', kind: 'gem' };
+    case 'modelcorp':
+      return { label: 'KIMI', kind: 'kimi' };
     case 'claude-code': {
       const id = modelId.toLowerCase();
       if (id.includes('opus')) return { label: 'OPUS', kind: 'claude' };

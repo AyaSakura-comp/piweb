@@ -3691,6 +3691,12 @@ dialog.sheet::backdrop {
   color: #8ab4f8;
 }
 
+.provider-badge.kimi {
+  background: rgb(139 92 246 / 0.18);
+  border-color: rgb(139 92 246 / 0.5);
+  color: #c4b5fd;
+}
+
 /* Claude's warm coral stays visually separate from the green local/GPT,
    blue Gemini, and violet OpenRouter badges around it. */
 .provider-badge.claude,
@@ -4411,6 +4417,10 @@ dialog.sheet::backdrop {
 
 :root[data-theme='light'] .provider-badge.gem {
   color: #245cb5;
+}
+
+:root[data-theme='light'] .provider-badge.kimi {
+  color: #6741ad;
 }
 
 :root[data-theme='light'] .provider-badge.claude,

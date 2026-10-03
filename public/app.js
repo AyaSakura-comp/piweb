@@ -2052,6 +2052,7 @@ function providerBadgeFor(provider, modelRef = '') {
     'ollama-lfm2': ['LOCAL', 'local'],
     ds4: ['LOCAL', 'local'],
     gemini: ['GEM', 'gem'],
+    modelcorp: ['KIMI', 'kimi'],
     'claude-code': ['CLAUDE', 'claude'],
     xai: ['XAI', 'xai'],
     openrouter: ['OR', 'or'],

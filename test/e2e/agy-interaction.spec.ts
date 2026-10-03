@@ -31,6 +31,12 @@ const MODELS = [
     reasoning: true,
   },
   {
+    ref: 'modelcorp/kimi-k3',
+    name: 'Kimi K3',
+    provider: 'modelcorp',
+    reasoning: true,
+  },
+  {
     ref: DEFAULT_MODEL_REF,
     name: 'GPT-5.6 Sol',
     provider: 'openai-codex',
@@ -213,6 +219,9 @@ test.describe('agy end-to-end model interaction and streaming lifecycle', () => 
     expect(sheetContained).toBe(true);
 
     const modelSearch = page.locator('#model-search');
+    await modelSearch.fill('kimi-k3');
+    const kimiItem = page.locator('.model-item', { hasText: 'modelcorp/kimi-k3' });
+    await expect(kimiItem.locator('.provider-badge.kimi')).toHaveText('KIMI');
     await modelSearch.fill('gemini-3.1');
     await page.waitForTimeout(200); // Debounce delay
 

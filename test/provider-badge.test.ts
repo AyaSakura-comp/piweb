@@ -55,6 +55,10 @@ describe('providerBadge', () => {
     });
   });
 
+  it('shows KIMI for the ModelCorp provider', () => {
+    expect(providerBadge('modelcorp', 'kimi-k3')).toEqual({ label: 'KIMI', kind: 'kimi' });
+  });
+
   it('leaves other providers unchanged', () => {
     expect(providerBadge('local-llama').label).toBe('LOCAL');
     expect(providerBadge('nvim').label).toBe('NV');
