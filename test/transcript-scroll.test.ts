@@ -7,6 +7,9 @@ import {
   isTranscriptNearBottom,
   jumpToLatest,
   settleTranscriptUpdate,
+  readAutoScrollPreference,
+  saveAutoScrollPreference,
+  shouldAutoScrollTranscript,
 } from '../public/session-ui.js';
 
 class FakeClassList {
@@ -31,6 +34,64 @@ function setupScroller() {
   };
 }
 
+describe('auto-scroll preference', () => {
+  it('defaults OFF and accepts only an explicit stored opt-in', () => {
+    for (const saved of [null, 'false', 'garbage', '1']) {
+      expect(readAutoScrollPreference({ getItem: () => saved })).toBe(false);
+    }
+    expect(readAutoScrollPreference({ getItem: () => 'true' })).toBe(true);
+    expect(
+      readAutoScrollPreference({
+        getItem: () => {
+          throw new Error('blocked storage');
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('stores a per-browser choice without throwing when persistence is blocked', () => {
+    const storage = { setItem: vi.fn() };
+    saveAutoScrollPreference(true, storage);
+    expect(storage.setItem).toHaveBeenCalledWith('piweb.autoScroll', 'true');
+    saveAutoScrollPreference(false, storage);
+    expect(storage.setItem).toHaveBeenLastCalledWith('piweb.autoScroll', 'false');
+    expect(() =>
+      saveAutoScrollPreference(false, {
+        setItem: () => {
+          throw new Error('blocked');
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it('OFF overrides both near-bottom detection and an existing composer lock', () => {
+    const scroller = setupScroller();
+    expect(shouldAutoScrollTranscript(scroller, false, true)).toBe(false);
+    expect(shouldAutoScrollTranscript(scroller, false, false)).toBe(false);
+    expect(shouldAutoScrollTranscript(scroller, true, false)).toBe(true);
+    scroller.scrollTop = 400;
+    expect(shouldAutoScrollTranscript(scroller, true, false)).toBe(false);
+    expect(shouldAutoScrollTranscript(scroller, true, true)).toBe(true);
+  });
+
+  it('ignores stale follow intent when the current preference is OFF', () => {
+    const scroller = setupScroller();
+    scroller.scrollHeight = 1200;
+    const button = { classList: new FakeClassList() };
+    settleTranscriptUpdate(scroller, button, true, 'auto', false);
+    expect(scroller.scrollTo).not.toHaveBeenCalled();
+    expect(button.classList.contains('visible')).toBe(true);
+  });
+
+  it('does not offer a jump when OFF but the whole reply already fits', () => {
+    const scroller = setupScroller();
+    const button = { classList: new FakeClassList() };
+    settleTranscriptUpdate(scroller, button, false, 'auto', false);
+    expect(scroller.scrollTo).not.toHaveBeenCalled();
+    expect(button.classList.contains('visible')).toBe(false);
+  });
+});
+
 describe('transcript live scrolling', () => {
   it('keeps completed live messages locked to the tail without an in-flight smooth-scroll gap', () => {
     const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
@@ -39,12 +100,15 @@ describe('transcript live scrolling', () => {
 
     expect(appendEvent).toContain('const followLatest = shouldFollowTranscriptTail()');
     expect(appendEvent).toContain(
-      "settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto')",
+      "settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto', canFollowTranscriptNow())",
+    );
+    expect(app.match(/function canFollowTranscriptNow\(\) \{([\s\S]*?)\n\}/)?.[1]).toContain(
+      'autoScrollEnabled && !promptTurnScroll.navigating',
     );
     expect(appendEvent).not.toContain("followLatest, 'smooth'");
-    expect(app.match(/function renderPartial\(text, thinking = ''\) \{([\s\S]*?)\n\}/)?.[1]).toContain(
-      'const followLatest = shouldFollowTranscriptTail()',
-    );
+    expect(
+      app.match(/function renderPartial\(text, thinking = ''\) \{([\s\S]*?)\n\}/)?.[1],
+    ).toContain('const followLatest = shouldFollowTranscriptTail()');
   });
 
   it('reanchors the live tail when focusing the composer opens the mobile keyboard', () => {
@@ -53,20 +117,30 @@ describe('transcript live scrolling', () => {
 
     expect(app).toContain("input.addEventListener('focus', captureComposerBottomLock)");
     expect(app).toContain("input.addEventListener('blur', handleComposerBlur)");
-    expect(app).toContain("$('btn-send').addEventListener('pointerdown', captureComposerSendIntent)");
-    expect(app).toContain("$('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup)");
-    expect(app).toContain("$('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave)");
+    expect(app).toContain(
+      "$('btn-send').addEventListener('pointerdown', captureComposerSendIntent)",
+    );
+    expect(app).toContain(
+      "$('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup)",
+    );
+    expect(app).toContain(
+      "$('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave)",
+    );
     expect(app).toContain('holdComposerBottomForSend(followAfterSend)');
     expect(app).toContain('scheduleComposerSendSettlement()');
     const sendSettlement =
       app.match(/function scheduleComposerSendSettlement\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
     expect(sendSettlement).not.toContain('needsViewportRecovery');
     expect(app).not.toContain('COMPOSER_SEND_LOCK_MS');
-    expect(app).toContain("$('messages').addEventListener('pointerdown', releaseComposerBottomLock");
+    expect(app).toContain(
+      "$('messages').addEventListener('pointerdown', releaseComposerBottomLock",
+    );
     expect(app).toContain("$('messages').addEventListener('touchmove', releaseComposerBottomLock");
     expect(app).toContain("$('messages').addEventListener('wheel', releaseComposerBottomLock");
     expect(app).toContain('if (shouldReleaseComposerBottomLock()) releaseComposerBottomLock()');
-    expect(app).not.toContain('if (composerBottomLocked && !isNearBottom()) releaseComposerBottomLock()');
+    expect(app).not.toContain(
+      'if (composerBottomLocked && !isNearBottom()) releaseComposerBottomLock()',
+    );
     expect(viewportSync).toContain('keepComposerBottomVisible()');
   });
 
@@ -132,7 +206,8 @@ describe('running tool call clock', () => {
     expect(setBusy).toContain('setToolElapsedTicking(busy)');
     // The result is the next event, so the badge must move off its row at once
     // rather than up to a second later.
-    expect(app).toMatch(/messages\.append\(node\);\n\s*\/\/[\s\S]*?syncRunningTool\(\);/);
+    const appendEvent = app.match(/function appendEvent\(event, live\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(appendEvent).toMatch(/messages\.append\(node\);[\s\S]*?syncRunningTool\(\);/);
     expect(app).toContain("event.kind === 'tool' && event.createdAt");
   });
 
@@ -150,7 +225,9 @@ describe('running tool call clock', () => {
 
     const withResult = setupToolTranscript(['tool', 'tool_result']);
     expect(runningToolNode(withResult, true)).toBeNull();
-    expect(runningToolNode(setupToolTranscript(['tool', 'tool_result', 'thinking']), true)).toBeNull();
+    expect(
+      runningToolNode(setupToolTranscript(['tool', 'tool_result', 'thinking']), true),
+    ).toBeNull();
 
     // A second call after a finished one is the live one.
     const second = setupToolTranscript(['tool', 'tool_result', 'tool']);

@@ -24,7 +24,7 @@ import { publishParent } from '../session/parent-publication.js';
 import { getTransport, type ChannelWriteFence } from '../transport/index.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { config } from '../config.js';
-import { beginChannelOperation, finishChannelOperation, touchChannelOperation } from '../db.js';
+import { beginChannelOperation, finishChannelOperation, getChannel, touchChannelOperation } from '../db.js';
 import { logger } from '../logger.js';
 import { repairSessionForContinue, resolveChannelSessionDir } from '../session/path.js';
 import { formatStreamError, resolvePiSpawn } from './invoke.js';
@@ -360,6 +360,15 @@ class RpcSession {
             /* Malformed/unsupported hints never clear known live work. */
           }
         }
+        // The parent's turn may have settled while children still owned it.
+        // Revisit retirement when that last owner disappears, even if no new
+        // agent_settled event follows the widget clear.
+        if (
+          !this.subagentsLive &&
+          !this.compacting &&
+          this.opts.channelJid &&
+          getChannel(this.opts.channelJid)?.kind === 'life'
+        ) this.armIdleTimer();
       }
       // Dialog requests are blocking, unlike widgets. Explicitly cancel rather
       // than silently stranding the model on an unsupported terminal UI.
@@ -641,6 +650,10 @@ class RpcSession {
       return response.data;
     } finally {
       this.compacting = false;
+      // Compaction may outlast Life's retirement grace, consuming its check.
+      // Re-arm on success or failure; streaming/children/delivery still gate it.
+      if (this.isAlive && this.opts.channelJid && getChannel(this.opts.channelJid)?.kind === 'life')
+        this.armIdleTimer();
     }
   }
 
@@ -658,10 +671,13 @@ class RpcSession {
 
   private armIdleTimer(): void {
     this.clearIdleTimer();
-    this.idleTimer = setTimeout(() => {
-      if (this.isAlive && !this.isStreaming) {
+    const life = Boolean(this.opts.channelJid && getChannel(this.opts.channelJid)?.kind === 'life');
+    const retireIfIdle = () => {
+      if (this.isAlive && !this.isStreaming && !this.compacting) {
         if (this.subagentsLive) {
-          this.armIdleTimer();
+          // Life will re-arm when its child widget becomes terminal. Standard
+          // sessions retain their existing warm-process timeout policy.
+          if (!life) this.armIdleTimer();
           return;
         }
         logger.info({ folder: this.folder }, 'RPC session idle timeout — shutting down');
@@ -671,7 +687,16 @@ class RpcSession {
           }
         });
       }
-    }, config.rpcIdleTimeoutMs);
+    };
+    this.idleTimer = setTimeout(() => {
+      // Life can remain warm past queue completion if an extension starts a
+      // follow-up or children are live. Once those settle it must release its
+      // archive-blocking lease, not wait the standard ten-minute timeout.
+      // Give queued completion wakes a short grace period and never retire
+      // before the queue's response/typing cleanup has handed ownership back.
+      if (life) void this.queueDelivery.then(retireIfIdle);
+      else retireIfIdle();
+    }, life ? 1000 : config.rpcIdleTimeoutMs);
     this.idleTimer.unref?.();
   }
 

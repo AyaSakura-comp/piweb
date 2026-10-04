@@ -26,6 +26,20 @@ const YOUTUBE_HOSTS = new Set([
 ]);
 let youtubePlayerSequence = 0;
 const youtubePlayerSources = new WeakMap();
+const pendingRichRenders = new WeakMap();
+
+/** Wait for asynchronous rich blocks before a live reply is revealed. */
+export function whenRichReady(container) {
+  const tasks = [...container.querySelectorAll('.mermaid-wrap')].map((node) =>
+    pendingRichRenders.get(node),
+  );
+  for (const image of container.querySelectorAll('img')) {
+    // Detached lazy images would never start loading while the reply is staged.
+    image.loading = 'eager';
+    tasks.push(image.decode().catch(() => {}));
+  }
+  return Promise.all(tasks);
+}
 
 export function getYouTubeVideoId(rawUrl) {
   let url;
@@ -771,7 +785,8 @@ function renderCode(item) {
     });
 
     const id = `mm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    ensureMermaid()
+    wrap.dataset.renderPending = 'true';
+    const ready = ensureMermaid()
       .then((mermaid) => {
         if (!mermaid) return;
         return mermaid.render(id, item.code);
@@ -808,7 +823,11 @@ function renderCode(item) {
         if (errEl) errEl.remove();
         const dError = document.getElementById('d' + id);
         if (dError) dError.remove();
+      })
+      .finally(() => {
+        delete wrap.dataset.renderPending;
       });
+    pendingRichRenders.set(wrap, ready);
 
     return wrap;
   }

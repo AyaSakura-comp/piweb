@@ -9,8 +9,8 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function setup() {
-  process.env.DB_PATH = ':memory:';
+async function setup(path = ':memory:') {
+  process.env.DB_PATH = path;
   vi.resetModules();
   const db = await import('../src/db.js');
   const { webTransport } = await import('../src/transport/web.js');
@@ -47,13 +47,46 @@ describe('streamed thinking UI', () => {
     // Proximity is captured before either placeholder mutates the transcript,
     // then reused after layout so a reader who scrolled up is never pulled down.
     expect(answerRenderer).toContain('const followLatest = shouldFollowTranscriptTail()');
-    expect(answerRenderer).toContain("settleTranscriptUpdate(host, $('jump-live'), followLatest)");
+    expect(answerRenderer).toContain(
+      "settleTranscriptUpdate(host, $('jump-live'), followLatest, 'auto', canFollowTranscriptNow())",
+    );
     expect(answerRenderer).toContain('requestAnimationFrame(settle)');
     expect(answerRenderer).not.toContain('host.scrollTop = host.scrollHeight');
   });
 });
 
 describe('intermediate assistant text', () => {
+  it.each(['turn_end', 'agent_end'])(
+    'retains the answer after %s until its final message is published',
+    async (type) => {
+      const { db, webTransport, stream } = await setup();
+      const content = '## Already read\n\nKeep these visible glyphs.\n\n';
+      await stream({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: content },
+      });
+      await stream({ type });
+      expect(db.getLiveOutput('web:thinking-stream')?.content).toBe(content);
+      expect(db.getRecentWebEvents('web:thinking-stream')).toHaveLength(0);
+      await webTransport.sendResponse('web:thinking-stream', content);
+      expect(db.getLiveOutput('web:thinking-stream')).toBeNull();
+      expect(db.getRecentWebEvents('web:thinking-stream')[0].content).toBe(content.trim());
+    },
+  );
+
+  it('cleans an aborted/unpublished answer and cannot resurrect it with the delayed flush', async () => {
+    const { db, webTransport, stream } = await setup();
+    await stream({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'aborted answer' },
+    });
+    await stream({ type: 'agent_end' });
+    await webTransport.clearTyping('web:thinking-stream');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(db.getLiveOutput('web:thinking-stream')).toBeNull();
+    expect(db.getRecentWebEvents('web:thinking-stream')).toHaveLength(0);
+  });
+
   it('cancels a delayed live-buffer flush during final typing cleanup', async () => {
     const { db, webTransport, stream } = await setup();
 

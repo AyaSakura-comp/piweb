@@ -31,7 +31,7 @@ import {
   claimDeletedSessionsForPurge,
   clearChannelSession,
   commitLifeControlOperation,
-  commitLifeMessageOperation,
+  commitWebMessageOperation,
   deletePushSubscription,
   enqueueControl,
   enqueueSubscriptionJob,
@@ -46,6 +46,7 @@ import {
   getWebEventsAround,
   getWebEventsBefore,
   getWebEventsSince,
+  getWebStreamSnapshot,
   finishChannelOperation,
   hasWebEventsAfter,
   hasWebEventsBefore,
@@ -1395,8 +1396,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           immediateSessionTitle,
         };
         let messageRowid: number;
+        let eventId: number;
         try {
-          messageRowid = commitLifeMessageOperation({
+          const committed = commitWebMessageOperation({
             operationId,
             channelJid: jid,
             expectedFolder: operationFolder,
@@ -1408,6 +1410,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             },
             message: queuedMessage,
           });
+          messageRowid = committed.messageRowid;
+          eventId = committed.eventId;
         } catch (error) {
           await cleanupOperationUploads(savedPaths);
           if ((error as Error).message === CHANNEL_GENERATION_CHANGED_ERROR) {
@@ -1432,6 +1436,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             : undefined;
         sendJson(res, 200, {
           ok: true,
+          eventId,
           ...(appliedSessionTitle ? { sessionTitle: appliedSessionTitle } : {}),
         });
         return;
@@ -1676,8 +1681,9 @@ function streamEvents(
   const timer = setInterval(() => {
     if (closed) return;
     try {
+      const snapshot = getWebStreamSnapshot(jid, cursor);
       if (streamGeneration) {
-        const current = getChannel(jid);
+        const current = snapshot.channel;
         const currentGeneration = current?.kind === 'life' ? current.folder : null;
         if (currentGeneration !== streamGeneration) {
           send('generation', { generation: currentGeneration });
@@ -1687,13 +1693,13 @@ function streamEvents(
         }
       }
 
-      const rows = getWebEventsSince(jid, cursor);
+      const rows = snapshot.rows;
       for (const row of rows) {
         cursor = row.rowid;
         send('event', serializeEvent(row));
       }
 
-      const busy = isChannelBusy(jid);
+      const busy = snapshot.busy;
       if (busy !== lastBusy) {
         lastBusy = busy;
         send('busy', { busy });
@@ -1702,9 +1708,11 @@ function streamEvents(
       // The reply as it is being generated. Sent only when it changes, and
       // once more as null when it ends, so the client can drop the preview
       // exactly when the finished message row arrives.
-      const live = getLiveOutput(jid);
+      const live = snapshot.live;
       const liveSeq = live?.seq ?? 0;
-      if (liveSeq !== lastLiveSeq) {
+      // Drain reconnect batches before clearing a preview whose final may be
+      // in the next page. A new turn can also reuse seq=1 between two polls.
+      if (!snapshot.hasMore && (liveSeq !== lastLiveSeq || (rows.length > 0 && live))) {
         lastLiveSeq = liveSeq;
         send(
           'partial',

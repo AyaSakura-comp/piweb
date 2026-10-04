@@ -4,6 +4,28 @@ const DEFAULT_BOTTOM_THRESHOLD_PX = 16;
 const DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX = 4;
 const MIN_HISTORY_PREFETCH_PX = 300;
 const HISTORY_PREFETCH_VIEWPORTS = 2;
+const AUTO_SCROLL_KEY = 'piweb.autoScroll';
+
+/** Local browser preference; following live output requires explicit opt-in. */
+export function readAutoScrollPreference(storage) {
+  try {
+    return (storage ?? globalThis.localStorage).getItem(AUTO_SCROLL_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function saveAutoScrollPreference(enabled, storage) {
+  try {
+    (storage ?? globalThis.localStorage).setItem(AUTO_SCROLL_KEY, String(Boolean(enabled)));
+  } catch {
+    // Keep the in-memory choice when private mode or policy blocks persistence.
+  }
+}
+
+export function shouldAutoScrollTranscript(scroller, enabled, bottomLocked = false) {
+  return Boolean(enabled && (bottomLocked || isTranscriptNearBottom(scroller)));
+}
 
 /** Whether iOS left the standalone viewport shorter after dismissing its keyboard. */
 export function needsViewportRecovery(
@@ -50,9 +72,16 @@ export function isTranscriptNearBottom(scroller, threshold = DEFAULT_BOTTOM_THRE
  * Preserve the reader's intent after transcript content changes: follow only
  * when they were already at the tail, otherwise expose the opt-in jump button.
  */
-export function settleTranscriptUpdate(scroller, jumpButton, wasNearBottom, behavior = 'auto') {
-  jumpButton.classList.toggle('visible', !wasNearBottom);
-  if (wasNearBottom) scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+export function settleTranscriptUpdate(
+  scroller,
+  jumpButton,
+  wasNearBottom,
+  behavior = 'auto',
+  autoScroll = true,
+) {
+  const follow = autoScroll && wasNearBottom;
+  jumpButton.classList.toggle('visible', !follow && !isTranscriptNearBottom(scroller));
+  if (follow) scroller.scrollTo({ top: scroller.scrollHeight, behavior });
 }
 
 /** Return to the live tail without making later output force-scroll a reader who leaves it again. */

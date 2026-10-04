@@ -22,6 +22,7 @@ import { embedOutboxMediaUrls } from '../agent/outbox.js';
 import { logger } from '../logger.js';
 import {
   appendWebEvent,
+  commitWebReply,
   clearLiveOutput,
   isChannelGenerationCurrent,
   isChannelQuarantinedForLifeArchive,
@@ -156,13 +157,37 @@ function writeEvent(
     files?: string[];
   },
   fence?: ChannelWriteFence,
+  completeReply = false,
 ): boolean {
   try {
-    appendWebEvent(event, fence);
+    if (completeReply) commitWebReply(event, fence);
+    else appendWebEvent(event, fence);
     return true;
   } catch (err: any) {
     logger.warn({ err: err.message, jid: event.channelJid }, 'Fenced web event was not written');
     return false;
+  }
+}
+
+function forgetLiveBuffer(jid: string, fence?: ChannelWriteFence): void {
+  const key = liveBufferKey(jid, fence);
+  const buf = liveBuffers.get(key);
+  if (buf?.timer) clearTimeout(buf.timer);
+  liveBuffers.delete(key);
+}
+
+/** Native EOF precedes queue/file delivery: keep the answer available for handoff. */
+function finishNativeStream(jid: string, fence?: ChannelWriteFence): void {
+  const buf = liveBuffers.get(liveBufferKey(jid, fence));
+  if (!buf?.text.trim()) return flushLive(jid, true, fence);
+  if (buf.timer) clearTimeout(buf.timer);
+  buf.timer = undefined;
+  buf.thinking = '';
+  try {
+    setLiveOutput(jid, { content: buf.text, thinking: '' }, fence);
+    buf.written = snapshot(buf);
+  } catch (err: any) {
+    logger.warn({ err: err.message, jid }, 'Failed to settle live answer');
   }
 }
 
@@ -228,15 +253,18 @@ function appendLive(
 
 export const webTransport: Transport = {
   async sendResponse(jid: string, text: string, fence?: ChannelWriteFence): Promise<boolean> {
-    // The finished message replaces the streaming preview; clear it first so a
-    // poll landing between the two can never show the reply twice.
-    flushLive(jid, true, fence);
     const body = text?.trim();
-    if (!body) return true;
-    return writeEvent(
+    if (!body) {
+      flushLive(jid, true, fence);
+      return true;
+    }
+    const sent = writeEvent(
       { channelJid: jid, kind: 'message', role: 'assistant', content: body },
       fence,
+      true,
     );
+    if (sent) forgetLiveBuffer(jid, fence);
+    return sent;
   },
 
   async sendFilesResponse(
@@ -245,7 +273,7 @@ export const webTransport: Transport = {
     files: string[],
     fence?: ChannelWriteFence,
   ): Promise<boolean> {
-    flushLive(jid, true, fence);
+    // File publication can await I/O. Keep the preview until all URLs are ready.
     const urls: string[] = [];
     const published = new Map<string, string>();
     for (const file of files) {
@@ -258,7 +286,7 @@ export const webTransport: Transport = {
 
     const content = embedOutboxMediaUrls(text, published);
 
-    return writeEvent(
+    const sent = writeEvent(
       {
         channelJid: jid,
         kind: 'message',
@@ -267,7 +295,10 @@ export const webTransport: Transport = {
         files: urls,
       },
       fence,
+      true,
     );
+    if (sent) forgetLiveBuffer(jid, fence);
+    return sent;
   },
 
   async sendNotice(jid: string, text: string, fence?: ChannelWriteFence): Promise<void> {
@@ -339,10 +370,10 @@ export const webTransport: Transport = {
         return;
       }
 
-      // A turn that ends without a reply (aborted, error, empty) must not leave
-      // half a sentence frozen on screen.
+      // Native completion is not durable delivery. Hold visible answer text;
+      // clearTyping still removes it if the queue aborts or publishes no reply.
       if (event.type === 'turn_end' || event.type === 'agent_end') {
-        flushLive(jid, true, fence);
+        finishNativeStream(jid, fence);
         return;
       }
 

@@ -13,7 +13,12 @@ graph TB
     subgraph Client ["Client Layer (Mobile & Desktop)"]
         Browser["Mobile / Desktop Browser (PWA)"]
         UI["Vanilla Web Client (public/)<br/>• Real-time SSE Stream Consumer<br/>• Slash Command Autocomplete (/kv, /pi)<br/>• Local KaTeX, Mermaid & Syntax Highlighting"]
+        Rich["Render-first Rich Content<br/>public/markdown.js + streaming-rich.js"]
+        Reveal["Reading-order Reveal<br/>Arrival pacing + cached rows + local CSS masks"]
         Browser --> UI
+        UI -->|Live source snapshots| Rich
+        Rich -->|Prepared DOM| Reveal
+        Reveal -->|Stationary text pixels| Browser
     end
 
     subgraph WebTier ["Web Tier (Docker Container :8099)"]
@@ -174,6 +179,35 @@ sequenceDiagram
 
 ---
 
+## Reading-order Reply Workflow
+
+Reply animation is a browser presentation stage, independent of agent execution,
+SQLite queues and SSE delivery. The existing transport buffers growing source in
+`live_output`; completed source is durable in `web_events`. The browser handles
+both through the same session-owned stream:
+
+```text
+partial source snapshot
+  → sample recent source growth (including unfinished Markdown)
+  → accept only a stable Markdown prefix; EOF flushes the tail
+  → render new rich DOM offscreen and await diagrams/images
+  → append hidden/inert, settle fonts/layout, cache actual text rows
+  → one adaptive RAF frontier: each row left→right, then the row below
+  → compatible final event reuses the partial body without replay
+```
+
+Completed rows stay opaque; new paragraphs join the same cursor. Velocity follows
+recent client-observed source cadence, not model decode TPS. Graphics use vertical
+bands, reduced motion skips animation, and history reload is static. Reflow
+releases started chunks rather than hiding read words. Network batching, Markdown
+boundaries and asset readiness can still produce legitimate pauses.
+
+See [render-reveal software architecture and exact workflow](docs/render-reveal.md)
+for component ownership, state/contracts, architecture/sequence diagrams, mask
+geometry, adaptive pacing, lifecycle/scroll guards and verification limits.
+
+---
+
 ## ⚡ KV Cache & Extension Slash Commands
 
 PiWeb dynamically discovers and routes extension slash commands, featuring first-class autocomplete and live status display for llama.cpp KV cache management:
@@ -195,6 +229,7 @@ PiWeb dynamically discovers and routes extension slash commands, featuring first
 - **Dual-Tier Process Architecture**: Dockerized frontend container for web exposure, host-native systemd daemon for full hardware privileges.
 - **SQLite WAL Event Log**: Crash-resilient message queue with monotonic event replay, offline resume, and optimistic local echoes.
 - **Real-Time Streaming**: Live streaming of agent thinking blocks, tool invocations, stdout outputs, and markdown answers via SSE.
+- **Render-first Reading-order Reveal**: Stable rich content reveals left-to-right per visual row with adaptive arrival pacing, preserved DOM/final handoff and static history. See [architecture and workflow](docs/render-reveal.md).
 - **Zero-CDN Dependency**: Vendored local KaTeX (math), Mermaid.js (diagrams), and highlight.js for strict privacy and local offline usage.
 - **Hardware-Accelerated KV Caching**: Up to 100x faster startup via Golden Base pre-caching and incremental turn snapshotting on AMD ROCm/llama.cpp.
 

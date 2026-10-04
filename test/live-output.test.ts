@@ -11,6 +11,32 @@ beforeEach(async () => {
 afterEach(() => db.closeDb());
 
 describe('live_output', () => {
+  it('publishes a final reply and consumes its preview as one operation', () => {
+    db.setLiveOutput('web:a', { content: 'visible preview' });
+    const id = db.commitWebReply({
+      channelJid: 'web:a',
+      kind: 'message',
+      role: 'assistant',
+      content: 'final reply',
+    });
+    const snapshot = db.getWebStreamSnapshot('web:a', 0);
+    expect(snapshot.rows.map((row) => row.content)).toEqual(['final reply']);
+    expect(snapshot.rows[0].rowid).toBe(id);
+    expect(snapshot.live).toBeNull();
+    expect(snapshot.hasMore).toBe(false);
+  });
+
+  it('signals undrained durable rows before SSE is allowed to clear a preview', () => {
+    for (let i = 0; i < 3; i++)
+      db.appendWebEvent({ channelJid: 'web:a', kind: 'thinking', content: String(i) });
+    const first = db.getWebStreamSnapshot('web:a', 0, 2);
+    expect(first.rows).toHaveLength(2);
+    expect(first.hasMore).toBe(true);
+    const last = db.getWebStreamSnapshot('web:a', first.rows.at(-1)!.rowid, 2);
+    expect(last.rows).toHaveLength(1);
+    expect(last.hasMore).toBe(false);
+  });
+
   it('starts empty and round-trips the in-flight text', () => {
     expect(db.getLiveOutput('web:a')).toBeNull();
     db.setLiveOutput('web:a', { content: 'Hel' });

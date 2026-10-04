@@ -43,6 +43,25 @@ release completes the return or snaps back based on distance and velocity.
 Buttons remain available, and scrolling,
 code blocks and text selection are excluded from the navigation gesture.
 
+## Live reply rendering
+
+Assistant replies and thinking use a browser-owned render-first pipeline:
+SSE source snapshots → stable Markdown boundary → detached rich render and asset
+readiness → hidden font/layout preparation → cached visual rows → one adaptive
+left-to-right, row-by-row gradient. Final events reuse compatible partial bodies,
+so old text does not replay. Reduced motion shows prepared content immediately;
+history paging/reload renders statically. Native EOF retains the preview until
+an atomic durable reply/preview transaction and consistent SSE snapshot hand it
+off; cancellation still clears unpublished output. Source arrival rate is not
+model decode TPS. Submitted-prompt reservation and synchronous layout transactions
+keep thinking toggles and finalization from clamping a reader's scroll position.
+
+See [reply reveal software architecture and workflow](docs/render-reveal.md) for
+component boundaries, state ownership, sequence/geometry, pacing, cancellation,
+scroll/accessibility tradeoffs, deployment and verification limits. The
+[final-delivery verification](docs/final-delivery-verification.md) documents the
+continuous recording, regression coverage and the frontend/backend deployment split.
+
 ## AGY activity viewers
 
 AGY models delegate execution to the Antigravity CLI; PiWeb displays its

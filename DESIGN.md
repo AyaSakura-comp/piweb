@@ -110,6 +110,50 @@ exclusions preserve native scrolling, selection and tool-output interactions.
 
 The image lightbox exposes a pencil action for writable main conversations. It opens a native modal above the viewer: fullscreen on mobile, bounded to 1100px with 24px desktop margins. Header Cancel/Confirm, colour swatches, brush width, Undo and Clear have at least 44px targets. Actions reuse the image viewer’s transparent monochrome outline-icon buttons (no accent-filled Confirm or boxed text actions); brush width uses a dark capsule and colour selection uses a circular white ring. Icon actions retain accessible names and tooltips. The canvas fits inside the remaining space and owns pointer gestures; the viewer beneath stays inert. Single-pointer input draws; two fingers pinch from 1× to 8× and pan within image bounds. Switching to a pinch removes its unfinished initial stroke; drawing resumes only after all gesture fingers lift. Zoom is view-only: the PNG always contains the complete image, not just the visible crop. Confirm adds a flattened PNG to the existing composer, preserves the draft and never sends automatically. See [image annotation](docs/image-annotation.md) for limits and browser regression coverage.
 
+## Render-first replies
+
+Live assistant/thinking content buffers unfinished Markdown and renders only new,
+completed blocks. Diagrams/images finish preparation before display. Each reply
+shares one reading-order cursor: each measured text row scans left-to-right through
+a 56px feather, then continues on the next row below. Earlier rows stay opaque;
+future rows stay hidden. New content extends the same progress without restarting
+a row/block-specific fade. Text ranges are measured without per-character wrappers.
+Graphics use vertical reveal bands; a started chunk finishes on responsive reflow
+to avoid remasking read glyphs. Velocity follows recent positive
+source-text arrival, calibrated to prepared height, with a soft lookahead and smoothed
+acceleration/deceleration; slow pacing survives idle gaps. Cold-start, EOF and oversized
+backlogs have catch-up safeguards. This is client-observed cadence, not decode TPS.
+No vertical translation, resizing, per-token spans or replay of old paragraphs.
+Real readiness gaps may pause the front.
+Final replies reuse their compatible partial DOM rather than briefly duplicating
+it, and expanded thinking stays expanded. Historical text does not replay; reduced
+motion shows ready content immediately. Native EOF keeps the preview visible until
+atomic durable delivery hands off its body; cancellation still clears it.
+Settings → General → **自動捲動** defaults OFF, persists per browser, and uses a
+54px outline-icon switch row with the existing capsule styling. OFF cancels
+composer locks and disables browser scroll anchoring and automatic reply/asset
+following; manual scrolling and Jump to present remain available. Normal Send is
+explicit navigation: match the saved user event ID, place this question 12px below
+the transcript's top, and reserve the remaining visible turn through bottom padding.
+Send uses a cancellable 360ms cubic ease-in-out real-scroll animation, not a
+translated clone. Capture keyboard visibility before blur; wait for reported closure,
+120ms viewport quiet, a 220ms initial keyboard guard and two layout frames. Later
+height/offset reports pause/resume from the current position; stale keyboard reports
+have a bounded 1000ms fallback, not a hardcoded iPhone animation duration. Fresh
+geometry always waits for 120ms quiet, including delayed acknowledgements after
+that fallback threshold. Automatic reply-follow cannot compete during the transition.
+Reduced motion skips the tween
+but still waits for keyboard settlement; composer refocus/reader gestures cancel it.
+These timings have deterministic Chromium boundary tests, not physical Safari proof.
+Typing alone does not move it. Replies fill that space without pushing OFF readers;
+ON follows overflowing replies only while at the tail. Short replies retain blank
+space; no per-message spacers accumulate. New sends replace the active anchor;
+reader gestures release re-pinning and navigation/manual Jump removes reservation.
+This applies to the main and Life transcripts; slash commands/BTW are excluded.
+The existing palette and composer/viewer controls are unchanged. See
+[render-first reply reveal](docs/render-reveal.md) for software architecture,
+component/state ownership, the live-to-final workflow, buffering and evidence limits.
+
 ## Verification
 
 ```sh

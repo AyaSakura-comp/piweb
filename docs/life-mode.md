@@ -230,6 +230,29 @@ until-done path use a one-shot Pi process that writes the same session files;
 Piweb closes any idle RPC instance first, so the next RPC turn reloads those
 one-shot additions instead of continuing from a stale branch.
 
+### Idle RPC ownership and New Life session
+
+A finished queue row or a cleared UI busy indicator alone does not prove that
+Life is safe to rotate: the RPC process can still own a durable lease while an
+autonomous follow-up or asynchronous child is active. After work settles, Life
+uses a roughly one-second retirement grace instead of the standard warm-session
+idle timeout. Retirement waits for the queue's response/typing cleanup and
+rechecks streaming, compaction and child ownership; the last child-widget clear
+re-arms the check even when no further `agent_settled` event arrives. Manual
+compaction success or failure also re-arms Life retirement, since a long
+compaction can consume the earlier check. Standard sessions retain their
+configured warm-session policy.
+
+`test/rpc-session-ownership.test.ts` verifies both autonomous follow-ups and
+children: New stays blocked until delivery is released, then the RPC exits,
+releases its lease and allows archive/new. Held-compaction regressions verify
+that both success and failure release the idle Life lease afterward, while a
+standard session keeps its configured warm timeout. The archive generation/fence checks
+are unchanged; this is not a bypass of active or queued work. Deploying this
+backend change requires the approved worker/web deployment procedure, not just
+refreshing the browser. See [final-delivery verification](final-delivery-verification.md)
+for the separately hot-patched frontend and its evidence limits.
+
 ## Persistence and invariants
 
 ```mermaid

@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { canReuseStreamingRich, updateStreamingRich } from './streaming-rich.js';
 import { createCameraComposer } from './camera-composer.js';
 import { createImageAnnotator } from './image-annotator.js';
 import { createBtwWorkspace } from './btw-workspace.js';
@@ -23,6 +24,7 @@ import {
   readCompressionPreference,
 } from './image-compression.js';
 import { bindThemeToggle } from './theme.js';
+import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -32,6 +34,9 @@ import {
   jumpToLatest,
   needsViewportRecovery,
   recoverViewportShell,
+  readAutoScrollPreference,
+  saveAutoScrollPreference,
+  shouldAutoScrollTranscript,
   runningToolNode,
   setDrawerCollapsed,
   shouldLoadOlderHistory,
@@ -547,6 +552,23 @@ $('btn-notify').addEventListener('click', () => {
 // ── settings + Pi subscriptions ─────────────────────────────────────────
 
 let subscriptionPollTimer;
+let autoScrollEnabled = readAutoScrollPreference();
+
+function renderAutoScrollSetting() {
+  $('messages').dataset.autoScroll = autoScrollEnabled ? 'on' : 'off';
+  const toggle = $('btn-auto-scroll');
+  toggle.setAttribute('aria-checked', String(autoScrollEnabled));
+  toggle.setAttribute('aria-label', `自動捲動，${autoScrollEnabled ? '開啟' : '關閉'}`);
+  toggle.querySelector('.settings-toggle').dataset.state = autoScrollEnabled ? 'on' : 'off';
+}
+
+$('btn-auto-scroll').addEventListener('click', () => {
+  autoScrollEnabled = !autoScrollEnabled;
+  saveAutoScrollPreference(autoScrollEnabled);
+  if (!autoScrollEnabled) releaseComposerBottomLock();
+  renderAutoScrollSetting();
+});
+renderAutoScrollSetting();
 
 function stopSubscriptionPolling() {
   clearTimeout(subscriptionPollTimer);
@@ -729,6 +751,7 @@ function standardFallbackJid() {
 
 /** Render the same truthful standard-mode shell boot shows when no session exists. */
 function clearStandardSelection() {
+  promptTurnScroll.clear();
   ++sessionSelectionGeneration;
   closeStream();
   closeSearch();
@@ -1121,6 +1144,7 @@ async function selectSession(jid, opts = {}) {
   commitRename(false);
   $('session-name').textContent = opts.name || session?.name || lifeName || jid;
   $('session-name').tabIndex = -1;
+  promptTurnScroll.clear();
   $('messages').textContent = '';
   state.pendingQuote = '';
   renderQuotePreview();
@@ -1399,6 +1423,7 @@ async function reopenActiveTail() {
 }
 
 $('jump-live').addEventListener('click', () => {
+  promptTurnScroll.clear();
   if (!state.atLive && state.activeJid) {
     void reopenActiveTail();
     return;
@@ -2543,8 +2568,12 @@ function setToolElapsedTicking(on) {
 }
 
 function setBusy(busy) {
-  $('app').classList.toggle('agent-busy', busy);
-  $('typing').hidden = !busy;
+  // Hiding the working indicator enlarges the transcript viewport. Replenish
+  // the owned prompt reservation before native scroll clamping can paint.
+  promptTurnScroll.preserveLayout(() => {
+    $('app').classList.toggle('agent-busy', busy);
+    $('typing').hidden = !busy;
+  });
   setToolElapsedTicking(busy);
   // Stop only exists while there is something to stop — it would be dead
   // weight in an already crowded header otherwise.
@@ -2616,6 +2645,26 @@ function renderFiles(container, files, content = '') {
   container.append(wrap);
 }
 
+const promptTurnScroll = createPromptTurnScroll({
+  scroller: $('messages'),
+  getOwner: () => `${sessionSelectionGeneration}:${state.activeJid}`,
+});
+
+$('messages').addEventListener('click', (event) => {
+  if (event.defaultPrevented || event.button !== 0) return;
+  const summary = event.target.closest('summary');
+  const details = summary?.parentElement;
+  if (!details?.matches('details.event') || details.parentElement !== $('messages')) return;
+  if (event.target.closest('a, button, input, textarea, select')) return;
+  // A native disclosure changes height before ResizeObserver can replenish
+  // the prompt's bottom reservation. Toggle and remeasure synchronously so
+  // closing Thinking cannot paint a clamped, older-history scroll position.
+  // Keyboard-generated summary clicks use this same path.
+  event.preventDefault();
+  promptTurnScroll.preserveLayout(() => { details.open = !details.open; });
+  if (state.atLive) setJumpLive(!isNearBottom());
+});
+
 const EVENT_LABELS = {
   thinking: ['Thinking', '💭'],
   tool: ['Tool', '🔧'],
@@ -2628,92 +2677,56 @@ function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
   const followLatest = shouldFollowTranscriptTail();
-  const node = buildEventNode(event);
-  if (live) node.classList.add('pop-in');
-  messages.append(node);
-  // The result arrives as the next event, so the clock has to move off the row
-  // it was on now rather than up to a second later.
-  syncRunningTool();
+  const liveRich =
+    live && ((event.kind === 'message' && event.role !== 'user') || event.kind === 'thinking');
+  const partial = liveRich
+    ? document.getElementById(event.kind === 'thinking' ? 'partial-thinking' : 'partial-msg')
+    : null;
+  const partialBody = partial?.querySelector(event.kind === 'thinking' ? '.event-body' : '.msg-text');
+  const reuseRich = canReuseStreamingRich(partialBody, event.content) ? partialBody : null;
+  const insert = () => {
+    const node = buildEventNode(event, { liveRich, reuseRich });
+    node.dataset.eventId = String(event.id);
+    // Finalize in the preview's existing slot, not at the transcript tail.
+    // Thinking can finish while its answer is already visible underneath it.
+    if (live && !liveRich) node.classList.add('pop-in');
+    if (partial) {
+      if (event.kind === 'thinking') node.open = partial.open;
+      partial.replaceWith(node);
+    } else if (live && event.kind === 'thinking') {
+      // A short reasoning preview may fall between SSE polls. Its saved row
+      // still belongs before the current answer, never above previous turns.
+      messages.insertBefore(node, document.getElementById('partial-msg'));
+    } else {
+      messages.append(node);
+    }
+    // The result arrives as the next event, so the clock has to move off the row
+    // it was on now rather than up to a second later.
+    syncRunningTool();
+  };
+  // Moving the reused body and removing the streaming caret can also clamp a
+  // reader-released prompt. Preserve its offset through the entire handoff.
+  if (live) promptTurnScroll.preserveLayout(insert);
+  else insert();
   // Keep the tail lock synchronous. A smooth scroll can still be in flight when
   // the next stream chunk arrives, making the viewport look "away" from the
   // bottom and incorrectly disabling follow mode.
-  if (live) settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto');
+  if (live) {
+    promptTurnScroll.update();
+    settleTranscriptUpdate(messages, $('jump-live'), followLatest, 'auto', canFollowTranscriptNow());
+  }
 }
 
-/** Build the DOM for one event. Shared by live append and paged prepend. */
-/**
- * The in-flight reply, shown as a normal assistant bubble that grows.
- *
- * Only the newly arrived tail is animated: re-rendering the whole string each
- * poll would restart the fade on text the user has already read, which reads as
- * flickering rather than typing.
- */
-let partialSeenText = '';
-let partialSeenThinking = '';
-
-/**
- * Where it is safe to render markdown for a half-written message.
- *
- * Markdown is block-structured — a table, list or heading only means anything
- * once its block is complete — so the text is split at the last blank line and
- * only the part before it is rendered. The unfinished tail stays plain until
- * its block closes. Splitting inside an open code fence would render a partial
- * fence as garbage, so an odd number of ``` pushes the boundary back.
- */
-function stableMarkdownSplit(text) {
-  let cut = text.lastIndexOf('\n\n');
-  while (cut > 0) {
-    const head = text.slice(0, cut);
-    if ((head.match(/```/g) || []).length % 2 === 0) return cut + 2;
-    cut = text.lastIndexOf('\n\n', cut - 1);
-  }
-  return 0;
-}
-
-/**
- * Grow a block as text arrives.
- *
- * Completed blocks are handed to the markdown renderer; the still-growing tail
- * is appended as plain spans that fade in. Re-rendering everything on each poll
- * would restart the fade on text already read and reflow the whole bubble, so
- * the markdown half is only rebuilt when the block boundary actually advances.
- */
-function growInto(target, text, seen) {
-  const state = target.__grow || (target.__grow = { boundary: -1, tail: '' });
-
-  if (!text.startsWith(seen)) {
-    target.textContent = '';
-    state.boundary = -1;
-    state.tail = '';
-    seen = '';
-  }
-
-  const boundary = stableMarkdownSplit(text);
-
-  if (boundary !== state.boundary) {
-    state.boundary = boundary;
-    state.tail = '';
-    target.textContent = '';
-    if (boundary > 0) {
-      const done = el('div', 'grow-done');
-      renderRich(done, text.slice(0, boundary));
-      target.append(done);
-    }
-    target.append(el('span', 'grow-tail'));
-  }
-
-  const tailHost = target.querySelector('.grow-tail');
-  const tail = text.slice(boundary);
-  const added = tail.slice(state.tail.length);
-  if (added && tailHost) {
-    const ink = el('span', 'ink', added);
-    tailHost.append(ink);
-    // Let the browser settle the fresh node before flipping the class on, or
-    // the transition is skipped and the text simply pops in.
-    requestAnimationFrame(() => ink.classList.add('lit'));
-  }
-  state.tail = tail;
-  return text;
+/** Append only ready rich blocks; evaluate scroll intent when async work ends. */
+function growInto(target, text, complete = false) {
+  void updateStreamingRich(target, text, {
+    complete,
+    beforeAppend: shouldFollowTranscriptTail,
+    afterAppend: (followLatest) => {
+      promptTurnScroll.update();
+      if (state.atLive) settleTranscriptUpdate($('messages'), $('jump-live'), followLatest, 'auto', canFollowTranscriptNow());
+    },
+  });
 }
 
 function removeFinishedPartial(node) {
@@ -2727,9 +2740,7 @@ function renderPartialThinking(thinking) {
   let node = document.getElementById('partial-thinking');
 
   if (!thinking) {
-    const removed = removeFinishedPartial(node);
-    partialSeenThinking = '';
-    return removed;
+    return removeFinishedPartial(node);
   }
 
   if (!node) {
@@ -2737,7 +2748,6 @@ function renderPartialThinking(thinking) {
     // thinking_end is not a visible jump.
     node = el('details', 'event thinking partial');
     node.id = 'partial-thinking';
-    node.classList.add('pop-in');
     const summary = el('summary');
     summary.append(el('span', 'event-chevron', '›'));
     summary.append(el('span', 'label', '💭 Thinking…'));
@@ -2745,11 +2755,11 @@ function renderPartialThinking(thinking) {
     const bodyWrap = el('div', 'event-body-wrap');
     bodyWrap.append(el('div', 'event-body'));
     node.append(bodyWrap);
-    host.append(node);
-    partialSeenThinking = '';
+    // SSE can expose answer text before the reasoning lane is sampled.
+    host.insertBefore(node, document.getElementById('partial-msg'));
   }
 
-  partialSeenThinking = growInto(node.querySelector('.event-body'), thinking, partialSeenThinking);
+  growInto(node.querySelector('.event-body'), thinking);
   return false;
 }
 
@@ -2762,23 +2772,27 @@ function renderPartial(text, thinking = '') {
 
   if (!text) {
     removedAnswer = removeFinishedPartial(node);
-    partialSeenText = '';
   } else {
     if (!node) {
-      node = el('div', 'msg partial pop-in');
+      node = el('div', 'msg partial');
       node.id = 'partial-msg';
       const body = el('div', 'msg-body');
       body.append(el('div', 'msg-text'));
       node.append(body);
       host.append(node);
-      partialSeenText = '';
     }
 
-    partialSeenText = growInto(node.querySelector('.msg-text'), text, partialSeenText);
+    // Reply delivery (parseOutboxMarkers/embedOutboxMediaUrls) collapses runs
+    // of blank lines. Use the same source during preview, not only at EOF.
+    // Thinking is not passed through that delivery normalization.
+    growInto(node.querySelector('.msg-text'), text.replace(/\n{3,}/g, '\n\n'));
   }
 
   if (state.atLive) {
-    const settle = () => settleTranscriptUpdate(host, $('jump-live'), followLatest);
+    const settle = () => {
+      promptTurnScroll.update();
+      settleTranscriptUpdate(host, $('jump-live'), followLatest, 'auto', canFollowTranscriptNow());
+    };
     // Safari can report pre-layout geometry immediately after removing a tall
     // partial, so re-clamp only after that removal has been laid out.
     if (removedThinking || removedAnswer) requestAnimationFrame(settle);
@@ -2786,7 +2800,8 @@ function renderPartial(text, thinking = '') {
   }
 }
 
-function buildEventNode(event) {
+/** Build one event for live append or paged history (which never replays). */
+function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
   const isAgyBackgroundCommand = event.kind === 'system' && (event.role === 'agy-command' || event.role === 'claude-command');
   if (isAgyBackgroundCommand) {
     try {
@@ -2817,8 +2832,9 @@ function buildEventNode(event) {
       return row;
     } else {
       const body = el('div', 'msg-body');
-      const textNode = el('div', 'msg-text');
-      renderText(textNode, event.content);
+      const textNode = reuseRich || el('div', 'msg-text');
+      if (liveRich) growInto(textNode, event.content, true);
+      else renderText(textNode, event.content);
       body.append(textNode);
       renderFiles(body, event.files, event.content);
 
@@ -2866,8 +2882,9 @@ function buildEventNode(event) {
     details.append(summary);
 
     const bodyWrap = el('div', 'event-body-wrap');
-    const bodyNode = el('div', 'event-body');
-    renderText(bodyNode, event.content);
+    const bodyNode = reuseRich || el('div', 'event-body');
+    if (liveRich) growInto(bodyNode, event.content, true);
+    else renderText(bodyNode, event.content);
     bodyWrap.append(bodyNode);
     details.append(bodyWrap);
     return details;
@@ -2878,8 +2895,12 @@ function isNearBottom() {
   return isTranscriptNearBottom($('messages'));
 }
 
+function canFollowTranscriptNow() {
+  return autoScrollEnabled && !promptTurnScroll.navigating;
+}
+
 function shouldFollowTranscriptTail() {
-  return composerBottomLocked || isNearBottom();
+  return shouldAutoScrollTranscript($('messages'), canFollowTranscriptNow(), composerBottomLocked);
 }
 
 function scrollToBottom(instant) {
@@ -2901,17 +2922,17 @@ let composerSendLockActive = false;
 let composerSendSettleTimer = 0;
 
 function keepComposerBottomVisible() {
-  if (!composerBottomLocked) return;
+  if (!autoScrollEnabled || !composerBottomLocked) return;
   composerBottomGuardUntil = performance.now() + COMPOSER_LAYOUT_GUARD_MS;
   if (composerBottomFrame) cancelAnimationFrame(composerBottomFrame);
   composerBottomFrame = requestAnimationFrame(() => {
     composerBottomFrame = 0;
-    if (composerBottomLocked) scrollToBottom(true);
+    if (autoScrollEnabled && composerBottomLocked) scrollToBottom(true);
   });
 }
 
 function captureComposerBottomLock() {
-  composerBottomLocked = isNearBottom();
+  composerBottomLocked = shouldFollowTranscriptTail();
   keepComposerBottomVisible();
 }
 
@@ -2965,7 +2986,7 @@ function cancelComposerSendIntent() {
 }
 
 function consumeComposerSendIntent() {
-  const followLatest = composerSendIntent || shouldFollowTranscriptTail();
+  const followLatest = autoScrollEnabled && (composerSendIntent || shouldFollowTranscriptTail());
   composerSendIntent = false;
   if (composerSendIntentCleanupTimer) clearTimeout(composerSendIntentCleanupTimer);
   composerSendIntentCleanupTimer = 0;
@@ -2983,7 +3004,7 @@ function scheduleComposerSendSettlement() {
     composerSendSettleTimer = 0;
     recoverStandaloneViewport();
     requestAnimationFrame(() => {
-      if (!composerSendLockActive || document.activeElement === input) return;
+      if (!autoScrollEnabled || !composerSendLockActive || document.activeElement === input) return;
       // The reflow above is best-effort. Clamp once in the current viewport and
       // release; a later viewport expansion only moves the tail closer, while
       // retrying until innerHeight changes can loop forever on broken WebKit.
@@ -2994,7 +3015,7 @@ function scheduleComposerSendSettlement() {
 }
 
 function holdComposerBottomForSend(followLatest) {
-  if (!followLatest) return;
+  if (!autoScrollEnabled || !followLatest) return;
   composerBottomLocked = true;
   composerSendLockActive = true;
   keepComposerBottomVisible();
@@ -3013,12 +3034,16 @@ function handleComposerBlur() {
 $('messages').addEventListener('pointerdown', releaseComposerBottomLock, { passive: true });
 $('messages').addEventListener('touchmove', releaseComposerBottomLock, { passive: true });
 $('messages').addEventListener('wheel', releaseComposerBottomLock, { passive: true });
+for (const type of ['pointerdown', 'touchmove', 'wheel', 'keydown']) {
+  $('messages').addEventListener(type, () => promptTurnScroll.release(), { passive: true });
+}
 
 $('btn-send').addEventListener('pointerdown', captureComposerSendIntent);
 $('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup);
 $('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave);
 $('btn-send').addEventListener('pointercancel', cancelComposerSendIntent);
 input.addEventListener('pointerdown', cancelStandaloneViewportRecovery);
+input.addEventListener('focus', () => promptTurnScroll.release());
 input.addEventListener('focus', captureComposerBottomLock);
 input.addEventListener('focus', cancelStandaloneViewportRecovery);
 input.addEventListener('blur', handleComposerBlur);
@@ -3368,11 +3393,11 @@ $('composer').addEventListener('submit', async (e) => {
   }
   const text = lifeTag ? `【${lifeTag.label}】${draft}` : draft;
   if (lifeTag) setLifeTag(null);
-  holdComposerBottomForSend(followAfterSend);
 
   // A slash line is a command, not a prompt. A quoted selection always makes
   // the turn a normal prompt, even when the reply itself begins with a slash.
   if (!quote && text.startsWith('/') && state.attachments.length === 0) {
+    holdComposerBottomForSend(followAfterSend);
     // A validated command belongs to this destination immediately. Detach the
     // shared textarea before awaiting its request so navigation cannot carry
     // the command into a second conversation.
@@ -3417,6 +3442,9 @@ $('composer').addEventListener('submit', async (e) => {
   // Dismiss immediately on a valid send; retained photos outlive the preview
   // and are cleared only after acknowledgement, so failures remain retryable.
   if (cameraWasOpen) cameraComposer.dismiss();
+  releaseComposerBottomLock();
+  const promptTicket = promptTurnScroll.begin();
+  input.blur();
 
   try {
     const attachments = [];
@@ -3444,7 +3472,9 @@ $('composer').addEventListener('submit', async (e) => {
     state.attachments = state.attachments.filter(a => !submittedAttachments.includes(a));
     renderAttachments();
     applyImmediateSessionTitle(destinationJid, result?.sessionTitle);
+    promptTurnScroll.acknowledge(promptTicket, result?.eventId);
   } catch (err) {
+    promptTurnScroll.cancel(promptTicket);
     if (submittedAttachments.some(a => a.isCamera) && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {
       if (!input.value) { input.value = rawDraft; autoGrow(); }
       if (!state.pendingQuote) { state.pendingQuote = quote; renderQuotePreview(); }
@@ -4729,6 +4759,7 @@ function syncViewportSizes() {
   // keyboard-animation deadline.
   keepComposerBottomVisible();
   scheduleComposerSendSettlement();
+  promptTurnScroll.viewportChanged();
 }
 
 if (window.visualViewport) {

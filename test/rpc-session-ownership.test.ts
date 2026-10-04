@@ -23,6 +23,242 @@ afterEach(async () => {
 });
 
 describe('persistent RPC filesystem ownership', () => {
+  it.each([
+    { kind: 'life', success: true },
+    { kind: 'life', success: false },
+    { kind: 'standard', success: true },
+  ] as const)(
+    'preserves $kind retirement policy after held compaction success=$success',
+    async ({ kind, success }) => {
+      const root = mkdtempSync(join(tmpdir(), 'piweb-held-compaction-'));
+      tempDirs.push(root);
+      const dbPath = resolve(root, 'gateway.db');
+      const fakePi = resolve(root, 'compact-pi.mjs');
+      const finishChildren = resolve(root, 'children-finished');
+      const compactStarted = resolve(root, 'compact-started');
+      const finishCompact = resolve(root, 'compact-finished');
+      writeFileSync(
+        fakePi,
+        `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+rl.on('line', (line) => {
+  const command = JSON.parse(line);
+  if (command.type === 'prompt') {
+    send({ type: 'agent_start' });
+    send({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async', widgetLines: ['PI_SUBAGENT_ASYNC_JSON:' + JSON.stringify({ kind: 'pi-subagents.async-status-snapshot', version: 1, runs: [{ state: 'running' }], omitted: {} })] });
+    send({ type: 'agent_settled' });
+    const timer = setInterval(() => {
+      if (!fs.existsSync(${JSON.stringify(finishChildren)})) return;
+      clearInterval(timer);
+      send({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async' });
+    }, 10);
+  } else if (command.type === 'compact') {
+    fs.writeFileSync(${JSON.stringify(compactStarted)}, 'started');
+    const timer = setInterval(() => {
+      if (!fs.existsSync(${JSON.stringify(finishCompact)})) return;
+      clearInterval(timer);
+      send({ type: 'response', id: command.id, command: 'compact', success: ${success}, data: {}, error: 'compact failed' });
+    }, 10);
+  }
+});
+`,
+      );
+      chmodSync(fakePi, 0o755);
+      Object.assign(process.env, {
+        DB_PATH: dbPath,
+        SESSIONS_DIR: resolve(root, 'sessions'),
+        PI_BIN: fakePi,
+        PI_CWD: root,
+        RPC_IDLE_TIMEOUT_MS: '600000',
+      });
+      vi.resetModules();
+      const db = await import('../src/db.js');
+      const rpc = await import('../src/agent/rpc-session.js');
+      db.initDb();
+      const channel =
+        kind === 'life'
+          ? db.getOrCreateLifeChannel().channel
+          : {
+              jid: 'web:compact-standard',
+              name: 'Standard',
+              folder: 'compact_standard',
+              requiresTrigger: false,
+              isMain: false,
+              cwdOverride: '',
+            };
+      if (kind === 'standard') db.registerChannel(channel);
+      const session = rpc.getRpcSession(channel.folder, { channelJid: channel.jid });
+      const inspect = new Database(dbPath, { readonly: true });
+      const leases = () =>
+        (
+          inspect
+            .prepare('select count(*) as count from channel_operations where channel_jid = ?')
+            .get(channel.jid) as { count: number }
+        ).count;
+      try {
+        await session.prompt('hello');
+        await vi.waitFor(() => expect(rpc.rpcSessionHasLiveSubagents(channel.folder)).toBe(true));
+        // Let the first Life grace expire while children are still active.
+        await new Promise((done) => setTimeout(done, 1100));
+        writeFileSync(finishChildren, 'done');
+        await vi.waitFor(() => expect(rpc.rpcSessionHasLiveSubagents(channel.folder)).toBe(false));
+        const compact = session.compact().then(
+          () => ({ ok: true, error: '' }),
+          (error: Error) => ({ ok: false, error: error.message }),
+        );
+        await vi.waitFor(() => expect(existsSync(compactStarted)).toBe(true));
+        // The rearmed retirement timer now fires during compaction.
+        await new Promise((done) => setTimeout(done, 1100));
+        expect(leases()).toBe(1);
+        expect(session.isAlive).toBe(true);
+        if (kind === 'life')
+          expect(() =>
+            db.archiveLifeSessionAndStartNew({
+              archivedJid: 'web:compacting',
+              archivedName: 'Compacting',
+              expectedFolder: channel.folder,
+            }),
+          ).toThrow('Life session still has active or queued work');
+        writeFileSync(finishCompact, 'done');
+        expect(await compact).toEqual({ ok: success, error: success ? '' : 'compact failed' });
+        if (kind === 'life') {
+          await vi.waitFor(() => expect(leases()).toBe(0), { timeout: 2500 });
+          expect(session.isAlive).toBe(false);
+          db.archiveLifeSessionAndStartNew({
+            archivedJid: 'web:after-compact',
+            archivedName: 'After compact',
+            expectedFolder: channel.folder,
+          });
+          expect(db.getChannel('web:after-compact')?.kind).toBe('standard');
+        } else {
+          await new Promise((done) => setTimeout(done, 1100));
+          expect(leases()).toBe(1);
+          expect(session.isAlive).toBe(true);
+        }
+      } finally {
+        await rpc.closeAllRpcSessions();
+        inspect.close();
+      }
+    },
+    10000,
+  );
+
+  it.each(['autonomous', 'children'] as const)(
+    'retires idle Life ownership after %s work without the ten-minute warm timeout',
+    async (mode) => {
+      const root = mkdtempSync(join(tmpdir(), 'piweb-life-late-retire-'));
+      tempDirs.push(root);
+      const dbPath = resolve(root, 'gateway.db');
+      const fakePi = resolve(root, 'late-life-pi.mjs');
+      const finishFile = resolve(root, 'finish');
+      writeFileSync(
+        fakePi,
+        `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+const widget = (state) => send({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async', widgetLines: ['PI_SUBAGENT_ASYNC_JSON:' + JSON.stringify({ kind: 'pi-subagents.async-status-snapshot', version: 1, runs: [{ state }], omitted: {} })] });
+rl.on('line', (line) => {
+  if (JSON.parse(line).type !== 'prompt') return;
+  send({ type: 'agent_start' });
+  if (${JSON.stringify(mode)} === 'children') widget('running');
+  send({ type: 'agent_settled' });
+  if (${JSON.stringify(mode)} === 'autonomous') send({ type: 'agent_start' });
+  const timer = setInterval(() => {
+    if (!fs.existsSync(${JSON.stringify(finishFile)})) return;
+    clearInterval(timer);
+    if (${JSON.stringify(mode)} === 'children') {
+      send({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async' });
+    } else {
+      send({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'late answer' }] } });
+      send({ type: 'agent_settled' });
+    }
+  }, 10);
+});
+`,
+      );
+      chmodSync(fakePi, 0o755);
+      process.env.DB_PATH = dbPath;
+      process.env.SESSIONS_DIR = resolve(root, 'sessions');
+      process.env.PI_BIN = fakePi;
+      process.env.PI_CWD = root;
+      process.env.RPC_IDLE_TIMEOUT_MS = '600000';
+      vi.resetModules();
+      const db = await import('../src/db.js');
+      const rpc = await import('../src/agent/rpc-session.js');
+      const transport = await import('../src/transport/index.js');
+      db.initDb();
+      const life = db.getOrCreateLifeChannel().channel;
+      const sendResponse = vi.fn().mockResolvedValue(true);
+      let releaseDelivery!: () => void;
+      const delivered = new Promise<void>((resolveDelivery) => {
+        releaseDelivery = resolveDelivery;
+      });
+      transport.setTransport({
+        sendResponse,
+        sendFilesResponse: vi.fn().mockResolvedValue(true),
+        setTyping: vi.fn().mockResolvedValue(undefined),
+        clearTyping: vi.fn().mockResolvedValue(undefined),
+        createEventStreamer: () => vi.fn().mockResolvedValue(undefined),
+      });
+      const session = rpc.getRpcSession(life.folder, { channelJid: life.jid });
+      const inspect = new Database(dbPath, { readonly: true });
+      const leases = () =>
+        (
+          inspect
+            .prepare('select count(*) as count from channel_operations where channel_jid = ?')
+            .get(life.jid) as { count: number }
+        ).count;
+      try {
+        await session.prompt('hello', undefined, delivered);
+        await vi.waitFor(() =>
+          expect(
+            mode === 'children'
+              ? rpc.rpcSessionHasLiveSubagents(life.folder)
+              : rpc.rpcSessionIsStreaming(life.folder),
+          ).toBe(true),
+        );
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1100));
+        expect(leases()).toBe(1);
+        expect(() =>
+          db.archiveLifeSessionAndStartNew({
+            archivedJid: 'web:too-early',
+            archivedName: 'Early',
+            expectedFolder: life.folder,
+          }),
+        ).toThrow('Life session still has active or queued work');
+        writeFileSync(finishFile, 'finish');
+        if (mode === 'children')
+          await vi.waitFor(() => expect(rpc.rpcSessionHasLiveSubagents(life.folder)).toBe(false));
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1100));
+        expect(leases()).toBe(1);
+        expect(sendResponse).not.toHaveBeenCalled();
+        releaseDelivery();
+        if (mode === 'autonomous')
+          await vi.waitFor(() =>
+            expect(sendResponse).toHaveBeenCalledWith(life.jid, 'late answer', expect.any(Object)),
+          );
+        await vi.waitFor(() => expect(leases()).toBe(0), { timeout: 2500 });
+        expect(session.isAlive).toBe(false);
+        db.archiveLifeSessionAndStartNew({
+          archivedJid: 'web:late-life',
+          archivedName: 'Late Life',
+          expectedFolder: life.folder,
+        });
+        expect(db.getChannel('web:late-life')?.kind).toBe('standard');
+      } finally {
+        releaseDelivery();
+        await rpc.closeAllRpcSessions();
+        inspect.close();
+      }
+    },
+    10000,
+  );
+
   it('holds a durable channel lease while idle and retires the process when deletion revokes it', async () => {
     const root = mkdtempSync(join(tmpdir(), 'piweb-rpc-ownership-'));
     tempDirs.push(root);

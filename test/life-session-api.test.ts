@@ -60,6 +60,72 @@ afterEach(async () => {
 });
 
 describe('Life session API', () => {
+  it('acknowledges the exact saved prompt event ID in standard and Life sessions', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'piweb-prompt-id-api-'));
+    tempDirs.push(tempDir);
+    const port = await unusedPort();
+    Object.assign(process.env, {
+      DB_PATH: resolve(tempDir, 'gateway.db'),
+      PIDG_CONFIG: resolve(tempDir, 'missing-config.json'),
+      SESSIONS_DIR: resolve(tempDir, 'sessions'),
+      WEB_MEDIA_DIR: resolve(tempDir, 'media'),
+      WEB_UPLOAD_DIR: resolve(tempDir, 'uploads'),
+      WEB_AUTH_TOKEN: 'prompt-id-test-token',
+      WEB_HOST: '127.0.0.1',
+      WEB_PORT: String(port),
+      WEB_TRUST_TAILSCALE_IDENTITY: 'false',
+    });
+    vi.resetModules();
+    const db = await import('../src/db.js');
+    const { startWebServer } = await import('../src/web/server.js');
+    db.initDb();
+    db.registerChannel({
+      jid: 'web:prompt-id',
+      name: 'Prompt ID',
+      folder: 'web_prompt_id',
+      requiresTrigger: false,
+      isMain: false,
+      cwdOverride: '',
+    });
+    const server = startWebServer();
+    servers.push(server);
+    if (!server.listening) await new Promise<void>((done) => server.once('listening', done));
+    const origin = `http://127.0.0.1:${port}`;
+    const login = await fetch(`${origin}/api/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'prompt-id-test-token' }),
+    });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const post = (path: string, body: unknown) =>
+      fetch(`${origin}${path}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const life = await (await post('/api/life-session', {})).json();
+    for (const jid of ['web:prompt-id', 'web:life']) {
+      for (let i = 0; i < 2; i++) {
+        const response = await post(`/api/sessions/${encodeURIComponent(jid)}/messages`, {
+          text: '相同 prompt',
+          quote: 'quoted context',
+          attachments: [],
+          ...(jid === 'web:life' ? { lifeGeneration: life.generation } : {}),
+        });
+        expect(response.status).toBe(200);
+        const result = await response.json();
+        const saved = db.getWebEventsSince(jid, 0, 10);
+        expect(result.eventId).toBe(saved.at(-1)!.rowid);
+        expect(Number.isSafeInteger(result.eventId)).toBe(true);
+        expect(saved.at(-1)).toMatchObject({
+          kind: 'message',
+          role: 'user',
+          content: '↪ 引用：「quoted context」\n相同 prompt',
+        });
+        expect(saved).toHaveLength(i + 1);
+      }
+    }
+  });
   it('creates one default Life session and rejects session management', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'piweb-life-api-'));
     tempDirs.push(tempDir);

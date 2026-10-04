@@ -1673,6 +1673,37 @@ export function getLiveOutput(channelJid: string): LiveOutput | null {
   return row && (row.content || row.thinking) ? row : null;
 }
 
+/** Publish a durable reply and consume its preview under the same write fence. */
+export function commitWebReply(
+  event: Parameters<typeof appendWebEvent>[0],
+  fence?: ChannelGenerationFence,
+): number {
+  return db
+    .transaction(() => {
+      const rowid = appendWebEvent(event, fence);
+      clearLiveOutput(event.channelJid, fence);
+      return rowid;
+    })
+    .immediate();
+}
+
+/** One WAL read snapshot: never mix pre-publication events with a post-publication clear. */
+export function getWebStreamSnapshot(channelJid: string, afterRowid: number, limit = 500) {
+  return db
+    .transaction(() => {
+      const channel = getChannel(channelJid);
+      const rows = getWebEventsSince(channelJid, afterRowid, limit);
+      return {
+        channel,
+        rows,
+        busy: isChannelBusy(channelJid),
+        live: getLiveOutput(channelJid),
+        hasMore: hasWebEventsAfter(channelJid, rows.at(-1)?.rowid ?? afterRowid),
+      };
+    })
+    .deferred();
+}
+
 /** Called when the finished message is appended, so the two never both show. */
 export function clearLiveOutput(channelJid: string, fence?: ChannelGenerationFence): void {
   fencedChannelWrite(channelJid, fence, () => {
@@ -2237,7 +2268,14 @@ export function touchChannelOperation(id: string): boolean {
     .immediate();
 }
 
-export function commitLifeMessageOperation(options: {
+/** Legacy callers consume the queue ID; the Web ack also needs its exact event ID. */
+export function commitLifeMessageOperation(
+  options: Parameters<typeof commitWebMessageOperation>[0],
+): number {
+  return commitWebMessageOperation(options).messageRowid;
+}
+
+export function commitWebMessageOperation(options: {
   operationId: string;
   channelJid: string;
   expectedFolder: string;
@@ -2248,18 +2286,19 @@ export function commitLifeMessageOperation(options: {
     files?: string[];
   };
   message: Omit<Parameters<typeof enqueueMessage>[0], 'channelJid'>;
-}): number {
+}): { messageRowid: number; eventId: number } {
   return db
     .transaction(() => {
       if (
         !isChannelOperationCurrent(options.operationId, options.channelJid, options.expectedFolder)
       )
         throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
-      appendWebEvent(
+      const eventId = appendWebEvent(
         { channelJid: options.channelJid, ...options.event },
         { expectedFolder: options.expectedFolder },
       );
-      return enqueueMessage({ channelJid: options.channelJid, ...options.message });
+      const messageRowid = enqueueMessage({ channelJid: options.channelJid, ...options.message });
+      return { messageRowid, eventId };
     })
     .immediate();
 }

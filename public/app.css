@@ -824,6 +824,19 @@ svg {
   padding: 12px 0 4px;
 }
 
+/* Browser anchoring must not silently follow new content when the setting is OFF.
+   Older-history prepends retain their explicit viewport re-anchoring. */
+#messages[data-auto-scroll='off'] {
+  overflow-anchor: none;
+}
+
+/* The submitted turn owns at least one visible transcript viewport. Its
+   non-semantic reservation shrinks as the actual response grows underneath. */
+#messages[data-prompt-turn='active'] {
+  padding-bottom: calc(4px + var(--prompt-turn-space, 0px));
+  overflow-anchor: none;
+}
+
 .msg {
   display: block;
   padding: 6px 14px;
@@ -925,6 +938,11 @@ svg {
   white-space: pre;
   overflow-wrap: normal;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Historical replies skip animation, but must not flash diagram source. */
+.mermaid-wrap[data-render-pending] {
+  visibility: hidden;
 }
 
 .mermaid-wrap {
@@ -1300,7 +1318,6 @@ svg {
     border-color 0.15s ease;
 }
 
-.event.partial,
 .event.pop-in,
 .msg.pop-in {
   animation: popInSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -2701,7 +2718,8 @@ svg {
   line-height: 1;
 }
 
-.notification-toggle {
+.notification-toggle,
+.settings-toggle {
   position: relative;
   width: 44px;
   height: 26px;
@@ -2712,7 +2730,8 @@ svg {
   transition: background 160ms ease, box-shadow 160ms ease;
 }
 
-.notification-toggle::after {
+.notification-toggle::after,
+.settings-toggle::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -2725,12 +2744,14 @@ svg {
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 160ms ease;
 }
 
-.notification-toggle[data-state='on'] {
+.notification-toggle[data-state='on'],
+.settings-toggle[data-state='on'] {
   background: var(--accent);
   box-shadow: inset 0 0 0 1px transparent;
 }
 
-.notification-toggle[data-state='on']::after {
+.notification-toggle[data-state='on']::after,
+.settings-toggle[data-state='on']::after {
   transform: translateX(18px);
   background: #fff;
 }
@@ -2875,7 +2896,9 @@ svg {
   .settings-dialog::backdrop,
   #trash-sheet .trash-panel,
   .notification-toggle,
-  .notification-toggle::after {
+  .notification-toggle::after,
+  .settings-toggle,
+  .settings-toggle::after {
     animation: none;
     transition: none;
   }
@@ -4469,19 +4492,66 @@ dialog.sheet::backdrop {
   color: #b5bac1;
 }
 
-/* ── streaming reply ────────────────────────────────────────────────────────
- *
- * The answer appears as it is generated rather than in one lump at the end.
- * Only the newly arrived tail fades in: animating the whole string on every
- * poll would restart the fade on text already read, which reads as flicker.
+/* ── render-first streaming reply ──────────────────────────────────────────
+ * Stable rich blocks are laid out before reveal. No token spans, slide-in, or
+ * rebuilding previously read blocks; the mask changes pixels, not geometry.
  */
-.msg.partial .msg-text .ink {
-  opacity: 0;
-  transition: opacity 220ms ease-out;
+/* Preserve native Markdown margin collapsing, including after history reload. */
+.reply-chunk {
+  display: block;
 }
 
-.msg.partial .msg-text .ink.lit {
-  opacity: 1;
+.reply-chunk[data-reveal='pending'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* One reading-order cursor: completed rows stay opaque, the active row scans
+   left to right, and future rows remain hidden. No spans, layout changes or timers. */
+.reply-chunk[data-reveal='revealing'] {
+  pointer-events: none;
+  --reply-active-mask: linear-gradient(
+    90deg,
+    #000 var(--reply-row-front),
+    transparent calc(var(--reply-row-front) + 56px)
+  );
+  -webkit-mask-image: linear-gradient(#000, #000), var(--reply-active-mask);
+  mask-image: linear-gradient(#000, #000), var(--reply-active-mask);
+  -webkit-mask-size: 100% var(--reply-row-top), 100% var(--reply-row-height);
+  mask-size: 100% var(--reply-row-top), 100% var(--reply-row-height);
+  -webkit-mask-position: 0 0, 0 var(--reply-row-top);
+  mask-position: 0 0, 0 var(--reply-row-top);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.reply-chunk[data-reveal-mode='hidden'] {
+  -webkit-mask-image: linear-gradient(transparent, transparent);
+  mask-image: linear-gradient(transparent, transparent);
+}
+
+/* Graphics are not lines of prose: reveal their band vertically after readiness. */
+.reply-chunk[data-reveal-mode='media'] {
+  --reply-active-mask: linear-gradient(
+    180deg,
+    #000 calc(var(--reply-front) - var(--chunk-top) - var(--reply-row-top)),
+    transparent calc(var(--reply-front) - var(--chunk-top) - var(--reply-row-top) + 56px)
+  );
+}
+
+.msg-text > .reply-chunk:first-child > :first-child {
+  margin-top: 0;
+}
+
+.msg-text > .reply-chunk:last-child > :last-child {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reply-chunk[data-reveal='revealing'] {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 
 /* A soft cursor so a pause in generation still looks alive rather than stuck. */
@@ -4504,26 +4574,12 @@ dialog.sheet::backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .msg.partial .msg-text .ink {
-    opacity: 1;
-    transition: none;
-  }
   .msg.partial .msg-text::after {
     animation: none;
   }
 }
 
-/* The streaming thinking block reuses the finished row's look, so the swap when
- * the block closes is not a visible jump. Only the caret marks it as live. */
-.event.thinking.partial .event-body .ink {
-  opacity: 0;
-  transition: opacity 220ms ease-out;
-}
-
-.event.thinking.partial .event-body .ink.lit {
-  opacity: 1;
-}
-
+/* Thinking uses the same ready-block queue and keeps its expanded state. */
 .event.thinking.partial .event-body::after {
   content: '';
   display: inline-block;
@@ -4537,24 +4593,9 @@ dialog.sheet::backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .event.thinking.partial .event-body .ink {
-    opacity: 1;
-    transition: none;
-  }
   .event.thinking.partial .event-body::after {
     animation: none;
   }
-}
-
-/* Streaming markdown: completed blocks render normally, the unfinished tail
- * stays plain until its block closes. Keep the tail's whitespace so a
- * half-written table still lines up instead of collapsing onto one line. */
-.grow-tail {
-  white-space: pre-wrap;
-}
-
-.grow-done > :last-child {
-  margin-bottom: 0;
 }
 
 /* Subagents: quiet native sheet, stable cards, shared conversation renderer. */
