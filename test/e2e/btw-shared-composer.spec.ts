@@ -66,6 +66,23 @@ function routes(
   return calls;
 }
 
+async function switchBySwipe(page: import('playwright').Page, side: boolean) {
+  // A swipe that lands during a running slide hits the moving surface's parent.
+  await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: side ? 280 : 100, y: 300 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: side ? 100 : 280, y: 300 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(page.locator(side ? '#messages' : '#btw-messages')).toBeHidden();
+  await cdp.detach();
+}
+
 test('one composer switches recipient with a visible BTW card and preserves both drafts', async ({
   page,
 }, info) => {
@@ -274,6 +291,8 @@ test('switches freely during a BTW run and keeps main send usable', async ({ pag
     });
   });
   await page.goto('/');
+  // Session selection resets the composer; type only after it has landed.
+  await expect(page.getByText('Main message')).toBeVisible();
   await page.locator('#input').fill('main draft');
   await page.locator('#btn-more').click();
   await page.locator('#mi-btw').click();
@@ -286,16 +305,16 @@ test('switches freely during a BTW run and keeps main send usable', async ({ pag
   await expect(page.locator('#btn-send')).toBeEnabled();
   await page.locator('#btn-send').click();
   await expect.poll(() => calls.some((p) => p.endsWith('/messages'))).toBe(true);
-  await page.locator('#btw-switch-side').click();
+  await switchBySwipe(page, true);
   await expect(page.locator('#btw-messages')).toContainText('side working');
   await expect(page.locator('.btw-waiting')).toBeVisible();
   expect(reads).toBe(1);
   await page.screenshot({ path: info.outputPath('btw-running-switch.png') });
   await page.waitForTimeout(600);
-  await page.locator('#btw-switch-main').click();
+  await switchBySwipe(page, false);
   release();
-  await expect(page.locator('#btw-switch-side')).not.toContainText('回答中');
-  await page.locator('#btw-switch-side').click();
+  await expect(page.locator('#btw-context-label')).not.toContainText('回答中');
+  await switchBySwipe(page, true);
   await expect(page.locator('#btw-messages')).toContainText('side complete');
   await expect(page.locator('#btn-send')).toBeEnabled();
 });
@@ -321,7 +340,253 @@ test('clear button clears the side thread only, after confirmation', async ({ pa
   await page.locator('#btw-clear').click();
   await expect(page.locator('#btw-messages')).not.toContainText('erase side only');
   expect(bodies).toEqual([{ action: 'clear', generation: 'web_btw_test' }]);
-  await page.locator('#btw-switch-main').click();
+  await switchBySwipe(page, false);
   await expect(page.locator('#messages')).toContainText('Main message');
   await page.screenshot({ path: info.outputPath('btw-cleared-main-preserved.png') });
+});
+
+test('BTW slides with a held horizontal finger and preserves recipient drafts', async ({
+  page,
+}, info) => {
+  routes(page);
+  await page.goto('/');
+  await expect(page.locator('#btw-switcher')).toHaveCount(0);
+  await expect(page.locator('#btw-context-label')).toHaveText('Main agent');
+  await page.locator('#input').fill('main retained');
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.locator('#input').fill('side retained');
+  await page.locator('#btw-back').click();
+  await expect(page.locator('#btw-messages')).toBeHidden();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 280, y: 300 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: 160, y: 300 }],
+  });
+  await expect
+    .poll(async () => (await page.locator('#messages').boundingBox())!.x)
+    .toBeLessThan(-80);
+  await expect(page.locator('#input')).toHaveValue('main retained');
+  await page.screenshot({ path: info.outputPath('btw-held-swipe.png') });
+  await page.waitForTimeout(500);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(page.locator('#input')).toHaveValue('side retained');
+  await expect(page.locator('#btw-context-label')).toHaveText('BTW');
+  await expect(page.locator('#messages')).toBeHidden();
+  await page.waitForTimeout(500);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 100, y: 300 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: 260, y: 300 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(page.locator('#input')).toHaveValue('main retained');
+  await expect(page.locator('#btw-messages')).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('BTW header follows DESIGN.md: back left, icon clear right, 44px targets, one-line status', async ({
+  page,
+}, info) => {
+  routes(page);
+  await page.goto('/');
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  const box = async (sel: string) => (await page.locator(sel).boundingBox())!;
+  const [card, back, clear, top] = await Promise.all([
+    box('#btw-card'),
+    box('#btw-back'),
+    box('#btw-clear'),
+    box('.topbar'),
+  ]);
+  expect(card.y).toBeCloseTo(top.y + top.height, 0); // directly under the header
+  expect(back.x).toBeLessThan(card.width / 2);
+  expect(clear.x).toBeGreaterThan(card.width / 2);
+  for (const b of [back, clear]) expect([b.width, b.height]).toEqual([44, 44]);
+  for (const sel of ['#btw-back', '#btw-clear']) {
+    const style = await page.locator(sel).evaluate((e) => getComputedStyle(e).borderTopWidth);
+    expect(style).toBe('0px');
+  }
+  const status = page.locator('#btw-card span');
+  expect(await status.evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true);
+  await expect(page.locator('#input')).toHaveAttribute('placeholder', '問 BTW…');
+  await expect(page.locator('#btw-context-label')).toBeAttached();
+  expect(
+    await page.locator('#btw-context-label').evaluate((e) => e.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: info.outputPath('btw-header.png'), animations: 'disabled' });
+});
+
+test('a short drag under 28% settles back; past 28% switches', async ({ page }) => {
+  routes(page);
+  await page.goto('/');
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+  const drag = async (from: number, to: number) => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: from, y: 300 }],
+    });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: to, y: 300 }],
+    });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+    await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+  };
+  await drag(100, 190); // 90px ≈ 23% of 390px
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await drag(100, 230); // 130px ≈ 33%
+  await expect(page.locator('#btw-card')).toBeHidden();
+  await expect(page.locator('#messages')).toBeVisible();
+});
+
+test('main view shows a quiet BTW-answering link that opens BTW', async ({ page }) => {
+  routes(page);
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({
+        json: { available: true, generation: 'web_btw_test', thread: { messages: [] } },
+      });
+    }
+    await hold;
+    return route.fulfill({
+      json: {
+        thread: {
+          messages: [
+            { role: 'user', content: 'q' },
+            { role: 'assistant', content: 'a' },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto('/');
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.locator('#input').fill('q');
+  await page.locator('#btn-send').click();
+  await expect(page.locator('#btw-card')).toContainText('BTW 回答中');
+  await page.locator('#btw-back').click();
+  const link = page.getByRole('button', { name: '查看 BTW（回答中）' });
+  await expect(link).toBeVisible();
+  await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+  await link.click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  release();
+  await expect(page.locator('#btw-messages')).toContainText('a');
+  await page.locator('#btw-back').click();
+  await expect(link).toBeHidden();
+});
+
+test('a BTW answer still running from an earlier page load shows as pending and fills in', async ({
+  page,
+}) => {
+  routes(page);
+  let reads = 0;
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    reads++;
+    const done = reads > 1;
+    return route.fulfill({
+      json: {
+        available: true,
+        generation: 'web_btw_test',
+        thread: done
+          ? {
+              messages: [
+                { role: 'user', content: 'slow q' },
+                { role: 'assistant', content: 'slow answer' },
+              ],
+              pending: [],
+            }
+          : { messages: [], pending: ['slow q'] },
+      },
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await expect(page.locator('#btw-messages')).toContainText('slow q');
+  await expect(page.locator('#btw-messages .btw-waiting')).toBeVisible();
+  await expect(page.locator('#btw-card')).toContainText('BTW 回答中');
+  await expect(page.locator('#btn-send')).toBeDisabled();
+  await expect(page.locator('#btw-messages')).toContainText('slow answer', { timeout: 8000 });
+  await expect(page.locator('#btw-messages .btw-waiting')).toHaveCount(0);
+  await expect(page.locator('#btw-card')).not.toContainText('BTW 回答中');
+});
+
+test('while BTW is answering, the menu and the link re-enter BTW immediately', async ({ page }) => {
+  routes(page);
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    if (route.request().method() === 'GET') {
+      reads++;
+      return route.fulfill({
+        json: { available: true, generation: 'web_btw_test', thread: { messages: [] } },
+      });
+    }
+    await hold;
+    return route.fulfill({
+      json: {
+        thread: {
+          messages: [
+            { role: 'user', content: 'q' },
+            { role: 'assistant', content: 'a' },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.locator('#input').fill('q');
+  await page.locator('#btn-send').click();
+  for (let i = 0; i < 2; i++) {
+    await page.locator('#btw-back').click();
+    await expect(page.locator('#btw-card')).toBeHidden();
+    await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+    if (i === 0) {
+      await page.locator('#btn-more').click();
+      await page.locator('#mi-btw').click();
+    } else {
+      await page.getByRole('button', { name: '查看 BTW（回答中）' }).click();
+    }
+    await expect(page.locator('#btw-card')).toBeVisible();
+    await expect(page.locator('#btw-messages .btw-waiting')).toBeVisible();
+  }
+  expect(reads).toBe(1);
+  release();
+  await expect(page.locator('#btw-messages')).toContainText('a');
 });

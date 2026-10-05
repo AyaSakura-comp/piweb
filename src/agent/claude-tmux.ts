@@ -292,6 +292,7 @@ export async function invokeClaudeTmux(
     signal?: AbortSignal;
     attachments?: string | null;
     onEvent?: (event: any) => void | Promise<void>;
+    onBackgroundReply?: (text: string) => Promise<void>;
     isCurrent?: () => boolean;
     dependencies?: ClaudeTmuxDependencies;
   },
@@ -403,6 +404,7 @@ export async function invokeClaudeTmux(
     let offset = activeTurn?.transcriptOffset ?? fileSize(transcriptPath);
     let remainder: Buffer = Buffer.alloc(0);
     let finalText = '';
+    let lastYieldedText = '';
     let informationalFallback = '';
     let turnComplete = false;
     let shouldSubmit = !recoveringTurn;
@@ -511,12 +513,21 @@ export async function invokeClaudeTmux(
             // Claude may yield an acknowledgement while its background children
             // run. Keep the queue lease and transcript tail alive for the actual
             // parent continuation, rather than losing its completion notification.
-            turnComplete = !(record.pendingBackgroundAgentCount > 0 || childTracker.hasPending);
+            // Bash and Monitor are not background *agents*, so Claude omits
+            // pendingBackgroundAgentCount for them. Their own tracker must also
+            // keep the transcript tail alive across acknowledgement turns.
+            turnComplete = !(record.pendingBackgroundAgentCount > 0 || childTracker.hasPending ||
+              commandTracker.getCommands().some((command) => command.state === 'running'));
             if (!turnComplete && finalText) {
-              await opts?.onEvent?.({
-                type: 'message_update',
-                assistantMessageEvent: { type: 'thinking_end', content: finalText },
-              });
+              lastYieldedText = finalText;
+              if (opts?.onBackgroundReply) {
+                await opts.onBackgroundReply(convertLocalMediaLinks(finalText, cwd));
+              } else {
+                await opts?.onEvent?.({
+                  type: 'message_update',
+                  assistantMessageEvent: { type: 'thinking_end', content: finalText },
+                });
+              }
               finalText = '';
             }
           }
@@ -590,7 +601,7 @@ export async function invokeClaudeTmux(
     }
     const finalCmdUpdates = commandTracker.pollActiveOutputs();
     if (finalCmdUpdates.length > 0) await publishCommands(finalCmdUpdates);
-    let replyText = finalText.trim();
+    let replyText = (finalText || lastYieldedText).trim();
     if (!replyText && informationalFallback) {
       replyText = informationalFallback.trim();
     }

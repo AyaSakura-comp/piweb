@@ -83,11 +83,21 @@ walkthroughs are not proof that every detached task survives process failure.
 See [recent AGY changes and verification status](docs/agy-observability-status.md)
 for test commands, evidence, known blockers and deployment scope.
 
+## Extension-owned replies
+
+Displayed Pi extension receipts/previews are used when no assistant text is returned.
+In persistent RPC, an extension-consumed prompt completes on `input_handled` without
+waiting for an agent run that never starts. Hidden custom messages stay hidden;
+ordinary assistant text takes precedence. No new confirmation command is introduced.
+See [extension reply semantics and verification commands](docs/extension-replies.md).
+
 ## Claude Code bridge
 
 An opt-in `claude-code/*` provider runs a persistent Claude Code TUI in tmux on
 the worker host, with HAIKU / SONNET / OPUS model badges. It uses autonomous
-host permissions and separate Claude memory. See [setup, security, lifecycle and
+host permissions and separate Claude memory. Background Bash/Monitor work keeps the
+parent turn alive; yielded replies are published to history without repeating the final
+already-delivered reply. See [setup, security, lifecycle and
 verification](docs/claude-tmux-bridge.md) before enabling `CLAUDE_TMUX_ENABLED`.
 
 ## Conversation continuity across harnesses
@@ -346,8 +356,10 @@ Evidence stays in ignored `artifacts/playwright/btw-live-results/`. This test
 uses the configured model, so enable it explicitly only in a disposable
 workspace; it does not cover real-device keyboards or BTW-specific Stop.
 
-BTW now has direct **主對話 / BTW** recipient buttons: the main composer remains
-usable during a side answer, and switching back preserves the pending side view.
+BTW uses a slim **BTW 側聊** header with back/clear icons and horizontal swipe
+navigation. While a side answer is pending, **BTW 回答中 ›** opens its transcript;
+the main composer and other session controls remain usable. Reloading or switching
+sessions restores pending side questions from the worker snapshot.
 **清除 BTW** confirms before clearing the native side thread, without deleting main
 messages; it is disabled while answering. See [BTW workspace](docs/btw-workspace.md)
 for API/generation safeguards, tests and the coordinated web/worker deployment requirement.
@@ -440,4 +452,6 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
 - **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON
   rather than multipart to keep the container dependency-free. Browser-reported size, upload time and response time
   are logged as `Upload metrics`, without filenames or content. Timings are not yet displayed in the UI;
-  refresh the page after deployment to enable recording. See [upload diagnostics](docs/upload-metrics.md).
+  refresh the page after deployment to enable recording. Attachment requests have an explicit
+  five-minute browser/server receive deadline; expiry reports an error without automatically
+  retrying the message. See [upload diagnostics and deadlines](docs/upload-metrics.md).

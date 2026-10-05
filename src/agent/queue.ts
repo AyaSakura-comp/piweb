@@ -470,6 +470,21 @@ async function processMessage(
       await closeRpcSession(channel.folder);
     }
 
+    let lastBackgroundReply: string | undefined;
+    const deliverReply = async (text: string): Promise<boolean> => {
+      if (signal.aborted || !renewWorkerLease(true)) return false;
+      const { text: outText, files: outFiles, rawText } = parseOutboxMarkers(text);
+      const sent = outFiles.length > 0
+        ? await getTransport().sendFilesResponse(jid, rawText ?? text, outFiles, writeFence)
+        : await getTransport().sendResponse(jid, outText, writeFence);
+      if (!sent) return false;
+      logMessage(jid, 'assistant', text, writeFence);
+      if (jid.startsWith('web:')) {
+        commitHarnessTurn(channel, targetHarness, getLastAssistantWebEventRowid(jid));
+      }
+      return true;
+    };
+
     let result;
     if (useClaudeTmux) {
       result = config.claudeTmuxEnabled
@@ -483,6 +498,10 @@ async function processMessage(
             signal,
             attachments,
             onEvent,
+            onBackgroundReply: async (text) => {
+              if (!await deliverReply(text)) throw new Error('Claude background reply could not be delivered');
+              lastBackgroundReply = text;
+            },
           })
         : {
             ok: false,
@@ -557,27 +576,15 @@ async function processMessage(
     }
 
     if (result.ok) {
-      // Method C: extract [[image:/file:]] markers; attach those files, send the rest as text.
-      const { text: outText, files: outFiles, rawText } = parseOutboxMarkers(result.text);
-      const sent =
-        outFiles.length > 0
-          ? await getTransport().sendFilesResponse(
-              jid,
-              rawText ?? result.text,
-              outFiles,
-              writeFence,
-            )
-          : await getTransport().sendResponse(jid, outText, writeFence);
+      // A monitor can terminate without another assistant text record. Do not
+      // deliver its already-published last reply a second time.
+      const sent = result.text === lastBackgroundReply || await deliverReply(result.text);
       if (!sent) {
         markMessageFailed(rowid);
         logger.warn({ jid }, 'Agent response generated but could not be delivered');
         return;
       }
 
-      logMessage(jid, 'assistant', result.text, writeFence);
-      if (jid.startsWith('web:')) {
-        commitHarnessTurn(channel, targetHarness, getLastAssistantWebEventRowid(jid));
-      }
       sigtermRetries.delete(rowid);
       markMessageDone(rowid);
       logger.info({ jid, responseLen: result.text.length }, 'Message processed');

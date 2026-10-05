@@ -15,11 +15,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Use a slim BTW header with accessible back/clear icons, horizontal transcript switching and a pending-answer link; preserve independent composer drafts and restore pending questions from worker snapshots
+- Set an explicit five-minute browser upload and server receive deadline, report timeout once and avoid automatic retries
 - Restore the **/pi status** header shortcut to standard sessions while keeping it available in Life mode
 - Replace the overflow menu's **Clean session** action with the same restorable **Delete session** flow used by the Sessions drawer
 
 ### Fixed
 
+- Run BTW side controls beside the serial worker control loop so a long answer does not block later snapshots or unrelated controls, while retaining ownership fencing
+- Keep Claude background Bash/Monitor work alive across yielded acknowledgements, publish intermediate replies to history and suppress an identical already-delivered final reply
+- Complete extension-consumed RPC prompts on `input_handled` when no agent run starts, and use displayed custom receipt text when no assistant text is available
 - Make permanent session purge recovery concurrency-safe with displayed channel-generation and deletion-episode purge tokens (including stale automatic-retention snapshots), generation-atomic command/title mutations with post-RPC cross-worker `/pi new` processing and durable-operation exclusion, reserved tombstone namespaces plus segment-aware cross-channel path-alias rejection with post-claim registration fencing, persisted directory inode identities, authenticated non-removable fsynced terminal seals and monotonic rmdir-only stale-upload guard publication, settled child/path/target cleanup, symlink/hard-link safety, missing-root creation, archive-discovery error propagation, confirmed-exit RPC ownership, pre-body request leases, post-retirement control fencing, atomic active-owner control claims, terminal cleanup of controls interrupted by trashing, frozen scheduled/message work plus folder-and-storage-token generation fencing for request leases, session-management mutations, and late worker cleanup on exactly reused owners, frozen transcript-safe clear handling plus stale live-output removal plus durable-worker plus monotonic-ownership-epoch restore-ABA exclusion for trashed sessions, delete/folder fences, completion receipts, and generation-specific guarded standard upload staging
 - Prevent stale trash-list responses from resurrecting purged rows, and use native modal isolation so stacked dialogs preserve each other's ownership
 - Fence suspended Life workers and controls after generation rotation, and prevent quarantined Life tasks from starving unrelated scheduled work

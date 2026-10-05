@@ -20,53 +20,69 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
   let mainScroll = 0;
   let sideScroll = 0;
   let sending = false;
+  // A side answer started by an earlier page load / session selection that is
+  // still running on the worker (reported by the snapshot's `pending`).
+  let remotePending = false;
+  let pendingPoll = null;
+  const sideBusy = () => sending || remotePending;
   let opening = false;
   let clearing = false;
   let runEpoch = 0;
-  const tabs = document.createElement('div');
-  tabs.id = 'btw-switcher';
-  tabs.className = 'btw-switcher';
-  tabs.hidden = true;
-  tabs.setAttribute('role', 'group');
-  tabs.setAttribute('aria-label', '對話收件對象');
-  const mainTab = Object.assign(document.createElement('button'), {
-    id: 'btw-switch-main',
-    type: 'button',
-    textContent: '主對話',
-  });
-  const sideTab = Object.assign(document.createElement('button'), {
-    id: 'btw-switch-side',
-    type: 'button',
-    textContent: 'BTW',
-  });
-  tabs.append(mainTab, sideTab);
-  main.before(tabs);
+  const contextLabel = document.createElement('div');
+  contextLabel.id = 'btw-context-label';
+  contextLabel.className = 'btw-context-label';
+  contextLabel.setAttribute('role', 'status');
+  contextLabel.setAttribute('aria-live', 'polite');
+  contextLabel.textContent = 'Main agent';
+  main.before(contextLabel);
+  // The ownership card sits at the top, right under the header, instead of
+  // between the transcript and the composer.
+  main.before(card);
   const clear = Object.assign(document.createElement('button'), {
     id: 'btw-clear',
     type: 'button',
-    textContent: '清除 BTW',
+    className: 'icon-btn',
+    title: '清除 BTW',
+    innerHTML:
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>',
   });
   clear.setAttribute('aria-label', '清除 BTW 訊息');
-  back.before(clear);
+  card.append(clear);
+  // Main view while a side answer is pending: a quiet link on the typing line.
+  const pendingRow = document.createElement('div');
+  pendingRow.className = 'btw-pending-row';
+  pendingRow.hidden = true;
+  const pendingLink = Object.assign(document.createElement('button'), {
+    type: 'button',
+    textContent: 'BTW 回答中 ›',
+  });
+  pendingLink.setAttribute('aria-label', '查看 BTW（回答中）');
+  pendingRow.append(pendingLink);
   const mainBlocked = () =>
     Boolean(byId('upload-progress') && !byId('upload-progress').hidden) || textarea.disabled;
   function renderControls() {
-    send.disabled = target === 'btw' ? sending || clearing : mainBlocked();
-    clear.disabled = sending || clearing || opening;
-    mainTab.setAttribute('aria-pressed', String(target === 'main'));
-    sideTab.setAttribute('aria-pressed', String(target === 'btw'));
-    sideTab.textContent = sending ? 'BTW · 回答中' : clearing ? 'BTW · 清除中' : 'BTW';
-    tabs.hidden = !owner;
+    send.disabled = target === 'btw' ? sideBusy() || clearing : mainBlocked();
+    clear.disabled = sideBusy() || clearing || opening;
+    pendingRow.hidden = !(target === 'main' && sideBusy() && owner);
+    contextLabel.textContent =
+      target === 'main'
+        ? `Main agent${sideBusy() ? ' · BTW 回答中' : ''}`
+        : `BTW${sideBusy() ? ' · 回答中' : clearing ? ' · 清除中' : ''}`;
+    byId('app').classList.toggle('btw-swipe-ready', Boolean(owner));
   }
   const status = card.querySelector('span');
   const typing = byId('typing');
 
   // The card replaces the main typing row while BTW is selected, so it carries
   // both states: the side answer in flight, and the main agent still working.
+  if (typing) typing.after(pendingRow);
   function renderStatus() {
-    if (sending) status.textContent = 'BTW 回答中…主對話不受影響';
-    else if (typing && !typing.hidden) status.textContent = '主對話仍在執行 · 這裡的訊息只送到 BTW';
-    else status.textContent = '這裡的訊息只送到 BTW，不會自動加入主對話';
+    const mainBusy = Boolean(typing && !typing.hidden);
+    if (sideBusy()) status.textContent = 'BTW 回答中…';
+    else if (clearing) status.textContent = '清除中…';
+    else if (mainBusy) status.textContent = '主對話執行中 · 不會加入主對話';
+    else status.textContent = '不會加入主對話';
+    status.classList.toggle('btw-live', sideBusy() || mainBusy);
     renderControls();
   }
   if (typing)
@@ -87,9 +103,115 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     return [question, waiting];
   }
 
+  // Render a snapshot. Questions still being answered on the worker show as
+  // pending, and the snapshot is re-read until they finish.
+  function renderThread(thread) {
+    side.replaceChildren();
+    for (const message of thread?.messages || []) {
+      // The structured Web bridge must not hand untrusted HTML to the renderer.
+      if (message.role !== 'user' && message.role !== 'assistant') continue;
+      if (typeof message.content !== 'string') continue;
+      side.append(buildMessage(message));
+    }
+    const pending = sending
+      ? []
+      : (thread?.pending || []).filter((text) => typeof text === 'string' && text);
+    for (const text of pending) side.append(...pendingNodes(text));
+    remotePending = pending.length > 0;
+    clearTimeout(pendingPoll);
+    pendingPoll = remotePending ? setTimeout(pollPending, 3000) : null;
+  }
+  async function pollPending() {
+    pendingPoll = null;
+    const session = getSession();
+    if (!remotePending || !session || session.key !== owner || sending || clearing) return;
+    const epoch = runEpoch;
+    try {
+      const data = await api(`/api/sessions/${encodeURIComponent(session.jid)}/btw`);
+      if (epoch !== runEpoch || key() !== session.key || owner !== session.key || sending) return;
+      if (!data?.available || data.generation !== generation) return;
+      const atBottom = side.scrollHeight - side.scrollTop - side.clientHeight < 40;
+      renderThread(data.thread);
+      if (atBottom) side.scrollTop = side.scrollHeight;
+    } catch {
+      if (epoch === runEpoch && remotePending) pendingPoll = setTimeout(pollPending, 5000);
+    }
+    renderStatus();
+  }
+
   const key = () => getSession()?.key || null;
   const snapshot = () => ({ target, owner });
-  function setTarget(next) {
+  let motions = [],
+    motionId = 0,
+    drag = null;
+  function cleanMotion() {
+    motionId++;
+    motions.forEach((animation) => animation.cancel());
+    motions = [];
+    for (const node of [main, side]) {
+      for (const property of ['position', 'left', 'top', 'width', 'height', 'transform', 'zIndex'])
+        node.style[property] = '';
+      node.inert = false;
+    }
+    main.hidden = target === 'btw';
+    side.hidden = target !== 'btw';
+    main.parentElement.classList.remove('btw-sliding');
+  }
+  function overlay(node, rect) {
+    const parent = main.parentElement.getBoundingClientRect();
+    Object.assign(node.style, {
+      position: 'absolute',
+      left: `${rect.left - parent.left}px`,
+      top: `${rect.top - parent.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      zIndex: '2',
+    });
+    node.hidden = false;
+    node.inert = true;
+    main.parentElement.classList.add('btw-sliding');
+  }
+  function setTarget(next, animate = true, offset = 0) {
+    cleanMotion();
+    drag = null;
+    if (next === target) return;
+    const from = target === 'main' ? main : side;
+    const to = next === 'main' ? main : side;
+    const rect = from.getBoundingClientRect();
+    const direction = next === 'btw' ? 1 : -1;
+    commitTarget(next);
+    if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches || !rect.width) return;
+    overlay(from, rect);
+    const id = motionId;
+    // DESIGN.md: 220ms in / 140ms ease-in back, translateX only, no rebound.
+    // A committed drag settles from the finger over 120–280ms by remaining distance.
+    const remaining = 1 - Math.min(1, Math.abs(offset) / rect.width);
+    const timing = offset
+      ? { duration: Math.round(120 + 160 * remaining), easing: 'cubic-bezier(.2,.8,.2,1)' }
+      : next === 'btw'
+        ? { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' }
+        : { duration: 140, easing: 'ease-in' };
+    motions = [
+      from.animate(
+        [
+          { transform: `translateX(${offset}px)` },
+          { transform: `translateX(${-direction * rect.width}px)` },
+        ],
+        timing,
+      ),
+      to.animate(
+        [
+          { transform: `translateX(${offset + direction * rect.width}px)` },
+          { transform: 'translateX(0)' },
+        ],
+        timing,
+      ),
+    ];
+    Promise.allSettled(motions.map((a) => a.finished)).then(() => {
+      if (id === motionId) cleanMotion();
+    });
+  }
+  function commitTarget(next) {
     if (next === target) return;
     if (target === 'main') {
       mainDraft = textarea.value;
@@ -110,7 +232,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     paste.disabled = next === 'btw' || mainBlocked();
     attach.title = next === 'btw' ? 'BTW currently supports text only' : 'Add attachment';
     textarea.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Message');
-    textarea.placeholder = next === 'btw' ? 'Message BTW…' : 'Message pi…';
+    textarea.placeholder = next === 'btw' ? '問 BTW…' : 'Message pi…';
     send.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Send');
     (next === 'main' ? main : side).scrollTop = next === 'main' ? mainScroll : sideScroll;
     renderStatus();
@@ -124,7 +246,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     if (byId('attachments')?.childElementCount || !byId('quote-preview').hidden) {
       return notify('請先移除主對話附件或引用，再切到 BTW');
     }
-    if (owner === session.key && generation && (sending || clearing || cached)) {
+    if (owner === session.key && generation && (sideBusy() || clearing || cached)) {
       setTarget('btw');
       renderStatus();
       return;
@@ -144,13 +266,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
         sideDraft = '';
         sideScroll = 0;
       }
-      side.replaceChildren();
-      for (const message of data.thread?.messages || []) {
-        // The structured Web bridge must not hand untrusted HTML to the renderer.
-        if (message.role !== 'user' && message.role !== 'assistant') continue;
-        if (typeof message.content !== 'string') continue;
-        side.append(buildMessage(message));
-      }
+      renderThread(data.thread);
       setTarget('btw');
       renderStatus();
       back.focus({ preventScroll: true });
@@ -169,7 +285,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     event.preventDefault();
     event.stopImmediatePropagation();
     const session = getSession();
-    if (!session || session.key !== owner || sending || clearing || opening) return;
+    if (!session || session.key !== owner || sideBusy() || clearing || opening) return;
     const text = textarea.value.trim();
     if (!text) return;
     const epoch = runEpoch;
@@ -226,9 +342,116 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     }
   }
 
+  for (const surface of [main, side]) {
+    surface.addEventListener('pointerdown', (event) => {
+      const session = getSession();
+      if (
+        !event.isPrimary ||
+        event.button !== 0 ||
+        !owner ||
+        owner !== session?.key ||
+        session.readOnly ||
+        event.clientX < 35 ||
+        event.clientX > innerWidth - 35 ||
+        event.target.closest('button, a, input, textarea, video, audio, summary') ||
+        !window.getSelection()?.isCollapsed ||
+        byId('attachments')?.childElementCount ||
+        !byId('quote-preview').hidden
+      )
+        return;
+      cleanMotion();
+      drag = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        dx: 0,
+        active: false,
+        surface,
+        next: target === 'main' ? 'btw' : 'main',
+      };
+    });
+    surface.addEventListener('pointermove', (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x,
+        dy = event.clientY - drag.y;
+      if (!drag.active) {
+        if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
+          drag = null;
+          return;
+        }
+        if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+        if ((target === 'main' && dx > 0) || (target === 'btw' && dx < 0)) {
+          drag = null;
+          return;
+        }
+        drag.active = true;
+        drag.rect = surface.getBoundingClientRect();
+        drag.other = surface === main ? side : main;
+        overlay(drag.other, drag.rect);
+        drag.other.scrollTop = surface === main ? sideScroll : mainScroll;
+        surface.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+      const direction = drag.next === 'btw' ? 1 : -1;
+      drag.dx =
+        direction > 0
+          ? Math.max(-drag.rect.width, Math.min(0, dx))
+          : Math.min(drag.rect.width, Math.max(0, dx));
+      const now = event.timeStamp;
+      if (drag.t != null && now > drag.t) {
+        const v = (drag.dx - drag.lastDx) / (now - drag.t);
+        drag.v = drag.v == null ? v : drag.v * 0.6 + v * 0.4;
+      }
+      drag.t = now;
+      drag.lastDx = drag.dx;
+      surface.style.transform = `translateX(${drag.dx}px)`;
+      drag.other.style.transform = `translateX(${drag.dx + direction * drag.rect.width}px)`;
+    });
+    const finish = (event, cancelled) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const saved = drag;
+      drag = null;
+      if (!saved.active) return;
+      // DESIGN.md (shared with Subagents): commit at 28% of the width, or a
+      // ≥60px flick at ≥0.5px/ms whose 180ms projection reaches 28%. Velocity
+      // expires after 100ms without movement; a reversed flick never commits.
+      const threshold = saved.rect.width * 0.28;
+      const sign = saved.next === 'btw' ? -1 : 1;
+      const fresh = saved.t != null && event.timeStamp - saved.t <= 100;
+      const speed = fresh ? (saved.v || 0) * sign : 0;
+      const travelled = saved.dx * sign;
+      const fling = travelled >= 60 && speed >= 0.5 && travelled + speed * 180 >= threshold;
+      if (!cancelled && (travelled >= threshold || fling)) {
+        setTarget(saved.next, true, saved.dx);
+      } else {
+        const id = motionId,
+          direction = saved.next === 'btw' ? 1 : -1;
+        const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180;
+        motions = [
+          saved.surface.animate(
+            [{ transform: `translateX(${saved.dx}px)` }, { transform: 'translateX(0)' }],
+            { duration, easing: 'ease-out' },
+          ),
+          saved.other.animate(
+            [
+              { transform: `translateX(${saved.dx + direction * saved.rect.width}px)` },
+              { transform: `translateX(${direction * saved.rect.width}px)` },
+            ],
+            { duration, easing: 'ease-out' },
+          ),
+        ];
+        Promise.allSettled(motions.map((a) => a.finished)).then(() => {
+          if (id === motionId) cleanMotion();
+        });
+      }
+    };
+    surface.addEventListener('pointerup', (event) => finish(event, false));
+    surface.addEventListener('pointercancel', (event) => finish(event, true));
+  }
+
   clear.addEventListener('click', async () => {
     const session = getSession();
-    if (sending || clearing || opening || !session || session.key !== owner) return;
+    if (sideBusy() || clearing || opening || !session || session.key !== owner) return;
     if (!confirm('清除這個 BTW 側聊的訊息與脈絡？主對話不受影響。')) return;
     const epoch = runEpoch;
     clearing = true;
@@ -264,16 +487,17 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     setTarget('main');
     renderControls();
   }
-  mainTab.addEventListener('click', goMain);
-  sideTab.addEventListener('click', () => {
-    void open({ cached: true });
-  });
   item.addEventListener('click', () => {
     void open();
   });
   back.addEventListener('click', () => {
     goMain();
     item.focus({ preventScroll: true });
+  });
+  pendingLink.addEventListener('click', () => {
+    if (!owner || owner !== key()) return;
+    setTarget('btw');
+    back.focus({ preventScroll: true });
   });
   byId('composer').addEventListener('submit', submit, true);
   // Capture before the main editor's keyboard slash/submit handlers run.
@@ -296,9 +520,12 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
       ++request;
       ++runEpoch;
       sending = false;
+      remotePending = false;
+      clearTimeout(pendingPoll);
+      pendingPoll = null;
       clearing = false;
       opening = false;
-      setTarget('main');
+      setTarget('main', false);
       owner = null;
       generation = null;
       sideDraft = '';

@@ -51,6 +51,9 @@ interface PendingTurn {
   inAssistant: boolean;
   currentAssistantText: string;
   lastAssistantText: string;
+  /** Displayed extension messages (receipts/previews); reply fallback when no assistant text. */
+  displayedText: string;
+  agentStarted: boolean;
   lastError: string;
   userPromptPersisted: boolean;
   abortRequested: boolean;
@@ -84,6 +87,8 @@ class RpcSession {
   private requestSequence = 0;
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly btwRequests = new Map<string, PendingRpcRequest>();
+  /** Questions whose side answer is still running, so a snapshot can show them. */
+  private readonly btwPendingSends = new Map<string, string>();
 
   constructor(
     private readonly folder: string,
@@ -414,6 +419,18 @@ class RpcSession {
       const errMsg = event?.message?.errorMessage ?? event?.errorMessage;
       if (typeof errMsg === 'string' && errMsg) turn.lastError = errMsg;
 
+      if (event.type === 'agent_start') turn.agentStarted = true;
+      if (event.type === 'message_end' && event.message?.role === 'custom' && event.message.display) {
+        const text =
+          typeof event.message.content === 'string'
+            ? event.message.content
+            : (event.message.content || [])
+                .filter((c: any) => c?.type === 'text')
+                .map((c: any) => c.text)
+                .join('\n');
+        if (text) turn.displayedText = turn.displayedText ? `${turn.displayedText}\n\n${text}` : text;
+      }
+
       // Final assistant text — same accumulation as the print path.
       if (event.type === 'message_start' && event.message?.role === 'assistant') {
         turn.inAssistant = true;
@@ -445,6 +462,9 @@ class RpcSession {
     if (!turn && this.opts.channelJid && this.renewOwnership()) this.deliverAutonomous(event);
 
     if (event.type === 'agent_start' || event.type === 'turn_start') this.streaming = true;
+    // An extension consumed the prompt (input handler/command): no agent run
+    // and therefore no agent_settled will follow for this turn.
+    if (event.type === 'input_handled' && turn && !turn.agentStarted) this.finishTurn();
     // agent_end can be followed by retry, compaction, or another low-level run.
     // agent_settled is the durable session-level completion boundary.
     if (event.type === 'agent_settled') {
@@ -527,7 +547,7 @@ class RpcSession {
     } else if (!turn.lastAssistantText && turn.lastError) {
       turn.resolve({ ok: false, text: '', error: formatStreamError(turn.lastError) });
     } else {
-      turn.resolve({ ok: true, text: turn.lastAssistantText || '(empty response)' });
+      turn.resolve({ ok: true, text: turn.lastAssistantText || turn.displayedText || '(empty response)' });
     }
     this.armIdleTimer();
   }
@@ -612,6 +632,7 @@ class RpcSession {
     }
     const id = randomUUID();
     const encoded = Buffer.from(JSON.stringify({ id, action, text }), 'utf8').toString('base64url');
+    if (action === 'send' && text) this.btwPendingSends.set(id, text);
     let rejectResult!: (error: Error) => void;
     const result = new Promise<any>((resolve, reject) => {
       rejectResult = reject;
@@ -632,9 +653,16 @@ class RpcSession {
       if (pending) { clearTimeout(pending.timeout); this.btwRequests.delete(id); }
       rejectResult(error instanceof Error ? error : new Error(String(error)));
     }
-    const value = await result;
+    let value;
+    try {
+      value = await result;
+    } finally {
+      this.btwPendingSends.delete(id);
+    }
     if (!value.ok) throw new Error(value.error || 'BTW request failed');
-    return value;
+    // A snapshot taken while a send is still running (page reload, session
+    // switch) reports that question so the client can show it as pending.
+    return action === 'snapshot' ? { ...value, pending: [...this.btwPendingSends.values()] } : value;
   }
 
   async compact(customInstructions?: string): Promise<any> {
@@ -728,6 +756,8 @@ class RpcSession {
         inAssistant: false,
         currentAssistantText: '',
         lastAssistantText: '',
+        displayedText: '',
+        agentStarted: false,
         lastError: '',
         userPromptPersisted: false,
         abortRequested: false,

@@ -60,6 +60,8 @@ describe('upload metrics API', () => {
     db.initDb();
     const server = startWebServer();
     servers.push(server);
+    // The real HTTP server must not cut attachment bodies off before two minutes.
+    expect(server.requestTimeout).toBe(300_000);
     if (!server.listening) await new Promise<void>((done) => server.once('listening', done));
     const origin = `http://127.0.0.1:${port}`;
     const metrics = {

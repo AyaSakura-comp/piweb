@@ -20,6 +20,7 @@ import {
   getChannel,
   recoverStuckControls,
   touchControlProcessing,
+  type ControlRow,
 } from '../db.js';
 import { runCommand } from '../commands/index.js';
 import { activeRpcSessionForBtw, prepareRpcSession } from '../agent/rpc-session.js';
@@ -33,6 +34,7 @@ const CONTROL_POLL_MS = 250;
 let running = false;
 let timer: NodeJS.Timeout | undefined;
 let activeTick: Promise<void> | undefined;
+const btwInFlight = new Set<Promise<void>>();
 
 export function startControlLoop(): void {
   if (running) return;
@@ -51,6 +53,7 @@ export async function stopControlLoop(): Promise<void> {
   // runCommand may be awaiting a confirmed RPC retirement for `pi new`.
   // Keep the DB open and the worker alive until that active control finishes.
   await activeTick;
+  await Promise.allSettled([...btwInFlight]);
 }
 
 function schedule(delayMs = CONTROL_POLL_MS): void {
@@ -76,136 +79,154 @@ async function tick(): Promise<void> {
   try {
     const rows = claimPendingControls();
     for (const row of rows) {
-      // A previously claimed row may have been re-keyed while waiting behind a
-      // long control. Refresh both its heartbeat and immutable session owner
-      // before execution instead of trusting the batch's stale web:life JID.
-      const owned = touchControlProcessing(row.rowid);
-      if (!owned) continue;
-      const channel = getChannel(owned.channel_jid);
-      if (!channel) {
-        finishControl(owned.rowid, false, 'Session no longer exists');
+      // A BTW side answer can take minutes. Running it inline would hold every
+      // later control (another session's /pi stop, this session's BTW snapshot)
+      // behind it, so BTW rows run beside the serial loop.
+      if (row.command === 'btw:web') {
+        const pending = runControl(row).catch((err: any) =>
+          logger.error({ err: err?.message, rowid: row.rowid }, 'BTW control crashed'),
+        );
+        btwInFlight.add(pending);
+        void pending.finally(() => btwInFlight.delete(pending));
         continue;
       }
-
-      let args: Record<string, string> = {};
-      try {
-        args = JSON.parse(owned.args || '{}');
-      } catch {
-        // A malformed args blob shouldn't wedge the queue — run with none and
-        // let the command report its own missing-argument error.
-        logger.warn({ rowid: owned.rowid, args: owned.args }, 'control: bad args JSON');
-      }
-
-      let ownershipLost = false;
-      const renewOwnership = (): boolean => {
-        if (ownershipLost) return false;
-        try {
-          const current = touchControlProcessing(
-            owned.rowid,
-            owned.channel_jid,
-            channel.folder,
-            channel.storageToken,
-            channel.ownershipEpoch,
-          );
-          if (current) return true;
-          ownershipLost = true;
-          logger.warn(
-            { rowid: owned.rowid, jid: owned.channel_jid },
-            'Control ownership expired; fencing stale result',
-          );
-        } catch (err: any) {
-          // A transient DB failure fences this individual check, but a later
-          // reconciliation must retry instead of permanently wedging the row.
-          logger.warn({ err: err.message, rowid: owned.rowid }, 'control: heartbeat failed');
-        }
-        return false;
-      };
-
-      const heartbeat = setInterval(renewOwnership, 60_000);
-      heartbeat.unref?.();
-
-      let result: { ok: boolean; text: string };
-      try {
-        if (owned.command === 'btw:web') {
-          if (!renewOwnership() || args.generation !== channel.folder)
-            throw new Error('BTW session generation changed');
-          if (!config.rpcSteer || channel.kind !== 'standard')
-            throw new Error('BTW requires a persistent Pi RPC session');
-          if (args.action !== 'snapshot' && args.action !== 'send' && args.action !== 'clear')
-            throw new Error('Invalid BTW action');
-          // Check the harness first: a warm Pi RPC can outlive a switch to AGY/Claude.
-          const effective = await computeEffectiveChannelSettings(channel);
-          if (isAgyModelRef(effective.rawModelRef) || isClaudeTmuxModelRef(effective.rawModelRef))
-            throw new Error('BTW is only available with a Pi model');
-          if (!renewOwnership()) throw new Error('BTW session generation changed');
-          let rpc = activeRpcSessionForBtw(channel.folder);
-          if (!rpc) {
-            rpc = await prepareRpcSession(channel.folder, {
-              channelJid: channel.jid,
-              channelStorageToken: channel.storageToken,
-              channelOwnershipEpoch: channel.ownershipEpoch,
-              model: effective.rawModelRef || undefined,
-              thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
-              cwd: effective.effectiveCwd,
-            });
-          }
-          const value = await rpc.btw(args.action, args.text);
-          if (!renewOwnership()) throw new Error('BTW session generation changed');
-          result = { ok: true, text: JSON.stringify({ messages: value.messages }) };
-        } else {
-          result = await runCommand(channel, owned.command, args, {
-            assertOwnership: () => {
-              if (!renewOwnership()) throw new Error('Control ownership expired');
-            },
-          });
-        }
-      } catch (err: any) {
-        result = { ok: false, text: err?.message || 'Control command failed' };
-      } finally {
-        clearInterval(heartbeat);
-      }
-      if (!renewOwnership()) {
-        failSettledControl(owned.rowid, owned.channel_jid);
-        continue;
-      }
-
-      // Auto-issued controls (e.g. the `pi new` fired when a session is created)
-      // pass silent:true — the user did not type them, so echoing their output
-      // would just be noise. Failures are still surfaced.
-      const silent = owned.command === 'btw:web' || (args.silent === 'true' && result.ok);
-      try {
-        if (!silent) {
-          appendWebEvent(
-            {
-              channelJid: owned.channel_jid,
-              kind: result.ok ? 'system' : 'error',
-              role: owned.command,
-              content: result.text,
-            },
-            {
-              expectedFolder: channel.folder,
-              expectedStorageToken: channel.storageToken,
-              expectedOwnershipEpoch: channel.ownershipEpoch,
-            },
-          );
-        }
-        finishControl(owned.rowid, result.ok, result.text);
-
-        logger.info(
-          { jid: owned.channel_jid, command: owned.command, ok: result.ok },
-          'Control command executed',
-        );
-      } catch (err: any) {
-        failSettledControl(owned.rowid, owned.channel_jid);
-        logger.warn(
-          { err: err.message, rowid: owned.rowid, jid: owned.channel_jid },
-          'Control result fenced during finalization',
-        );
-      }
+      await runControl(row);
     }
   } catch (err: any) {
     logger.error({ err: err.message }, 'Control loop error');
   } finally {
     schedule();
+  }
+}
+
+async function runControl(row: ControlRow): Promise<void> {
+  // A previously claimed row may have been re-keyed while waiting behind a
+  // long control. Refresh both its heartbeat and immutable session owner
+  // before execution instead of trusting the batch's stale web:life JID.
+  const owned = touchControlProcessing(row.rowid);
+  if (!owned) return;
+  const channel = getChannel(owned.channel_jid);
+  if (!channel) {
+    finishControl(owned.rowid, false, 'Session no longer exists');
+    return;
+  }
+
+  let args: Record<string, string> = {};
+  try {
+    args = JSON.parse(owned.args || '{}');
+  } catch {
+    // A malformed args blob shouldn't wedge the queue — run with none and
+    // let the command report its own missing-argument error.
+    logger.warn({ rowid: owned.rowid, args: owned.args }, 'control: bad args JSON');
+  }
+
+  let ownershipLost = false;
+  const renewOwnership = (): boolean => {
+    if (ownershipLost) return false;
+    try {
+      const current = touchControlProcessing(
+        owned.rowid,
+        owned.channel_jid,
+        channel.folder,
+        channel.storageToken,
+        channel.ownershipEpoch,
+      );
+      if (current) return true;
+      ownershipLost = true;
+      logger.warn(
+        { rowid: owned.rowid, jid: owned.channel_jid },
+        'Control ownership expired; fencing stale result',
+      );
+    } catch (err: any) {
+      // A transient DB failure fences this individual check, but a later
+      // reconciliation must retry instead of permanently wedging the row.
+      logger.warn({ err: err.message, rowid: owned.rowid }, 'control: heartbeat failed');
+    }
+    return false;
+  };
+
+  const heartbeat = setInterval(renewOwnership, 60_000);
+  heartbeat.unref?.();
+
+  let result: { ok: boolean; text: string };
+  try {
+    if (owned.command === 'btw:web') {
+      if (!renewOwnership() || args.generation !== channel.folder)
+        throw new Error('BTW session generation changed');
+      if (!config.rpcSteer || channel.kind !== 'standard')
+        throw new Error('BTW requires a persistent Pi RPC session');
+      if (args.action !== 'snapshot' && args.action !== 'send' && args.action !== 'clear')
+        throw new Error('Invalid BTW action');
+      // Check the harness first: a warm Pi RPC can outlive a switch to AGY/Claude.
+      const effective = await computeEffectiveChannelSettings(channel);
+      if (isAgyModelRef(effective.rawModelRef) || isClaudeTmuxModelRef(effective.rawModelRef))
+        throw new Error('BTW is only available with a Pi model');
+      if (!renewOwnership()) throw new Error('BTW session generation changed');
+      let rpc = activeRpcSessionForBtw(channel.folder);
+      if (!rpc) {
+        rpc = await prepareRpcSession(channel.folder, {
+          channelJid: channel.jid,
+          channelStorageToken: channel.storageToken,
+          channelOwnershipEpoch: channel.ownershipEpoch,
+          model: effective.rawModelRef || undefined,
+          thinking: effective.hasManagedThinking ? effective.effectiveThinking : undefined,
+          cwd: effective.effectiveCwd,
+        });
+      }
+      const value = await rpc.btw(args.action, args.text);
+      if (!renewOwnership()) throw new Error('BTW session generation changed');
+      result = {
+        ok: true,
+        text: JSON.stringify({ messages: value.messages, pending: value.pending ?? [] }),
+      };
+    } else {
+      result = await runCommand(channel, owned.command, args, {
+        assertOwnership: () => {
+          if (!renewOwnership()) throw new Error('Control ownership expired');
+        },
+      });
+    }
+  } catch (err: any) {
+    result = { ok: false, text: err?.message || 'Control command failed' };
+  } finally {
+    clearInterval(heartbeat);
+  }
+  if (!renewOwnership()) {
+    failSettledControl(owned.rowid, owned.channel_jid);
+    return;
+  }
+
+  // Auto-issued controls (e.g. the `pi new` fired when a session is created)
+  // pass silent:true — the user did not type them, so echoing their output
+  // would just be noise. Failures are still surfaced.
+  const silent = owned.command === 'btw:web' || (args.silent === 'true' && result.ok);
+  try {
+    if (!silent) {
+      appendWebEvent(
+        {
+          channelJid: owned.channel_jid,
+          kind: result.ok ? 'system' : 'error',
+          role: owned.command,
+          content: result.text,
+        },
+        {
+          expectedFolder: channel.folder,
+          expectedStorageToken: channel.storageToken,
+          expectedOwnershipEpoch: channel.ownershipEpoch,
+        },
+      );
+    }
+    finishControl(owned.rowid, result.ok, result.text);
+
+    logger.info(
+      { jid: owned.channel_jid, command: owned.command, ok: result.ok },
+      'Control command executed',
+    );
+  } catch (err: any) {
+    failSettledControl(owned.rowid, owned.channel_jid);
+    logger.warn(
+      { err: err.message, rowid: owned.rowid, jid: owned.channel_jid },
+      'Control result fenced during finalization',
+    );
   }
 }

@@ -276,6 +276,14 @@ describe('Claude tmux invocation', () => {
       return res;
     };
 
+    fixture.dependencies.sleep = async () => {
+      if (!appended) return;
+      appendFileSync(fixture.transcript, JSON.stringify({
+        type: 'user', message: { role: 'user', content:
+          '<task-notification><task-id>bg_99</task-id><status>completed</status></task-notification>' },
+      }) + '\n' + JSON.stringify({ type: 'system', subtype: 'turn_duration' }) + '\n');
+    };
+
     const result = await invokeClaudeTmux('web_claude1', 'run in bg', {
       dependencies: fixture.dependencies,
       onEvent: (event) => {
@@ -592,6 +600,62 @@ describe('Claude tmux invocation', () => {
       dependencies: fixture.dependencies,
     });
     expect(result).toEqual({ ok: true, text: 'Parent received child final.' });
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it.each([
+    ['Bash', true], ['Monitor', true], ['Monitor', false],
+  ])('keeps %s background continuations visible (new final text: %s)', async (tool, hasFinalText) => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    const replies: string[] = [];
+    let phase = 0;
+    const append = (rows: any[]) => appendFileSync(fixture.transcript,
+      rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const answer = (text: string) => ({ type: 'assistant', message: {
+      role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }],
+    } });
+    const duration = { type: 'system', subtype: 'turn_duration' };
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const result = await tmux(args);
+      if (fixture.submissionCount && phase === 0) {
+        phase = 1;
+        append([
+          { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call',
+            name: tool, input: { command: 'watch progress' } }] } },
+          { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call',
+            content: tool === 'Monitor' ? 'Monitor started (task watch_1, expires in 30m)' :
+              'Command running in background with ID: watch_1' }] } },
+          answer('Waiting for events.'), duration,
+        ]);
+      }
+      return result;
+    };
+    fixture.dependencies.sleep = async () => {
+      if (phase === 1) {
+        // This must reach the UI before the persistent monitor terminates.
+        expect(replies).toEqual(['Waiting for events.']);
+        phase = 2;
+        append([{ type: 'user', message: { content:
+          '<task-notification><task-id>watch_1</task-id><event>results ready</event></task-notification>' } },
+          answer('Results are ready.'), duration]);
+      } else if (phase === 2) {
+        expect(replies).toEqual(['Waiting for events.', 'Results are ready.']);
+        phase = 3;
+        // Terminal enqueue alone is not a completed parent turn.
+        append([{ type: 'queue-operation', operation: 'enqueue', content:
+          '<task-notification><task-id>watch_1</task-id><status>completed</status></task-notification>' }]);
+      } else if (phase === 3) {
+        phase = 4;
+        append(hasFinalText ? [answer('All done.'), duration] : [duration]);
+      }
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'run task', {
+      dependencies: fixture.dependencies,
+      onBackgroundReply: async (text: string) => { replies.push(text); },
+    });
+    expect(result).toEqual({ ok: true, text: hasFinalText ? 'All done.' : 'Results are ready.' });
+    expect(phase).toBe(4);
     expect(fixture.submissionCount).toBe(1);
   });
 

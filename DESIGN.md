@@ -154,6 +154,28 @@ The existing palette and composer/viewer controls are unchanged. See
 [render-first reply reveal](docs/render-reveal.md) for software architecture,
 component/state ownership, the live-to-final workflow, buffering and evidence limits.
 
+## BTW side conversation
+
+BTW reuses the main shell and the single composer; only the transcript and a
+slim header change. Keyboard/screen-reader users get the same actions as touch.
+
+- **Header (52px, directly under the topbar)**: same `--bg` surface and bottom
+  border as the topbar — no `--bg-alt` slab. Left: `‹` back icon (回主對話).
+  Centre: “BTW 側聊” at 15px/650 and one 12px `--text-2` status line with
+  ellipsis (主對話執行中 · 不會加入主對話 / BTW 回答中… / 清除中… /
+  不會加入主對話); a 6px accent dot marks live work. Right: trash icon
+  (清除 BTW, with confirmation). Both actions are borderless 44×44px icon
+  buttons with accessible names and tooltips; no boxed text buttons.
+- **Main view**: no persistent recipient row. While a BTW answer is pending, a
+  quiet 12px “BTW 回答中 ›” link shares the existing typing line and opens BTW.
+  The visually hidden `#btw-context-label` keeps the polite live announcement.
+- **Composer**: placeholder “問 BTW…”; the isolation note lives in the header.
+- **Motion**: horizontal `translateX` only, no rebound. Enter BTW 220ms and
+  return 140ms ease-in; a committed drag settles from the finger over 120–280ms
+  with `cubic-bezier(.2,.8,.2,1)`. Drag commits at 28% of the width or by the
+  same flick rule as Subagents (≥60px, ≥0.5px/ms, 180ms projection, velocity
+  expires after 100ms). Reduced motion skips automatic animation.
+
 ## Verification
 
 ```sh

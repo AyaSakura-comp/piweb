@@ -81,6 +81,8 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
   return new Promise((resolve, reject) => {
     request.open('POST', path, true);
     request.withCredentials = true;
+    // Includes body transmission and the acknowledgement, but not local file preparation.
+    request.timeout = 5 * 60 * 1000;
     request.setRequestHeader('content-type', 'application/json');
 
     request.upload.addEventListener('progress', (event) => {
@@ -121,6 +123,10 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
     request.addEventListener('abort', () => {
       finish('abort');
       reject(new Error('Upload cancelled'));
+    });
+    request.addEventListener('timeout', () => {
+      finish('error');
+      reject(new Error('Upload timed out after 5 minutes. Check your connection before retrying.'));
     });
 
     onProgress(0);

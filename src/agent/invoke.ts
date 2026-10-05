@@ -295,6 +295,9 @@ export async function invokeAgent(
     // track the most recent assistant turn's text content for the return value.
     let lineBuf = '';
     let lastAssistantText = '';
+    // Displayed extension messages (e.g. finance previews/receipts) are the
+    // user-facing reply when a turn ends without assistant text.
+    let displayedText = '';
     let currentAssistantText = '';
     let inAssistantMessage = false;
     // Capture provider/model errors that pi reports in-stream but otherwise
@@ -317,6 +320,11 @@ export async function invokeAgent(
         // assistant message; flip the "last" on message_end so multi-turn
         // runs only surface the final turn's text to AgentResult (matches the
         // prior text-mode behavior).
+        if (event?.type === 'message_end' && event.message?.role === 'custom' && event.message.display) {
+          const c = event.message.content;
+          const text = typeof c === 'string' ? c : (c || []).filter((x: any) => x?.type === 'text').map((x: any) => x.text).join('\n');
+          if (text) displayedText = displayedText ? `${displayedText}\n\n${text}` : text;
+        }
         if (event?.type === 'message_start' && event.message?.role === 'assistant') {
           inAssistantMessage = true;
           currentAssistantText = '';
@@ -429,7 +437,7 @@ export async function invokeAgent(
 
       // No assistant text but pi reported an in-stream error → surface it as an
       // error to Discord instead of a useless "(empty response)".
-      if (!lastAssistantText && lastErrorMessage) {
+      if (!lastAssistantText && !displayedText && lastErrorMessage) {
         const friendly = formatStreamError(lastErrorMessage);
         logger.warn(
           { channelFolder, error: lastErrorMessage.slice(0, 300) },
@@ -439,7 +447,7 @@ export async function invokeAgent(
         return;
       }
 
-      resolve({ ok: true, text: lastAssistantText || '(empty response)' });
+      resolve({ ok: true, text: lastAssistantText || displayedText || '(empty response)' });
     });
 
     proc.on('error', (err) => {

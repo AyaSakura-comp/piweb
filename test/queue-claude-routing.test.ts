@@ -117,6 +117,33 @@ describe('queue Claude tmux routing', () => {
     );
   });
 
+  it('delivers resumed background replies before completion without duplicating the last reply', async () => {
+    await runQueuedMessage('claude-code/haiku', true, true, async (_folder, _prompt, opts) => {
+      await opts.onBackgroundReply('Waiting for events.');
+      expect(sendResponseMock).toHaveBeenCalledTimes(1);
+      await opts.onBackgroundReply('Results ready.');
+      expect(sendResponseMock).toHaveBeenCalledTimes(2);
+      return { ok: true, text: 'Results ready.' };
+    }, 2);
+    expect(sendResponseMock.mock.calls.map((call) => call[1])).toEqual([
+      'Waiting for events.', 'Results ready.',
+    ]);
+    expect(sendResponseMock.mock.calls[1][2]).toMatchObject({
+      expectedFolder: 'web_claude1', expectedStorageToken: expect.any(String),
+      expectedOwnershipEpoch: expect.any(Number),
+    });
+  });
+
+  it('delivers a distinct final reply after background updates', async () => {
+    await runQueuedMessage('claude-code/haiku', true, true, async (_folder, _prompt, opts) => {
+      await opts.onBackgroundReply('Waiting for events.');
+      return { ok: true, text: 'All done.' };
+    }, 2);
+    expect(sendResponseMock.mock.calls.map((call) => call[1])).toEqual([
+      'Waiting for events.', 'All done.',
+    ]);
+  });
+
   it('leaves non-Claude models on their existing path', async () => {
     await runQueuedMessage('local-llama/qwen', false, false);
 
@@ -129,6 +156,8 @@ async function runQueuedMessage(
   modelOverride: string,
   rpcSteer: boolean,
   claudeTmuxEnabled: boolean,
+  claudeImplementation?: (...args: any[]) => Promise<any>,
+  expectedResponses = 1,
 ): Promise<void> {
   const tempDir = mkdtempSync(join(tmpdir(), 'piweb-claude-routing-'));
   tempDirs.push(tempDir);
@@ -142,7 +171,9 @@ async function runQueuedMessage(
 
   invokeAgentMock.mockResolvedValue({ ok: true, text: 'pi answered' });
   invokeAgyMock.mockResolvedValue({ ok: true, text: 'agy answered' });
-  invokeClaudeMock.mockResolvedValue({ ok: true, text: 'claude answered' });
+  invokeClaudeMock.mockReset();
+  if (claudeImplementation) invokeClaudeMock.mockImplementation(claudeImplementation);
+  else invokeClaudeMock.mockResolvedValue({ ok: true, text: 'claude answered' });
   sendResponseMock.mockResolvedValue(true);
 
   vi.resetModules();
@@ -177,7 +208,7 @@ async function runQueuedMessage(
       timestamp: new Date().toISOString(),
     });
     queue.startProcessingLoop();
-    await vi.waitFor(() => expect(sendResponseMock).toHaveBeenCalledTimes(1), {
+    await vi.waitFor(() => expect(sendResponseMock).toHaveBeenCalledTimes(expectedResponses), {
       timeout: 2000,
       interval: 10,
     });

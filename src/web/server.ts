@@ -463,6 +463,10 @@ export function startWebServer(): ReturnType<typeof createServer> {
     });
   });
 
+  // Keep slow attachment bodies alive for at least two minutes. Make Node's
+  // five-minute receive budget explicit; this is not an SSE/idle-socket timeout.
+  server.requestTimeout = 5 * 60 * 1000;
+
   server.listen(config.webPort, config.webHost, () => {
     logger.info({ host: config.webHost, port: config.webPort }, 'piweb web server listening');
   });

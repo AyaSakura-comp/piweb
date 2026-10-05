@@ -25,6 +25,14 @@ Inspect on the host: `docker logs --since 1h piweb-app 2>&1 | grep 'Upload metri
 Refresh PiWeb after deployment to load the instrumented client. Timings currently
 appear in logs only, not in the composer or message card.
 
+## Upload deadline
+
+Attachment requests have an explicit **5-minute (300,000ms)** browser deadline, exceeding the required two-minute minimum. It begins at XHR Send and covers transmission plus the server acknowledgement; local image preparation/base64 conversion occurs beforehand and is not included. Node's incoming-request receive budget is also explicitly five minutes. This is not a socket-idle or SSE-stream timeout and does not limit agent inference.
+
+On expiry the request rejects with `Upload timed out after 5 minutes`, allowing the composer to leave its busy state. The best-effort diagnostic is recorded once as `outcome: error`; no automatic retry is made. Check the transcript before retrying, since a lost acknowledgement does not prove the server rejected the message. Network loss, browser suspension and external proxy limits can still interrupt a transfer earlier.
+
+Regression tests use fake clocks to verify a response after 121 seconds remains accepted, five-minute expiry rejects without hanging, and failure telemetry is not duplicated. The API test checks the real Node server's receive budget. These are not physical-phone or real two-minute throttled-network measurements.
+
 ## Reading a result
 
 A recorded single-image upload had `fileBytes: 2349505`, `bodyBytes: 3132755`,
@@ -43,8 +51,9 @@ npx vitest run test/upload-progress.test.ts test/upload-metrics.test.ts \
   test/upload-metrics-api.test.ts
 ```
 
-Tests cover timings, decoded sizes, failure reporting, metric field validation,
-authentication, cross-origin rejection and exclusion of private payload fields.
+Tests cover timings, decoded sizes, slow-upload acceptance, deadline rejection,
+failure reporting, metric field validation, authentication, cross-origin rejection,
+the server receive budget and exclusion of private payload fields.
 Both frontend assets and the web endpoint must be deployed; this feature does
 not require restarting the agent worker. If telemetry delivery fails, the upload
 still completes normally, but no diagnostic record is guaranteed.

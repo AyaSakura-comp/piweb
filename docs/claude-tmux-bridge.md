@@ -49,8 +49,10 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
   `pasted_content`; without that external request, it can treat the whole task
   as quoted data and ask what to do instead of executing it.
 - Output comes exclusively from complete JSONL records, not scraped screen text.
-  Thinking, tool calls and results become streamed Pi-shaped events; final output
-  is delivered after `turn_duration`. Partial UTF-8 writes are retained as bytes.
+  Thinking, tool calls and results become streamed Pi-shaped events. A
+  `turn_duration` closes the parent turn only after pending child agents and
+  tracked background Bash/Monitor commands have finished. Partial UTF-8 writes
+  are retained as bytes.
 - Uploads are staged through Piweb and provided as absolute paths. Local markdown
   media links are converted to outbox markers before delivery.
 - Stop sends Ctrl-C, including for a running turn recovered after worker restart.
@@ -64,6 +66,34 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
   Claude's external TUI/transcript and SQLite cannot commit atomically.
 - `/pi status`, Pi compaction, Pi subagent controls and Pi extension commands are
   not Claude-native controls. Do not interpret their output as Claude usage.
+
+## Background replies and commands
+
+A parent may yield an acknowledgement before background work finishes. The bridge
+keeps its queue lease and transcript tail alive while child agents or tracked
+commands remain running; Bash/Monitor work is tracked even when Claude omits
+`pendingBackgroundAgentCount`.
+
+Each yielded reply is delivered through the ordinary transport (including local
+media/outbox conversion), appended to visible history and recorded for cross-harness
+continuity. A later distinct final reply is delivered normally. If the turn ends
+without another text record, the last yielded text is retained as the result but
+the queue does not send that identical already-published reply again. This is
+per-turn duplicate suppression, not a crash-safe exactly-once guarantee.
+
+Use the existing **Stop** control to interrupt work or **⋯ → 背景命令**
+to inspect the tracked command view. This change adds no new slash command and
+does not turn Pi-only controls into Claude-native controls.
+
+Regression commands:
+
+```bash
+npx vitest run test/claude-tmux.test.ts test/queue-claude-routing.test.ts
+```
+
+Fake transcript/queue tests cover monitor/background-command continuation,
+publication before completion, identical-final suppression and distinct-final
+publication. They do not consume Claude quota or prove live-provider timing.
 
 ## Subagents
 

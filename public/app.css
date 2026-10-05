@@ -1469,37 +1469,58 @@ svg {
 
 /* BTW reuses the existing composer. Its small ownership card replaces the
    main-only typing indicator while the side transcript is selected. */
-.messages[hidden], .btw-card[hidden], .btw-switcher[hidden] { display: none !important; }
-.btw-switcher { display: flex; flex: 0 0 auto; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
-.btw-switcher button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text-2); font: inherit; font-size: 13px; }
-.btw-switcher button[aria-pressed="true"] { color: var(--text); background: var(--bg-alt); border-color: var(--accent, #7274ff); }
-#btw-clear:disabled { opacity: .45; }
+.messages[hidden], .btw-card[hidden] { display: none !important; }
+.main.btw-sliding { overflow: hidden; }
+.btw-swipe-ready .messages { touch-action: pan-y; }
+.btw-context-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .app.btw-active .typing { display: none !important; }
+/* Jump to present belongs to the main transcript; it must not float over BTW. */
+.app.btw-active .jump-live { display: none !important; }
+/* BTW header: same surface as the topbar (no extra slab), icon actions only,
+   16px visual gutter via the 44px targets, one-line metadata. */
 .btw-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 6px 10px 6px 16px;
-  background: var(--bg-alt);
-  border-top: 1px solid var(--border);
-  color: var(--text);
-}
-.btw-card > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.btw-card strong { font-size: 14px; }
-.btw-card span { color: var(--text-2); font-size: 12px; line-height: 1.3; }
-.btw-card button {
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 4px;
+  min-height: 52px;
+  padding: 0 max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
   background: var(--bg);
+  border-bottom: 1px solid var(--border);
   color: var(--text);
-  font: inherit;
-  font-size: 13px;
+  flex: none;
 }
-.btw-card button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.btw-card .icon-btn { width: 44px; height: 44px; }
+.btw-card .icon-btn:disabled { opacity: .45; }
+.btw-card .icon-btn:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+.btw-card > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.btw-card strong { font-size: 15px; font-weight: 650; line-height: 1.25; color: var(--text); }
+.btw-card span { color: var(--text-2); font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btw-card span.btw-live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+/* Main view while a BTW answer is pending: one quiet link on the typing line. */
+.btw-pending-row { display: flex; justify-content: flex-end; height: 25px; padding: 0 8px; flex: none; pointer-events: none; }
+.typing:not([hidden]) + .btw-pending-row { margin-top: -27px; }
+.btw-pending-row button {
+  pointer-events: auto;
+  min-width: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+}
+.btw-pending-row button:active { background: var(--bg-hover); }
+.app.btw-active .btw-pending-row { display: none !important; }
 .btw-waiting {
   display: flex;
   align-items: center;

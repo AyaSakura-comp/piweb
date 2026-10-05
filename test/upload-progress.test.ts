@@ -31,6 +31,7 @@ class FakeRequest extends FakeEventTarget {
   sentBody = '';
   status = 200;
   responseText = '{"queued":true}';
+  timeout = 0;
 
   open(method: string, path: string, async: boolean): void {
     this.method = method;
@@ -59,6 +60,68 @@ class FakeElement {
 }
 
 describe('sendJsonWithUploadProgress', () => {
+  it('allows a slow upload to complete after more than two minutes', async () => {
+    vi.useFakeTimers();
+    try {
+      const request = new FakeRequest();
+      request.send = (body) => {
+        request.sentBody = body;
+        if (request.timeout > 0) {
+          setTimeout(() => request.emit('timeout'), request.timeout);
+        }
+      };
+      let settled = false;
+      const result = sendJsonWithUploadProgress(
+        '/api/messages',
+        { attachments: [{ name: 'large.pdf', dataBase64: 'YWJj' }] },
+        { createRequest: () => request, report: vi.fn() },
+      ).then((value) => {
+        settled = true;
+        return value;
+      });
+      expect(request.timeout).toBe(300_000);
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect(settled).toBe(false);
+      request.emit('load');
+      await expect(result).resolves.toEqual({ queued: true });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects on the five-minute deadline and records the failure once', async () => {
+    vi.useFakeTimers();
+    try {
+      const request = new FakeRequest();
+      request.status = 0;
+      request.send = () => {
+        if (request.timeout > 0) setTimeout(() => request.emit('timeout'), request.timeout);
+      };
+      const report = vi.fn();
+      const onProgress = vi.fn();
+      const result = sendJsonWithUploadProgress(
+        '/api/messages',
+        {},
+        {
+          createRequest: () => request,
+          report,
+          onProgress,
+        },
+      );
+      const rejected = expect(result).rejects.toThrow(/Upload timed out.*5 minutes/);
+      await vi.advanceTimersByTimeAsync(300_000);
+      await rejected;
+      request.emit('error');
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'error', status: 0 }));
+      expect(onProgress).not.toHaveBeenCalledWith(100);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('reports timings and sizes without attachment content or names', async () => {
     const request = new FakeRequest();
     const report = vi.fn();
