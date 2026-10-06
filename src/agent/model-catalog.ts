@@ -57,6 +57,14 @@ export async function getModelRuntime(): Promise<ModelRuntime> {
   return runtimeInstance;
 }
 
+// The runtime reads ~/.pi/agent/models.json once, at creation. Re-read it so a
+// provider added while the worker is running reaches the catalog without a
+// restart. Network catalogs are left to their own refresh path.
+export async function reloadModelConfig(): Promise<void> {
+  if (!runtimeInstance) return;
+  await runtimeInstance.refresh({ allowNetwork: false });
+}
+
 export function listAvailableModels(options?: { forceRefresh?: boolean }): AvailableModelInfo[] {
   const forceRefresh = options?.forceRefresh ?? false;
   const now = Date.now();

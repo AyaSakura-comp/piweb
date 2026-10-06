@@ -15,7 +15,7 @@ import {
   listExpiredDeletedSessions,
 } from '../db.js';
 import { purgeSessionBatch, recoverPendingSessionPurges } from '../session/purge.js';
-import { listAvailableModels, primeModelRegistry } from '../agent/model-catalog.js';
+import { listAvailableModels, primeModelRegistry, reloadModelConfig } from '../agent/model-catalog.js';
 import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -113,8 +113,11 @@ async function sweepTrash(): Promise<void> {
  * spawning pi, which only the worker can do — the web server may be in a
  * container with no pi binary — so it goes through the meta table.
  */
-function publishModelCatalog(): void {
+async function publishModelCatalog(): Promise<void> {
   try {
+    await reloadModelConfig().catch((err: any) => {
+      logger.warn({ err: err.message }, 'Failed to reload pi model config');
+    });
     const models = listAvailableModels({ forceRefresh: true });
     setMeta('models', JSON.stringify(models));
     logger.debug({ count: models.length }, 'Published model catalog');
@@ -159,8 +162,8 @@ export async function startWorker(): Promise<void> {
     logger.warn({ err: err.message }, 'Failed to initialize pi model runtime');
   });
   await startSubscriptionManager(lifecycleGeneration);
-  publishModelCatalog();
-  modelRefreshTimer = setInterval(publishModelCatalog, MODEL_REFRESH_MS);
+  await publishModelCatalog();
+  modelRefreshTimer = setInterval(() => void publishModelCatalog(), MODEL_REFRESH_MS);
   void publishExtensionCommands();
   extCommandRefreshTimer = setInterval(() => void publishExtensionCommands(), EXT_COMMAND_REFRESH_MS);
   void sweepTrash();
