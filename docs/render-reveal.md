@@ -1,196 +1,134 @@
-# Render-first reply reveal
+# LobeHub Streamdown reply island
 
-Live assistant replies and thinking finish rendering stable Markdown before showing it. Each reply owns one soft reading-order front: it scans text rows left-to-right and proceeds down to the next row. New prepared content joins its current position instead of starting an independent block fade. Text stays in place; the existing PiWeb colours, composer and viewer controls remain unchanged.
+## Current source integration
 
-## Software architecture
-
-The reveal is a **browser presentation layer**, not a new agent scheduler or
-transport. The host worker still owns generation and tool execution; Docker
-still serves authenticated APIs/SSE; SQLite remains the process boundary. The
-browser receives growing source snapshots and prepares/reveals rich content
-independently of when the next network packet arrives.
+The selected package is **[`@lobehub/streamdown`](https://github.com/lobehub/streamdown), pinned at 1.4.0**, with React/ReactDOM 19.3.0. It is not Vercel Streamdown. `client/lobehub-rich.jsx` owns a small reply-only root; the rest of the application remains vanilla JavaScript.
 
 ```mermaid
 flowchart LR
-    subgraph Host[Host worker]
-        Agent[Agent text and thinking deltas]
-        Transport[Web transport buffer]
-        Agent --> Transport
-    end
-    subgraph Storage[Shared SQLite]
-        Live[(live_output snapshots)]
-        Events[(web_events final transcript)]
-    end
-    subgraph Web[Docker web tier]
-        SSE[Authenticated session SSE]
-    end
-    subgraph Browser[Browser presentation]
-        App[app.js stream ownership and DOM handoff]
-        Source[streaming-rich.js source boundary and revision]
-        Pace[Arrival history and adaptive pace]
-        Rich[markdown.js renderRich and whenRichReady]
-        Layout[Fonts and two-frame layout barrier]
-        Rows[Cached text rows and media bands]
-        Flow[One RAF controller per rich body]
-        Mask[app.css local row masks]
-        History[Static historical render]
-    end
-    Transport -->|growing source| Live
-    Transport -->|completed events| Events
-    Live -->|partial snapshot| SSE
-    Events -->|durable event| SSE
-    SSE --> App
-    App -->|live update| Source
-    Source -->|positive growth, even unfinished tails| Pace
-    Source -->|new stable source or EOF tail| Rich
-    Rich --> Layout
-    Layout --> Rows
-    Rows --> Flow
-    Pace --> Flow
-    Flow -->|shared coordinate and active row X| Mask
-    App -->|paging or reload| History
+    SSE[Existing authenticated SSE] --> App[app.js partial and durable body ownership]
+    App --> Boundary[streaming-rich.js source and connection fences]
+    Boundary --> Island[React reply island]
+    Island --> Lobe[LobeHub parsing and balanced character fade]
+    Island --> Static[CachedMarkdown history and reduced motion]
+    Lobe --> Plugins[GFM math and KaTeX]
+    Lobe --> Leaves[Existing code Mermaid media and viewer leaves]
+    Island --> Scroll[Existing current-choice scroll callbacks]
 ```
 
-### Component ownership
+- Upstream owns parsing, remend, balanced smoothing, character fade and its 180ms duration. No old piweb animation is called, no custom pace is layered on it, and no `animated` API from the similarly named Vercel package is assumed.
+- Compatible final delivery completes the preview row in place, retaining its connected body, React root and Streamdown instance. Even synchronous detach/reinsert restarts completed native CSS fills, so the final handoff does not reparent the body. There is no upstream `complete` prop; EOF does not switch renderer or force a whole-tail flush. The boundary's durable `complete` flag releases `latexGuard` on that same instance: an unrenderable unfinished formula must no longer retain only the last valid partial source. Balanced smoothing, character granularity and the native 180ms fade remain unchanged. Individual animation-tail Text nodes/spans may be coalesced by the library.
+- Static assistant/thinking history and reduced motion use the exported `CachedMarkdown`; user messages, tools and ordinary notices still use the existing renderer. CommonMark semantics intentionally replace the old live scanner.
+- The island tags its body `lobe-rich`: parsed prose uses `white-space: normal`, so HAST's inter-block/list separator newlines cannot become additional visible blank lines. Explicit prose breaks remain `<br>`, inline code retains `pre-wrap`, and fenced code retains `pre`. The existing paragraph/list margins and line-height are not reduced to compensate. Raw user/tool whitespace styles stay unchanged. The owned class is removed on unmount; live, in-place EOF, history and reduced motion share the same typography scope.
+- The maintained `LobeHub screenshot layout walkthrough keeps prose lists and copy usable` regression in `test/e2e/lobehub-streamdown.spec.ts` reproduces a long config-file reply with loose lists and inline/fenced code. One continuous recording covers history, pointer-reachable copy/Send, streamed chunks, in-place EOF, reload, light theme and reduced motion; measured margins reject extra whitespace line boxes and document overflow. Run `PIWEB_E2E_PORT=4292 npx playwright test test/e2e/lobehub-streamdown.spec.ts --grep 'screenshot layout walkthrough' --workers=1`. Diagnostic-only `PIWEB_LAYOUT_DEPLOYED_ASSETS=1` replays `app.css` and `lobehub-rich.js` previously captured into `artifacts/lobehub-layout-audit/runtime/`; the default always uses current source assets. A local passing recording does not mean these assets have been deployed or certify physical iPhone/Safari behavior.
+- Transport CRLF/leading-whitespace normalization and publication-marker privacy remain at the boundary. An unpublished `[[image/video/file: local path]]` and its following tail are held for durable delivery; compatible earlier paragraphs stay attached.
+- `client/outbox-media.js` supplies the shared remark extension for published `[[image: URL]]`, `[[video: URL]]` and `[[file: URL]]` markers. Image files remain inline images at the model-selected positions; other files get friendly download links. Parsed text only is transformed (including GFM auto-links inside markers), never code, math, HTML or explicit link labels. Only `/media/` and HTTP(S) URLs are embedded; raw HTML stays disabled and local preview publication fences stay unchanged. Both Streamdown and static/reduced-motion CachedMarkdown use this extension.
+- Assistant/thinking links in both live and historical bodies reuse `markdown.js`'s exact-host/video-ID parser and exported inline YouTube binding (with leaf-owned cleanup), not a second player/parser. Recognized anchors retain `youtube-inline-link`, so delegated copy-link handling cannot intercept them. Unmodified clicks open/replace/close the same privacy-enhanced iframe leaf; modified clicks keep external navigation. Native fading guards still own interaction availability. Embed/network fixtures—not live YouTube—cover all four surfaces in `test/e2e/lobehub-streamdown.spec.ts`.
+- Leaf components preserve table scrolling, syntax highlighting, code copy, KaTeX, native images/video and delegated lightbox use. Video forwards upstream leaf props, including className/style. The published-video regression samples a real upstream block fade at 0/90/180ms and verifies inert release; it does not invent an animation for video-only streaming tails. Expensive code/diagram preparation is debounced, not reveal pacing. Upstream-fading controls are inert, and still-fading spans are not selectable; this is an interaction guard, not an animation replacement.
+- A detached live root is unmounted after real removal; compatible EOF keeps its row/body connected. Revision/connectivity checks fence obsolete imports; owned motion/resize/animation listeners are released. Late resize callbacks cannot reuse tail-follow intent after reader navigation.
 
-| Component                                                                                    | Responsibility                                                                                                                                                                            | Does not own                                                          |
-| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `src/transport/web.ts`                                                                       | Accumulates answer/thinking deltas; publishes `live_output`; persists completed `web_events`. Existing live-buffer flush interval is 150ms.                                               | Markdown layout, reveal timers or model decode-rate measurement.      |
-| `src/web/server.ts` → `streamEvents`                                                         | Polls SQLite every 400ms and emits `event`, `partial` and `busy` frames on `/api/sessions/:jid/stream?after=cursor`. Durable events advance the reconnect cursor.                         | Agent execution or per-row animation.                                 |
-| `public/app.js` → `openStream`, `renderPartial`, `growInto`, `appendEvent`, `buildEventNode` | Fences SSE callbacks by selected session/source; owns partial/final containers, history rendering and current transcript scroll intent.                                                   | Token spans, line splitting or independent block fades.               |
-| `public/streaming-rich.js`                                                                   | Owns normalized source, accepted boundary, revision-fenced serial preparation queue, row geometry, arrival samples and the shared visual controller.                                      | Backend queues, persistence, model/server TPS or text layout changes. |
-| `public/markdown.js` → `renderRich`, `whenRichReady`                                         | Builds normal rich DOM; tracks Mermaid promises and waits for image decode/error fallback before live display. KaTeX renders synchronously when available; layout/font readiness follows. | Reveal position and speed.                                            |
-| `public/app.css` → `.reply-chunk` masks                                                      | Composites completed rows and the active horizontal feather; keeps future rows hidden and graphics in vertical bands.                                                                     | Source parsing, RAF ownership or network scheduling.                  |
+### Publishing and deploying the spacing repair
 
-Transport batching and SSE polling are existing behavior, not delays added by
-this feature. A received snapshot may contain many tokens, so client-observed
-source growth cannot identify exact model decode TPS.
+The repair requires both the class-bearing reply bundle and the scoped prose CSS;
+shipping only the CSS cannot affect an older bundle that never adds `lobe-rich`.
+Build frontend assets from source; do not commit generated bundles or local video
+artifacts. A Web rollout must rebuild the app before recreating its Tailscale
+sidecar, which shares the app's network namespace. Keep the host worker and gateway
+running; a worker-only restart cannot update frontend files in the Web container.
+Reload existing browser tabs after rollout to load the new ESM bundle. Deploying
+frontend assets does not reload already-running host worker modules or resolve the
+historical legacy-parser review findings described below.
 
-### State and contracts
+### Build and evidence
 
-State is held in a module-private `WeakMap` keyed by the **actual rich-body DOM
-node**. Answer and thinking each have their own body/controller; they do not
-share one global page cursor. The final wrapper may change while the compatible
-body node, its state and prepared children remain the same.
+```sh
+npm run build                 # TypeScript plus the browser bundle/notices
+npm run test:e2e -- test/e2e/lobehub-streamdown.spec.ts --workers=1
+# Direct Playwright bypasses npm lifecycle hooks: build the client first.
+npm run build:client
+PIWEB_E2E_PORT=4223 npx playwright test test/e2e/lobehub-streamdown.spec.ts \
+  --workers=1 --reporter=list --output=artifacts/lobehub-streamdown/verified
+```
 
-| State                                     | Meaning                                                                                                                                                                      |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source`, `boundary`                      | Latest normalized source and the last accepted/scheduled stable source offset. The boundary is not a count of already visible characters.                                    |
-| `revision`, `queue`                       | Generation fence and serial Promise chain for source-ordered async preparation. A pending asset can hold later chunks; received source/pacing samples still update.          |
-| `flow.front`, `goal`                      | Monotonic vertical-equivalent progress and the extent of all prepared chunks. Row X is a projection of this progress, not an independent timer.                              |
-| `pace.samples`, `highWater`, `speed`      | Bounded receive-time history, largest observed source length and smoothed current velocity. Units are JavaScript string-length units, including Markdown/UTF-16, not tokens. |
-| `items`, `preparedChars`, `pixelsPerChar` | Prepared chunks, cached local rows/bounds and calibrated source-to-height density.                                                                                           |
-| `frame`, `clock`, `observer`, `media`     | Owned RAF, timing anchor, ResizeObserver and reduced-motion listener; disposed on idle completion, invalidation or detachment.                                               |
+`public/lobehub-rich.js` and both license notices are generated/ignored. Docker builds them in the build stage and copies them after public assets into the runtime image. The bundle is outside immutable `vendor/` paths and uses the existing mutable-asset cache policy. Deploying from a shared dirty worktree is still not feature-only publication.
 
-`updateStreamingRich(target, text, { complete, beforeAppend, afterAppend })`
-accepts full growing snapshots. Its returned Promise represents **preparation
-queue completion**, not the moment every pixel is revealed. `complete: true`
-means source EOF and flushes the tail; the visual frontier may still be moving.
-`canReuseStreamingRich` compares normalized incoming source against the accepted
-prefix, so only compatible bodies are reused at final handoff. Normalization
-removes leading outer whitespace from the first partial, matching the transport's
-final `trim()`, while retaining trailing blank lines needed for Markdown boundaries.
-EOF may remove the accepted prefix's trailing whitespace only when its trimmed
-form exactly equals the final source; the accepted offset is rebased to that final
-length. Other substantive prefix rewrites still invalidate the body.
+The maintained library spec checks real upstream DOM/CSS, Chinese/emoji source, live/history fence/list shapes, same-root EOF, unpublished outbox privacy, reduced motion, rich leaves, control focus, cancellation and a continuous actual-Send dark/light/static-history video. Its embedded-file-image journey also exercises local preview → published PNG-path markers → lightbox → static history in both themes; inline/nested remote images, file links, code literals and unsafe URL rejection have separate coverage. `test/outbox-media-markdown.test.ts` covers the AST extension and explicit video kinds. Focused regression: `npm run build:client && PIWEB_E2E_PORT=4223 npx playwright test test/e2e/lobehub-streamdown.spec.ts --grep 'embedded file images|published markers preserve' --workers=1`; evidence lives under `artifacts/lobehub-embedded-media/`. The block-spacing regression measures paragraph/list/table/code gaps against their CSS margins across history, real Send/live, same-root durable EOF and reduced motion, while preserving inline/fenced code whitespace, explicit breaks and raw user text. Focused run: `npm run build:client && PIWEB_E2E_PORT=4223 npx playwright test test/e2e/lobehub-streamdown.spec.ts --grep 'block spacing' --workers=1`; evidence lives under `artifacts/lobehub-spacing/`. API/SSE timing is deterministic and independent of screenshots. It is not live-provider or physical iPhone/Safari/PWA evidence.
 
-### One live reply: exact workflow
+### Unresolved migration limits
+
+- `client/document-context.js` repairs two block-context losses through public APIs, without replacing the renderer: the `preprocess` callback uses a remark math AST to collapse empty lines only inside display-math nodes (including unfinished nodes, before marked can freeze an internal paragraph). Code/inline-code remain literal. A remark plugin wraps unified's documented `processor.parser`, providing whole-document reference definitions before each independent block is parsed; a post-parse transform alone would be too late because unresolved references have already become text. Parse-only definitions are prepended (never appended into an unfinished code/math tail), removed from visible block children, then canonical document-order definitions are supplied to remark-rehype. First-definition precedence, normalized/collapsed/shortcut references and reference images therefore match history. URL sanitation, HTML skipping and KaTeX trust settings are unchanged.
+- `unified@11.0.5` and `remark-parse@11.0.0` are explicit exact direct dependencies, matching the already-installed versions and existing lock entries. They are needed for syntax-aware document context, not a second rendering/animation engine; no upstream files or pinned LobeHub version are modified. Definition snapshots omit positions so unchanged definitions keep upstream plugin options equal during prose growth. Definition changes reparse existing blocks through upstream memoization, without changing root/prefix keys or replaying settled fades.
+- Maintained document-context regressions cover progressive chunks, durable EOF/reload, dark/light/reduced motion, safe links/images, first-definition precedence, literal math in code, and desktop native selection/reader offset while a later definition resolves. Mobile uses the existing custom selection UI and intentionally suppresses native ranges. This adapter does not repair cross-block footnotes, migrate incomplete-tail remend semantics, or certify every nested math/Markdown construct. Whole-document AST context adds linear parsing work per source snapshot; long-transcript performance is not newly benchmarked.
+- The previous custom-renderer E2E suite still includes obsolete frontier/Highlight/invisible-preparation expectations. A passing library/interaction subset is not an all-E2E green claim. The OFF-scroll regression replaces only its obsolete `--reply-front` assertion with actual retained-content verification.
+- The historical indented-fence publication review remains uncleared. New live/static indented-fence coverage is evidence for this replacement, not an approval of legacy code or an independent publication review.
+- Dependency audit results, missing independent review and any baseline Settings fixture failure must be disclosed before publication/deployment. No automatic audit fix, commit, push, worker restart or deployment is implied by local preview.
+
+## Historical custom reading-order implementation
+
+The remaining presentation sections record the superseded renderer, **not the current reply-island algorithms or build assets**. Durable-delivery, auto-scroll, exact Send and keyboard ownership contracts below remain applicable; old Highlight/frontier/wrapper/preparation rules do not.
+
+Live assistant replies and thinking reveal native text in source reading order. Only the newest **eight graphemes** have a short soft-colour edge; already-read text stays clear. Settled images, tables, code, diagrams and math fade as complete surfaces over **160ms**, independently of their physical dimensions and unrelated text backlog. There is no diagonal wipe, per-character wrapper, translated duplicate or whole-answer buffer. This is a qualitative presentation redesign, not a claim about GPT app internals.
+
+## Software architecture
+
+The browser owns presentation, not agent scheduling or persistence. Existing host-worker generation, transport buffering, SQLite snapshots and authenticated SSE are unchanged. Transport batching (150ms) and SSE polling (400ms) are not introduced by reveal and cannot measure model decode TPS.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant SSE as Session SSE
-    participant App as app.js
-    participant Stream as streaming-rich.js
-    participant Rich as markdown.js
-    participant DOM as Browser layout
-    participant RAF as Shared reveal controller
-    SSE-->>App: partial {content, thinking, seq}
-    App->>Stream: updateStreamingRich(body, full source)
-    Stream->>Stream: Normalize CRLF and sample positive growth
-    alt No new stable Markdown boundary
-        Stream-->>App: Keep tail buffered, retain existing DOM
-    else New stable source
-        Stream->>Rich: renderRich(detached pending chunk, delta)
-        Stream->>Rich: await whenRichReady(chunk)
-        Rich-->>Stream: Mermaid/image settled or fallback
-        Stream->>App: Read current scroll-follow intent
-        Stream->>DOM: Append hidden inert chunk and settle scroll
-        Stream->>DOM: await fonts.ready and two RAF boundaries
-        Stream->>DOM: Measure rows/bands once
-        Stream->>RAF: Extend existing goal, retain front and pace
-        loop While prepared content remains
-            RAF->>RAF: Smooth speed and advance monotonic front
-            RAF->>DOM: Paint completed rows and active-row feather
-        end
-    end
-    SSE-->>App: event with completed assistant/thinking source
-    App->>App: Reuse compatible partial body and remove partial wrapper
-    App->>Stream: updateStreamingRich(body, final source, complete=true)
-    Stream->>RAF: Flush tail into the same queue/controller
-    Note over Stream,RAF: Final event does not reset/replay the frontier
+flowchart LR
+    Agent[Host agent] --> Transport[Web transport buffer]
+    Transport --> Live[(SQLite live_output)]
+    Transport --> Events[(SQLite web_events)]
+    Live --> SSE[Docker authenticated SSE]
+    Events --> SSE
+    SSE --> App[app.js ownership and body handoff]
+    App --> Source[streaming-rich.js boundaries and revision queue]
+    Source --> Rich[markdown.js rich readiness]
+    Source --> Plain[Conservative open prose]
+    Rich --> Layout[Fonts and two-frame layout barrier]
+    Plain --> Layout
+    Layout --> Flow[reading-reveal.js one RAF per body]
+    Flow --> Ranges[Native CSS Highlight ranges]
+    Flow --> Atoms[160ms whole-surface opacity]
+    App --> History[Static history render]
 ```
 
-Each async job checks target connectivity and revision before/after readiness
-barriers. A committed-prefix rewrite increments the revision, stops the old
-controller, clears its DOM and starts a new flow. Old preparation results are
-discarded; this fence does **not** abort an in-flight image request. Unfinished
-suffix revisions preserve the accepted prefix and prepared nodes.
+| Component                  | Ownership                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `public/app.js`            | Session/source fences, partial/final wrapper identity, compatible rich-body reuse, history and current scroll intent.      |
+| `public/streaming-rich.js` | Normalized source, stable boundary, revision-fenced serial preparation, conservative native prose preview and promotion.   |
+| `public/markdown.js`       | Existing production rich rendering, Mermaid and image decode/error readiness; no new parser.                               |
+| `public/reading-reveal.js` | Grapheme-safe native ranges, one monotonic text frontier/RAF, smoothed pace, owned range cleanup and rapid atom readiness. |
+| `public/app.css`           | Four controller-owned Highlight colour levels, pending opacity and interaction guards; no geometry mask.                   |
 
-At a prepared-content boundary the controller releases its RAF/observer/media
-resources and retains position plus learned slow velocity. A later chunk resumes
-that same flow; exceptional catch-up speed is capped back to the baseline.
-Reduced motion or closed zero-height thinking releases prepared content without
-animation. Resizing a started chunk releases it instead of remasking read words;
-unstarted chunks are remeasured. Removing/replacing the body causes ownership
-checks to stop the abandoned controller.
+### State and lifecycle
 
-### Reading-order geometry and paint
+A module-private WeakMap belongs to the actual body node, not the changing partial/final wrapper. Answers and thinking have independent controllers. `source`, `boundary`, `revision` and `queue` retain their existing ownership meaning; the accepted source offset is not the visible-text count. `preview` owns only a conservative unfinished plain paragraph and its native Text node. The reading controller tracks `front`, `goal`, `speed`, prepared items, grapheme offsets, RAF timing, reduced-motion listener and its own Highlight ranges.
 
-Text-node `Range.getClientRects()` measurements are grouped into overlapping
-visual rows. The space between adjacent glyph bands belongs to the row bands;
-inline fragments merge without changing the original DOM. Rich atoms are
-measured once as text or media bounds. Chunk offsets use target **content space**:
-`chunk.top = chunkRect.top - targetRect.top + target.scrollTop`, so an expanded
-thinking body's internal scrolling never advances its reveal. For a text row:
+`updateStreamingRich` accepts growing snapshots and resolves after queued preparation, not after all text becomes visible. EOF flushes the remaining source into the same body/controller; it neither resets progress nor releases a whole hidden tail. Normalization and compatible trailing-whitespace final handoff are retained. A substantive committed-prefix rewrite invalidates the revision, clears owned ranges and resets that affected body. Superseded readiness jobs check connectivity/revision before publication; cancellation does not abort an already-issued image request.
 
-```text
-localFront = flow.front - chunk.top
-progress   = clamp((localFront - rowStart) / rowBandHeight, 0, 1)
-rowX       = row.left - 56 + (row.right - row.left + 56) * progress
-```
+### Incremental preparation and promotion
 
-The first row also consumes the initial 56px cold-start budget. CSS uses one
-opaque mask rectangle above `row.top` and one 90-degree feather limited to the
-active row's height/position. The next row wraps X back to its left edge while
-`flow.front` keeps increasing. Graphics instead use a vertical feather within
-their own band. Standard and WebKit mask properties are both supplied. Once a
-whole chunk is exposed its mask and temporary row properties are removed.
+Stable Markdown still goes through the existing parser/readiness barriers. A conservative single-line prose tail beginning with a letter/number can also appear before a closing blank line: one native paragraph/Text node receives `appendData`, rather than repeated HTML rebuilds. Markdown-sensitive symbols, URLs, list prefixes, math and publication-marker syntax remain buffered. Ordinary repeated snapshots do not append duplicate runs.
 
-### Design choices and operational boundaries
+When plain prose becomes stable or reaches EOF, the same paragraph/Text node is promoted. Compatible inline formatting retains the already-read plain prefix and appends only newly parsed nodes. A genuinely revised or structural provisional tail may be replaced; committed blocks are not rebuilt. This limited preview is not a replacement incremental Markdown parser and does not repair the historical indented-fence disagreement.
 
-- **Render first, then reveal:** avoids raw fences/diagram source, token-fade
-  flicker and rich-content relayout, but unfinished Markdown/assets can pause
-  visible progress. This is incremental rendering, not whole-answer buffering.
-- **One controller, local masks:** appends share progress without row/block
-  timers or a huge whole-reply mask texture. Per-frame work uses cached geometry;
-  only preparation/resize performs layout reads.
-- **Arrival-adaptive, not token-synchronous:** the controller speeds up/down
-  smoothly and has backlog/EOF safeguards; the renderer and SSE are not throttled
-  by the animation. A very large catch-up can traverse multiple rows per frame.
-- **Chunk-scoped interaction:** visible early rows inside an unfinished chunk
-  remain inert/aria-hidden until that entire chunk is ready. Previously ready
-  chunks remain interactive; hidden controls cannot steal focus.
-- **History is source, not animation state:** SQLite stores conversation source,
-  not row coordinates or RAF state. Paging/reload renders ordinary static rich
-  content. No backend schema or scheduler change is required.
-- **Scroll policy stays separate:** layout insertion respects current reader
-  intent; native tail following may move the viewport, but the reveal does not
-  transform text or resize its layout.
-- **Deployment:** CSS and `streaming-rich.js` must ship together. Refresh an open
-  client and send a new message; history intentionally does not replay. The web
-  image can be rebuilt without restarting the active host worker. A shared-tree
-  Docker rebuild is not proof of a feature-only Git commit.
+Rich readiness happens while detached. Prepared rich atoms get independent inert wrappers; adjacent text retains its stable source cohort. They are laid out invisibly, await fonts and two paint boundaries, then join the controller. A ready image/table/code block therefore does not inherit a paragraph's text backlog or inertness. Pending assets can still hold later serial preparation; a never-settling readiness timeout remains deferred.
+
+### Native text and whole-surface paint
+
+`Intl.Segmenter` supplies UTF-16 grapheme boundaries, preserving combining characters and joined emoji. Native CSS Highlight ranges cover hidden text and three soft-colour levels. Only an eight-grapheme edge transitions through 25%, 50% and 75% text colour; older text has no overlay. Ranges are coalesced, not one wrapper/timer per character, and each controller deletes only its own ranges. Other highlight owners and native selection are not cleared.
+
+Rich atoms use 160ms opacity on the whole native surface, not a spatial scan. Their zero-text items finish independently of the text goal. Already-ready nodes are skipped by paint; temporary visibility/opacity and empty presentation-only style attributes are removed. Native wrapping/size changes cannot rewind text offsets or grant unrelated future content progress; internal thinking scrolling does not alter the reading frontier.
+
+Idle completion removes RAF/media listeners/ranges while retaining the frontier. A later append joins without replay; cold resumption starts at 80 graphemes/s. Detachment or revision stops abandoned work. Reduced motion, absent CSS Highlight support or closed zero-height thinking shows settled content immediately. Legacy exported geometry/row/pace helpers remain pure compatibility APIs only; production does not call them.
+
+### Operational boundaries
+
+- This is incremental display of received/prepared content, not a guarantee of motion while no new content is available.
+- Pending/revealing native blocks remain inert/aria-hidden; already-ready blocks and independent ready media remain interactive.
+- History stores source, not Highlight or RAF state, and renders without live animation.
+- Scroll ownership, native layout and the palette/composer/viewer controls are unchanged.
+- `app.css`, `streaming-rich.js` and `reading-reveal.js` must ship together. No deployment is implied by local recordings, and shared-tree Docker packaging is not feature-only Git publication.
 
 ## Streaming and finalization
 
@@ -216,53 +154,31 @@ rendered bodies; a substantive committed-prefix rewrite remains a real revision.
 
 ### Browser preparation
 
-- `public/streaming-rich.js` buffers unfinished text instead of exposing raw Markdown in per-token `.ink` spans.
+- `public/streaming-rich.js` buffers unfinished rich syntax; eligible plain prose uses a native paragraph/Text preview instead of raw Markdown or per-token `.ink` spans.
 - Blank-line boundaries are accepted only outside fenced code and multiline math, before any transport-owned `[[image: ...]]`, `[[video: ...]]` or `[[file: ...]]` marker. Delivery may replace or remove those markers, so the marker-containing block and its subsequent tail wait for the durable final source; earlier ready blocks remain visible and are not replayed. Ordinary Markdown images with stable URLs continue preparing/revealing during streaming. Lists remain buffered through blank-line/indented continuations until an outdented non-item or finalization closes them. An unfinished next-marker prefix (`-`, `+`, `*`, digits, or digits plus `.`/`)`) does not prematurely close the list. List recognition follows the production parser's indentation acceptance, including spaces and tabs, rather than assuming a CommonMark 0–3-space limit. CRLF and the transport's leading-whitespace normalization are applied consistently.
 - Assistant previews apply the same repeated-blank-line collapse as reply delivery (`parseOutboxMarkers` / `embedOutboxMediaUrls`), preventing delivery-only whitespace changes from invalidating already-rendered content. Thinking does not use that assistant-delivery normalization.
-- Only newly completed source is sent to the production `renderRich`; previously rendered DOM is retained. Revising a still-hidden tail does not rebuild older blocks. Rewriting already committed source intentionally resets the affected reply.
+- Only newly completed rich source is sent to the production `renderRich`; eligible prose appends native text. Previously committed DOM is retained, compatible plain-prefix promotion preserves native paragraph/Text identity, and a revised provisional tail cannot rebuild older blocks. Rewriting committed source intentionally resets the affected reply.
 - Mermaid rendering and image decoding finish while the new block is detached. The ready block is laid out invisibly, font loading is awaited, and a two-frame paint boundary precedes the reveal. Historical Mermaid also hides its temporary source while rendering; the existing code fallback remains available if Mermaid cannot render.
 - Chunk wrappers preserve native Markdown margin collapsing. The mobile regression compares heading, paragraph, code, diagram and list geometry before/after reload within 0.2px; it caught and fixed a 6px spacing difference during visual review.
 - A final SSE event replaces its partial in the existing transcript slot, reuses compatible rendered nodes and flushes the remaining tail. It does not wait for a later partial-clear event, duplicate the answer or replay old paragraphs. Expanded thinking retains its disclosure state. Late reasoning previews and durable thinking events whose preview was missed are inserted before the current answer preview, after previous turns; finalization never moves an existing thinking row below its answer. Removing the streaming caret at EOF can legitimately shorten the expanded body without changing its transcript order.
 - Queue revisions and connected-target checks discard obsolete async work after replacement, partial removal or session changes. Finalization while an image is still preparing retains exactly one queue and one copy of the image.
 
-A single paragraph without a closing blank line can remain buffered until the final event. The existing working indicator/caret still indicates generation. This deliberate buffering trades token-by-token immediacy for finished formatting.
+Conservative plain prose can now appear before a closing blank line. Unfinished rich syntax still waits for a safe boundary or EOF; generation indicators remain visible. This preserves finished formatting without imposing whole-answer buffering.
 
 ## Motion and interaction
 
-Each live rich body owns one monotonic **vertical-equivalent reading coordinate** (`--reply-front`) and one `requestAnimationFrame` controller. The surface is now **row-by-row, left to right, then down to the next row**, not a flat horizontal edge moving downward. Velocity follows observed text arrival, accelerating and decelerating within the same reply. New blocks extend the goal without resetting position or changing already-read opacity. Final handoff preserves the same controller, arrival history and coordinate.
+One RAF per body advances a monotonic **grapheme coordinate**, not diagonal pixels. Compatible final handoff preserves native body/text nodes and already-read ranges. Whole rich surfaces finish their brief fades independently; reflow changes ordinary native wrapping, not reveal progress.
 
-### Reading-order surface
+### Reading pace (`public/reading-reveal.js`)
 
-After layout/fonts settle, `Range.getClientRects()` measures actual wrapped text lines, including inline formatting and code. Overlapping inline pieces merge into one row; no character spans or cloned text are inserted. Measurements are cached and are not performed per animation frame.
+- Target = remaining text backlog / 1.2 seconds, clamped to **80–3200 graphemes/s**.
+- **250ms exponential smoothing** changes speed without abrupt per-packet jumps.
+- Elapsed time is capped at **48ms** so a suspended frame does not reveal an entire tail on return.
+- The **eight-grapheme** edge is independent of line width, font size and media dimensions.
+- EOF uses the same reading controller/rules, without a special whole-tail completion or replay.
+- `--reply-front`, `--reply-speed` and `data-reading-visible` are test diagnostics in grapheme units, not model tokens/second or geometric pixels.
 
-Each chunk uses two CSS mask layers: fully opaque completed rows above the active row, plus a **56px horizontal feather** sweeping across that row. Rows below stay transparent. The active X position comes from the shared coordinate's fraction through the measured row band; returning to the left edge of the next row is a wrap in reading order, not a restart of progress or independent row timer. The existing cold-start feather-distance budget is spent within the first horizontal row rather than adding a blank vertical wait.
-
-Images, diagrams, display formulas and embedded media are geometric bands, not ordinary text rows: they keep a vertical feather within their own band after readiness. Inline formulas participate as text-row atoms. LTR reading order is intentional; full bidi/vertical-writing sequencing is not claimed.
-
-A width/height reflow of an already-started chunk releases that chunk completely rather than remasking previously read glyphs under new line breaks. Unstarted chunks are remeasured normally, and future arrivals still animate. This deliberate reflow fallback may finish a large active chunk immediately. It does not change the source DOM, Markdown line wrapping or scroll policy.
-
-### Adaptive velocity controls (`public/streaming-rich.js`)
-
-- Positive normalized source-length growth is sampled on every incoming partial, **before** the stable-Markdown early return. Unfinished text therefore teaches the pacing controller even before another complete paragraph is ready.
-- A sliding **1200ms** window estimates received source units per second. These are JavaScript string-length units including Markdown, **not model tokens or server decode TPS**. The first snapshot has no reliable elapsed interval and does not count as an infinite-rate burst. Duplicate, shrinking and regrown hidden-tail snapshots below the prior high-water mark do not inflate throughput; rapid arrivals are coalesced in 40ms receive-time buckets and storage is bounded to 64 samples. This preserves the recent window even with hundreds of updates per second.
-- Prepared layout calibrates pixels per source unit (`height / prepared source length`, bounded 0.1–8). Resize adjusts this density but does not manufacture input samples. Layout preparation and network batching can still affect how closely the estimate represents real generation.
-- A soft **450ms lookahead** slows an almost-caught-up front. The regular streaming target ranges from **24–600px/s**; both acceleration and deceleration use **400ms exponential smoothing**, rather than snapping to each packet. `--reply-speed` exposes the sampled current velocity for tests, not a user-facing TPS readout.
-- **120px/s** remains the cold-start/EOF baseline, not a minimum for ordinary learned live streams. No new data makes the recent estimate decay; no ready content still pauses the front. Idle cleanup preserves a learned slow velocity but discards exceptional backlog catch-up velocity, so resuming does not jump back to 120px/s.
-- Very large ready buffers (**over 800px**) and finalization can use a roughly **3.2s catch-up budget**; this safeguard may exceed the regular 600px/s target. A cold-start fallback ceases to pin normal live pacing once real arrival intervals are available. EOF flushes the remaining tail normally instead of leaving it behind a learned slow/stale rate.
-
-The renderer itself is not deliberately throttled. These controls govern the visual frontier only. They approximate client-observed streaming cadence, not exact token-by-token synchronization or a guarantee of continuous motion without ready content.
-
-Prepared chunks offset the shared coordinate by their measured `--chunk-top`; their local masks follow the same reading-order progress across paragraphs, code and other rich content. This avoids a huge whole-message mask texture. There are no per-block CSS animations, opacity fades, animation-end listeners or completion timers. Fully exposed chunks lose their masks and become interactive. Geometry is cached after readiness and remeasured on insertion/resize, not read on every animation frame; responsive reflow never rewinds the frontier or hides already-read content.
-
-The front pauses only when it reaches all currently prepared content. Later content resumes at that position and preserves a learned slow pace; idle completion discards exceptional backlog catch-up speed, so a small continuation remains gradual even after a huge reply. Render-first buffering still means that delayed generation, an unfinished Markdown block, an image or a diagram may create a genuine readiness pause; this is not a promise of uninterrupted motion when no ready content exists.
-
-Image decode rejection falls back without blocking text, but there is no dedicated readiness timeout for a request that never settles. Such a pending asset can hold later text in the serial preparation queue until failure or cancellation; a bounded asset-readiness fallback is deferred.
-
-Frame gaps are capped at 48ms to prevent a suspended tab from jumping across unread content on return. Reduced-motion changes release prepared content immediately. RAF, resize observation and media listeners are removed on completion, replacement or detachment. No transform, dimensions or text layout are animated.
-
-Pending/revealing chunks stay `inert` and `aria-hidden` until ready, so invisible links and controls cannot steal keyboard focus or receive clicks. Already revealed content remains interactive.
-
-`prefers-reduced-motion: reduce` shows ready content without an autonomous reveal. Historical text loaded through paging/reload does not replay live animations. Existing user bubbles and tool-card animations are unchanged.
+Text insertion/layout remains native. Prepared atoms fade over 160ms, with one body RAF rather than individual animation timers. Unavailable source/unfinished syntax or delayed assets can still cause waits; no dedicated never-settling asset timeout is added. Browsers without CSS Highlights and reduced-motion users receive settled content immediately. Chunk-scoped inertness protects hidden controls; historical text and completed content do not replay. Native selection/copy, links, media and disclosure interactions retain their ordinary workflow once ready.
 
 ### Auto-scroll preference
 
@@ -297,8 +213,11 @@ harness context change is needed.
 
 The browser matches that ID to a saved `.msg-user` row, whether the SSE event or
 HTTP acknowledgement arrives first. Only then does it remove that row's pop-in,
-reserve one visible turn and navigate the question to 12px below the transcript
-edge. This explicit send navigation applies with auto-scroll OFF as well as ON.
+reserve one visible turn and align the question's outer row with the transcript's
+clipping edge. The row's own padding provides breathing room. A separate top inset
+would expose the preceding row, because scroller padding does not clip history.
+The scroll target rounds upward to prevent fractional-pixel slivers. This explicit
+send navigation applies with auto-scroll OFF as well as ON.
 
 #### Smooth Send and keyboard dismissal
 
@@ -338,7 +257,7 @@ draft legitimately resizes its composer independently of those keyboard reports.
 These fixtures are not a physical iPhone/Safari/PWA or native IME verification.
 
 Reservation is **bottom padding on the transcript**, not cloned messages, fake
-history or a spacer after each row. It is `max(0, viewport height - top inset -
+history or a spacer after each row. It is `max(0, viewport height -
 actual turn height - base bottom padding)`: short answers keep whitespace below,
 ready reply/media growth spends it, and long answers need no extra whitespace.
 Mutation/resize observations batch measurement; reveal-mask animation alone does
@@ -385,9 +304,6 @@ workflow.
 
 ## Verification
 
-See [continuous final-delivery verification](final-delivery-verification.md) for
-the full-frame recording, the additional layout fixes and deployment boundaries.
-
 The maintained `final delivery continuous video walkthrough` test records one
 continuous mobile journey: real Send, repeated-blank-line text growth/finalization,
 a second Send, expanded thinking, an unpublished media tail, published image and
@@ -413,6 +329,9 @@ npx vitest run test/streaming-rich.test.ts test/thinking-stream.test.ts \
   test/live-output.test.ts test/transcript-scroll.test.ts test/web-reply-handoff.test.ts \
   test/prompt-turn-scroll.test.ts test/life-session-api.test.ts
 # Send → question at top / blank answer area → short/long growth → manual jump;
+# The 'prompt turn submission raises' regression also checks every preceding row
+# is fully above the clipping edge (no previous-message sliver), then short/long
+# replies, next Send, dark/light, viewport resize and manual history reading.
 # next turn, keyboard-quiet smooth Send, reader/refocus cancellation, reduced motion,
 # viewport changes, ON follow without animation snap and pending-image OFF.
 # Settings OFF → submit navigation → hold stream/final position → ON → OFF;
@@ -421,15 +340,17 @@ PIWEB_E2E_PORT=4212 npx playwright test test/e2e/render-reveal.spec.ts \
   --grep 'prompt turn|auto-scroll' --workers=1 --reporter=list
 PIWEB_E2E_PORT=4194 npx playwright test test/e2e/render-reveal.spec.ts \
   --workers=1 --reporter=list
-# Send → slow → fast → slow → fast → final → composer → reload.
-# Transport cadence is intentional input, independent of screenshots/assertions.
-PIWEB_E2E_PORT=4201 npx playwright test \
-  test/e2e/render-reveal.spec.ts --grep 'adaptive shared front walkthrough' \
-  --workers=1 --reporter=list --output=artifacts/render-reveal-rows/recording
+# Reading-order preview: real Send → independent prose packets → fast whole media/table/code
+# → final native-body handoff → light Send → composer → static history.
+PIWEB_E2E_PORT=4222 npx playwright test test/e2e/render-reveal.spec.ts \
+  --grep 'reading-order soft' --workers=1 --reporter=list \
+  --output=artifacts/render-reveal-reading/recording
 ```
 
-The browser suite uses the real application modules/styles and controlled API/SSE fixtures, not a replacement UI or a real agent conversation. It covers actual pixel contrast (left glyphs visible while right/next-row glyphs remain hidden), row/X scans without replacing text nodes, reflow release without remasking, measured slow → fast → slow → fast velocity, unfinished-tail arrival sampling, slow-velocity preservation across idle gaps, a monotonic shared coordinate through overlapping arrivals/final handoff, horizontal row-mask and vertical media-band stop alignment across active chunks, transport-trimmed assistant/thinking final handoff without replay, every unfinished list-marker prefix and static list hierarchy, internally scrolled thinking with scroll-invariant content coordinates, paused-front continuation (including small continuations after a large backlog), active-controller cancellation, dynamic reduced motion, mobile/desktop stationary geometry and animation-frame samples, delayed assets, Mermaid readiness, nested-list/CRLF hierarchy, light-theme LaTeX/font readiness, expanded thinking, scroll intent, hidden-content focus protection, composer hit testing and history reload.
+The maintained new contracts cover grapheme boundaries, the narrow fade edge, smoothed/frame-capped pace, conservative plain-tail eligibility, early open prose with native paragraph/Text identity through EOF, inline-format promotion, bounded whole-image readiness without masks, rapid independent media readiness despite a long text backlog, Highlight ownership/cleanup and unsupported-API fallback. Existing source-hierarchy, source/asset ownership, reduced motion, reflow, hidden-future touch selection with a ready positive control, disclosure, finalization and scroll tests remain maintained.
 
-Current reading-order evidence lives under ignored `artifacts/render-reveal-rows/`. Earlier adaptive-velocity evidence lives under ignored `artifacts/render-reveal-adaptive/`: H.264 MP4, chronological decoded-frame sheets, phase screenshots, frame samples and the verification report. Earlier fixed-velocity shared-front recordings under `artifacts/render-reveal-continuous/` and per-block recordings under `artifacts/render-reveal/` are superseded for adaptive pacing, though their boundary/geometry/baseline investigation remains relevant. Inspection uses decoded sampled video frames and screenshots, not direct MP4 playback or every-frame visual inspection. Physical iPhone/Safari smoothness and real-agent arrival cadence have not been tested; these Chromium fixtures do not prove performance on every device or an unreliable network.
+The continuous production-UI recording uses independently timed SSE packets/final events, actual hit-tested Send, dark/light themes, code/table/large image, compatible native final reuse, composer and static history. Per-RAF data checks body/paragraph/Text identity, monotonic progress, relative geometry, no masks/overflow/error states and console/page/network failures. Evidence and archived obsolete diagonal-only contracts live under ignored `artifacts/render-reveal-reading/`. Contact sheets and full-size milestones are decoded-image inspection, not direct playback, every-frame full-resolution scrutiny, physical iPhone/Safari/PWA testing, measured GPU/compositor FPS or real-provider/network cadence.
+
+Earlier diagonal/steady-tail and row/relay recordings are historical, not evidence of user acceptance of this new presentation. The indented-fence parser publication blocker remains **unrepaired and uncleared**. Local gates/recording do not authorize deployment, commit or push; user visual confirmation is required before a new deployment. The independently known Settings/device-code fixture's system-metrics 404 remains outside this feature and is not called green.
 
 The broader history suite has a pre-existing screenshot mismatch: expected transcript height 734px, actual 711px. Serving exact pre-feature assets while preserving unrelated dirty files reproduces the identical 390×711 screenshot pixel-for-pixel. Its baseline was not updated to hide the mismatch; see the evidence report.

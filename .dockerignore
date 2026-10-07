@@ -6,4 +6,6 @@ node_modules/
 dist/
 .git/
 test/
+# Local video evidence and the inspected upstream checkout are not build input.
+artifacts/
 *.md

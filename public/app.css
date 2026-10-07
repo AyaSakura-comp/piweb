@@ -4513,66 +4513,49 @@ dialog.sheet::backdrop {
   color: #b5bac1;
 }
 
-/* ── render-first streaming reply ──────────────────────────────────────────
- * Stable rich blocks are laid out before reveal. No token spans, slide-in, or
- * rebuilding previously read blocks; the mask changes pixels, not geometry.
- */
-/* Preserve native Markdown margin collapsing, including after history reload. */
-.reply-chunk {
-  display: block;
+/* LobeHub owns reply animation. These rules only fit existing native layout
+ * and interactions; the package injects its own fade CSS without overrides. */
+.msg-text.lobe-rich,
+.event-body.lobe-rich {
+  /* HAST's inter-block newlines are separators, not visible blank lines.
+     Prose line breaks already have <br>; leave raw user/tool text untouched. */
+  white-space: normal;
 }
-
-.reply-chunk[data-reveal='pending'] {
-  opacity: 0;
-  pointer-events: none;
+.lobe-rich :not(pre) > code {
+  white-space: pre-wrap;
 }
-
-/* One reading-order cursor: completed rows stay opaque, the active row scans
-   left to right, and future rows remain hidden. No spans, layout changes or timers. */
-.reply-chunk[data-reveal='revealing'] {
-  pointer-events: none;
-  --reply-active-mask: linear-gradient(
-    90deg,
-    #000 var(--reply-row-front),
-    transparent calc(var(--reply-row-front) + 56px)
-  );
-  -webkit-mask-image: linear-gradient(#000, #000), var(--reply-active-mask);
-  mask-image: linear-gradient(#000, #000), var(--reply-active-mask);
-  -webkit-mask-size: 100% var(--reply-row-top), 100% var(--reply-row-height);
-  mask-size: 100% var(--reply-row-top), 100% var(--reply-row-height);
-  -webkit-mask-position: 0 0, 0 var(--reply-row-top);
-  mask-position: 0 0, 0 var(--reply-row-top);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-}
-
-.reply-chunk[data-reveal-mode='hidden'] {
-  -webkit-mask-image: linear-gradient(transparent, transparent);
-  mask-image: linear-gradient(transparent, transparent);
-}
-
-/* Graphics are not lines of prose: reveal their band vertically after readiness. */
-.reply-chunk[data-reveal-mode='media'] {
-  --reply-active-mask: linear-gradient(
-    180deg,
-    #000 calc(var(--reply-front) - var(--chunk-top) - var(--reply-row-top)),
-    transparent calc(var(--reply-front) - var(--chunk-top) - var(--reply-row-top) + 56px)
-  );
-}
-
-.msg-text > .reply-chunk:first-child > :first-child {
+.msg-text > .streamdown-animated > :first-child {
   margin-top: 0;
 }
-
-.msg-text > .reply-chunk:last-child > :last-child {
+.msg-text > .streamdown-animated > :last-child {
   margin-bottom: 0;
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .reply-chunk[data-reveal='revealing'] {
-    -webkit-mask-image: none;
-    mask-image: none;
-  }
+.streamdown-animated .stream-char[data-lobe-fading] {
+  user-select: none;
+}
+.lobe-code {
+  position: relative;
+}
+.lobe-code > div > pre {
+  padding-top: 44px;
+}
+.lobe-code-copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.streamdown-animated .msg-inline-media {
+  display: block;
 }
 
 /* A soft cursor so a pause in generation still looks alive rather than stuck. */

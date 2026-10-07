@@ -36,9 +36,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && npm run build:client",
+    "build:client": "node scripts/build-client.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:e2e": "npm run build:client",
+    "pretest:e2e:update": "npm run build:client",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots=all",
     "lint": "eslint .",
@@ -56,6 +59,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
+    "@lobehub/streamdown": "1.4.0",
     "better-sqlite3": "^12.0.0",
     "croner": "^10.0.1",
     "discord.js": "^14.18.0",
@@ -64,6 +68,14 @@
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "puppeteer-core": "^25.8.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "rehype-katex": "7.0.1",
+    "remark-breaks": "4.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
@@ -74,6 +86,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.0",
     "@types/web-push": "^3.6.4",
+    "esbuild": "0.27.4",
     "eslint": "^10.3.0",
     "eslint-config-prettier": "^10.1.8",
     "katex": "^0.18.1",

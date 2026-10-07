@@ -12,3 +12,8 @@ sessions/
 *.tgz
 ts-state/
 artifacts/
+
+# Deterministic reply-island output; npm run build and Docker generate it.
+public/lobehub-rich.js
+public/lobehub-rich.js.LEGAL.txt
+public/lobehub-rich.LICENSE.txt

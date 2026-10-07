@@ -18,8 +18,11 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json ./
+COPY tsconfig.json LICENSE ./
 COPY src ./src
+COPY client ./client
+COPY scripts/build-client.mjs ./scripts/build-client.mjs
+COPY public/media-files.js ./public/media-files.js
 RUN npm run build
 
 # Drop dev dependencies from the tree we ship.
@@ -34,6 +37,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY public ./public
+COPY --from=build /app/public/lobehub-rich* ./public/
 
 # Least privilege: the web tier only ever needs to read/write the shared data
 # directory, which is bind-mounted with matching ownership.

@@ -12,6 +12,7 @@
 
 import { renderRich } from './markdown.js';
 import { canReuseStreamingRich, updateStreamingRich } from './streaming-rich.js';
+import { renderLobehubStatic } from './lobehub-rich.js';
 import { createCameraComposer } from './camera-composer.js';
 import { createImageAnnotator } from './image-annotator.js';
 import { createBtwWorkspace } from './btw-workspace.js';
@@ -2682,29 +2683,53 @@ function appendEvent(event, live) {
   const partial = liveRich
     ? document.getElementById(event.kind === 'thinking' ? 'partial-thinking' : 'partial-msg')
     : null;
-  const partialBody = partial?.querySelector(event.kind === 'thinking' ? '.event-body' : '.msg-text');
+  const partialBody = partial?.querySelector(
+    event.kind === 'thinking' ? '.event-body' : '.msg-text',
+  );
   const reuseRich = canReuseStreamingRich(partialBody, event.content) ? partialBody : null;
   const insert = () => {
-    const node = buildEventNode(event, { liveRich, reuseRich });
+    let node;
+    if (reuseRich) {
+      // Keep the entire row connected: reparenting even the same React body
+      // restarts browser CSS animations whose completed fill is still applied.
+      node = partial;
+      node.removeAttribute('id');
+      node.classList.remove('partial');
+      growInto(reuseRich, event.content, true);
+      if (event.kind === 'thinking') {
+        const summary = node.querySelector('summary');
+        summary.querySelector('.label').textContent = `💭 ${event.role || 'Thinking'}`;
+        const peek = event.content
+          .replace(/```\w*\n?/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 120);
+        summary.append(el('span', 'peek', peek));
+      } else {
+        renderFiles(node.querySelector('.msg-body'), event.files, event.content);
+      }
+    } else {
+      node = buildEventNode(event, { liveRich });
+    }
     node.dataset.eventId = String(event.id);
     // Finalize in the preview's existing slot, not at the transcript tail.
     // Thinking can finish while its answer is already visible underneath it.
     if (live && !liveRich) node.classList.add('pop-in');
-    if (partial) {
+    if (partial && node !== partial) {
       if (event.kind === 'thinking') node.open = partial.open;
       partial.replaceWith(node);
-    } else if (live && event.kind === 'thinking') {
+    } else if (!partial && live && event.kind === 'thinking') {
       // A short reasoning preview may fall between SSE polls. Its saved row
       // still belongs before the current answer, never above previous turns.
       messages.insertBefore(node, document.getElementById('partial-msg'));
-    } else {
+    } else if (!partial) {
       messages.append(node);
     }
     // The result arrives as the next event, so the clock has to move off the row
     // it was on now rather than up to a second later.
     syncRunningTool();
   };
-  // Moving the reused body and removing the streaming caret can also clamp a
+  // Removing the streaming caret and publishing attachments can also clamp a
   // reader-released prompt. Preserve its offset through the entire handoff.
   if (live) promptTurnScroll.preserveLayout(insert);
   else insert();
@@ -2834,7 +2859,7 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
       const body = el('div', 'msg-body');
       const textNode = reuseRich || el('div', 'msg-text');
       if (liveRich) growInto(textNode, event.content, true);
-      else renderText(textNode, event.content);
+      else renderLobehubStatic(textNode, event.content);
       body.append(textNode);
       renderFiles(body, event.files, event.content);
 
@@ -2884,6 +2909,7 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     const bodyWrap = el('div', 'event-body-wrap');
     const bodyNode = reuseRich || el('div', 'event-body');
     if (liveRich) growInto(bodyNode, event.content, true);
+    else if (event.kind === 'thinking') renderLobehubStatic(bodyNode, event.content);
     else renderText(bodyNode, event.content);
     bodyWrap.append(bodyNode);
     details.append(bodyWrap);

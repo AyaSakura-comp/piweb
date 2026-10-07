@@ -112,19 +112,31 @@ The image lightbox exposes a pencil action for writable main conversations. It o
 
 ## Render-first replies
 
-Live assistant/thinking content buffers unfinished Markdown and renders only new,
-completed blocks. Diagrams/images finish preparation before display. Each reply
-shares one reading-order cursor: each measured text row scans left-to-right through
-a 56px feather, then continues on the next row below. Earlier rows stay opaque;
-future rows stay hidden. New content extends the same progress without restarting
-a row/block-specific fade. Text ranges are measured without per-character wrappers.
-Graphics use vertical reveal bands; a started chunk finishes on responsive reflow
-to avoid remasking read glyphs. Velocity follows recent positive
-source-text arrival, calibrated to prepared height, with a soft lookahead and smoothed
-acceleration/deceleration; slow pacing survives idle gaps. Cold-start, EOF and oversized
-backlogs have catch-up safeguards. This is client-observed cadence, not decode TPS.
-No vertical translation, resizing, per-token spans or replay of old paragraphs.
-Real readiness gaps may pause the front.
+Live assistant/thinking replies use a reply-only React 19 island backed by
+**`@lobehub/streamdown@1.4.0`**, not Vercel Streamdown. Use upstream's balanced
+smoothing, character reveal and 180ms fade without a piweb animation overlay.
+There are no piweb Highlight ranges, geometric masks, duplicate surfaces or
+custom pacing. The package owns CommonMark parsing and incomplete-tail repair;
+`remark-gfm`, `remark-math` and `rehype-katex` provide tables/tasks/math.
+Existing highlighting, Mermaid controls, media/lightbox delegation and palette
+remain leaf integrations. Fading controls are inert until their upstream fades
+finish; selection excludes still-fading character spans, not readable prefixes.
+Compatible EOF keeps the same React root/body and Streamdown instance. Upstream
+may coalesce its temporary character spans; individual Text-node identity is
+not a contract. Static assistant/thinking history and reduced motion use the
+package's non-animated `CachedMarkdown`. User messages and other notices retain
+the existing renderer. Late asset resize callbacks recheck reader ownership;
+Send/scroll/attachment workflows are not converted to React.
+This intentionally replaces the live parser instead of attempting another repair
+to the old indented-fence scanner. Its legacy pure exports remain for compatibility,
+not production reply parsing. New-parser tests and visual approval do not clear
+the historical failed publication review. A document-context adapter preserves
+blank-line display math and cross-block reference definitions through progressive
+rendering and connected EOF; focused regressions verify agreement with history.
+Cross-block footnotes and exhaustive nested constructs remain uncertified, and
+the legacy animation E2E suite has not been fully migrated. Validation is not deployment approval,
+GPT implementation parity, model TPS or physical-device/GPU-FPS proof.
+
 Final replies reuse their compatible partial DOM rather than briefly duplicating
 it, and expanded thinking stays expanded. Historical text does not replay; reduced
 motion shows ready content immediately. Native EOF keeps the preview visible until

@@ -727,7 +727,7 @@ export function applySyntaxHighlighting(
   return true;
 }
 
-function renderCode(item) {
+export function renderCode(item) {
   if (item.lang === 'mermaid') {
     const wrap = document.createElement('div');
     wrap.className = 'mermaid-wrap';
@@ -1004,12 +1004,12 @@ function link(text, url) {
   return a;
 }
 
-function bindInlineYouTube(sourceLink, videoId) {
+export function bindInlineYouTube(sourceLink, videoId) {
   sourceLink.classList.add('youtube-inline-link');
   sourceLink.setAttribute('aria-label', `Play YouTube video: ${sourceLink.textContent.trim()}`);
   sourceLink.setAttribute('aria-expanded', 'false');
   sourceLink.title = 'Play video here';
-  sourceLink.addEventListener('click', (event) => {
+  const onClick = (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       // Preserve the browser's external-navigation default while preventing the
       // app's delegated copy-link handler from cancelling modified clicks.
@@ -1019,10 +1019,25 @@ function bindInlineYouTube(sourceLink, videoId) {
     event.preventDefault();
     event.stopPropagation();
     toggleInlineYouTube(sourceLink, videoId);
-  });
-  sourceLink.addEventListener('auxclick', (event) => {
+  };
+  const onAuxClick = (event) => {
     if (event.button === 1) event.stopPropagation();
-  });
+  };
+  sourceLink.addEventListener('click', onClick);
+  sourceLink.addEventListener('auxclick', onAuxClick);
+  // React leaves release only their own listeners/player on URL change/unmount.
+  return () => {
+    sourceLink.removeEventListener('click', onClick);
+    sourceLink.removeEventListener('auxclick', onAuxClick);
+    const scope = sourceLink.closest('.msg-text, .event-body');
+    const player = scope?.querySelector('.youtube-inline-player');
+    if (player && youtubePlayerSources.get(player) === sourceLink) removeInlineYouTube(player);
+    sourceLink.classList.remove('youtube-inline-link');
+    sourceLink.removeAttribute('aria-expanded');
+    sourceLink.removeAttribute('aria-controls');
+    sourceLink.removeAttribute('aria-label');
+    sourceLink.removeAttribute('title');
+  };
 }
 
 function removeInlineYouTube(player, focusSource = false) {

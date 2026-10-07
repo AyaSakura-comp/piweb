@@ -13,10 +13,15 @@ export default tseslint.config(
       'ts-state/**',
       'artifacts/**',
       'public/vendor/**',
+      'public/lobehub-rich.js', // Generated dependency bundle; lint client/ source instead.
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['client/**/*.jsx'],
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+  },
   {
     languageOptions: {
       ecmaVersion: 'latest',

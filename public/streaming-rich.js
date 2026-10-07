@@ -1,5 +1,10 @@
-/** Render completed Markdown once, then reveal it without moving the text. */
-import { renderRich, whenRichReady } from './markdown.js';
+/** Legacy pure reveal helpers and the LobeHub reply-island boundary. */
+export {
+  readingGraphemes,
+  readingFadeLevel,
+  advanceReadingPace,
+  plainStreamingTail,
+} from './reading-reveal.js';
 
 const streams = new WeakMap();
 // The transport trims completed replies. Canonicalize the leading edge from
@@ -10,9 +15,12 @@ const normalize = (text) =>
     .trimStart();
 const REVEAL_FEATHER = 56;
 const REVEAL_SPEED = 120;
+const ROW_LAG_GLYPHS = 1.5;
+const MAX_ACTIVE_ROWS = 5;
 const RATE_WINDOW_MS = 1200;
 const RATE_SAMPLE_MS = 40;
 const PACE_SMOOTHING_MS = 400;
+const TAIL_LOOKAHEAD_MS = RATE_WINDOW_MS;
 const MIN_STREAM_SPEED = 24;
 const MAX_STREAM_SPEED = 600;
 
@@ -20,7 +28,7 @@ export function createRevealPace() {
   return { samples: [], highWater: 0, speed: REVEAL_SPEED };
 }
 
-/** Sample positive source growth, even while its Markdown tail is unfinished. */
+/** Sample positive cumulative input; production supplies prepared geometric extent. */
 export function noteRevealArrival(pace, length, now) {
   if (length <= pace.highWater) return;
   pace.highWater = length;
@@ -54,10 +62,20 @@ function recentArrivalRate(pace, now) {
   return ((pace.highWater - count) * 1000) / Math.max(1, now - start);
 }
 
-/** Follow arrival cadence in both directions; never snap the front or velocity. */
+/** Smooth measured arrivals, braking against the prepared surface boundary. */
 export function advanceRevealPace(
   pace,
-  { now, elapsed, front, goal, pixelsPerChar = 0.75, catchupSpeed = 0, complete = false },
+  {
+    now,
+    elapsed,
+    front,
+    goal,
+    tailEnd = null,
+    pixelsPerChar = 0.75,
+    catchupSpeed = 0,
+    complete = false,
+    steadyDrain = false,
+  },
 ) {
   const rate = recentArrivalRate(pace, now);
   const incoming = rate === null ? REVEAL_SPEED : Math.min(MAX_STREAM_SPEED, rate * pixelsPerChar);
@@ -68,16 +86,45 @@ export function advanceRevealPace(
     rate !== null && !complete
       ? incoming * Math.min(1, backlog / Math.max(REVEAL_FEATHER, incoming * 0.45))
       : incoming;
-  const target = Math.max(
+  let target = Math.max(
     complete || rate === null ? REVEAL_SPEED : MIN_STREAM_SPEED,
     buffered,
     catchupSpeed,
   );
+  const liveTail =
+    Number.isFinite(tailEnd) &&
+    tailEnd > front &&
+    !complete &&
+    now - pace.samples.at(-1)?.at <= RATE_WINDOW_MS;
+  const remaining = liveTail ? tailEnd - front : Infinity;
+  // Retain a little ready runway instead of exhausting every short arrival.
+  // Production passes geometric surface extents, never glyph/source counts.
+  // EOF or stale preparation still releases the buffer normally.
+  if (liveTail) {
+    // Tail distance corrects packet-rate aliasing in BOTH directions: a growing
+    // runway accelerates; nearing the ready corner slows below the usual floor.
+    target = Math.min(
+      Math.max(MAX_STREAM_SPEED, catchupSpeed),
+      (remaining * 1000) / TAIL_LOOKAHEAD_MS,
+    );
+  }
+  // Production EOF keeps the velocity the reader just saw, not a 120px/s
+  // reset or a backlog-dependent deadline. The floor only drains near-zero tails.
+  if (complete && steadyDrain) {
+    pace.drainSpeed ??= Math.max(MIN_STREAM_SPEED, Math.min(MAX_STREAM_SPEED, pace.speed));
+    target = pace.drainSpeed;
+  }
   const dt = Math.max(0, Math.min(48, elapsed));
   pace.speed += (target - pace.speed) * (1 - Math.exp(-dt / PACE_SMOOTHING_MS));
+  // Braking must also bound inherited/catch-up inertia. With capped frame gaps,
+  // this cannot consume the entire live tail in one step. New data accelerates
+  // through the same smoother; there is no separate block timer or held surface.
+  if (liveTail) pace.speed = Math.min(pace.speed, (remaining * 1000) / (2 * PACE_SMOOTHING_MS));
   return pace.speed;
 }
 
+// Legacy pure geometry/pace helpers remain exported for compatibility.
+// Production now uses native-text reading-order softness and brief rich-atom fades.
 /** Merge rendered inline rectangles into row bands without changing the DOM. */
 export function buildRevealRows(rectangles, height) {
   const lines = [];
@@ -90,6 +137,7 @@ export function buildRevealRows(rectangles, height) {
       last.left = Math.min(last.left, rect.left);
       last.right = Math.max(last.right, rect.right);
       if (rect.kind === 'media') last.kind = 'media';
+      if (rect.glyphWidth > 0) last.glyphWidth = Math.max(last.glyphWidth || 0, rect.glyphWidth);
     } else lines.push({ ...rect, kind: rect.kind || 'text' });
   }
   return lines.map((row, i) => ({
@@ -98,6 +146,7 @@ export function buildRevealRows(rectangles, height) {
     left: row.left,
     right: row.right,
     kind: row.kind,
+    ...(row.glyphWidth > 0 ? { glyphWidth: row.glyphWidth } : {}),
   }));
 }
 
@@ -124,37 +173,119 @@ export function revealRowAt(rows, front, lead = 0) {
   };
 }
 
-const RICH_ATOMS =
-  '.mermaid-chart, .katex-display, .katex, .msg-inline-media, img, video, iframe, svg, canvas';
-function measureRevealRows(chunk, bounds) {
-  const rectangles = [];
-  const add = (rect, kind = 'text') => {
-    const box = {
-      top: Math.max(0, rect.top - bounds.top),
-      bottom: Math.min(bounds.height, rect.bottom - bounds.top),
-      left: Math.max(0, rect.left - bounds.left),
-      right: Math.min(bounds.width, rect.right - bounds.left),
-      kind,
-    };
-    if (box.bottom > box.top && box.right > box.left) rectangles.push(box);
+/** Cache a staggered schedule within each text run; media remains a barrier. */
+export function buildRevealSchedule(rows, lead = 0) {
+  const schedule = rows.map((row) => ({ ...row, start: row.top, end: row.bottom }));
+  for (let first = 0; first < schedule.length; ) {
+    const start = schedule[first].top - (first ? 0 : lead);
+    if (schedule[first].kind === 'media') {
+      schedule[first++].start = start;
+      continue;
+    }
+    let last = first + 1;
+    while (last < schedule.length && schedule[last].kind !== 'media') last++;
+    const run = schedule.slice(first, last);
+    const glyphs = run
+      .map((row) => row.glyphWidth)
+      .filter((width) => Number.isFinite(width) && width > 0)
+      .sort((a, b) => a - b);
+    const lag = ROW_LAG_GLYPHS * (glyphs[Math.floor(glyphs.length / 2)] || 16);
+    const starts = [];
+    const scans = [];
+    const releases = [];
+    for (let i = 0; i < run.length; i++) {
+      // Row six waits for row one's slot, seven for two, etc. Newly starting
+      // neighbours retain the small glyph stagger, not a whole five-row batch.
+      starts[i] = Math.max(
+        i ? starts[i - 1] + lag : 0,
+        i >= MAX_ACTIVE_ROWS ? releases[i - MAX_ACTIVE_ROWS] : 0,
+      );
+      scans[i] = starts[i] + run[i].right - run[i].left + REVEAL_FEATHER;
+      // Short lower rows can finish early, but never release out of order or
+      // remask read text. The first row frees its slot at its own glyph edge.
+      releases[i] = Math.max(i ? releases[i - 1] : 0, scans[i]);
+    }
+    const scale = (schedule[last - 1].bottom - start) / releases.at(-1);
+    for (let i = first; i < last; i++) {
+      const local = i - first;
+      schedule[i].start = start + starts[local] * scale;
+      schedule[i].scanEnd = start + scans[local] * scale;
+      schedule[i].end = start + releases[local] * scale;
+      schedule[i].travel = run[local].right - run[local].left + REVEAL_FEATHER;
+    }
+    // Avoid floating-point residue delaying release at the measured run boundary.
+    schedule[last - 1].end = schedule[last - 1].bottom;
+    first = last;
+  }
+  return schedule;
+}
+
+/** Near-parallel horizontal bands from one shared, monotonically advancing front. */
+export function revealRowsAt(schedule, front) {
+  if (!schedule.length || front >= schedule.at(-1).end)
+    return { mode: 'ready', index: schedule.length, bands: [] };
+  if (front < schedule[0].start) return { mode: 'hidden', index: -1, bands: [] };
+  let low = 0;
+  let high = schedule.length - 1;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (front >= schedule[middle].end) low = middle + 1;
+    else high = middle;
+  }
+  const row = schedule[low];
+  const bands = [];
+  if (row.kind !== 'media') {
+    for (let i = low; i < Math.min(schedule.length, low + MAX_ACTIVE_ROWS); i++) {
+      const next = schedule[i];
+      if (next.kind === 'media' || front < next.start) break;
+      const progress = Math.max(
+        0,
+        Math.min(1, (front - next.start) / Math.max(0.001, next.scanEnd - next.start)),
+      );
+      bands.push({
+        index: i,
+        top: next.top,
+        height: next.bottom - next.top,
+        progress,
+        front: next.left - REVEAL_FEATHER + next.travel * progress,
+      });
+    }
+  }
+  return {
+    mode: row.kind === 'media' ? 'media' : 'rows',
+    index: low,
+    top: row.top,
+    height: row.bottom - row.top,
+    bands,
   };
-  const walker = document.createTreeWalker(chunk, NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.textContent.trim() || node.parentElement.closest(RICH_ATOMS)) continue;
-    range.selectNodeContents(node);
-    for (const rect of range.getClientRects()) add(rect);
-  }
-  for (const atom of chunk.querySelectorAll(RICH_ATOMS)) {
-    if (atom.parentElement.closest(RICH_ATOMS)) continue;
-    add(
-      atom.getBoundingClientRect(),
-      atom.matches('.katex:not(.katex-display)') ? 'text' : 'media',
-    );
-  }
-  if (!rectangles.length && bounds.height > 0)
-    rectangles.push({ top: 0, bottom: bounds.height, left: 0, right: bounds.width, kind: 'media' });
-  return buildRevealRows(rectangles, bounds.height);
+}
+
+/** Project a whole rich surface onto the top-left → bottom-right unit vector. */
+export function projectRevealRect({ left = 0, top = 0, width, height }) {
+  const start = (left + top) / Math.SQRT2;
+  return {
+    start,
+    end: width > 0 && height > 0 ? start + (width + height) / Math.SQRT2 : start,
+  };
+}
+
+/** Put late-ready pixels ahead of the plane without moving or remasking old DOM. */
+export function prepareRevealSurface(bounds, front, previousOffset = 0) {
+  const offset = Math.max(previousOffset, front + REVEAL_FEATHER - bounds.start);
+  return { start: bounds.start + offset, end: bounds.end + offset, offset };
+}
+
+/** Pixel stops, not percentages: adding content never stretches an old mask. */
+export function diagonalRevealAt(bounds, front) {
+  return {
+    mode:
+      bounds.end <= bounds.start || front >= bounds.end
+        ? 'ready'
+        : front <= bounds.start - REVEAL_FEATHER
+          ? 'hidden'
+          : 'diagonal',
+    front: front - bounds.start,
+  };
 }
 
 /** One shared pixel coordinate; neither new blocks nor layout shrink rewind it. */
@@ -232,258 +363,22 @@ function reusableBoundary(stream, source, complete) {
 
 export function canReuseStreamingRich(target, text) {
   const stream = target && streams.get(target);
-  return !!stream && reusableBoundary(stream, normalize(text), true) >= 0;
+  return !!stream && normalize(text).startsWith(stream.source.trimEnd());
 }
 
-function nextPaint() {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-}
-
-function createRevealFlow(target) {
-  target.classList.add('reply-flow');
-  target.dataset.reveal = 'pending';
-  target.style.setProperty('--reply-front', `${-REVEAL_FEATHER}px`);
-  return {
-    front: -REVEAL_FEATHER,
-    goal: 0,
-    pace: createRevealPace(),
-    complete: false,
-    preparedChars: 0,
-    pixelsPerChar: 0.75,
-    catchupSpeed: 0,
-    items: [],
-    frame: 0,
-    clock: null,
-    measure: true,
-    observer: null,
-    media: null,
-    onMotion: null,
-  };
-}
-
-function stopRevealFlow(flow) {
-  cancelAnimationFrame(flow.frame);
-  flow.frame = 0;
-  flow.clock = null;
-  // Retain a learned slow pace across idle gaps, but discard exceptional
-  // backlog catch-up velocity before a later small continuation.
-  flow.pace.speed = Math.min(REVEAL_SPEED, flow.pace.speed);
-  flow.observer?.disconnect();
-  flow.observer = null;
-  flow.media?.removeEventListener('change', flow.onMotion);
-  flow.media = null;
-  flow.onMotion = null;
-}
-
-function measureRevealFlow(target, flow) {
-  // Expanded thinking can scroll internally. Measure in target content space,
-  // not viewport space, so scrollTop never becomes an unearned reveal advance.
-  const origin = target.getBoundingClientRect().top - target.scrollTop;
-  let floor = flow.front;
-  flow.goal = 0;
-  for (const item of flow.items) {
-    const rect = item.chunk.getBoundingClientRect();
-    const top = rect.top - origin;
-    const changed =
-      item.rows &&
-      (Math.abs(item.width - rect.width) > 0.2 || Math.abs(item.height - rect.height) > 0.2);
-    // Release an already-started chunk on reflow: previously read glyphs must
-    // never become hidden because their line breaks changed. Future chunks wait.
-    if (changed && flow.front > item.top - (item === flow.items[0] ? REVEAL_FEATHER : 0)) {
-      floor = Math.max(floor, rect.bottom - origin);
-    }
-    item.top = top;
-    item.end = rect.bottom - origin;
-    if (item.chunk.dataset.reveal === 'ready') floor = Math.max(floor, item.end);
-    else {
-      item.chunk.style.setProperty('--chunk-top', `${top}px`);
-      if (!item.rows || changed) {
-        item.rows = measureRevealRows(item.chunk, rect);
-        item.width = rect.width;
-        item.height = rect.height;
-        item.mask = null;
-      }
-    }
-    flow.goal = Math.max(flow.goal, item.end);
+/** Source/connection fencing only; parsing, smoothing and fades are upstream. */
+export function updateStreamingRich(target, text, options = {}) {
+  let source = normalize(text);
+  if (!options.complete) {
+    const marker = source.search(/\[\[(?:image|video|file)\s*:/i);
+    if (marker >= 0) source = source.slice(0, marker);
   }
-  // Preserve already exposed content when a responsive reflow changes offsets.
-  flow.front = floor;
-  // Calibrate visual density without inventing a source-arrival sample on resize.
-  if (flow.preparedChars)
-    flow.pixelsPerChar = Math.max(0.1, Math.min(8, flow.goal / flow.preparedChars));
-  const backlog = Math.max(0, flow.goal - flow.front);
-  // Cold starts, very large buffers and EOF need a bounded catch-up fallback.
-  // Ordinary live streams can go BELOW 120px/s and slow down within an episode.
-  flow.catchupSpeed =
-    flow.complete || backlog > 800 || flow.pace.samples.length < 2 ? backlog / 3.2 : 0;
-  flow.measure = false;
-}
-
-function paintRevealFlow(target, flow) {
-  target.style.setProperty('--reply-front', `${flow.front.toFixed(2)}px`);
-  target.style.setProperty('--reply-speed', `${flow.pace.speed.toFixed(2)}`);
-  for (const item of flow.items) {
-    const { chunk, end } = item;
-    if (chunk.dataset.reveal === 'ready') continue;
-    if (flow.front >= end) {
-      chunk.dataset.reveal = 'ready';
-      chunk.inert = false;
-      chunk.removeAttribute('aria-hidden');
-      delete chunk.dataset.revealMode;
-      delete chunk.dataset.revealRow;
-      for (const property of [
-        '--chunk-top',
-        '--reply-row-top',
-        '--reply-row-height',
-        '--reply-row-front',
-      ])
-        chunk.style.removeProperty(property);
-      continue;
-    }
-    const mask = revealRowAt(
-      item.rows,
-      flow.front - item.top,
-      item === flow.items[0] ? REVEAL_FEATHER : 0,
-    );
-    if (!item.mask || item.mask.mode !== mask.mode || item.mask.index !== mask.index) {
-      chunk.dataset.revealMode = mask.mode;
-      chunk.dataset.revealRow = String(mask.index);
-      chunk.style.setProperty('--reply-row-top', `${(mask.top || 0).toFixed(2)}px`);
-      chunk.style.setProperty('--reply-row-height', `${(mask.height || 0).toFixed(2)}px`);
-    }
-    if (mask.mode === 'rows')
-      chunk.style.setProperty('--reply-row-front', `${mask.front.toFixed(2)}px`);
-    item.mask = mask;
-  }
-  target.dataset.reveal = flow.front < flow.goal ? 'revealing' : 'ready';
-}
-
-function resumeRevealFlow(target, flow) {
-  if (flow.frame) return;
-  const current = () => streams.get(target)?.flow === flow && target.isConnected;
-  measureRevealFlow(target, flow);
-  const showAll = () => {
-    if (!current()) return stopRevealFlow(flow);
-    if (flow.measure) measureRevealFlow(target, flow);
-    flow.front = Math.max(flow.front, flow.goal);
-    paintRevealFlow(target, flow);
-    stopRevealFlow(flow);
-  };
-  // Closed thinking disclosures have no visible geometry and need no animation.
-  const media = matchMedia('(prefers-reduced-motion: reduce)');
-  if (media.matches || !target.getBoundingClientRect().height) return showAll();
-  flow.media = media;
-  flow.onMotion = () => {
-    if (media.matches) showAll();
-  };
-  media.addEventListener('change', flow.onMotion);
-  flow.observer = new ResizeObserver(() => {
-    if (!current()) return stopRevealFlow(flow);
-    flow.measure = true;
+  const record = streams.get(target) || { source: '', revision: 0 };
+  record.source = source;
+  const revision = ++record.revision;
+  streams.set(target, record);
+  return import('./lobehub-rich.js').then(({ updateLobehubRich }) => {
+    if (streams.get(target) !== record || record.revision !== revision || !target.isConnected) return;
+    return updateLobehubRich(target, source, options);
   });
-  flow.observer.observe(target);
-  const tick = (now) => {
-    flow.frame = 0;
-    if (!current()) return stopRevealFlow(flow);
-    if (flow.measure) measureRevealFlow(target, flow);
-    const elapsed = flow.clock === null ? 0 : now - flow.clock;
-    flow.clock = now;
-    const speed = advanceRevealPace(flow.pace, {
-      now,
-      elapsed,
-      front: flow.front,
-      goal: flow.goal,
-      pixelsPerChar: flow.pixelsPerChar,
-      catchupSpeed:
-        flow.complete || flow.goal - flow.front > 800 || flow.pace.samples.length < 2
-          ? flow.catchupSpeed
-          : 0,
-      complete: flow.complete,
-    });
-    flow.front = advanceRevealFront(flow.front, flow.goal, elapsed, speed);
-    paintRevealFlow(target, flow);
-    if (flow.front >= flow.goal) return stopRevealFlow(flow);
-    flow.frame = requestAnimationFrame(tick);
-  };
-  paintRevealFlow(target, flow);
-  flow.frame = requestAnimationFrame(tick);
-}
-
-/**
- * Buffer the unfinished tail. Only new, complete blocks enter the render queue.
- * Ready blocks are appended once; finalization flushes the tail into the same
- * target. Revisions and connection checks fence replaced/cancelled replies.
- */
-export function updateStreamingRich(
-  target,
-  text,
-  { complete = false, beforeAppend, afterAppend } = {},
-) {
-  const source = normalize(text);
-  let stream = streams.get(target);
-  if (!stream) {
-    stream = {
-      source: '',
-      boundary: 0,
-      revision: 0,
-      queue: Promise.resolve(),
-      flow: createRevealFlow(target),
-    };
-    streams.set(target, stream);
-  }
-  // A provider may revise its still-hidden tail. Preserve completed blocks
-  // unless their own source changed, not merely the unfinished suffix.
-  const reuseBoundary = reusableBoundary(stream, source, complete);
-  if (reuseBoundary < 0) {
-    stream.revision++;
-    stream.boundary = 0;
-    stream.queue = Promise.resolve();
-    stopRevealFlow(stream.flow);
-    target.replaceChildren();
-    stream.flow = createRevealFlow(target);
-  } else stream.boundary = reuseBoundary;
-  stream.source = source;
-  noteRevealArrival(stream.flow.pace, source.length, performance.now());
-  if (complete && !stream.flow.complete) {
-    stream.flow.complete = true;
-    stream.flow.measure = true;
-  }
-  const boundary = complete ? source.length : stableMarkdownBoundary(source);
-  if (boundary <= stream.boundary) return stream.queue;
-
-  const delta = source.slice(stream.boundary, boundary);
-  stream.boundary = boundary;
-  if (!delta.trim()) return stream.queue;
-  const revision = stream.revision;
-  const current = () =>
-    streams.get(target) === stream && stream.revision === revision && target.isConnected;
-  stream.queue = stream.queue.then(async () => {
-    if (!current()) return;
-    const chunk = document.createElement('div');
-    chunk.className = 'reply-chunk';
-    chunk.dataset.reveal = 'pending';
-    chunk.inert = true;
-    chunk.setAttribute('aria-hidden', 'true');
-    renderRich(chunk, delta);
-    // No raw Mermaid source or unloaded image is exposed during preparation.
-    await whenRichReady(chunk);
-    if (!current()) return;
-    const follow = beforeAppend?.();
-    target.append(chunk);
-    // Layout the fully rendered content while hidden; this also requests fonts.
-    chunk.getBoundingClientRect();
-    afterAppend?.(follow);
-    await document.fonts?.ready;
-    await nextPaint();
-    if (!current()) return;
-    chunk.dataset.reveal = 'revealing';
-    stream.flow.items.push({ chunk, end: 0 });
-    stream.flow.preparedChars += delta.length;
-    // Measure once after readiness, not on every frame. Local masks all read
-    // this target's shared front; chunks never own an animation or a timer.
-    measureRevealFlow(target, stream.flow);
-    paintRevealFlow(target, stream.flow);
-    resumeRevealFlow(target, stream.flow);
-  });
-  return stream.queue;
 }
