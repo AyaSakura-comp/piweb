@@ -268,59 +268,246 @@ with 403 if it comes from elsewhere.
 
 ## Setup
 
-### 1. Configuration
+### 1. Prerequisites and source checkout
+
+The split deployment below targets **Linux with systemd user services**. Install
+Git, **Node.js >=22.19.0** with npm, OpenSSL, Docker Engine and Docker Compose v2
+(`docker compose`, not the older `docker-compose`). Your normal user must be able
+to run Docker. Native `better-sqlite3` compilation may also require Python 3,
+Make and a C/C++ compiler if a prebuilt binary is unavailable. You need a
+Tailscale account, a usable model/provider, and permission to execute agent tools
+on this host. A GPU, ROCm, llama.cpp, KV-cache extensions, Claude Code, AGY and
+Breeze ASR are **optional**, not installation prerequisites.
 
 ```bash
-cp .env.piweb.example ~/.config/piweb/config.env
-openssl rand -hex 24                     # put this in WEB_AUTH_TOKEN
-mkdir -p ~/.local/share/piweb
+mkdir -p "$HOME/src"
+git clone https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
+cd "$HOME/src/piweb"
+node --version
+docker compose version
+npm ci
+npm run build
+./node_modules/.bin/pi
 ```
 
-### 2. Worker (host)
+In Pi, use `/login` for subscription/OAuth providers and `/model` to select a
+working model, then exit. API-key or local-model providers can use their normal
+Pi configuration instead. Run this as the **same user** who will run the worker. `npm ci` installs the
+repository's pinned Pi packages (currently 0.84.1) and the local `pi` executable;
+you do not need an unrelated globally installed/latest Pi. Credentials stay in
+that user's Pi configuration, normally `~/.pi/agent/auth.json`, not in the web
+container. `npm run build` compiles TypeScript **and** builds the pinned LobeHub
+reply-renderer browser bundle; running `tsc` alone is insufficient.
+
+**Do not use `piscord setup` or `npx piscord@latest setup` to install PiWeb.**
+Those commands configure the optional Discord gateway, not this web/worker split.
+
+### 2. Shared configuration (fresh installation only)
+
+The following blocks assume Bash and one shell session in the checkout. Replace
+the example hostname with the actual PiWeb node hostname for your tailnet. Do not
+run these file-generation steps over an existing installation: keep its token,
+paths, provider settings and data, and follow the update section instead.
 
 ```bash
-npm install && npm run build
-cp deploy/piweb-worker.service ~/.config/systemd/user/
+REPO_DIR=$(pwd -P)
+PIWEB_DATA="$HOME/.local/share/piweb"
+PI_CWD="$HOME/src"
+PIWEB_FQDN=piweb.YOUR-TAILNET.ts.net  # replace before continuing
+NODE_BIN=$(command -v node)
+
+# Refuse to overwrite an existing installation's configuration.
+if [ -e .env ] || [ -e "$HOME/.config/piweb/config.env" ]; then
+  echo 'Existing installation: use the update instructions instead.'
+  exit 1
+fi
+umask 077
+mkdir -p "$HOME/.config/piweb" "$HOME/.config/systemd/user" \
+  "$PIWEB_DATA/sessions" "$PIWEB_DATA/web-media" "$PIWEB_DATA/web-uploads"
+WEB_AUTH_TOKEN=$(openssl rand -hex 24)
+
+cat > "$HOME/.config/piweb/config.env" <<EOF
+PIWEB_DATA=$PIWEB_DATA
+DB_PATH=$PIWEB_DATA/gateway.db
+SESSIONS_DIR=$PIWEB_DATA/sessions
+WEB_MEDIA_DIR=$PIWEB_DATA/web-media
+WEB_UPLOAD_DIR=$PIWEB_DATA/web-uploads
+PI_BIN=$REPO_DIR/node_modules/.bin/pi
+PI_CWD=$PI_CWD
+WEB_AUTH_TOKEN=$WEB_AUTH_TOKEN
+WEB_PUBLIC_ORIGIN=https://$PIWEB_FQDN
+STREAM_THINKING=true
+STREAM_TOOLS=true
+CLAUDE_TMUX_ENABLED=false
+AGY_ENABLED=false
+VOICE_ASR_ENABLED=false
+LOG_LEVEL=info
+EOF
+
+cat > .env <<EOF
+PIWEB_DATA=$PIWEB_DATA
+PI_CWD=$PI_CWD
+WEB_AUTH_TOKEN=$WEB_AUTH_TOKEN
+WEB_PUBLIC_ORIGIN=https://$PIWEB_FQDN
+WEB_ALLOWED_LOGINS=
+TS_AUTHKEY=
+LOG_LEVEL=info
+EOF
+chmod 600 .env "$HOME/.config/piweb/config.env"
+```
+
+Set `TS_AUTHKEY` in `.env` to a suitable Tailscale node-registration key for the
+first start; once `ts-state/` contains the authenticated node, it can be cleared.
+Never commit either configuration file or share token-bearing command output.
+Optionally restrict tailnet identity access with `WEB_ALLOWED_LOGINS` in `.env`.
+The supplied `.env.example` and `.env.piweb.example` list more options, but their
+`/home/chihmin/...` paths are examples, **not portable defaults**.
+
+The host reads `~/.config/piweb/config.env` by default (`PIDG_CONFIG` can select
+another file). Config precedence is checkout `.env` → config file → process
+environment, with later values winning. Docker Compose reads the checkout `.env`
+and passes the web-tier settings explicitly. Keep `PI_CWD` identical on both
+sides, and keep the database, sessions, media and upload paths under the same
+absolute `PIWEB_DATA` path. Do not replace the container mount with `/data`:
+attachments contain absolute paths that the host worker must be able to open.
+
+Compose runs the app as `1000:1000`. If your user/group IDs differ, create a local
+`docker-compose.override.yml` before starting containers (do not commit it):
+
+```bash
+# Only needed when id -u / id -g are not both 1000.
+cat > docker-compose.override.yml <<EOF
+services:
+  app:
+    user: "$(id -u):$(id -g)"
+EOF
+```
+
+### 3. Tailscale HTTPS: private by default
+
+**Before the first container start**, replace the checkout's `ts-serve.json` with
+your own hostname and no `AllowFunnel`. The bundled file contains a deployment-
+specific hostname **and enables public Funnel**, so do not deploy it unchanged.
+
+```bash
+cat > ts-serve.json <<EOF
+{
+  "TCP": { "443": { "HTTPS": true } },
+  "Web": {
+    "$PIWEB_FQDN:443": {
+      "Handlers": { "/": { "Proxy": "http://127.0.0.1:8099" } }
+    }
+  }
+}
+EOF
+```
+
+This keeps access on the tailnet. Tailscale identity is accepted only from the
+loopback Serve proxy; tagged devices without a user identity need the shared
+token. Do not publish port 8099 or widen `WEB_HOST` while trusting identity headers.
+For **explicitly requested public access**, add an `AllowFunnel` object mapping
+`"<your-actual-hostname>:443"` to `true`, and allow Funnel in your tailnet policy.
+Public visitors must log in with the shared token; Funnel requests do not receive
+trusted tailnet identity. Both modes enforce same-origin checks for browser
+writes. `WEB_PUBLIC_ORIGIN` must match the URL actually used, without a trailing
+slash. This interface gives authenticated users agent access to your host.
+
+### 4. Host worker and Docker web tier
+
+Install the worker unit and a local drop-in. The drop-in uses your actual Node
+and checkout paths, so nvm/custom installs do not rely on `/usr/bin/node` or on
+an interactive shell's PATH. The copied unit runs from your home directory;
+`PI_CWD` controls the agent's default project directory.
+
+```bash
+cp deploy/piweb-worker.service "$HOME/.config/systemd/user/"
+mkdir -p "$HOME/.config/systemd/user/piweb-worker.service.d"
+cat > "$HOME/.config/systemd/user/piweb-worker.service.d/paths.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart="$NODE_BIN" "$REPO_DIR/dist/cli/piweb.js" worker
+Environment="PATH=$(dirname "$NODE_BIN"):$HOME/.local/bin:$HOME/bin:$REPO_DIR/node_modules/.bin:/usr/local/bin:/usr/bin:/bin"
+EOF
 systemctl --user daemon-reload
-systemctl --user enable --now piweb-worker
-```
+systemctl --user enable --now piweb-worker.service
 
-### 3. Lightweight session-title ranker
-
-Automatic names never call the conversation model. The web tier segments the
-first prompt with built-in `Intl.Segmenter`, generates short candidate spans,
-and scores them before the message response returns. The worker retains the same
-path only as a crash-recovery fallback. Features cover content,
-request/stop words, position, length, skipped words, technical identifiers, and
-filenames. Generic text can fall back to quoted context or an attachment name.
-
-The ranker runs in-process without a model file, native binary, provider
-credential, network request, GPU allocation, or KV cache. It does not translate
-or run OpenCC: Traditional Chinese, Simplified Chinese, Japanese, and English
-characters remain as typed. No title-specific environment variables are needed.
-
-### 4. Web tier (Docker)
-
-```bash
-# .env next to docker-compose.yml
-echo "PIWEB_DATA=$HOME/.local/share/piweb" >> .env
-echo "WEB_AUTH_TOKEN=<the same token>"     >> .env
-
+# Validates interpolation without printing the shared token.
+docker compose config --quiet
 docker compose up -d --build
 ```
 
-Then expose it with the bundled Tailscale sidecar. `ts-serve.json` sets
-`AllowFunnel`, which publishes it to the **public internet**; drop that key to
-keep it tailnet-only.
+For a headless server, an administrator can run
+`sudo loginctl enable-linger "$USER"` so the user service survives logout.
+The worker must run on the host; do not set `WEB_EMBEDDED_WORKER=true` in this
+split deployment. No Discord token or Discord daemon is required.
 
-With Funnel on, the shared token is the only thing protecting an endpoint that
-runs commands on your host: use a long random one, and note that Tailscale
-identity auth is deliberately refused for public requests.
+### 5. Verify and open the app
 
-> **Path gotcha:** `PIWEB_DATA` is mounted at the _same absolute path_ inside the
-> container as on the host. The web tier records absolute upload paths in SQLite
-> and the host worker opens them directly, so mounting it elsewhere breaks
-> attachments while text messages keep working — a confusing half-failure.
+```bash
+systemctl --user status piweb-worker.service --no-pager
+journalctl --user -u piweb-worker.service -n 50 --no-pager
+docker compose ps
+docker compose logs --tail=50 app tailscale
+docker compose exec tailscale tailscale status
+docker compose exec tailscale tailscale serve status
+docker compose exec tailscale wget -q -O /dev/null http://127.0.0.1:8099/
+curl --fail --silent --show-error -o /dev/null "https://$PIWEB_FQDN/"
+```
+
+If Tailscale assigned a different node name because `piweb` already exists, use
+the actual DNS name from `tailscale status` in `ts-serve.json` and
+`WEB_PUBLIC_ORIGIN`, then recreate app **followed by** tailscale as below.
+Open the HTTPS URL from a tailnet device. If a token login is shown, retrieve the
+shared token privately from your config file. Create a disposable session and send
+one short prompt to verify a **completed agent reply**, then try an attachment;
+an HTTP 200 alone does not prove the worker, provider or upload paths work.
+For iOS notifications, use **Share → Add to Home Screen** and launch from that icon.
+
+### Updating an existing installation
+
+Use a clean checkout; do not discard local changes or overwrite configuration,
+`ts-state/`, shared data or Pi credentials. Back up the database with a SQLite-
+aware backup (WAL is enabled), plus sessions/media and configuration. From an
+**external administrator terminal**, wait until all agent turns and background
+work are idle before stopping or restarting the worker. Never synchronously
+restart the worker from an agent turn running inside its own service.
+
+```bash
+set -e  # stop this update sequence if any build/install command fails
+systemctl --user stop piweb-worker.service
+# In the checkout; resolve any local changes before pulling.
+git pull --ff-only
+npm ci
+npm run build
+# Rebuild before recreating either container; do not proceed if it fails.
+docker compose build app
+systemctl --user start piweb-worker.service
+docker compose up -d --no-build --force-recreate app
+docker compose up -d --no-build --force-recreate tailscale
+```
+
+Recreating app changes its network namespace: recreate the Tailscale sidecar
+**after app** or it can retain the old namespace and return HTTP 502. Repeat the
+verification steps and refresh open browser tabs. A frontend-only update does
+not by itself require restarting the host worker. Do not run the optional
+Discord daemon commands below to manage `piweb-worker.service`.
+
+Common setup failures:
+
+| Symptom                           | Check                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Compose rejects an unset variable | Both `PIWEB_DATA` and `PI_CWD`, plus a nonempty `WEB_AUTH_TOKEN`, must be in `.env`.                  |
+| SQLite/upload permission error    | Container UID/GID must own or have access to the shared directory; use the local user override above. |
+| Agent executable not found        | Verify absolute `PI_BIN`, local Pi install and the systemd drop-in's Node/PATH settings.              |
+| UI loads but no reply/model list  | Check worker logs, provider credentials and whether a valid model is configured.                      |
+| Text works but attachments fail   | Check identical absolute storage paths and directory ownership in both tiers.                         |
+| HTTP 403 on writes                | Check the actual HTTPS origin against `WEB_PUBLIC_ORIGIN`; do not disable CSRF checks.                |
+| Tailscale HTTPS fails / HTTP 502  | Check registration, actual hostname, Serve config and app-then-sidecar recreation order.              |
+
+Automatic first-prompt titles are computed in-process; no separate title model,
+provider credential, network service or GPU setup is required. Optional Claude
+Code, AGY, KV-cache and ASR integrations have separate requirements and should be
+enabled only after the basic Pi installation works.
 
 ## Running it all in one process
 

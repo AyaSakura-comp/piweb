@@ -4,6 +4,37 @@ A mobile-first web front end and local gateway for the [pi coding agent](https:/
 
 ---
 
+## Installation
+
+For the **Linux + Docker web tier + host worker** deployment, follow the
+[complete PiWeb installation guide](README.piweb.md#setup). It covers the pinned
+Pi runtime, matching host/container storage paths, token and CSRF configuration,
+portable systemd paths, container UID/GID, private Tailscale HTTPS, opt-in public
+Funnel, verification, updates and troubleshooting.
+
+Start from **this fork**, not the upstream Discord package:
+
+```bash
+mkdir -p "$HOME/src"
+git clone https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
+cd "$HOME/src/piweb"
+npm ci
+npm run build
+```
+
+Prerequisites: Node.js **>=22.19.0**, Git, OpenSSL, Docker Engine + Compose v2,
+Linux/systemd for the host worker, and a configured Pi model/provider. Native
+SQLite builds may need Python 3, Make and a C/C++ compiler. `npm ci` installs the
+pinned Pi packages and local executable; `npm run build` also produces the
+LobeHub browser bundle. GPU/ROCm and optional Claude Code, AGY, ASR or KV-cache
+services are not required for basic installation. Authenticate the local Pi as
+the worker user, then complete the linked configuration and startup steps.
+
+**PiWeb does not require a Discord bot token.** `piscord setup`, `piscord start`
+and `piscord daemon` manage the optional Discord gateway, not the
+`piweb-worker.service` + Docker deployment. The Discord CLI reference later in
+this README is not a substitute for the PiWeb installation guide.
+
 ## 🏛️ Software Architecture
 
 PiWeb is designed around strict separation of privileges and robust process isolation. The web interface runs inside a secure Docker container accessible via Tailscale, while the agent execution engine runs natively on the host to retain full system access (GPU, ROCm inference, Docker sockets, systemctl, and local repositories).
@@ -119,7 +150,7 @@ sequenceDiagram
     Ext->>Pi: Spawn ephemeral `pi --mode rpc` with channel environment
     Pi->>KvExt: Initialize extension & register handlers
     Ext->>Pi: RPC Call: execute_command("/kv status")
-    
+
     Note over KvExt,Llama: 3. Extension & llama.cpp Inspection
     KvExt->>Llama: GET /slots/0 (Inspect active token counts & state)
     KvExt->>KvExt: Scan ~/.cache/llama-slots/*.meta.json (LRU stats & disk usage)
@@ -150,7 +181,7 @@ sequenceDiagram
     Web->>DB: INSERT INTO message_queue
     Worker->>DB: claimNextMessage()
     Worker->>Pi: Spawn `pi --session-dir <dir> --continue --mode json`
-    
+
     Note over Pi,Llama: Golden Base Cache Check (Startup Acceleration)
     KvExt->>KvExt: Compute SHA-256 of ctx.getSystemPrompt() (Prompt + Tools + Skills)
     alt Cache Hit (promptPrefixHash matches base_system_prompt.meta.json)
@@ -294,9 +325,14 @@ piscord send --channel dc:123456789 --file chart.png --file data.csv
 - Respects `MAX_ATTACHMENT_BYTES` per file
 - Works independently — no running gateway daemon required
 
-## Daemon Management
+## Optional Discord Daemon Management
 
-The setup wizard offers to install a background service automatically. You can also manage it manually:
+These commands manage **`pi-discord-gateway`**, not the PiWeb host worker or
+Docker containers. For PiWeb, use the [installation and update guide](README.piweb.md#setup).
+The Discord setup wizard offers to install its background service automatically.
+Do not rerun that wizard over an existing PiWeb config: this fork shares the
+config path, so add Discord settings without replacing your web/worker settings.
+You can manage the optional Discord service manually:
 
 ```bash
 piscord daemon install   # Generate + enable service
@@ -319,9 +355,12 @@ piscord daemon uninstall # Remove the service
 
 ## Configuration Reference
 
-Config file location depends on your OS (see Data Locations). On Linux: `~/.config/pi-discord-gateway/config.env`
-
-Most users won't need to edit this file directly — `piscord setup` generates it for you. If you do want to tweak advanced settings, you can edit the file manually, or ask your pi to configure it for you. Run `piscord status` to see the config path on your system.
+This section describes the optional Discord settings in this fork's shared
+config file. On Linux it defaults to `~/.config/piweb/config.env`; `PIDG_CONFIG`
+can select another path (see Data Locations). On a fresh Discord-only installation,
+`piscord setup` generates it. On an existing PiWeb installation, preserve your
+web/worker settings and add Discord settings manually instead of overwriting
+that file. Run `piscord status` to see the resolved config path.
 
 | Variable                     | Default                         | Description                                                                |
 | ---------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
@@ -385,29 +424,30 @@ piscord help                                  Show help
 
 Paths are platform-aware. Defaults by OS:
 
-| Item     | Linux                                       | macOS                                                      | Windows                                     |
-| -------- | ------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------- |
-| Config   | `~/.config/pi-discord-gateway/config.env`   | `~/Library/Application Support/piscord-gateway/config.env` | `%APPDATA%\piscord-gateway\config.env`      |
-| Database | `~/.local/share/piscord-gateway/gateway.db` | `~/Library/Application Support/piscord-gateway/gateway.db` | `%LOCALAPPDATA%\piscord-gateway\gateway.db` |
-| Sessions | `~/.local/share/piscord-gateway/sessions/`  | `~/Library/Application Support/piscord-gateway/sessions/`  | `%LOCALAPPDATA%\piscord-gateway\sessions\`  |
-| pi auth  | `~/.pi/agent/auth.json`                     | `~/.pi/agent/auth.json`                                    | `~/.pi/agent/auth.json`                     |
+| Item     | Linux                             | macOS                                            | Windows                           |
+| -------- | --------------------------------- | ------------------------------------------------ | --------------------------------- |
+| Config   | `~/.config/piweb/config.env`      | `~/Library/Application Support/piweb/config.env` | `%APPDATA%\piweb\config.env`      |
+| Database | `~/.local/share/piweb/gateway.db` | `~/Library/Application Support/piweb/gateway.db` | `%LOCALAPPDATA%\piweb\gateway.db` |
+| Sessions | `~/.local/share/piweb/sessions/`  | `~/Library/Application Support/piweb/sessions/`  | `%LOCALAPPDATA%\piweb\sessions\`  |
+| pi auth  | `~/.pi/agent/auth.json`           | `~/.pi/agent/auth.json`                          | `~/.pi/agent/auth.json`           |
 
-## Alternative Installation
+## Optional Discord CLI from this checkout
 
-### npx (quick trial, no global install)
+PiWeb installation is documented [above](#installation) and in
+[README.piweb.md](README.piweb.md#setup). The upstream `piscord` npm package is
+not an alternative installer for this fork.
 
-```bash
-npx piscord@latest setup
-```
-
-### From source
+After building this checkout, its bundled Discord CLI is available as:
 
 ```bash
-git clone https://github.com/Crokily/pi-discord-gateway.git
-cd pi-discord-gateway
-npm install && npm run build
-node dist/cli/index.js setup
+node dist/cli/index.js help
+node dist/cli/index.js status
 ```
+
+For a **fresh Discord-only** configuration, `node dist/cli/index.js setup` runs
+the interactive wizard. For an existing PiWeb deployment, preserve its shared
+config file and add the required `DISCORD_BOT_TOKEN` and Discord settings there;
+never replace it with a new wizard-generated file.
 
 ## Troubleshooting
 
