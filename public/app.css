@@ -4533,27 +4533,6 @@ dialog.sheet::backdrop {
 .streamdown-animated .stream-char[data-lobe-fading] {
   user-select: none;
 }
-.lobe-code {
-  position: relative;
-}
-.lobe-code > div > pre {
-  padding-top: 44px;
-}
-.lobe-code-copy {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 1;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--text-2);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
 .streamdown-animated .msg-inline-media {
   display: block;
 }

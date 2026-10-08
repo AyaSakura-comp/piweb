@@ -6,7 +6,6 @@ import React, {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -46,9 +45,7 @@ const Pre = memo(function Pre({ children, className = '' }) {
   const lang = /language-([\w+-]+)/.exec(child?.props.className ?? '')?.[1] ?? '';
   const code = textOf(children).replace(/\n$/, '');
   const holder = useRef(null);
-  const [copied, setCopied] = useState(false);
   useEffect(() => {
-    setCopied(false);
     // Only expensive diagram/highlight preparation is debounced. Reveal cadence
     // and incomplete-tail repair remain entirely upstream-owned.
     const timer = setTimeout(() => {
@@ -65,23 +62,6 @@ const Pre = memo(function Pre({ children, className = '' }) {
   }, [code, lang]);
   return (
     <div className={`lobe-code ${className}`.trim()}>
-      {lang !== 'mermaid' && (
-        <button
-          type="button"
-          className="lobe-code-copy"
-          aria-label="複製程式碼"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(code);
-              setCopied(true);
-            } catch {
-              setCopied(false);
-            }
-          }}
-        >
-          {copied ? '已複製 ✓' : '複製'}
-        </button>
-      )}
       <div ref={holder} />
     </div>
   );

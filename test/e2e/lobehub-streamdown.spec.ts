@@ -882,7 +882,9 @@ test('LobeHub screenshot layout walkthrough keeps prose lists and copy usable', 
     await control.click();
   };
   await measure('.msg[data-event-id="1"] .msg-text', '01-history');
-  await reachable('.msg[data-event-id="1"] .lobe-code-copy');
+  // Code text remains tap-to-copy, but is no longer a toolbar button.
+  // Keep the 44px control contract below for Send, not for plain text.
+  await page.locator('.msg[data-event-id="1"] pre code').click();
   await expect.poll(() => page.evaluate(() => (window as any).__layoutCopied)).toBe(code);
   await page.screenshot({ path: info.outputPath('02-copy.png') });
   await page.locator('#input').fill('重現截圖中的段落、清單和程式碼排版');
@@ -934,6 +936,35 @@ test('LobeHub screenshot layout walkthrough keeps prose lists and copy usable', 
   expect(errors).toEqual([]);
 });
 
+test('LobeHub code blocks have no inline copy button or reserved toolbar space', async ({ page }, info) => {
+  const source = '影片轉向量流程：\n\n```text\n整支影片\n  ↓ 每 20 秒切一段\n43 個片段\n  ↓ 每段抽取畫面\n768 維向量\n```\n';
+  const { errors, events } = await setup(page, [event(1, source), event(2, source, 'assistant', 'thinking')]);
+  const check = async (selector: string) => {
+    const body = page.locator(selector);
+    await expect(body.locator('pre code')).toContainText('768 維向量');
+    await expect(body.locator('.lobe-code-copy')).toHaveCount(0);
+    await expect(body.locator('.lobe-code button')).toHaveCount(0);
+    expect(await body.locator('pre').evaluate((el) => parseFloat(getComputedStyle(el).paddingTop))).toBeLessThan(44);
+  };
+  await check('.msg[data-event-id="1"] .msg-text');
+  await check('[data-event-id="2"] .event-body');
+  await partial(page, source, source);
+  await check('#partial-msg .msg-text');
+  await check('#partial-thinking .event-body');
+  events.push(event(3, source));
+  await emit(page, 'event', events.at(-1));
+  await partial(page, '');
+  await check('.msg[data-event-id="3"] .msg-text');
+  await page.reload();
+  await check('.msg[data-event-id="3"] .msg-text');
+  await page.locator('.msg[data-event-id="3"] pre').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('code-without-copy.png') });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await partial(page, source);
+  await check('#partial-msg .msg-text');
+  expect(errors).toEqual([]);
+});
+
 test('LobeHub history and reduced motion are readable without animation', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const { errors } = await setup(page, [event(1, prose + rich)]);
@@ -970,7 +1001,7 @@ test('LobeHub rich surfaces retain table scrolling media math syntax and copy co
   await expect(page.locator('#partial-msg .katex')).toHaveCount(1);
   await expect(page.locator('#partial-msg pre code.hljs')).toHaveCount(1);
   await expect(page.locator('#partial-msg .mermaid-chart svg')).toHaveCount(1);
-  await page.locator('#partial-msg .lobe-code-copy').click();
+  await page.locator('#partial-msg pre code.hljs').click();
   expect(await page.evaluate(() => (window as any).__copied)).toContain('const answer = 42;');
   await page.locator('#partial-msg img').click();
   await expect(page.locator('#lightbox')).toBeVisible();
