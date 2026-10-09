@@ -1,12 +1,5 @@
 import Database from 'better-sqlite3';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createProbeServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -406,11 +399,10 @@ describe('Life session API', () => {
 
     // Starting a fresh Pi context is available without making Life itself
     // renameable, deletable, or clearable.
-    const fresh = await request(
-      `/api/sessions/${encodeURIComponent(first.jid)}/commands`,
-      'POST',
-      { command: 'pi new', lifeGeneration: rotated.life.generation },
-    );
+    const fresh = await request(`/api/sessions/${encodeURIComponent(first.jid)}/commands`, 'POST', {
+      command: 'pi new',
+      lifeGeneration: rotated.life.generation,
+    });
     expect(fresh.status).toBe(200);
     sqlite = new Database(dbPath, { readonly: true });
     try {
@@ -458,9 +450,8 @@ describe('Life session API', () => {
     process.env.WEB_PORT = String(port);
     process.env.WEB_TRUST_TAILSCALE_IDENTITY = 'false';
 
-    const actualFsPromises = await vi.importActual<typeof import('node:fs/promises')>(
-      'node:fs/promises',
-    );
+    const actualFsPromises =
+      await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     let releaseWrite!: () => void;
     const writeGate = new Promise<void>((resolveWrite) => {
       releaseWrite = resolveWrite;
@@ -657,12 +648,7 @@ describe('Life session API', () => {
           attachments: [{ name: 'new.png', dataBase64: Buffer.from('new').toString('base64') }],
         },
       ],
-      [
-        'command',
-        `/api/sessions/${encodedJid}/commands`,
-        'POST',
-        { command: 'pi status' },
-      ],
+      ['command', `/api/sessions/${encodedJid}/commands`, 'POST', { command: 'pi status' }],
       ['soft delete', `/api/sessions/${encodedJid}`, 'DELETE', undefined],
       ['permanent delete', `/api/sessions/${encodedJid}?permanent=1`, 'DELETE', undefined],
     ] as const;

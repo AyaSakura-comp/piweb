@@ -1678,30 +1678,26 @@ export function commitWebReply(
   event: Parameters<typeof appendWebEvent>[0],
   fence?: ChannelGenerationFence,
 ): number {
-  return db
-    .transaction(() => {
-      const rowid = appendWebEvent(event, fence);
-      clearLiveOutput(event.channelJid, fence);
-      return rowid;
-    })
-    .immediate();
+  return db.transaction(() => {
+    const rowid = appendWebEvent(event, fence);
+    clearLiveOutput(event.channelJid, fence);
+    return rowid;
+  }).immediate();
 }
 
 /** One WAL read snapshot: never mix pre-publication events with a post-publication clear. */
 export function getWebStreamSnapshot(channelJid: string, afterRowid: number, limit = 500) {
-  return db
-    .transaction(() => {
-      const channel = getChannel(channelJid);
-      const rows = getWebEventsSince(channelJid, afterRowid, limit);
-      return {
-        channel,
-        rows,
-        busy: isChannelBusy(channelJid),
-        live: getLiveOutput(channelJid),
-        hasMore: hasWebEventsAfter(channelJid, rows.at(-1)?.rowid ?? afterRowid),
-      };
-    })
-    .deferred();
+  return db.transaction(() => {
+    const channel = getChannel(channelJid);
+    const rows = getWebEventsSince(channelJid, afterRowid, limit);
+    return {
+      channel,
+      rows,
+      busy: isChannelBusy(channelJid),
+      live: getLiveOutput(channelJid),
+      hasMore: hasWebEventsAfter(channelJid, rows.at(-1)?.rowid ?? afterRowid),
+    };
+  }).deferred();
 }
 
 /** Called when the finished message is appended, so the two never both show. */
