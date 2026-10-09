@@ -937,7 +937,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   status` shortcut, thinking level picker, and **New Life session** as header actions;
   its ⋯ menu keeps Search and Media. The pencil button calls
   `/api/life-session/new`, which compares the caller's Life generation, refuses
-  stale generations, active/queued work, or request/worker leases, re-keys the
+  stale generations, active/queued work, or request/worker leases (the client
+  answers an active-work 409 with `pi stop` + retry, and a stopped Life parent
+  retires as soon as Pi settles), re-keys the
   current row/transcript/Pi folder and scheduled tasks to a new standard JID,
   inserts a fresh empty `web:life`, and commits a media/upload move journal.
   Filesystem moves finish idempotently after commit and recover during DB startup;

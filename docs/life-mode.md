@@ -52,7 +52,13 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   pencil immediately before ⋯ calls
   `POST /api/life-session/new`: it saves the current conversation into the
   standard list under an extractive first-prompt title and opens a fresh, empty
-  Life session. Rotation is refused while Life has active or queued work. The
+  Life session. The server still refuses rotation while Life has active or
+  queued work, but the pencil does not stop there: on that 409 it enqueues a
+  generation-bound `pi stop` and retries for up to 20 s. A stopped Life parent
+  retires as soon as Pi settles, even with live async children
+  (`retireRpcSessionWhenSettled`), so its lease no longer holds New Life until
+  the children or idle timeout finish. The stopped conversation is archived like
+  any other. The
   lower-level typed `/pi new` command remains available for rotating only Pi's
   internal context without promoting the transcript. Life's overflow contains
   **Search** and **Media**; Sessions, New pi session, Delete session, and their
