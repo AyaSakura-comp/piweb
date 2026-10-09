@@ -96,7 +96,7 @@ off it.
    worker queue loop ─claimNextMessage─┘  (per-channel serial, global cap 3)
         │ spawn pi --session-dir <dir> --continue --mode json
         │ stream stdout events ─▶ getTransport().createEventStreamer(jid)
-        │                          └─▶ append web_events(thinking/tool/tool_result)
+        │                          └─▶ append web_events(thinking/narration/tool/tool_result)
         │ setChannelBusy(jid,true) … clearTyping on finish
         ▼ final reply → parseOutboxMarkers → append web_events(assistant [+files])
                               │
@@ -104,7 +104,9 @@ off it.
 ```
 
 Reply text flows through the transport's `sendResponse`/`sendFilesResponse`; the
-streamed thinking/tool events flow through `createEventStreamer`. Both end up as
+streamed thinking/tool events flow through `createEventStreamer`. Text the model
+writes before a tool call is a `narration` row (plain text, not a thinking card,
+not the final answer); only real reasoning is `thinking`. Both end up as
 `web_events` rows, so the transcript is complete and replayable — the phone can
 disconnect at any point and resume from its last rowid.
 

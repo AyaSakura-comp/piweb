@@ -143,7 +143,12 @@ event existed, forcing a new render when that event eventually arrived.
 publication. `src/db.ts` → `commitWebReply` inserts the final event and consumes its
 preview in one fenced SQLite transaction; pending buffer timers are then cancelled.
 `clearTyping` still discards an aborted/unpublished preview. Tool-call narration
-still moves to the thinking lane rather than masquerading as a final answer.
+(assistant text followed by a tool call) becomes a `narration` row: rendered as
+plain reply text in the same answer-lane node that streamed it, never as a
+thinking card, and never counted as the final answer (unread, search, push and
+cross-harness context ignore it). Claude Code transcript text before a
+`tool_use` arrives as `narration_end`. Rows written before this change stay
+`thinking`.
 
 The SSE reader uses `getWebStreamSnapshot`: channel metadata, events, busy and
 partial state come from one WAL read snapshot. It drains reconnect event batches

@@ -924,7 +924,7 @@ describe('Claude transcript translation', () => {
       },
       {
         type: 'message_update',
-        assistantMessageEvent: { type: 'thinking_end', content: 'I will inspect the tests.' },
+        assistantMessageEvent: { type: 'narration_end', content: 'I will inspect the tests.' },
       },
       {
         type: 'message_update',
@@ -948,7 +948,7 @@ describe('Claude transcript translation', () => {
     expect(final.events).toEqual([]);
   });
 
-  it('maps a text-only narration record ending in tool_use to thinking', () => {
+  it('maps a text-only narration record ending in tool_use to narration', () => {
     const translated = translateClaudeTranscriptRecord({
       type: 'assistant',
       message: {
@@ -962,7 +962,7 @@ describe('Claude transcript translation', () => {
       {
         type: 'message_update',
         assistantMessageEvent: {
-          type: 'thinking_end',
+          type: 'narration_end',
           content: 'I will inspect the repository first.',
         },
       },

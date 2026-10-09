@@ -169,6 +169,13 @@ function writeEvent(
   }
 }
 
+function writeNarration(jid: string, text: string, fence?: ChannelWriteFence): void {
+  writeEvent(
+    { channelJid: jid, kind: 'narration', role: 'assistant', content: truncate(text, config.maxEventChars) },
+    fence,
+  );
+}
+
 function forgetLiveBuffer(jid: string, fence?: ChannelWriteFence): void {
   const key = liveBufferKey(jid, fence);
   const buf = liveBuffers.get(key);
@@ -409,6 +416,14 @@ export const webTransport: Transport = {
         return;
       }
 
+      // Narration from adapters that see whole records rather than deltas
+      // (Claude Code transcript text that precedes a tool_use).
+      if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'narration_end') {
+        const text = String(event.assistantMessageEvent.content ?? '').trim();
+        if (text) writeNarration(jid, text, fence);
+        return;
+      }
+
       // Tool calls. pi-ai's event type is `toolcall_end` (one word).
       if (
         config.streamTools &&
@@ -416,22 +431,13 @@ export const webTransport: Transport = {
         event.assistantMessageEvent?.type === 'toolcall_end'
       ) {
         // Text followed by a tool call is intermediate narration, not the final
-        // answer. Fold it into thinking and clear the answer lane before the
-        // tool row lands; otherwise it stays behind as a stray assistant bubble
-        // throughout the rest of the tool loop.
+        // answer. Persist it as its own plain-text row (not a thinking card,
+        // which is for real reasoning) and clear the answer lane before the
+        // tool row lands; otherwise the final reply would repeat it.
         const buf = liveBuffers.get(liveBufferKey(jid, fence));
         const narration = buf?.text.trim() ?? '';
         if (buf && narration) {
-          if (config.streamThinking) {
-            writeEvent(
-              {
-                channelJid: jid,
-                kind: 'thinking',
-                content: truncate(narration, config.maxEventChars),
-              },
-              fence,
-            );
-          }
+          writeNarration(jid, narration, fence);
           buf.text = '';
           try {
             setLiveOutput(jid, { content: '', thinking: buf.thinking }, fence);

@@ -100,7 +100,7 @@ describe('intermediate assistant text', () => {
     expect(db.getLiveOutput('web:thinking-stream')).toBeNull();
   });
 
-  it('folds text that is followed by a tool call into thinking instead of leaving an answer preview', async () => {
+  it('persists text that is followed by a tool call as plain narration, not thinking', async () => {
     const { db, stream } = await setup();
 
     await stream({
@@ -122,8 +122,28 @@ describe('intermediate assistant text', () => {
         content: event.content,
       })),
     ).toEqual([
-      { kind: 'thinking', content: 'Now let me generate the song:' },
+      { kind: 'narration', content: 'Now let me generate the song:' },
       { kind: 'tool', content: '$ generate-song' },
+    ]);
+  });
+
+  it('writes whole-record narration from adapters as plain narration', async () => {
+    const { db, stream } = await setup();
+
+    await stream({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_end', content: 'The tests cover Life mode.' },
+    });
+    await stream({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'narration_end', content: '生成成功！現在驗證影片品質：' },
+    });
+
+    expect(
+      db.getRecentWebEvents('web:thinking-stream').map((event) => [event.kind, event.role, event.content]),
+    ).toEqual([
+      ['thinking', '', 'The tests cover Life mode.'],
+      ['narration', 'assistant', '生成成功！現在驗證影片品質：'],
     ]);
   });
 });

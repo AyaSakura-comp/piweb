@@ -170,11 +170,13 @@ export function translateClaudeTranscriptRecord(raw: any): ClaudeTranslatedRecor
           });
         }
       } else if (part?.type === 'text' && (hasToolUse || message.stop_reason === 'tool_use')) {
+        // Text before a tool call is narration, shown as plain text rather
+        // than as a thinking card.
         const text = String(part.text ?? '').trim();
         if (text) {
           events.push({
             type: 'message_update',
-            assistantMessageEvent: { type: 'thinking_end', content: text },
+            assistantMessageEvent: { type: 'narration_end', content: text },
           });
         }
       } else if (part?.type === 'tool_use') {

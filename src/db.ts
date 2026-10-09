@@ -1252,7 +1252,20 @@ export function logMessage(
 
 // ── piweb: web events (transcript + live stream) ──
 
-export type WebEventKind = 'message' | 'thinking' | 'tool' | 'tool_result' | 'system' | 'error';
+/**
+ * `narration` is assistant text written between tool calls ("Let me check the
+ * logs:"). It is shown as plain reply text, not folded into a thinking card,
+ * but it is not the final answer: it never counts as a reply for unread,
+ * search or cross-harness context.
+ */
+export type WebEventKind =
+  | 'message'
+  | 'narration'
+  | 'thinking'
+  | 'tool'
+  | 'tool_result'
+  | 'system'
+  | 'error';
 
 export interface WebEventRow {
   rowid: number;

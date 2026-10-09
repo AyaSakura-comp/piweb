@@ -2500,6 +2500,7 @@ function openStream(selection = sessionSelectionGeneration, jid = state.activeJi
     appendEvent(event, true);
     if (
       event.kind !== 'thinking' &&
+      event.kind !== 'narration' &&
       event.kind !== 'tool' &&
       event.kind !== 'tool_result' &&
       event.role !== 'user'
@@ -2683,12 +2684,19 @@ const EVENT_LABELS = {
   error: ['Error', '⚠️'],
 };
 
+/** Rows rendered as assistant reply text: final replies and tool-loop narration. */
+function isAnswerLike(event) {
+  return (event.kind === 'message' && event.role !== 'user') || event.kind === 'narration';
+}
+
 function appendEvent(event, live) {
   state.cursor = Math.max(state.cursor, event.id);
   const messages = $('messages');
   const followLatest = shouldFollowTranscriptTail();
-  const liveRich =
-    live && ((event.kind === 'message' && event.role !== 'user') || event.kind === 'thinking');
+  // Narration (assistant text before a tool call) streamed in the answer lane;
+  // finalize it in that same node rather than as a thinking card.
+  const answerLike = isAnswerLike(event);
+  const liveRich = live && (answerLike || event.kind === 'thinking');
   const partial = liveRich
     ? document.getElementById(event.kind === 'thinking' ? 'partial-thinking' : 'partial-msg')
     : null;
@@ -2715,6 +2723,7 @@ function appendEvent(event, live) {
           .slice(0, 120);
         summary.append(el('span', 'peek', peek));
       } else {
+        if (event.kind === 'narration') node.classList.add('msg-narration');
         renderFiles(node.querySelector('.msg-body'), event.files, event.content);
       }
     } else {
@@ -2843,9 +2852,12 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
       event = { ...event, content: `${command.command}\n${command.state} · ${command.agent}` };
     } catch { /* Render malformed historic text without interpreting it. */ }
   }
-  if (event.kind === 'message') {
-    const isUser = event.role === 'user';
-    const row = el('div', `msg${isUser ? ' msg-user' : ''}`);
+  if (event.kind === 'message' || event.kind === 'narration') {
+    const isUser = event.kind === 'message' && event.role === 'user';
+    const row = el(
+      'div',
+      `msg${isUser ? ' msg-user' : ''}${event.kind === 'narration' ? ' msg-narration' : ''}`,
+    );
 
     if (isUser) {
       const avatar = el('div', 'avatar', 'U');
