@@ -19,7 +19,9 @@ Type=simple
 WorkingDirectory=%h
 ExecStart=/usr/bin/node %h/src/piweb/dist/cli/piweb.js worker
 EnvironmentFile=%h/.config/piweb/config.env
-Restart=on-failure
+# SIGTERM (including earlyoom) is handled with exit(0). Recover even then;
+# explicit systemctl stop still suppresses automatic restarts.
+Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal

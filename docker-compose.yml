@@ -17,6 +17,8 @@ services:
     build: .
     image: piweb:latest
     container_name: piweb-app
+    # earlyoom skips -1000; also protects against the kernel OOM killer.
+    oom_score_adj: -1000
     restart: unless-stopped
     user: '1000:1000' # write PIWEB_DATA as the host user, so the worker can read it
     environment:
@@ -47,6 +49,7 @@ services:
   tailscale:
     image: tailscale/tailscale:latest
     container_name: piweb-ts
+    oom_score_adj: -1000
     restart: unless-stopped
     depends_on: [app]
     environment:
