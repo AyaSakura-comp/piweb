@@ -2,22 +2,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPromptTurnScroll, getPromptTurnLayout } from '../public/prompt-turn-scroll.js';
 
 const geometry = (height = 400, top = 1000, bottom = 1060) =>
-  getPromptTurnLayout(height, top, bottom, 12, 4);
+  getPromptTurnLayout(height, top, bottom, 4);
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('prompt turn viewport geometry', () => {
-  it('reserves the empty remainder and aligns the new prompt below top padding', () => {
-    expect(geometry()).toEqual({ top: 988, space: 324 });
+  it('reserves the empty remainder and aligns the new prompt with the clipping edge', () => {
+    expect(geometry()).toEqual({ top: 1000, space: 336 });
   });
   it('spends reservation as the answer grows without moving the prompt', () => {
-    expect(geometry(400, 1000, 1260)).toEqual({ top: 988, space: 124 });
-    expect(geometry(400, 1000, 1500)).toEqual({ top: 988, space: 0 });
+    expect(geometry(400, 1000, 1260)).toEqual({ top: 1000, space: 136 });
+    expect(geometry(400, 1000, 1500)).toEqual({ top: 1000, space: 0 });
   });
   it('uses actual short viewport dimensions rather than a screen-height constant', () => {
-    expect(geometry(200)).toEqual({ top: 988, space: 124 });
+    expect(geometry(200)).toEqual({ top: 1000, space: 136 });
     expect(geometry(0).space).toBe(0);
-    expect(geometry(400, 5, 65).top).toBe(0);
+    expect(geometry(400, 5, 65).top).toBe(5);
+  });
+  it('rounds fractional anchors upward to avoid exposing a subpixel history sliver', () => {
+    expect(geometry(400, 1000.4, 1060.4)).toEqual({ top: 1001, space: 337 });
+    const { top, space } = geometry(400, 1000.4, 1060.4);
+    // Native scrollHeight is integral; its maximum must still reach the target.
+    expect(Math.round(1060.4 + 4 + space) - 400).toBeGreaterThanOrEqual(top);
   });
 });
 
@@ -107,6 +113,16 @@ function fixture({ animate = false } = {}) {
 }
 
 describe('prompt turn ownership and lifecycle', () => {
+  it('places the preceding row fully above the viewport after Send', () => {
+    const f = fixture();
+    const previous = f.add(11, 940, 60, false);
+    const ticket = f.controller.begin();
+    const prompt = f.add(12);
+    f.controller.acknowledge(ticket, 12);
+    const edge = f.scroller.getBoundingClientRect().top;
+    expect(previous.getBoundingClientRect().bottom).toBeLessThanOrEqual(edge);
+    expect(prompt.getBoundingClientRect().top).toBe(edge);
+  });
   it('does not move while typing/requesting; only the acknowledged saved user ID anchors', () => {
     const f = fixture();
     f.add(11);
@@ -118,15 +134,15 @@ describe('prompt turn ownership and lifecycle', () => {
     expect(f.scroller.scrollTo).not.toHaveBeenCalled();
     f.add(12);
     f.controller.update();
-    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 988, behavior: 'auto' });
-    expect(f.space()).toBe(324);
+    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1000, behavior: 'auto' });
+    expect(f.space()).toBe(336);
   });
   it('also handles the saved SSE row arriving before the acknowledgement', () => {
     const f = fixture();
     const ticket = f.controller.begin();
     const row = f.add(12);
     f.controller.acknowledge(ticket, 12);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
     expect(row.classList.remove).toHaveBeenCalledWith('pop-in');
   });
   it('reduces blank space on response growth without issuing follow-scrolls', () => {
@@ -137,8 +153,8 @@ describe('prompt turn ownership and lifecycle', () => {
     f.scroller.scrollTo.mockClear();
     f.add(13, 1060, 200, false);
     f.controller.update();
-    expect(f.space()).toBe(124);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.space()).toBe(136);
+    expect(f.scroller.scrollTop).toBe(1000);
     expect(f.scroller.scrollTo).not.toHaveBeenCalled();
   });
   it('recalculates reservation for keyboard/viewport changes while still anchored', () => {
@@ -148,8 +164,8 @@ describe('prompt turn ownership and lifecycle', () => {
     f.controller.acknowledge(ticket, 12);
     f.scroller.clientHeight = 700;
     f.controller.update();
-    expect(f.space()).toBe(624);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.space()).toBe(636);
+    expect(f.scroller.scrollTop).toBe(1000);
   });
   it('restores the prompt if a temporary rich-body replacement clamps native scrollTop', () => {
     const f = fixture();
@@ -158,7 +174,7 @@ describe('prompt turn ownership and lifecycle', () => {
     f.controller.acknowledge(ticket, 12);
     f.scroller.scrollTop = 937;
     f.controller.update();
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
   });
   it('restores the reader position synchronously after a disclosure clamps scrollTop', () => {
     const f = fixture();
@@ -174,8 +190,8 @@ describe('prompt turn ownership and lifecycle', () => {
       // The native collapse shrinks scrollHeight before ResizeObserver runs.
       f.scroller.scrollTop = 808;
     });
-    expect(f.space()).toBe(304);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.space()).toBe(316);
+    expect(f.scroller.scrollTop).toBe(1000);
     // Preserving a disclosure must not reclaim a released viewport pin.
     f.scroller.scrollTop = 400;
     f.scroller.clientHeight = 700;
@@ -235,7 +251,7 @@ describe('prompt turn ownership and lifecycle', () => {
     f.controller.acknowledge(first, 12);
     expect(f.scroller.scrollTo).not.toHaveBeenCalled();
     f.controller.acknowledge(second, 14);
-    expect(f.scroller.scrollTop).toBe(1088);
+    expect(f.scroller.scrollTop).toBe(1100);
   });
   it('failures and malformed acknowledgements do not navigate or clear an existing turn', () => {
     const f = fixture();
@@ -247,7 +263,7 @@ describe('prompt turn ownership and lifecycle', () => {
     f.controller.cancel(failed);
     f.controller.acknowledge(failed, 13);
     f.controller.update();
-    expect(f.space()).toBe(324);
+    expect(f.space()).toBe(336);
     expect(f.scroller.scrollTo).not.toHaveBeenCalled();
     f.controller.acknowledge(f.controller.begin(), undefined);
     expect(f.scroller.scrollTo).not.toHaveBeenCalled();
@@ -261,7 +277,7 @@ describe('prompt turn ownership and lifecycle', () => {
     const fresh = f.controller.begin();
     f.add(14, 1100);
     f.controller.acknowledge(fresh, 14);
-    expect(f.scroller.scrollTop).toBe(1088);
+    expect(f.scroller.scrollTop).toBe(1100);
   });
   it('navigation/removal clears owned padding and manual jump cleanup is idempotent', () => {
     const f = fixture();
@@ -294,10 +310,10 @@ describe('smooth prompt turn navigation', () => {
     expect(f.scroller.scrollTop).toBeGreaterThan(620);
     expect(f.scroller.scrollTop).toBeLessThan(970);
     f.advance(260);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
     const positions = f.scroller.scrollTo.mock.calls.map(([call]) => call.top);
     expect(positions.length).toBeGreaterThan(10);
-    expect(positions.every((top, i) => top >= (positions[i - 1] ?? 600) && top <= 988)).toBe(true);
+    expect(positions.every((top, i) => top >= (positions[i - 1] ?? 600) && top <= 1000)).toBe(true);
     expect(f.controller.navigating).toBe(false);
     expect(f.frameCount()).toBe(0);
   });
@@ -321,7 +337,7 @@ describe('smooth prompt turn navigation', () => {
     f.advance(100);
     expect(f.scroller.scrollTop).toBe(600);
     f.advance(450);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
   });
   it.each([false, true])(
     'late acknowledgement still waits for fresh viewport quiet (reduced=%s)',
@@ -338,7 +354,7 @@ describe('smooth prompt turn navigation', () => {
       expect(f.scroller.scrollTo).not.toHaveBeenCalled();
       expect(f.scroller.scrollTop).toBe(600);
       f.advance(500);
-      expect(f.scroller.scrollTop).toBe(988);
+      expect(f.scroller.scrollTop).toBe(1000);
       expect(f.frameCount()).toBe(0);
     },
   );
@@ -353,7 +369,7 @@ describe('smooth prompt turn navigation', () => {
       f.advance(1100);
       const current = f.scroller.scrollTop;
       expect(current).toBeGreaterThan(600);
-      expect(current).toBeLessThan(988);
+      expect(current).toBeLessThan(1000);
       f.setReduced(reduced);
       f.viewport.height = 400;
       f.controller.viewportChanged();
@@ -362,7 +378,7 @@ describe('smooth prompt turn navigation', () => {
       expect(f.scroller.scrollTo).not.toHaveBeenCalled();
       expect(f.scroller.scrollTop).toBe(current);
       f.advance(500);
-      expect(f.scroller.scrollTop).toBe(988);
+      expect(f.scroller.scrollTop).toBe(1000);
       expect(f.frameCount()).toBe(0);
     },
   );
@@ -375,7 +391,7 @@ describe('smooth prompt turn navigation', () => {
     f.advance(900);
     expect(f.scroller.scrollTop).toBe(600);
     f.advance(650);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
     expect(f.frameCount()).toBe(0);
   });
   it('pauses mid-motion on viewport changes and resumes from the current position', () => {
@@ -391,7 +407,7 @@ describe('smooth prompt turn navigation', () => {
     f.advance(100);
     expect(f.scroller.scrollTop).toBe(current);
     f.advance(450);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
     const positions = f.scroller.scrollTo.mock.calls.map(([call]) => call.top);
     expect(positions.every((top, i) => top >= (positions[i - 1] ?? 600))).toBe(true);
   });
@@ -428,7 +444,7 @@ describe('smooth prompt turn navigation', () => {
     f.add(14, 1100);
     f.controller.acknowledge(fresh, 14);
     f.advance(450);
-    expect(f.scroller.scrollTop).toBe(1088);
+    expect(f.scroller.scrollTop).toBe(1100);
   });
   it('reduced motion still waits for keyboard dismissal, then positions without a tween', () => {
     const f = fixture();
@@ -441,7 +457,7 @@ describe('smooth prompt turn navigation', () => {
     f.viewport.height = 400;
     f.controller.viewportChanged();
     f.advance(200);
-    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 988, behavior: 'auto' });
+    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1000, behavior: 'auto' });
     expect(f.frameCount()).toBe(0);
   });
   it('switching reduced motion on during a tween finishes once and stops its RAF', () => {
@@ -449,7 +465,7 @@ describe('smooth prompt turn navigation', () => {
     f.advance(150);
     f.setReduced(true);
     f.advance(30);
-    expect(f.scroller.scrollTop).toBe(988);
+    expect(f.scroller.scrollTop).toBe(1000);
     expect(f.frameCount()).toBe(0);
   });
 });

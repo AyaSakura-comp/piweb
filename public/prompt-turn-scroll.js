@@ -9,14 +9,17 @@ export function getPromptTurnLayout(
   viewportHeight,
   anchorTop,
   contentBottom,
-  inset,
   bottomPadding,
 ) {
+  // Padding is not a clipping gutter: an inset exposes the previous row.
+  // Round upward so fractional row edges cannot leave a sliver of history.
+  const top = Math.max(0, Math.ceil(anchorTop));
   return {
-    top: Math.max(0, anchorTop - inset),
+    top,
     space: Math.max(
       0,
-      Math.ceil(viewportHeight - inset - (contentBottom - anchorTop) - bottomPadding),
+      // Reserve the rounding offset too, or scrollHeight clamps the last pixel.
+      Math.ceil(viewportHeight - (contentBottom - anchorTop) - bottomPadding + top - anchorTop),
     ),
   };
 }
@@ -163,7 +166,6 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
       watch();
       const previousSpace = Number.parseFloat(scroller.style.getPropertyValue(SPACE_PROPERTY)) || 0;
       const style = getComputedStyle(scroller);
-      const inset = Number.parseFloat(style.paddingTop) || 0;
       const bottomPadding = (Number.parseFloat(style.paddingBottom) || 0) - previousSpace;
       const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
       const anchorTop = turn.node.getBoundingClientRect().top - origin;
@@ -175,7 +177,6 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
         scroller.clientHeight,
         anchorTop,
         bottom,
-        inset,
         bottomPadding,
       );
       const pin =

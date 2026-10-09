@@ -145,8 +145,10 @@ Settings → General → **自動捲動** defaults OFF, persists per browser, an
 54px outline-icon switch row with the existing capsule styling. OFF cancels
 composer locks and disables browser scroll anchoring and automatic reply/asset
 following; manual scrolling and Jump to present remain available. Normal Send is
-explicit navigation: match the saved user event ID, place this question 12px below
-the transcript's top, and reserve the remaining visible turn through bottom padding.
+explicit navigation: match the saved user event ID, align the question's outer row
+with the transcript's clipping edge (rounding upward for fractional pixels), and
+reserve the remaining visible turn through bottom padding. The row's own padding
+keeps its contents inset; no part of the previous turn remains visible above it.
 Send uses a cancellable 360ms cubic ease-in-out real-scroll animation, not a
 translated clone. Capture keyboard visibility before blur; wait for reported closure,
 120ms viewport quiet, a 220ms initial keyboard guard and two layout frames. Later
