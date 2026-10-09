@@ -28,10 +28,11 @@ export function normalizeDisplayMath(source) {
 // Prefixed currency (NT$, US$, HK$…) is never a math delimiter, but LobeHub's
 // preprocessLaTeX pairs it with the next `$` and rewrites the `|` between them
 // to `\vert{}` — merging two table cells and breaking the whole table.
+// Only a `$` that would OPEN math is currency: in `$A$` or `$x = C$` the
+// letter before the closing `$` is a variable, not a dollar prefix.
 // A `$` before a digit is left alone: LobeHub already escapes `$2,600`, and a
 // second escape would render a literal backslash.
-const CURRENCY_PREFIX = /(?<![A-Za-z\\])(?:NT|US|HK|NZ|AU|CA|SG|MX|A|C|S|R)\$(?![$\d])/g;
-const LONE_DOLLAR = /(?<![\\$])\$(?![$\d])/g;
+const CURRENCY_BEFORE = /(?<![A-Za-z\\])(?:NT|US|HK|NZ|AU|CA|SG|MX|A|C|S|R)$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 function splitCode(line) {
@@ -46,30 +47,93 @@ function splitCode(line) {
   return parts;
 }
 
-// `$$` as a symbol (e.g. a "費用 ($$)" price-level header) pairs with the next
-// `$$` — often in a later table — as display math, and every `|` in between
-// becomes `\vert{}`. Math cannot span a cell, so an unpaired `$$` is literal.
-const DOUBLE_DOLLAR = /(?<!\\)\$\$/g;
-
-const escapeLoneDollars = (cell) => {
-  if ((cell.match(DOUBLE_DOLLAR) || []).length % 2) cell = cell.replace(DOUBLE_DOLLAR, '\\$\\$');
-  const singles = cell.match(LONE_DOLLAR) || [];
-  return singles.length % 2 ? cell.replace(LONE_DOLLAR, '\\$') : cell;
+const findDollar = (text, from, double) => {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === '\\') i++;
+    else if (text[i] === '$' && (text[i + 1] === '$') === double) return i;
+    else if (text[i] === '$') i++;
+  }
+  return -1;
 };
+
+/**
+ * Split one line into [text, kind] pieces: 'math' for a same-line `$$…$$` or
+ * a Pandoc-style `$…$` (non-space just inside both delimiters, closing `$` not
+ * followed by a digit), 'currency' for a prefixed `$` that would open math,
+ * and 'text' for the rest. In a table row a `$…$` spanning a spaced ` | ` cell
+ * boundary is not math: math cannot span cells.
+ */
+function scanMath(text, isRow) {
+  const pieces = [];
+  let last = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (text[i] !== '$') continue;
+    if (text[i + 1] === '$') {
+      const close = findDollar(text, i + 2, true);
+      if (close > i + 2) {
+        pieces.push([text.slice(last, i), 'text'], [text.slice(i, close + 2), 'math']);
+        last = close + 2;
+        i = close + 1;
+      } else i++;
+      continue;
+    }
+    if (/\d/.test(text[i + 1] ?? '')) {
+      // LobeHub keeps `$5$` / `$1,000$` as math; any other `$5…` is money.
+      const number = /^\$\d+(?:,\d+)*\$(?![$\d])/.exec(text.slice(i));
+      if (number) {
+        pieces.push([text.slice(last, i), 'text'], [number[0], 'math']);
+        last = i + number[0].length;
+        i = last - 1;
+      }
+      continue;
+    }
+    if (CURRENCY_BEFORE.test(text.slice(0, i))) {
+      pieces.push([text.slice(last, i), 'text'], ['$', 'currency']);
+      last = i + 1;
+      continue;
+    }
+    if (!text[i + 1] || /\s/.test(text[i + 1])) continue;
+    const close = findDollar(text, i + 1, false);
+    if (close < 0) continue;
+    const body = text.slice(i + 1, close);
+    if (/\s$/.test(body) || /\d/.test(text[close + 1] ?? '') || (isRow && /\s\|\s/.test(body))) {
+      continue;
+    }
+    pieces.push([text.slice(last, i), 'text'], [text.slice(i, close + 1), 'math']);
+    last = close + 1;
+    i = close;
+  }
+  pieces.push([text.slice(last), 'text']);
+  return pieces;
+}
+
+// Outside a real same-line formula, a `$`/`$$` in a table cell is literal:
+// a "費用 ($$)" price-level header or a lone `$` would otherwise pair with
+// one in another cell (or a later table) and every `|` in between would
+// become `\vert{}`.
+const STRAY_DOLLARS = /(?<!\\)\$(?!\d)/g;
 
 function protectLine(line) {
   const isRow = /^\s*\|/.test(line);
   return splitCode(line)
     .map(([text, code]) => {
       if (code) return text;
-      text = text.replace(CURRENCY_PREFIX, (m) => m.slice(0, -1) + '\\$');
-      // Math cannot span a table cell; an unpaired `$` inside one is literal.
-      return isRow
-        ? text
-            .split(/(?<!\\)\|/)
-            .map(escapeLoneDollars)
-            .join('|')
-        : text;
+      return scanMath(text, isRow)
+        .map(([piece, kind]) => {
+          // remark-math ends inline math at the first `$`, even an escaped
+          // one (`$\$100$`); KaTeX's \char"24 draws the same dollar sign.
+          if (kind === 'math') return piece.replace(/(?<!\\)\\\$/g, '\\char"24{}');
+          if (kind === 'currency') return '\\$';
+          // LobeHub escapes `$5` even when the author already wrote `\$5`,
+          // which renders a stray backslash; an entity is a plain `$`.
+          piece = piece.replace(/(?<!\\)\\\$(?=\d)/g, '&#36;');
+          return isRow ? piece.replace(STRAY_DOLLARS, '\\$') : piece;
+        })
+        .join('');
     })
     .join('');
 }
