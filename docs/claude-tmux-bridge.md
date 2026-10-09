@@ -63,7 +63,9 @@ needs its next approved safe restart to pick up a changed launch policy.
   prompt or pane history does not acknowledge a new paste. This does not change
   the startup deadline, pane size, or retry policy.
 - Output comes exclusively from complete JSONL records, not scraped screen text.
-  Thinking, tool calls and results become streamed Pi-shaped events. A
+  Thinking, tool calls and results become streamed Pi-shaped events; text in a
+  record that ends in `tool_use` becomes `narration_end` (plain text in the UI,
+  not a thinking card). A
   `turn_duration` closes the parent turn only after pending child agents and
   tracked background Bash/Monitor commands have finished. Partial UTF-8 writes
   are retained as bytes.

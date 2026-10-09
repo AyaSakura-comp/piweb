@@ -628,7 +628,9 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   the transcript survives reconnects and restarts.
 - **Thinking & Tool Accordions**: Streamed reasoning and tool executions render inside
   smooth, physics-animated collapsible cards (`grid-template-rows: 0fr -> 1fr`) with animated chevrons
-  and pop-in slide-up inertia, keeping intermediate chatter neatly contained.
+  and pop-in slide-up inertia. Only real reasoning goes in a Thinking card; text the
+  model writes before a tool call ("Now let me check…") is shown as plain reply
+  text (a `narration` row) between the cards.
 - **Apple-Style Text Selection & Quoting**: Custom selection overlays with iOS lollipop handles
   and a frosted glass floating action toolbar (`Quote`, `Copy`, `Dismiss`).
 - **Camera & Photo Batches**: Drag Send upward for a bottom camera pane that follows the finger and settles to a
