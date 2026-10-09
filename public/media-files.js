@@ -30,34 +30,8 @@ function isIosHomeScreenApp(runtime) {
   return runtime.navigator?.standalone === true;
 }
 
-function createSvgIcon(doc, kind) {
-  const namespace = 'http://www.w3.org/2000/svg';
-  const create = (tag) =>
-    typeof doc.createElementNS === 'function'
-      ? doc.createElementNS(namespace, tag)
-      : doc.createElement(tag);
-  const svg = create('svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  svg.setAttribute('aria-hidden', 'true');
-
-  const paths =
-    kind === 'download'
-      ? ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3']
-      : ['M6 6l12 12', 'M18 6L6 18'];
-  for (const data of paths) {
-    const path = create('path');
-    path.setAttribute('d', data);
-    svg.append(path);
-  }
-  return svg;
-}
-
-function safeSameOriginMediaUrl(value, doc) {
+/** `value` if it is an http(s) URL on this page's origin, else ''. */
+export function safeSameOriginMediaUrl(value, doc) {
   if (typeof value !== 'string' || value.length === 0) return '';
   try {
     const base = new URL(doc.baseURI || globalThis.location?.href || 'https://piweb.local/');
@@ -69,7 +43,12 @@ function safeSameOriginMediaUrl(value, doc) {
   }
 }
 
-function bindIosViewerSave(button, getMedia, runtime) {
+/**
+ * iOS home-screen save: a normal <a download> strands installed PWAs in an
+ * uncloseable Quick Look screen (WebKit bug 236943), so fetch the file on the
+ * first tap and hand it to the native share sheet on the second.
+ */
+export function bindMediaSave(button, getMedia, runtime) {
   let file;
   let preparedUrl = '';
 
@@ -126,143 +105,6 @@ function bindIosViewerSave(button, getMedia, runtime) {
   });
 }
 
-/**
- * Build the full-screen player used by Media gallery video/audio tiles.
- * The gallery remains underneath so closing the player returns to the same
- * scroll position instead of navigating away from Piweb.
- */
-export function createMediaViewer(doc = document, runtime = globalThis) {
-  const root = doc.createElement('div');
-  root.className = 'media-player';
-  root.hidden = true;
-  root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-modal', 'true');
-  root.setAttribute('aria-label', 'Media player');
-
-  const bar = doc.createElement('header');
-  bar.className = 'media-player-bar';
-  const title = doc.createElement('span');
-  title.className = 'media-player-title';
-
-  const actions = doc.createElement('div');
-  actions.className = 'media-player-actions';
-  const iosHomeScreen = isIosHomeScreenApp(runtime);
-  const download = doc.createElement(iosHomeScreen ? 'button' : 'a');
-  download.className = 'icon-btn media-player-download';
-  if (iosHomeScreen) download.type = 'button';
-  download.append(createSvgIcon(doc, 'download'));
-
-  const closeButton = doc.createElement('button');
-  closeButton.className = 'icon-btn media-player-close';
-  closeButton.type = 'button';
-  closeButton.title = 'Close';
-  closeButton.setAttribute('aria-label', 'Close media player');
-  closeButton.append(createSvgIcon(doc, 'close'));
-  actions.append(download, closeButton);
-  bar.append(title, actions);
-
-  const stage = doc.createElement('div');
-  stage.className = 'media-player-stage';
-  const video = doc.createElement('video');
-  video.className = 'media-player-video';
-  video.controls = true;
-  video.playsInline = true;
-  video.preload = 'metadata';
-  video.hidden = true;
-  const audio = doc.createElement('audio');
-  audio.className = 'media-player-audio';
-  audio.controls = true;
-  audio.preload = 'metadata';
-  audio.hidden = true;
-  stage.append(video, audio);
-  root.append(bar, stage);
-
-  let activeMedia;
-  let previousBodyOverflow = '';
-  let previousFocus;
-
-  function release(player) {
-    player.pause();
-    player.removeAttribute('src');
-    player.load();
-    player.hidden = true;
-  }
-
-  function close() {
-    if (root.hidden) return;
-    root.hidden = true;
-    activeMedia = undefined;
-    release(video);
-    release(audio);
-    doc.body.style.overflow = previousBodyOverflow;
-    const focusTarget = previousFocus;
-    previousFocus = undefined;
-    if (focusTarget?.isConnected !== false) focusTarget?.focus?.({ preventScroll: true });
-  }
-
-  function open(item, opener = doc.activeElement) {
-    if (item.type !== 'video' && item.type !== 'audio') return false;
-    const url = safeSameOriginMediaUrl(item.url, doc);
-    if (!url) return false;
-
-    release(video);
-    release(audio);
-
-    const name = downloadNameFromMediaUrl(url);
-    const player = item.type === 'video' ? video : audio;
-    activeMedia = { type: item.type, url, name };
-    title.textContent = name;
-    if (!iosHomeScreen) {
-      download.href = url;
-      download.download = name;
-    } else {
-      download.removeAttribute('data-ready');
-    }
-    download.title = `Download ${item.type}`;
-    download.setAttribute('aria-label', `Download ${item.type} ${name}`);
-    player.src = url;
-    player.hidden = false;
-
-    if (root.hidden) {
-      previousBodyOverflow = doc.body.style.overflow;
-      previousFocus = opener;
-    }
-    root.hidden = false;
-    doc.body.style.overflow = 'hidden';
-    closeButton.focus({ preventScroll: true });
-    return true;
-  }
-
-  if (iosHomeScreen) bindIosViewerSave(download, () => activeMedia, runtime);
-  closeButton.addEventListener('click', close);
-  root.addEventListener('click', (event) => {
-    if (event.target === root || event.target === stage) close();
-  });
-  root.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      close();
-      return;
-    }
-    if (event.key !== 'Tab' || !activeMedia) return;
-
-    const activePlayer = activeMedia.type === 'video' ? video : audio;
-    const focusables = [download, closeButton, activePlayer];
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    if (event.shiftKey && doc.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && doc.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  });
-
-  return { element: root, open, close };
-}
-
 function bindIosVideoSave(button, url, name, runtime) {
   let file;
 
@@ -316,8 +158,8 @@ function bindIosVideoSave(button, url, name, runtime) {
 
 /**
  * Build an inline video card with an explicit, mobile-friendly download.
- * With `onOpen`, the card is a poster that opens the media album (where the
- * video plays) instead of a native inline player.
+ * With `onOpen`, the card is a poster that starts the video in the stream
+ * player dock instead of a native inline player.
  */
 export function createVideoAttachment(url, doc = document, runtime = globalThis, onOpen) {
   const name = downloadNameFromMediaUrl(url);
@@ -337,7 +179,7 @@ export function createVideoAttachment(url, doc = document, runtime = globalThis,
     open = doc.createElement('button');
     open.type = 'button';
     open.className = 'video-open';
-    open.setAttribute('aria-label', `Open video ${name}`);
+    open.setAttribute('aria-label', `Play video ${name}`);
     open.addEventListener('click', () => onOpen(url));
   } else {
     video.controls = true;

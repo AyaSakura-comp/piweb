@@ -880,15 +880,23 @@ export function renderMediaElement(type, rawUrl, alt = '') {
   const lower = url.toLowerCase();
   const kind = (type || '').toLowerCase();
 
-  if (kind === 'video' || /\.(mp4|webm|mov)$/i.test(lower)) {
+  if (kind === 'video' || /\.(mp4|webm|mov|m4v)$/i.test(lower)) {
+    // Poster only; app.js plays `.stream-open` in the stream player dock.
     const wrap = document.createElement('div');
-    wrap.className = 'video-file';
+    wrap.className = 'video-file stream-video';
+    wrap.dataset.streamUrl = url;
+    wrap.dataset.streamType = 'video';
     const video = document.createElement('video');
-    video.src = url;
-    video.controls = true;
+    video.src = `${url}#t=0.1`;
+    video.muted = true;
     video.playsInline = true;
     video.preload = 'metadata';
-    wrap.append(video);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'video-open stream-open';
+    const name = decodeURIComponent(url.split(/[?#]/, 1)[0].split('/').pop() || 'video');
+    open.setAttribute('aria-label', `Play video ${name.replace(/^[0-9a-f]{8}-/i, '')}`);
+    wrap.append(video, open);
     return wrap;
   }
 

@@ -4145,64 +4145,169 @@ dialog.sheet::backdrop {
   text-align: center;
 }
 
-/* Video and audio open here instead of navigating the browser to a raw file.
-   Keep the controls dark in either app theme so native media chrome has a
-   stable, high-contrast canvas. */
-.media-player {
-  position: fixed;
-  inset: 0;
-  z-index: 61;
+/* ── stream player dock ─────────────────────────────────────────────────
+   One persistent player between the transcript and the composer. It is a flex
+   child of .main, so the transcript shrinks instead of being covered. */
+.stream-player {
+  position: relative;
+  z-index: 41;
+  flex: none;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: #0b0b0d;
-  color: #fff;
-  animation: lb-in 0.16s ease-out;
+  gap: 2px;
+  margin: 0 10px 6px;
+  padding: 6px 6px 4px;
+  border: 1px solid var(--bg-dark);
+  border-radius: 14px;
+  background: var(--bg-alt);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
 }
 
-.media-player-bar {
+.stream-player[hidden] {
+  display: none;
+}
+
+.sp-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  padding: calc(8px + env(safe-area-inset-top)) 8px 8px 16px;
-  border-bottom: 1px solid rgb(255 255 255 / 0.1);
 }
 
-.media-player-title {
+.sp-stage {
+  flex: none;
+  width: 64px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #000;
+}
+
+.stream-player[data-type='audio'] .sp-stage {
+  width: 40px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.sp-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sp-video[hidden],
+.sp-art[hidden],
+.sp-audio {
+  display: none;
+}
+
+.sp-art {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.sp-art svg {
+  width: 22px;
+  height: 22px;
+}
+
+.sp-info {
   flex: 1;
   min-width: 0;
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  align-content: center;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-bright);
+  text-align: left;
+  font: inherit;
+  touch-action: manipulation;
+}
+
+.sp-title,
+.sp-meta {
   overflow: hidden;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.media-player-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.sp-title {
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.media-player-download {
-  width: 44px;
+.sp-meta {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stream-player[data-state='error'] .sp-meta {
+  color: var(--danger, #f23f43);
+}
+
+.sp-controls {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.sp-btn {
+  width: 40px;
   height: 44px;
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 50%;
-  color: #fff;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-bright);
   text-decoration: none;
   touch-action: manipulation;
 }
 
-.media-player-download[data-ready='true'] {
-  background: rgb(63 95 111 / 0.5);
-  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.7);
+.sp-btn svg {
+  width: 22px;
+  height: 22px;
 }
 
-.media-player-download[aria-busy='true'] svg {
+.sp-toggle svg {
+  width: 26px;
+  height: 26px;
+}
+
+.sp-close {
+  color: var(--text-dim);
+}
+
+.sp-btn:active,
+.sp-btn:focus-visible,
+.sp-info:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.sp-btn:disabled {
+  opacity: 0.35;
+}
+
+.sp-btn[hidden] {
+  display: none;
+}
+
+.sp-download[data-ready='true'] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.sp-download[aria-busy='true'] svg {
   animation: media-download-pulse 0.8s ease-in-out infinite alternate;
 }
 
@@ -4213,45 +4318,178 @@ dialog.sheet::backdrop {
   }
 }
 
-.media-player-download:active,
-.media-player-download:focus-visible,
-.media-player-close:active,
-.media-player-close:focus-visible {
-  background: rgb(255 255 255 / 0.16);
-  color: #fff;
+/* Played | buffered | not yet loaded, drawn on the native range track. */
+.sp-seek {
+  --sp-played: 0%;
+  --sp-buffered: 0%;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: none;
+}
+
+.sp-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--sp-played),
+    color-mix(in srgb, var(--text-dim) 55%, transparent) var(--sp-played) var(--sp-buffered),
+    var(--bg-dark) var(--sp-buffered) 100%
+  );
+}
+
+.sp-seek::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--sp-played),
+    color-mix(in srgb, var(--text-dim) 55%, transparent) var(--sp-played) var(--sp-buffered),
+    var(--bg-dark) var(--sp-buffered) 100%
+  );
+}
+
+.sp-seek::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--accent);
+  -webkit-appearance: none;
+}
+
+.sp-seek::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.sp-seek:disabled::-webkit-slider-thumb {
+  visibility: hidden;
+}
+
+.sp-extra {
+  display: none;
+}
+
+.stream-player.expanded .sp-extra {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sp-position {
+  margin-right: auto;
+  padding-left: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stream-player.expanded[data-type='video'] .sp-head {
+  flex-wrap: wrap;
+}
+
+.stream-player.expanded[data-type='video'] .sp-stage {
+  order: -1;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: 42dvh;
+}
+
+.stream-player.expanded[data-type='video'] .sp-video {
+  object-fit: contain;
+}
+
+/* Keep "Jump to present" above the dock (its height is published by app.js). */
+.app.has-stream-player .jump-live {
+  bottom: calc(96px + var(--stream-player-h, 0px));
+}
+
+/* Audio attachments: a track row that plays in the dock. */
+.audio-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 320px);
+  min-height: 56px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-alt);
+  color: var(--text-bright);
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+}
+
+.audio-track:active,
+.audio-track:focus-visible {
+  background: var(--bg-input);
   outline: none;
 }
 
-.media-player-stage {
+.audio-track-glyph {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent) no-repeat 56% 50% / 18px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M7 4.5v15l13-7.5z'/%3E%3C/svg%3E");
+}
+
+.audio-track[data-stream-playing='true'] .audio-track-glyph {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M6.5 5h4v14h-4zM13.5 5h4v14h-4z'/%3E%3C/svg%3E");
+  background-position: 50% 50%;
+}
+
+.audio-track-text {
+  display: grid;
   min-width: 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
+  gap: 2px;
+}
+
+.audio-track-name {
   overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.media-player-video,
-.media-player-audio {
-  max-width: 100%;
+.audio-track-kind {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
-.media-player-video {
-  width: min(100%, 960px);
-  max-height: 100%;
-  border-radius: 10px;
-  background: #000;
+.audio-track.stream-current,
+.media-tile.stream-current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
-.media-player-audio {
-  width: min(100%, 560px);
+.video-file.stream-current {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .media-player {
-    animation: none;
-  }
+.video-file[data-stream-playing='true'] .video-open::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M6.5 5h4v14h-4zM13.5 5h4v14h-4z'/%3E%3C/svg%3E");
+  background-position: 50% 50%;
+}
+
+/* Inline reply videos have no download row under the poster. */
+.stream-video .video-open {
+  inset: 0;
+}
+
+.msg-inline-media .stream-video {
+  display: block;
 }
 
 /* ── light appearance refinements ───────────────────────────────────────────
@@ -4675,7 +4913,7 @@ dialog.sheet::backdrop {
   position: relative;
 }
 
-/* The chat card is a poster: tapping it opens the album, where it plays. */
+/* The chat card is a poster: tapping it plays it in the stream player dock. */
 .video-open {
   position: absolute;
   inset: 0 0 45px;
@@ -4684,7 +4922,7 @@ dialog.sheet::backdrop {
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: zoom-in;
+  cursor: pointer;
   touch-action: manipulation;
 }
 

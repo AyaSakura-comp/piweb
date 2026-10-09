@@ -288,10 +288,32 @@ const server = createServer((request, response) => {
     return;
   }
 
-  response.writeHead(200, {
+  const headers = {
     'content-type': mime[extname(file).toLowerCase()] || 'application/octet-stream',
     'cache-control': 'no-store',
-  });
+    'accept-ranges': 'bytes',
+  };
+  // Byte ranges, like the production /media route, so media streams.
+  const size = statSync(file).size;
+  const range = request.headers.range?.match(/^bytes=(\d*)-(\d*)$/);
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = Math.min(range[1] && range[2] ? Number(range[2]) : size - 1, size - 1);
+    if (start > end) {
+      response.writeHead(416, { ...headers, 'content-range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    response.writeHead(206, {
+      ...headers,
+      'content-range': `bytes ${start}-${end}/${size}`,
+      'content-length': end - start + 1,
+    });
+    if (request.method === 'HEAD') response.end();
+    else createReadStream(file, { start, end }).pipe(response);
+    return;
+  }
+  response.writeHead(200, { ...headers, 'content-length': size });
   if (request.method === 'HEAD') response.end();
   else createReadStream(file).pipe(response);
 });

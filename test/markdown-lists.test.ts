@@ -231,15 +231,21 @@ describe('markdown rendering', () => {
     const md = `[[video: /media/demo.mp4]]\n\n[[file: /media/12345678-report.pdf]]`;
     await render(md);
     const elements = await page.evaluate(() => {
-      const video = document.querySelector('#c .msg-inline-media .video-file video');
+      const card = document.querySelector('#c .msg-inline-media .video-file');
+      const video = card?.querySelector('video');
       const file = document.querySelector('#c .msg-inline-media a.file-link');
       return {
+        streamUrl: card?.getAttribute('data-stream-url'),
+        play: card?.querySelector('button.stream-open')?.getAttribute('aria-label'),
         videoSrc: video?.getAttribute('src'),
         fileHref: file?.getAttribute('href'),
         fileText: file?.textContent,
       };
     });
-    expect(elements.videoSrc).toBe('/media/demo.mp4');
+    // A poster that plays in the stream player dock, not an inline player.
+    expect(elements.streamUrl).toBe('/media/demo.mp4');
+    expect(elements.play).toBe('Play video demo.mp4');
+    expect(elements.videoSrc).toBe('/media/demo.mp4#t=0.1');
     expect(elements.fileHref).toBe('/media/12345678-report.pdf');
     expect(elements.fileText).toBe('report.pdf');
   });

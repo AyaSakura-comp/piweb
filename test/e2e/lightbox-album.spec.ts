@@ -139,7 +139,7 @@ test('tapping a transcript image opens the whole session album at that image', a
 
 const clip = readFileSync(new URL('./fixtures/media/demo-loop.webm', import.meta.url));
 
-test('tapping a chat video opens it in the same album, between the images', async ({ page }, info) => {
+test('a chat video stays in the image album, between the images', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
@@ -181,15 +181,20 @@ test('tapping a chat video opens it in the same album, between the images', asyn
 
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(session.name);
-  const poster = page.getByRole('button', { name: 'Open video clip.webm' });
+  // Tapping the chat poster plays in the stream player dock (stream-player
+  // spec); the album still holds the video when paging from an image.
+  const poster = page.getByRole('button', { name: 'Play video clip.webm' });
   await expect(poster).toBeVisible();
   await page.waitForTimeout(600);
   await page.screenshot({ path: info.outputPath('01-chat-video-poster.png') });
-  await poster.click();
-
-  // Opens on the video, inside the full album.
-  const lbVideo = page.locator('#lb-video');
+  await page.locator('#messages img[src$="middle.png"]').click();
   await expect(page.locator('#lightbox')).toBeVisible();
+  await expect(page.locator('#lb-count')).toHaveText('2 / 4');
+  const swipeIn = await touchSwiper(page, 200);
+  await swipeIn(-200);
+
+  // The video, inside the full album.
+  const lbVideo = page.locator('#lb-video');
   await expect(page.locator('#lb-count')).toHaveText('3 / 4');
   await expect(lbVideo).toBeVisible();
   await expect(page.locator('#lb-img')).toBeHidden();

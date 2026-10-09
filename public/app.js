@@ -19,7 +19,8 @@ import { createImageAnnotator } from './image-annotator.js';
 import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createCommandsRunningView } from './commands-running.js';
-import { createMediaViewer, createVideoAttachment } from './media-files.js';
+import { createVideoAttachment, downloadNameFromMediaUrl } from './media-files.js';
+import { createStreamPlayer } from './stream-player.js';
 import {
   IMAGE_COMPRESSION_KEY,
   prepareImageUpload,
@@ -51,8 +52,16 @@ import {
 } from './upload-progress.js';
 
 const $ = (id) => document.getElementById(id);
-const mediaViewer = createMediaViewer(document);
-document.body.append(mediaViewer.element);
+// Video and audio play in one persistent dock above the composer, so playback
+// survives scrolling, the drawer and switching sessions.
+const streamPlayer = createStreamPlayer(document);
+$('composer-wrap').before(streamPlayer.element);
+if (typeof ResizeObserver === 'function') {
+  new ResizeObserver(() => {
+    const height = streamPlayer.element.hidden ? 0 : streamPlayer.element.offsetHeight + 6;
+    document.documentElement.style.setProperty('--stream-player-h', `${height}px`);
+  }).observe(streamPlayer.element);
+}
 
 const MODE_KEY = 'piweb.mode';
 const LIFE_JID = 'web:life';
@@ -141,6 +150,7 @@ const systemMetricsMonitor = mountSystemMetrics({
 
 function showLogin() {
   systemMetricsMonitor.stop();
+  streamPlayer.stop();
   $('login').hidden = false;
   $('app').hidden = true;
   closeStream();
@@ -746,7 +756,6 @@ function setPresentationMode(mode, { persist = true } = {}) {
     closeThinkingSheet();
     closeMoreMenu();
     closeMediaSheet();
-    mediaViewer.close();
   }
   renderHeaderBadge();
 }
@@ -786,7 +795,6 @@ function clearStandardSelection() {
   closeThinkingSheet();
   closeMoreMenu();
   closeMediaSheet();
-  mediaViewer.close();
   $('session-name').textContent = 'no session';
   $('session-name').tabIndex = 0;
   $('messages').textContent = '';
@@ -1166,7 +1174,6 @@ async function selectSession(jid, opts = {}) {
   closeModelSheet();
   closeThinkingSheet();
   closeMoreMenu();
-  mediaViewer.close();
   closeMediaSheet();
   renderPartial('');
   renderSessions();
@@ -1797,8 +1804,7 @@ $('menu-scrim').addEventListener('click', closeMoreMenu);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (isMenuOpen()) closeMoreMenu();
-  if (!mediaViewer.element.hidden) mediaViewer.close();
-  else if (!$('media-sheet').hidden) closeMediaSheet();
+  if (!$('media-sheet').hidden) closeMediaSheet();
 });
 
 /** Wire a menu row: always dismiss first, so the action never runs under an open menu. */
@@ -1867,14 +1873,16 @@ async function openMediaSheet() {
     .reverse();
   note.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}`;
 
+  // Video and audio share one oldest-first playlist in the stream player.
+  const playlist = items.filter((i) => i.type === 'video' || i.type === 'audio').reverse();
   const frag = document.createDocumentFragment();
   for (const item of items) {
-    frag.append(buildMediaTile(item, album));
+    frag.append(buildMediaTile(item, album, playlist));
   }
   grid.append(frag);
 }
 
-function buildMediaTile(item, album) {
+function buildMediaTile(item, album, playlist) {
   const tile = el('button', 'media-tile');
   tile.type = 'button';
   tile.title = item.name;
@@ -1906,14 +1914,18 @@ function buildMediaTile(item, album) {
     tile.append(el('span', 'media-badge', 'AUDIO'));
   }
 
+  if (item.type !== 'image') {
+    tile.dataset.streamUrl = item.url;
+    tile.dataset.streamType = item.type;
+  }
   tile.addEventListener('click', () => {
-    if (item.type === 'image' || item.type === 'video') {
+    if (item.type === 'image') {
       closeMediaSheet();
       openLightbox(item.url, album);
     } else {
-      // Keep the gallery in place underneath the player so Close returns to the
-      // same scroll position rather than navigating Piweb to the original file.
-      mediaViewer.open(item, tile);
+      streamPlayer.play(item, playlist);
+      // A video needs the screen; music can keep playing while browsing.
+      if (item.type === 'video') closeMediaSheet();
     }
   });
 
@@ -2618,6 +2630,67 @@ function renderText(container, raw) {
   renderRich(container, raw);
 }
 
+const STREAM_VIDEO_RE = /\.(mp4|webm|mov|m4v)$/;
+const STREAM_AUDIO_RE = /\.(wav|mp3|ogg|oga|opus|m4a|aac|flac)$/;
+
+function markStreamable(node, url, type) {
+  node.dataset.streamUrl = url;
+  node.dataset.streamType = type;
+  const now = streamPlayer.current();
+  if (now?.url === url) {
+    node.classList.add('stream-current');
+    node.dataset.streamPlaying = String(now.playing);
+  }
+}
+
+/** A tappable track row; playback happens in the stream player dock. */
+function createAudioTrack(url) {
+  const name = downloadNameFromMediaUrl(url);
+  const track = el('button', 'audio-track');
+  track.type = 'button';
+  track.setAttribute('aria-label', `Play audio ${name}`);
+  const glyph = el('span', 'audio-track-glyph');
+  glyph.setAttribute('aria-hidden', 'true');
+  const label = el('span', 'audio-track-text');
+  label.append(el('span', 'audio-track-name', name), el('span', 'audio-track-kind', '音訊 · 串流播放'));
+  track.append(glyph, label);
+  track.addEventListener('click', () => playFromTranscript(url, 'audio'));
+  markStreamable(track, url, 'audio');
+  return track;
+}
+
+/**
+ * Play a transcript video/audio with every streamable item currently in the
+ * transcript (in reading order) as its playlist.
+ */
+function playFromTranscript(url, type) {
+  const list = [...$('messages').querySelectorAll('[data-stream-url]')].map((node) => ({
+    url: node.dataset.streamUrl,
+    type: node.dataset.streamType,
+  }));
+  streamPlayer.play({ url, type }, list);
+}
+
+// Inline reply media (Markdown/LobeHub) renders poster buttons with stream data
+// attributes; they are rendered outside app.js, so play them by delegation.
+$('messages').addEventListener('click', (event) => {
+  const open = event.target.closest?.('.stream-open');
+  const card = open?.closest('[data-stream-url]');
+  if (!card) return;
+  event.preventDefault();
+  playFromTranscript(card.dataset.streamUrl, card.dataset.streamType);
+});
+
+streamPlayer.onChange((now) => {
+  for (const node of document.querySelectorAll('[data-stream-url]')) {
+    const current = now?.url === node.dataset.streamUrl;
+    node.classList.toggle('stream-current', current);
+    if (current) node.dataset.streamPlaying = String(now.playing);
+    else delete node.dataset.streamPlaying;
+  }
+  $('app').classList.toggle('has-stream-player', Boolean(now));
+});
+
 function renderFiles(container, files, content = '') {
   if (!files || files.length === 0) return;
   const unreferenced = content ? files.filter((url) => !content.includes(url)) : files;
@@ -2635,13 +2708,12 @@ function renderFiles(container, files, content = '') {
       // images in a transcript is a swipe instead of a back-and-forth.
       img.addEventListener('click', () => openLightbox(url));
       wrap.append(img);
-    } else if (/\.(mp4|webm|mov)$/.test(lower)) {
-      wrap.append(createVideoAttachment(url, document, globalThis, (u) => openLightbox(u)));
-    } else if (/\.(wav|mp3|ogg|m4a)$/.test(lower)) {
-      const audio = el('audio');
-      audio.src = url;
-      audio.controls = true;
-      wrap.append(audio);
+    } else if (STREAM_VIDEO_RE.test(lower)) {
+      const card = createVideoAttachment(url, document, globalThis, (u) => playFromTranscript(u, 'video'));
+      markStreamable(card, url, 'video');
+      wrap.append(card);
+    } else if (STREAM_AUDIO_RE.test(lower)) {
+      wrap.append(createAudioTrack(url));
     } else {
       const rawName = decodeURIComponent(url.split('/').pop() || 'file');
       const displayName = rawName.replace(/^[0-9a-f]{8}-/, '');
@@ -4914,7 +4986,6 @@ function isDrawerGestureAllowed() {
   if (!$('login').hidden || isMenuOpen() || isTranscriptSelectionActive()) return false;
   return (
     $('lightbox').hidden &&
-    mediaViewer.element.hidden &&
     !document.querySelector('.sheet:not([hidden])')
   );
 }
@@ -5093,7 +5164,6 @@ function isLifeEntryAllowed() {
   }
   return (
     $('lightbox').hidden &&
-    mediaViewer.element.hidden &&
     !document.querySelector('.sheet:not([hidden])')
   );
 }

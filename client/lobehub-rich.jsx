@@ -18,6 +18,7 @@ import rehypeKatex from 'rehype-katex';
 import { bindInlineYouTube, getYouTubeVideoId, renderCode } from './markdown.js';
 import { remarkOutboxMedia } from './outbox-media.js';
 import { continuesSource, tokenizeOutbox } from '../public/outbox-stream.js';
+import { downloadNameFromMediaUrl } from '../public/media-files.js';
 import {
   documentDefinitions,
   normalizeDisplayMath,
@@ -78,12 +79,22 @@ function Table({ children, node: _node, ...props }) {
 }
 function Image({ src, alt, node: _node, ...props }) {
   if (!src) return null;
-  if (props['data-piweb-media'] === 'video' || /\.(?:mp4|webm|mov)(?:[?#]|$)/i.test(src))
+  if (props['data-piweb-media'] === 'video' || /\.(?:mp4|webm|mov|m4v)(?:[?#]|$)/i.test(src)) {
+    // Poster only; app.js plays `.stream-open` in the stream player dock.
+    const { 'data-piweb-media': _kind, ...videoProps } = props;
     return (
       <span className="msg-inline-media">
-        <video {...props} src={src} controls playsInline preload="metadata" />
+        <span className="video-file stream-video" data-stream-url={src} data-stream-type="video">
+          <video {...videoProps} src={`${src}#t=0.1`} muted playsInline preload="metadata" />
+          <button
+            type="button"
+            className="video-open stream-open"
+            aria-label={`Play video ${downloadNameFromMediaUrl(src)}`}
+          />
+        </span>
       </span>
     );
+  }
   return (
     <span className="msg-inline-media">
       <img {...props} src={src} alt={alt || 'image'} className="msg-inline-img" loading="lazy" />

@@ -575,7 +575,8 @@ production phone viewport (390×844). Every test records a WebM video; visual te
 also compare rendered pixels with reviewed PNG baselines. Current coverage includes
 syntax highlighting, persisted light/dark switching, the Japanese-minimal light
 palette, drawer/sheet foreground layering, click-to-expand YouTube embeds with
-external fallback, the in-app video/audio player with real download actions,
+external fallback, the persistent video/audio stream player (Range streaming,
+playlist, playback across session switches) with real download actions,
 touch transcript selection without Safari's document-wide native selection,
 Recently deleted touch/mouse long-press and button multi-selection, Delete all,
 Settings navigation and the OpenAI device-code connect/copy/complete/disconnect workflow,
@@ -585,7 +586,7 @@ boundaries without a jump:
 
 ```bash
 npm run test:e2e                                      # full behavior + visual suite
-npx playwright test test/e2e/media-player.spec.ts    # video/audio player + downloads
+npx playwright test test/e2e/stream-player.spec.ts   # video/audio stream player
 npx playwright test test/e2e/markdown-links.spec.ts  # inline YouTube open/replace/close workflow
 npx playwright test test/e2e/text-selection.spec.ts  # touch selection + quote preview
 npx playwright test test/e2e/history-scroll.spec.ts  # 500 rows + nine delayed, partially loaded touch boundaries
@@ -640,10 +641,10 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
   [camera controls, privacy, retry behavior and verification limits](docs/camera-composer.md).
 - **Multimedia & Attachments**: Clipboard paste (`btn-paste` and `Ctrl+V`/`Cmd+V`) and file upload support
   images (PNG, JPEG, WebP, GIF, SVG), audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF).
-  Voice notes and audio files receive automatic Breeze ASR transcription. Tapping an image or video opens a shared
-  session album at that item, including attachments outside the loaded transcript page. Videos use poster cards in chat
-  and native playback controls in the album; leaving a video or closing the viewer unloads it. Audio keeps its separate
-  in-app player. Image prefetch is limited to a sliding window, not the whole album.
+  Voice notes and audio files receive automatic Breeze ASR transcription. Tapping an image opens a shared
+  session album at that item, including attachments outside the loaded transcript page. Videos (poster cards) and audio
+  (track rows) play in a persistent stream player dock above the composer that streams by byte range, walks the
+  session's media as a playlist and keeps playing across scrolling and session switches (`docs/stream-player.md`). Image prefetch is limited to a sliding window, not the whole album.
   See [image/video album behavior and verification](docs/media-album.md).
   Static JPEG/PNG uploads are resized in the browser by default (at most 541,200 total
   pixels, equivalent to 528×1025; aspect ratio preserved, no upscaling). Uncheck **壓縮圖片** beside pending images to send

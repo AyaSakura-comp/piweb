@@ -8,15 +8,16 @@
 - Images and videos share an oldest-first album. The counter and thumbnail strip
   expand when the list arrives, without reloading the currently displayed item.
 - Chat videos appear as poster buttons with a play indicator and a separate
-  download link. Tap the poster to open that video in the album; playback uses
-  native video controls rather than an inline chat player.
+  download link. Tapping the poster plays it in the persistent
+  [stream player](stream-player.md) dock; the album still contains videos, so
+  swiping from an image reaches them and they play in the album.
 - Swipe between images and videos. Video thumbnails carry a play indicator.
   Video control-band gestures are excluded from album swipes; videos do not use
   image pinch/double-tap zoom.
 - Leaving a video or closing the album pauses it and removes its source, so it
   does not continue playing in the background.
-- **⋯ → Media** opens images/videos in the same mixed album. Audio retains the
-  separate in-app player.
+- **⋯ → Media** opens images in the mixed album; video and audio tiles play in
+  the stream player dock.
 
 ## Loading and safety boundaries
 
