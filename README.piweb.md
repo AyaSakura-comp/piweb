@@ -486,6 +486,25 @@ docker compose up -d --no-build --force-recreate app
 docker compose up -d --no-build --force-recreate tailscale
 ```
 
+#### Frontend-only changes: no image rebuild
+
+`public/` is copied into the image, but the server reads static files from disk
+on every request with `cache-control: no-cache`. A change confined to `public/`
+or `client/` can therefore be hot-deployed into the running container without
+rebuilding the image or restarting anything:
+
+```bash
+npm run build:client                         # if client/ changed
+live=$(mktemp -d) && docker cp piweb-app:/app/public/. "$live"
+diff -rq "$live" public                      # the files this deploy changes
+docker cp public/<changed-file> piweb-app:/app/public/<changed-file>
+```
+
+Reload the browser to pick it up. The copy lasts until `piweb-app` is
+recreated, so commit the change as well. Rebuild the image only for web server
+code (`src/web/**`), dependency, `Dockerfile` or compose changes; the full
+sequence above remains the path for those.
+
 Recreating app changes its network namespace: recreate the Tailscale sidecar
 **after app** or it can retain the old namespace and return HTTP 502. Repeat the
 verification steps and refresh open browser tabs. A frontend-only update does

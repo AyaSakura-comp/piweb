@@ -664,10 +664,30 @@ docker compose build app && docker compose up -d
 curl -s -o /dev/null -w '%{http_code}\n' https://piweb.<tailnet>.ts.net/   # expect 200
 ```
 
-Note `public/` is **COPY**ed into the image, not bind-mounted, so a frontend-only
-change still needs `docker compose build app`. Static files are served
-`cache-control: no-cache`, so phones pick up new JS/CSS on reload with no
-cache-busting.
+Note `public/` is **COPY**ed into the image, not bind-mounted. A frontend-only
+change does **not** need an image rebuild, though: `serveStatic()` reads each
+file from disk per request (ETag = size + mtime) and serves `public/` as
+`cache-control: no-cache`, so copying the changed files into the running
+container takes effect on the next phone reload. See "Frontend hot deploy" in §9.
+
+### When to rebuild the image (and when not to)
+
+**Do not rebuild the web image unless it is actually required, and ask the user
+first.** The layer cache has been pruned on this host, so a rebuild re-downloads
+the Debian toolchain and takes 15+ minutes; the user has explicitly rejected
+rebuilding for frontend fixes.
+
+| change touches                                                   | deploy by                                          |
+| ---------------------------------------------------------------- | -------------------------------------------------- |
+| `public/**`, `client/**` (→ `public/lobehub-rich.js`)            | frontend hot deploy (§9), no rebuild, no restart   |
+| `src/agent`, `src/db.ts`, worker code                            | `npm run build` + worker restart (host, no Docker) |
+| `src/web/**` (web server code, compiled into the image's `dist`) | image rebuild — ask first                          |
+| `package.json` / lockfile, `Dockerfile`, compose file            | image rebuild — ask first                          |
+
+A hot-deployed file lives only in the current container. Anything that
+recreates `piweb-app` (an image rebuild, `docker compose up` deciding to
+recreate) resets it to the image contents — so **commit the change** too; the
+next legitimate image build then includes it.
 
 ### Auth
 
@@ -1356,16 +1376,38 @@ of host command execution — keep it long. A short numeric token is brute-force
 in about a day against the rate limiter; that trade-off was accepted knowingly,
 so do not "fix" it unasked, but do not weaken it further either.
 
-Redeploy quick reference:
+Redeploy quick reference (pick by the table in §3 "When to rebuild the image"):
 
 ```bash
-# frontend / web tier (public/ is COPYed into the image)
+# frontend hot deploy — public/ and client/ changes. No image build, no restart.
+npm run build:client                                  # only if client/ changed
+live=$(mktemp -d) && docker cp piweb-app:/app/public/. "$live"
+diff -rq "$live" public                               # exactly what will ship
+for f in public/lobehub-rich.js; do                   # ← the files diff listed
+  docker cp "$f" "piweb-app:/app/$f"
+done
+# verify the public URL serves the new bytes, not just the container file
+curl -s https://piweb.crayfish-monitor.ts.net/lobehub-rich.js | sha256sum
+sha256sum public/lobehub-rich.js
+
+# web server code / dependencies only — slow; ASK THE USER FIRST
 docker compose build app && docker compose up -d     # NOT `up -d app` — see §3
 curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 
 # worker (src/agent, src/db, …) — check nothing is in flight first
 npm run build && systemctl --user restart piweb-worker
 ```
+
+Frontend hot deploy notes:
+
+- `diff -rq` against the **live** container, not against git: other sessions may
+  already have hot-deployed uncommitted files, and the diff shows exactly which
+  files this deploy changes. Copy only those; never `docker cp` the whole dir
+  blindly over someone else's live state.
+- `vendor/`, `icons/` and `favicon*` are served `immutable` (1-year cache), so a
+  hot copy there will not reach phones that already cached them — rename the
+  file (and its reference) instead.
+- Phones need a reload; an open tab keeps the old JS until then.
 
 **Commit before deploying.** The deploy flow on this host runs `git reset --hard`
 (visible in `git reflog` as `reset: moving to HEAD` before the fast-forward), so
