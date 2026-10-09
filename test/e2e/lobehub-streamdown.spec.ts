@@ -936,15 +936,23 @@ test('LobeHub screenshot layout walkthrough keeps prose lists and copy usable', 
   expect(errors).toEqual([]);
 });
 
-test('LobeHub code blocks have no inline copy button or reserved toolbar space', async ({ page }, info) => {
-  const source = '影片轉向量流程：\n\n```text\n整支影片\n  ↓ 每 20 秒切一段\n43 個片段\n  ↓ 每段抽取畫面\n768 維向量\n```\n';
-  const { errors, events } = await setup(page, [event(1, source), event(2, source, 'assistant', 'thinking')]);
+test('LobeHub code blocks have no inline copy button or reserved toolbar space', async ({
+  page,
+}, info) => {
+  const source =
+    '影片轉向量流程：\n\n```text\n整支影片\n  ↓ 每 20 秒切一段\n43 個片段\n  ↓ 每段抽取畫面\n768 維向量\n```\n';
+  const { errors, events } = await setup(page, [
+    event(1, source),
+    event(2, source, 'assistant', 'thinking'),
+  ]);
   const check = async (selector: string) => {
     const body = page.locator(selector);
     await expect(body.locator('pre code')).toContainText('768 維向量');
     await expect(body.locator('.lobe-code-copy')).toHaveCount(0);
     await expect(body.locator('.lobe-code button')).toHaveCount(0);
-    expect(await body.locator('pre').evaluate((el) => parseFloat(getComputedStyle(el).paddingTop))).toBeLessThan(44);
+    expect(
+      await body.locator('pre').evaluate((el) => parseFloat(getComputedStyle(el).paddingTop)),
+    ).toBeLessThan(44);
   };
   await check('.msg[data-event-id="1"] .msg-text');
   await check('[data-event-id="2"] .event-body');
@@ -1259,5 +1267,38 @@ test('LobeHub continuous video uses real Send dark light upstream streaming fina
   expect(await page.locator('.msg-text .stream-char').count()).toBe(0);
   await page.screenshot({ path: info.outputPath('05-static-history.png') });
   await writeFile(info.outputPath('samples.json'), JSON.stringify({ samples, errors }, null, 2));
+  expect(errors).toEqual([]);
+});
+
+test('LobeHub keeps NT$ currency tables as tables in history and streaming', async ({
+  page,
+}, info) => {
+  const table = (name: string) =>
+    `### ${name}\n\n| 型號 | 美國售價 (USD) | 台灣售價 (NT$) | 匯率換算 (NT$) | 差價 |\n|---|---|---|---|---|\n| **${name} A** | ~$2,600 | 139,900 | ~82,000 | 台灣貴 5.8 萬 |\n| **${name} B** | **$4,999** | 約 16 萬 | ~157,000 | 相近 |`;
+  const source = `三、完整價格對比表（USD vs NT$）\n\n${table('筆電')}\n\n${table('桌上型')}\n\nEnd of currency fixture.`;
+  const { errors } = await setup(page, [event(60, source)]);
+  const history = page
+    .locator('.msg-text:not(#partial-msg .msg-text)')
+    .filter({ hasText: 'End of currency fixture.' });
+  await expect(history.locator('table')).toHaveCount(2);
+  await expect(history.locator('.katex')).toHaveCount(0);
+  await expect(history.locator('th').nth(3)).toHaveText('匯率換算 (NT$)');
+  await expect(history).not.toContainText('| 型號 |');
+  await expect(history).not.toContainText('\\');
+  await expect(history.locator('td').nth(1)).toHaveText('~$2,600');
+
+  await partial(page, source);
+  const live = page.locator('#partial-msg .msg-text');
+  await expect(live.locator('table')).toHaveCount(2, { timeout: 15000 });
+  await expect(live.locator('.katex')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await history.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('currency-tables.png') });
   expect(errors).toEqual([]);
 });

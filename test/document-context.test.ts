@@ -6,8 +6,10 @@ import remarkMath from 'remark-math';
 import {
   normalizeDisplayMath,
   documentDefinitions,
+  protectCurrencyDollars,
   remarkDocumentDefinitions,
 } from '../client/document-context.js';
+import { preprocessLaTeX } from '@lobehub/streamdown';
 
 const parse = (block: string, document: string) =>
   unified()
@@ -70,5 +72,41 @@ describe('document context before block parsing', () => {
   it('does not invent references from code or definitions from code', () => {
     expect(documentDefinitions('```\n[ref]: https://example.test\n```')).toEqual([]);
     expect(references(parse('`[ref]`', '[ref]: https://example.test'))).toEqual([]);
+  });
+});
+
+describe('currency dollars before LaTeX preprocessing', () => {
+  const parseTypes = (source: string) =>
+    unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(remarkMath)
+      .parse(source)
+      .children.map((node: any) => node.type);
+  const table =
+    '| 型號 | 台灣售價 (NT$) | 匯率換算 (NT$) | 差價 |\n|---|---|---|---|\n| **A** | ~$2,600 | 139,900 | x |';
+
+  it('keeps a table whose header has two NT$ cells', () => {
+    expect(parseTypes(preprocessLaTeX(table))).toEqual(['paragraph']); // upstream bug
+    expect(parseTypes(preprocessLaTeX(protectCurrencyDollars(table)))).toEqual(['table']);
+  });
+  it('escapes prefixed currency and unpaired cell dollars only', () => {
+    expect(protectCurrencyDollars('價格 (NT$) 與 US$')).toBe('價格 (NT\\$) 與 US\\$');
+    expect(protectCurrencyDollars('| $x$ | a $ b |')).toBe('| $x$ | a \\$ b |');
+  });
+  it('leaves digit-led amounts to LobeHub so they are escaped exactly once', () => {
+    const amounts = '| ~$2,600 | **$4,999** | NT$100 | US$5 |';
+    expect(protectCurrencyDollars(amounts)).toBe(amounts);
+    expect(preprocessLaTeX(protectCurrencyDollars(table))).not.toMatch(/\\\\\$/);
+  });
+  it('leaves math, code spans and code blocks alone', () => {
+    const kept = [
+      '$a+b$ and $$c$$',
+      '| `NT$` | $\\alpha$ |',
+      '```\nNT$ | x$\n```',
+      '    NT$ indented code',
+      'A $x$ term',
+    ].join('\n\n');
+    expect(protectCurrencyDollars(kept)).toBe(kept);
   });
 });

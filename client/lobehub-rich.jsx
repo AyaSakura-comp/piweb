@@ -20,6 +20,7 @@ import { remarkOutboxMedia } from './outbox-media.js';
 import {
   documentDefinitions,
   normalizeDisplayMath,
+  protectCurrencyDollars,
   remarkDocumentDefinitions,
 } from './document-context.js';
 
@@ -111,15 +112,16 @@ function Link({ href, children, node: _node, className = '', ...props }) {
 const components = { pre: Pre, table: Table, img: Image, a: Link };
 const options = { components, remarkPlugins, rehypePlugins, skipHtml: true };
 
-const preprocessDocument = (source) => normalizeDisplayMath(preprocessLaTeX(source));
+const preprocessReply = (source) => preprocessLaTeX(protectCurrencyDollars(source));
+const preprocessDocument = (source) => normalizeDisplayMath(preprocessReply(source));
 
 function Reply({ source, animate, complete }) {
-  const definitions = useMemo(() => documentDefinitions(preprocessLaTeX(source)), [source]);
+  const definitions = useMemo(() => documentDefinitions(preprocessReply(source)), [source]);
   const contextualPlugins = useMemo(
     () => [...remarkPlugins, [remarkDocumentDefinitions, { definitions }]],
     [definitions],
   );
-  if (!animate) return <CachedMarkdown {...options}>{preprocessLaTeX(source)}</CachedMarkdown>;
+  if (!animate) return <CachedMarkdown {...options}>{preprocessReply(source)}</CachedMarkdown>;
   // Explicit requested settings: balanced smoothing, character reveal. Keep the
   // native 180ms fade; EOF does not toggle this branch or remount Streamdown.
   return (

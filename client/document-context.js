@@ -25,6 +25,68 @@ export function normalizeDisplayMath(source) {
   return source;
 }
 
+// Prefixed currency (NT$, US$, HK$…) is never a math delimiter, but LobeHub's
+// preprocessLaTeX pairs it with the next `$` and rewrites the `|` between them
+// to `\vert{}` — merging two table cells and breaking the whole table.
+// A `$` before a digit is left alone: LobeHub already escapes `$2,600`, and a
+// second escape would render a literal backslash.
+const CURRENCY_PREFIX = /(?<![A-Za-z\\])(?:NT|US|HK|NZ|AU|CA|SG|MX|A|C|S|R)\$(?![$\d])/g;
+const LONE_DOLLAR = /(?<![\\$])\$(?![$\d])/g;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+function splitCode(line) {
+  // [text, isCode] segments; an unclosed backtick run stays text.
+  const parts = [];
+  let last = 0;
+  for (const match of line.matchAll(/(`+)[^`]*?\1(?!`)/g)) {
+    parts.push([line.slice(last, match.index), false], [match[0], true]);
+    last = match.index + match[0].length;
+  }
+  parts.push([line.slice(last), false]);
+  return parts;
+}
+
+const escapeLoneDollars = (cell) => {
+  const singles = cell.match(LONE_DOLLAR) || [];
+  return singles.length % 2 ? cell.replace(LONE_DOLLAR, '\\$') : cell;
+};
+
+function protectLine(line) {
+  const isRow = /^\s*\|/.test(line);
+  return splitCode(line)
+    .map(([text, code]) => {
+      if (code) return text;
+      text = text.replace(CURRENCY_PREFIX, (m) => m.slice(0, -1) + '\\$');
+      // Math cannot span a table cell; an unpaired `$` inside one is literal.
+      return isRow
+        ? text
+            .split(/(?<!\\)\|/)
+            .map(escapeLoneDollars)
+            .join('|')
+        : text;
+    })
+    .join('');
+}
+
+export function protectCurrencyDollars(source) {
+  let fence = null;
+  return source
+    .split('\n')
+    .map((line) => {
+      const open = FENCE.exec(line);
+      if (fence) {
+        if (open && open[1][0] === fence[0] && open[1].length >= fence.length) fence = null;
+        return line;
+      }
+      if (open) {
+        fence = open[1];
+        return line;
+      }
+      return /^(?: {4}|\t)/.test(line) ? line : protectLine(line);
+    })
+    .join('\n');
+}
+
 export function documentDefinitions(source) {
   const definitions = new Map();
   walk(documentParser.parse(source), (node) => {
