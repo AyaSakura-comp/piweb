@@ -92,6 +92,7 @@ export function listAvailableModels(options?: { forceRefresh?: boolean }): Avail
     .getAvailable()
     .map(toAvailableModelInfo)
     .concat(cachedAgyModels(), listClaudeTmuxModels(config.claudeTmuxEnabled))
+    .filter((model) => !(process.env.PIWEB_HIDDEN_MODELS ?? '').split(',').map((ref) => ref.trim()).includes(model.ref))
     .sort((a, b) => a.ref.localeCompare(b.ref));
 
   cache = { loadedAt: now, models };
