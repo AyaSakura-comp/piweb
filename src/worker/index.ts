@@ -27,11 +27,13 @@ import { startSessionTitleLoop, stopSessionTitleLoop } from './session-title.js'
 import { startSubscriptionLoop, stopSubscriptionLoop } from './subscriptions.js';
 import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
+import { startClaudeTmuxReaper } from '../agent/claude-tmux-reaper.js';
 import { discoverPiExtensionCommands } from '../commands/extension-runner.js';
 
 // Both of these return their own stop function rather than exporting one.
 let stopScheduler: () => void = () => {};
 let stopArchiveCleanup: () => void = () => {};
+let stopClaudeTmuxReaper: () => void = () => {};
 let modelRefreshTimer: NodeJS.Timeout | undefined;
 let extCommandRefreshTimer: NodeJS.Timeout | undefined;
 let trashSweepTimer: NodeJS.Timeout | undefined;
@@ -152,6 +154,7 @@ export async function startWorker(): Promise<void> {
   startSessionTitleLoop();
   stopScheduler = startScheduler();
   stopArchiveCleanup = startArchiveCleanup();
+  stopClaudeTmuxReaper = startClaudeTmuxReaper();
   // agy's catalog comes from a separate CLI and merges in from cache, so wait
   // for the first fetch before publishing or the picker's first render after a
   // worker restart would be missing every Gemini model.
@@ -187,6 +190,7 @@ export async function stopWorker(): Promise<void> {
   const controlStopped = stopControlLoop();
   stopScheduler();
   stopArchiveCleanup();
+  stopClaudeTmuxReaper();
   const titleStopped = stopSessionTitleLoop();
   const subscriptionStopped = stopSubscriptionLoop();
   const processingStopped = stopProcessingLoop();

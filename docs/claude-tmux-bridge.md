@@ -61,6 +61,14 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.
+- Deleting (trashing) or purging a Piweb session closes its Claude TUI within
+  a minute: the worker reconciles `piweb-cc-*` tmux sessions against SQLite
+  (`src/agent/claude-tmux-reaper.ts`), because the Docker web tier cannot reach
+  host tmux. Only the TUI process ends — the Claude transcript and pointer stay,
+  so restoring from the trash resumes the same conversation. Ownership is
+  proven by a channel row in this DB, then stamped as `@piweb_owner=<DB_PATH>`
+  so a purged row is still recognised; sessions of other instances (disposable
+  live tests) and non-Piweb tmux sessions are never touched.
 - Stable queue row ids and start offsets allow worker recovery to tail a surviving
   turn without resending it. This is not a transactional exactly-once guarantee:
   Claude's external TUI/transcript and SQLite cannot commit atomically.
