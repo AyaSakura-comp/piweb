@@ -9,7 +9,7 @@
   expand when the list arrives, without reloading the currently displayed item.
 - Chat videos appear as poster buttons with a play indicator and a separate
   download link. Tapping the poster plays it in the persistent
-  [stream player](stream-player.md) dock; the album still contains videos, so
+  [stream player](stream-player.md); the album still contains videos, so
   swiping from an image reaches them and they play in the album.
 - Swipe between images and videos. Video thumbnails carry a play indicator.
   Video control-band gestures are excluded from album swipes; videos do not use

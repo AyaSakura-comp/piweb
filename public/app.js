@@ -52,16 +52,30 @@ import {
 } from './upload-progress.js';
 
 const $ = (id) => document.getElementById(id);
-// Video and audio play in one persistent dock above the composer, so playback
-// survives scrolling, the drawer and switching sessions.
-const streamPlayer = createStreamPlayer(document);
-$('composer-wrap').before(streamPlayer.element);
+// Video and audio play in one player: embedded in place of the tapped
+// transcript item, or in a dock above the composer (Media sheet, or after the
+// item left the transcript), so playback survives switching sessions.
+const streamDock = document.createElement('div');
+streamDock.className = 'stream-dock';
+$('composer-wrap').before(streamDock);
+const streamPlayer = createStreamPlayer(document, globalThis, {
+  dock: streamDock,
+  resolveAnchor: (url) =>
+    [...$('messages').querySelectorAll('[data-stream-url]')].find(
+      (node) => node.dataset.streamUrl === url && !node.closest('.stream-player'),
+    ) ?? null,
+});
 if (typeof ResizeObserver === 'function') {
   new ResizeObserver(() => {
-    const height = streamPlayer.element.hidden ? 0 : streamPlayer.element.offsetHeight + 6;
-    document.documentElement.style.setProperty('--stream-player-h', `${height}px`);
-  }).observe(streamPlayer.element);
+    document.documentElement.style.setProperty('--stream-player-h', `${streamDock.offsetHeight}px`);
+  }).observe(streamDock);
 }
+// Transcript re-renders drop the node an embedded player stands in for;
+// re-home it (same item re-rendered, else the dock) before playback notices.
+new MutationObserver(() => streamPlayer.relocate()).observe($('messages'), {
+  childList: true,
+  subtree: true,
+});
 
 const MODE_KEY = 'piweb.mode';
 const LIFE_JID = 'web:life';
@@ -2654,7 +2668,7 @@ function createAudioTrack(url) {
   const label = el('span', 'audio-track-text');
   label.append(el('span', 'audio-track-name', name), el('span', 'audio-track-kind', '音訊 · 串流播放'));
   track.append(glyph, label);
-  track.addEventListener('click', () => playFromTranscript(url, 'audio'));
+  track.addEventListener('click', () => playFromTranscript(url, 'audio', track));
   markStreamable(track, url, 'audio');
   return track;
 }
@@ -2663,12 +2677,12 @@ function createAudioTrack(url) {
  * Play a transcript video/audio with every streamable item currently in the
  * transcript (in reading order) as its playlist.
  */
-function playFromTranscript(url, type) {
+function playFromTranscript(url, type, anchor = null) {
   const list = [...$('messages').querySelectorAll('[data-stream-url]')].map((node) => ({
     url: node.dataset.streamUrl,
     type: node.dataset.streamType,
   }));
-  streamPlayer.play({ url, type }, list);
+  streamPlayer.play({ url, type }, list, { anchor });
 }
 
 // Inline reply media (Markdown/LobeHub) renders poster buttons with stream data
@@ -2678,7 +2692,7 @@ $('messages').addEventListener('click', (event) => {
   const card = open?.closest('[data-stream-url]');
   if (!card) return;
   event.preventDefault();
-  playFromTranscript(card.dataset.streamUrl, card.dataset.streamType);
+  playFromTranscript(card.dataset.streamUrl, card.dataset.streamType, card);
 });
 
 streamPlayer.onChange((now) => {
@@ -2709,7 +2723,9 @@ function renderFiles(container, files, content = '') {
       img.addEventListener('click', () => openLightbox(url));
       wrap.append(img);
     } else if (STREAM_VIDEO_RE.test(lower)) {
-      const card = createVideoAttachment(url, document, globalThis, (u) => playFromTranscript(u, 'video'));
+      const card = createVideoAttachment(url, document, globalThis, (u) =>
+        playFromTranscript(u, 'video', card),
+      );
       markStreamable(card, url, 'video');
       wrap.append(card);
     } else if (STREAM_AUDIO_RE.test(lower)) {

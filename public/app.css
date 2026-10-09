@@ -4145,9 +4145,20 @@ dialog.sheet::backdrop {
   text-align: center;
 }
 
-/* ── stream player dock ─────────────────────────────────────────────────
-   One persistent player between the transcript and the composer. It is a flex
-   child of .main, so the transcript shrinks instead of being covered. */
+/* ── stream player ───────────────────────────────────────────────────────
+   One player, two places. Docked: between the transcript and the composer;
+   .stream-dock is a flex child of .main, so the transcript shrinks instead of
+   being covered. Embedded: in place of the tapped poster/track, which is
+   hidden while the player stands in for it. */
+.stream-dock {
+  flex: none;
+  display: grid;
+}
+
+[data-stream-embedded='true'] {
+  display: none !important;
+}
+
 .stream-player {
   position: relative;
   z-index: 41;
@@ -4164,6 +4175,32 @@ dialog.sheet::backdrop {
 
 .stream-player[hidden] {
   display: none;
+}
+
+.stream-player[data-placement='inline'] {
+  z-index: auto;
+  flex: 1 1 100%;
+  width: min(100%, 560px);
+  max-width: min(100%, 560px);
+  margin: 0;
+  box-shadow: none;
+}
+
+.msg-inline-media .stream-player[data-placement='inline'] {
+  margin: 4px 0;
+}
+
+/* While zooming in/out the animated height clips the content. */
+.stream-player.sp-morphing {
+  overflow: hidden;
+}
+
+.stream-player[data-placement='inline'] .sp-expand {
+  display: none;
+}
+
+.stream-player[data-placement='inline'] .sp-info {
+  cursor: default;
 }
 
 .sp-head {

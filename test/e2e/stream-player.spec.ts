@@ -77,18 +77,25 @@ const videoEl = (page: Page) => page.locator('.stream-player .sp-video');
 const time = (page: Page, which: 'audio' | 'video') =>
   (which === 'audio' ? audioEl(page) : videoEl(page)).evaluate((m: HTMLMediaElement) => m.currentTime);
 
-test('video and audio stream in a persistent dock with a session playlist', async ({ page }, info) => {
+test('transcript media opens embedded in place and docks when it leaves', async ({ page }, info) => {
   const { errors, ranges } = await setup(page);
   const dock = page.getByRole('region', { name: 'Media player' });
   await expect(dock).toBeHidden();
 
   // Audio attachments are track rows, not native players.
-  const track = page.getByRole('button', { name: 'Play audio stream-tone.mp3' });
+  const track = page.locator('#messages .audio-track[aria-label="Play audio stream-tone.mp3"]');
   await expect(track).toBeVisible();
   await expect(page.locator('#messages audio')).toHaveCount(0);
   await track.click();
 
+  // The track zooms into the full player at the same spot in the transcript.
   await expect(dock).toBeVisible();
+  await expect(dock).toHaveAttribute('data-placement', 'inline');
+  await expect(track).toBeHidden();
+  await expect(page.locator('#messages .stream-player')).toHaveCount(1);
+  await page.screenshot({ path: info.outputPath('00-audio-opening.png') });
+  await expect(dock).not.toHaveClass(/sp-morphing/);
+  await expect(dock.locator('.sp-position')).toBeVisible();
   await expect(dock.locator('.sp-title')).toHaveText('stream-tone.mp3');
   await expect.poll(() => time(page, 'audio')).toBeGreaterThan(0.3);
   await expect(dock).toHaveAttribute('data-state', 'playing');
@@ -108,8 +115,7 @@ test('video and audio stream in a persistent dock with a session playlist', asyn
   });
   await expect.poll(() => time(page, 'audio')).toBeGreaterThan(3.5);
 
-  // Expanded view: playlist position, download.
-  await dock.locator('.sp-info').click();
+  // Embedded players are always open: playlist position, download.
   await expect(dock.locator('.sp-position')).toHaveText('2 / 3');
   await expect(dock.getByRole('link', { name: 'Download audio stream-tone.mp3' })).toHaveAttribute(
     'download',
@@ -121,11 +127,16 @@ test('video and audio stream in a persistent dock with a session playlist', asyn
   await dock.getByRole('button', { name: 'Next' }).click();
   await expect(dock.locator('.sp-title')).toHaveText('demo-tone.mp3');
   await expect(dock.locator('.sp-position')).toHaveText('3 / 3');
+  // ...and the player moves to that item's spot, restoring the previous track.
+  await expect(track).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play audio demo-tone.mp3' })).toBeHidden();
   await expect(dock.getByRole('button', { name: 'Next' })).toBeDisabled();
 
   // The video poster plays in the dock; the end auto-advances to the next item.
   await page.getByRole('button', { name: 'Play video stream-clip.webm' }).click();
   await expect(dock).toHaveAttribute('data-type', 'video');
+  await expect(page.getByRole('button', { name: 'Play video stream-clip.webm' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Play audio demo-tone.mp3' })).toBeVisible();
   await expect(videoEl(page)).toBeVisible();
   await expect.poll(() => time(page, 'video')).toBeGreaterThan(0.3);
   expect(await audioEl(page).getAttribute('src')).toBeNull();
@@ -137,14 +148,17 @@ test('video and audio stream in a persistent dock with a session playlist', asyn
   });
   await expect(dock.locator('.sp-title')).toHaveText('stream-tone.mp3');
   await expect.poll(() => time(page, 'audio')).toBeGreaterThan(0.3);
+  await expect(track).toBeHidden();
 
-  // Switching sessions keeps it playing.
+  // Switching sessions keeps it playing, now in the dock above the composer.
   await page.locator('#btn-menu').click();
   await page.locator('.session-item', { hasText: 'Other session' }).click();
   await expect(page.locator('#session-name')).toHaveText('Other session');
   const before = await time(page, 'audio');
   await expect.poll(() => time(page, 'audio')).toBeGreaterThan(before + 0.3);
   await expect(dock).toBeVisible();
+  await expect(dock).toHaveAttribute('data-placement', 'dock');
+  await expect(page.locator('.stream-dock .stream-player')).toHaveCount(1);
   await dock.locator('.sp-info').click();
   await page.screenshot({ path: info.outputPath('04-playing-across-sessions.png') });
 
@@ -185,5 +199,37 @@ test('Media sheet audio keeps the sheet open, video closes it to play', async ({
   await page.screenshot({ path: info.outputPath('02-sheet-video.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
   await page.screenshot({ path: info.outputPath('03-sheet-video-light.png') });
+  expect(errors).toEqual([]);
+});
+
+test('an embedded player zooms in from its poster and closes back into it', async ({ page }, info) => {
+  const { errors } = await setup(page);
+  const dock = page.getByRole('region', { name: 'Media player' });
+  const poster = page.getByRole('button', { name: 'Play video stream-clip.webm' });
+  const card = page.locator('#messages .video-file').first();
+  const before = (await card.boundingBox())!;
+
+  await poster.click();
+  // Mid-zoom: the player starts from the poster's box and grows in place.
+  await page.waitForTimeout(60);
+  await page.screenshot({ path: info.outputPath('01-zooming.png') });
+  const start = (await dock.boundingBox())!;
+  expect(Math.abs(start.y - before.y)).toBeLessThan(2);
+  await expect(dock).not.toHaveClass(/sp-morphing/);
+  const open = (await dock.boundingBox())!;
+  expect(open.width).toBeGreaterThan(before.width);
+  await expect.poll(() => time(page, 'video')).toBeGreaterThan(0.3);
+  await page.screenshot({ path: info.outputPath('02-embedded-video.png') });
+
+  // Tapping the picture toggles playback in place.
+  await videoEl(page).click();
+  await expect(dock).toHaveAttribute('data-state', 'paused');
+
+  await dock.getByRole('button', { name: 'Close player' }).click();
+  await expect(dock).toBeHidden();
+  await expect(poster).toBeVisible();
+  const after = (await card.boundingBox())!;
+  expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });

@@ -1,12 +1,20 @@
 /**
  * Persistent streaming player for transcript video and audio.
  *
- * One dock above the composer plays every chat/gallery video and audio file.
+ * One player plays every chat/gallery video and audio file. Started from the
+ * transcript it opens embedded in place: the tapped poster/track zooms into the
+ * full player at the same spot. Started from the Media sheet, or once its
+ * transcript item is gone (another session was selected), it lives in a dock
+ * above the composer, so playback survives switching sessions.
+ *
  * It streams through the media route's HTTP Range support (nothing is fetched
- * as a whole blob), keeps playing while the transcript scrolls, the drawer
- * opens or another session is selected, and walks a playlist of the session's
- * media with previous/next and auto-advance. Lock-screen / headset controls go
- * through the Media Session API where the browser has it.
+ * as a whole blob) and walks a playlist of the session's media with
+ * previous/next and auto-advance. Lock-screen / headset controls go through the
+ * Media Session API where the browser has it.
+ *
+ * The same <video>/<audio> elements are moved between places; a synchronous
+ * DOM move does not pause them (engines only pause media that is still
+ * detached when a later task runs).
  */
 
 import { bindMediaSave, downloadNameFromMediaUrl, safeSameOriginMediaUrl } from './media-files.js';
@@ -27,6 +35,8 @@ const ICONS = {
 const FILLED = new Set(['play', 'pause', 'prev', 'next']);
 const RESTART_THRESHOLD_S = 3;
 const SEEK_STEP_S = 10;
+const MORPH_MS = 360;
+const MORPH_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
 
 function icon(doc, kind) {
   const create = (tag) =>
@@ -70,7 +80,13 @@ export function playableQueue(items, doc) {
   return queue;
 }
 
-export function createStreamPlayer(doc = document, runtime = globalThis) {
+/**
+ * `options.dock` is the container above the composer; `options.resolveAnchor(url)`
+ * returns the transcript node to embed in for a playlist item, or null.
+ */
+export function createStreamPlayer(doc = document, runtime = globalThis, options = {}) {
+  const dock = options.dock ?? null;
+  const resolveAnchor = options.resolveAnchor ?? (() => null);
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.className = className;
@@ -94,6 +110,8 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
   const root = el('section', 'stream-player');
   root.hidden = true;
   root.setAttribute('aria-label', 'Media player');
+  root.dataset.placement = 'dock';
+  dock?.append(root);
 
   const stage = el('div', 'sp-stage');
   const video = el('video', 'sp-video');
@@ -148,6 +166,12 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
   let seeking = false;
   let failed = false;
   const listeners = new Set();
+  // Embedded placement: the transcript node the player stands in for (hidden
+  // while embedded) and its size, so closing can shrink back into it.
+  let placement = 'dock';
+  let host = null;
+  let hostSize = null;
+  let morph = null;
   const current = () => (index >= 0 ? queue[index] : undefined);
   const player = () => (current()?.type === 'video' ? video : audio);
 
@@ -255,6 +279,144 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
     media.currentTime = Math.max(0, Math.min(media.duration, media.currentTime + delta));
   }
 
+  const reduceMotion = () => {
+    try {
+      return Boolean(runtime.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+    } catch {
+      return false;
+    }
+  };
+
+  function cancelMorph() {
+    const running = morph;
+    morph = null;
+    running?.cancel();
+    root.classList.remove('sp-morphing');
+  }
+
+  function unhost() {
+    if (host) delete host.dataset.streamEmbedded;
+    host = null;
+    hostSize = null;
+  }
+
+  function finishMorph(animation, done) {
+    animation.finished.then(
+      () => {
+        if (morph !== animation) return;
+        morph = null;
+        root.classList.remove('sp-morphing');
+        done?.();
+      },
+      () => undefined,
+    );
+  }
+
+  /**
+   * Put the player in place of `anchor` (embedded) or in the dock. With
+   * `animate`, the anchor's box grows into the player: height drives the layout
+   * so the transcript below glides down, a clip widens it, and the picture
+   * fades in.
+   */
+  function mount(anchor, animate) {
+    cancelMorph();
+    const embed = Boolean(anchor?.isConnected && anchor.parentNode);
+    const from = embed ? anchor.getBoundingClientRect() : null;
+    unhost();
+    if (embed) {
+      if (anchor.nextSibling !== root) anchor.after(root);
+      anchor.dataset.streamEmbedded = 'true';
+      host = anchor;
+      hostSize = { width: from.width, height: from.height };
+      placement = 'inline';
+    } else {
+      if (dock && root.parentNode !== dock) dock.append(root);
+      placement = 'dock';
+    }
+    root.dataset.placement = placement;
+    root.hidden = false;
+    setExpanded(placement === 'inline');
+    if (!embed || !animate || !from.height || reduceMotion() || typeof root.animate !== 'function') return;
+    const to = root.getBoundingClientRect();
+    const clipRight = Math.max(0, to.width - from.width);
+    root.classList.add('sp-morphing');
+    const animation = root.animate(
+      [
+        { height: `${from.height}px`, clipPath: `inset(0 ${clipRight}px 0 0 round 10px)` },
+        { height: `${to.height}px`, clipPath: 'inset(0 0 0 0 round 14px)' },
+      ],
+      { duration: MORPH_MS, easing: MORPH_EASING },
+    );
+    morph = animation;
+    stage.animate?.(
+      [
+        { opacity: 0.4, transform: `scale(${Math.min(1, from.width / Math.max(1, to.width)).toFixed(3)})` },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: MORPH_MS, easing: MORPH_EASING },
+    );
+    finishMorph(animation, () => {
+      // Bring the whole player into view when it grew past the viewport edge.
+      try {
+        root.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      } catch {
+        /* Older engines without scroll options. */
+      }
+    });
+  }
+
+  /** Shrink an embedded player back into its anchor, then park it hidden. */
+  function unmount() {
+    const park = () => {
+      unhost();
+      root.hidden = true;
+      placement = 'dock';
+      root.dataset.placement = placement;
+      if (dock && root.parentNode !== dock) dock.append(root);
+    };
+    cancelMorph();
+    if (
+      placement !== 'inline' ||
+      !host?.isConnected ||
+      !hostSize?.height ||
+      reduceMotion() ||
+      typeof root.animate !== 'function'
+    ) {
+      park();
+      return;
+    }
+    const from = root.getBoundingClientRect();
+    root.classList.add('sp-morphing');
+    const animation = root.animate(
+      [
+        { height: `${from.height}px`, clipPath: 'inset(0 0 0 0 round 14px)', opacity: 1 },
+        {
+          height: `${hostSize.height}px`,
+          clipPath: `inset(0 ${Math.max(0, from.width - hostSize.width)}px 0 0 round 10px)`,
+          opacity: 0.6,
+        },
+      ],
+      { duration: MORPH_MS * 0.8, easing: MORPH_EASING, fill: 'forwards' },
+    );
+    morph = animation;
+    finishMorph(animation, () => {
+      park();
+      animation.cancel();
+    });
+  }
+
+  /**
+   * Re-home an embedded player whose transcript node was re-rendered or
+   * removed (history reload, another session): embed in the new node for the
+   * same item, else fall back to the dock so playback continues.
+   */
+  function relocate() {
+    if (index < 0 || placement !== 'inline') return;
+    if (host?.isConnected && root.isConnected && host.nextSibling === root) return;
+    const anchor = resolveAnchor(current().url);
+    mount(anchor?.isConnected ? anchor : null, false);
+  }
+
   function load(nextIndex, autoplay = true) {
     const item = queue[nextIndex];
     if (!item) return;
@@ -281,6 +443,10 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
     media.preload = 'auto';
     media.src = item.url;
     root.hidden = false;
+    // Advancing while embedded moves the player to the next item's spot.
+    if (placement === 'inline' && host?.dataset.streamUrl !== item.url) {
+      mount(resolveAnchor(item.url), true);
+    }
     updateMediaSession();
     render();
     if (autoplay) {
@@ -305,13 +471,12 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
   }
 
   function stop() {
-    if (root.hidden) return;
+    if (root.hidden || index < 0) return;
     release(video);
     release(audio);
     queue = [];
     index = -1;
-    root.hidden = true;
-    setExpanded(false);
+    unmount();
     const ms = session();
     if (ms) {
       try {
@@ -335,7 +500,7 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
    * Tapping the item that is already loaded toggles play/pause instead of
    * restarting it.
    */
-  function play(item, items = [item]) {
+  function play(item, items = [item], { anchor = null } = {}) {
     const list = playableQueue(items, doc);
     const target = playableQueue([item], doc)[0];
     if (!target) return false;
@@ -344,11 +509,16 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
       const media = player();
       queue = list.some((entry) => entry.url === target.url) ? list : queue;
       index = queue.findIndex((entry) => entry.url === target.url);
-      if (media.paused) media.play().catch(() => undefined);
+      if (anchor && host !== anchor) {
+        // Playing in the dock and tapped in the transcript: open it there.
+        mount(anchor, true);
+        if (media.paused) media.play().catch(() => undefined);
+      } else if (media.paused) media.play().catch(() => undefined);
       else media.pause();
       render();
       return true;
     }
+    mount(anchor, true);
     queue = list.some((entry) => entry.url === target.url) ? list : [target];
     load(queue.findIndex((entry) => entry.url === target.url));
     return true;
@@ -397,12 +567,17 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
   prev.addEventListener('click', previous);
   next.addEventListener('click', advance);
   close.addEventListener('click', stop);
-  info.addEventListener('click', () => setExpanded(!root.classList.contains('expanded')));
-  expand.addEventListener('click', () => setExpanded(!root.classList.contains('expanded')));
+  // Embedded players are always fully open; only the dock collapses.
+  const toggleExpanded = () => {
+    if (placement !== 'inline') setExpanded(!root.classList.contains('expanded'));
+  };
+  info.addEventListener('click', toggleExpanded);
+  expand.addEventListener('click', toggleExpanded);
   video.addEventListener('click', () => {
-    if (!root.classList.contains('expanded')) setExpanded(true);
+    if (!root.classList.contains('expanded')) return setExpanded(true);
+    if (placement === 'inline') toggle.click();
   });
-  art.addEventListener('click', () => setExpanded(!root.classList.contains('expanded')));
+  art.addEventListener('click', () => (placement === 'inline' ? toggle.click() : toggleExpanded()));
   fullscreen.addEventListener('click', () => {
     if (typeof video.requestFullscreen === 'function') {
       video.requestFullscreen().catch(() => video.webkitEnterFullscreen?.());
@@ -431,6 +606,8 @@ export function createStreamPlayer(doc = document, runtime = globalThis) {
     element: root,
     play,
     stop,
+    relocate,
+    placement: () => (root.hidden ? null : placement),
     current: () => {
       const item = current();
       return item ? { ...item, playing: !player().paused } : null;
