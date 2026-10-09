@@ -667,6 +667,33 @@ svg {
   flex: none;
 }
 
+.host-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--bg-dark);
+  flex: none;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.host-metrics[hidden] { display: none; }
+.host-metric { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; }
+.host-metric strong { font-size: 12px; font-weight: 500; color: var(--text-bright); white-space: nowrap; }
+.metrics-interval {
+  width: 76px;
+  min-height: 44px;
+  border: 1px solid var(--bg-dark);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-input);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 16px;
+}
+.metrics-interval:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .drawer-title {
   font-weight: 700;
   color: var(--text-bright);

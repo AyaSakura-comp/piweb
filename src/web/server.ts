@@ -23,6 +23,7 @@ import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { parseUploadMetrics } from './upload-metrics.js';
+import { sampleSystemMetrics } from './system-metrics.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
   archiveLifeSessionAndStartNew,
@@ -563,6 +564,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       'Rejected cross-origin state-changing request',
     );
     sendJson(res, 403, { error: 'Cross-origin request refused' });
+    return;
+  }
+
+  if (method === 'GET' && path === '/api/system-metrics') {
+    res.setHeader('Cache-Control', 'no-store');
+    sendJson(res, 200, await sampleSystemMetrics());
     return;
   }
 

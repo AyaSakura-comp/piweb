@@ -11,6 +11,7 @@
  */
 
 import { renderRich } from './markdown.js';
+import { mountSystemMetrics } from './system-metrics.js';
 import { canReuseStreamingRich, updateStreamingRich } from './streaming-rich.js';
 import { renderLobehubStatic } from './lobehub-rich.js';
 import { createCameraComposer } from './camera-composer.js';
@@ -132,7 +133,14 @@ async function api(path, options = {}) {
 
 // ── auth ─────────────────────────────────────────────────────────────────
 
+let metricsStorage;
+try { metricsStorage = localStorage; } catch { /* storage is optional */ }
+const systemMetricsMonitor = mountSystemMetrics({
+  panel: $('host-metrics'), input: $('metrics-interval'), document, storage: metricsStorage,
+});
+
 function showLogin() {
+  systemMetricsMonitor.stop();
   $('login').hidden = false;
   $('app').hidden = true;
   closeStream();
@@ -141,6 +149,7 @@ function showLogin() {
 function showApp() {
   $('login').hidden = true;
   $('app').hidden = false;
+  systemMetricsMonitor.start();
 }
 
 // Remembering the entered token so it never has to be retyped. The durable

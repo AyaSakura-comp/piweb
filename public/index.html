@@ -119,6 +119,7 @@
             </button>
           </div>
         </header>
+        <div class="host-metrics" id="host-metrics" aria-label="Host system metrics" hidden></div>
         <div class="session-list" id="session-list"></div>
         <footer class="drawer-foot">
           <button class="text-btn drawer-settings-entry" id="btn-settings" type="button">
@@ -561,6 +562,17 @@
           </section>
 
           <p class="settings-footnote" id="auto-scroll-help">送出提問會置頂；關閉時，回覆不會自動往下捲，仍可點選 Jump to present。</p>
+
+          <section class="settings-section" aria-labelledby="settings-monitor-title">
+            <h3 id="settings-monitor-title">主機監控</h3>
+            <div class="settings-group">
+              <label class="settings-row" for="metrics-interval">
+                <span class="settings-row-label">數字更新間隔（秒）</span>
+                <input class="metrics-interval" id="metrics-interval" type="number" min="1" max="60" step="1" value="1" inputmode="numeric" aria-describedby="metrics-help">
+              </label>
+            </div>
+            <p class="settings-footnote" id="metrics-help">預設每 1 秒更新，可設定 1–60 秒，儲存於此瀏覽器。顯示主機數據；無法讀取的項目會隱藏，背景分頁暫停更新。功耗為 Package 或 GPU 感測值，非插座總功耗。</p>
+          </section>
 
           <section class="settings-section" aria-labelledby="settings-subscriptions-title">
             <h3 id="settings-subscriptions-title">Pi agent subscriptions</h3>
