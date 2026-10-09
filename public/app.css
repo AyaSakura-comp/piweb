@@ -5011,3 +5011,8 @@ dialog.sheet::backdrop {
   text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
   pointer-events: none;
 }
+
+/* New Life is stopping the running Life turn before archiving it. */
+#btn-life-new-session[aria-busy='true'] svg {
+  animation: media-download-pulse 0.8s ease-in-out infinite alternate;
+}

@@ -37,6 +37,7 @@ import {
   closeRpcSession,
   rpcSessionIsStreaming,
   rpcSessionHasLiveSubagents,
+  retireRpcSessionWhenSettled,
 } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
@@ -96,9 +97,17 @@ export function stopChannelTask(jid: string): {
   preservedSession: boolean;
 } {
   const channel = getChannel(jid);
+  // Life is archived by New Life, which waits for the parent's lease. Let a
+  // stopped (or idle warm) Life parent exit as soon as Pi settles instead of
+  // after its children or the idle timeout.
+  const retireLife = () => {
+    if (channel?.kind === 'life') retireRpcSessionWhenSettled(channel.folder);
+  };
   if (channel && abortRpcSession(channel.folder)) {
+    retireLife();
     return { aborted: true, cleared: 0, preservedSession: true };
   }
+  retireLife();
 
   const controller = activeChannelControllers.get(jid);
   if (controller) controller.abort();

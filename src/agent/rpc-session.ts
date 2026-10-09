@@ -78,6 +78,7 @@ class RpcSession {
   private closed = false;
   private subagentsLive = false;
   private compacting = false;
+  private retireRequested = false;
   private publication?: ReturnType<typeof publishParent>;
   private autonomousActive = false;
   private autonomousText = '';
@@ -697,8 +698,31 @@ class RpcSession {
     this.send({ type: 'abort' });
   }
 
+  /**
+   * Stop on Life: release the archive-blocking lease as soon as Pi settles,
+   * even while async children are still live, so New Life is not held up by
+   * a turn the user has already stopped.
+   */
+  retireWhenSettled(): void {
+    this.retireRequested = true;
+    this.retireIfRequested();
+  }
+
+  private retireIfRequested(): void {
+    if (!this.retireRequested || this.closed || this.isStreaming || this.compacting) return;
+    this.clearIdleTimer();
+    void this.queueDelivery.then(() => {
+      if (this.closed || this.isStreaming || this.compacting) return;
+      logger.info({ folder: this.folder }, 'Retiring stopped Life RPC session');
+      void retireSession(this).then(() => {
+        if (sessions.get(keyFor(this.folder)) === this) sessions.delete(keyFor(this.folder));
+      });
+    });
+  }
+
   private armIdleTimer(): void {
     this.clearIdleTimer();
+    if (this.retireRequested) return this.retireIfRequested();
     const life = Boolean(this.opts.channelJid && getChannel(this.opts.channelJid)?.kind === 'life');
     const retireIfIdle = () => {
       if (this.isAlive && !this.isStreaming && !this.compacting) {
@@ -911,6 +935,14 @@ export function steerRpcSession(folder: string, message: string): boolean {
   const session = sessions.get(keyFor(folder));
   if (!session || !session.isAlive || !session.isStreaming) return false;
   return session.steer(message);
+}
+
+/** Retire a Life parent once its current (stopped) turn settles. */
+export function retireRpcSessionWhenSettled(folder: string): boolean {
+  const session = sessions.get(keyFor(folder));
+  if (!session) return false;
+  session.retireWhenSettled();
+  return true;
 }
 
 /** Abort an active RPC turn without terminating its persistent Pi process. */

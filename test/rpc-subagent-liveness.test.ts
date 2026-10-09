@@ -113,3 +113,42 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   expect(session.isAlive).toBe(true);
   await vi.waitFor(() => expect(session.isAlive).toBe(false), { timeout: 1500 });
 });
+
+it('a stopped Life parent retires once Pi settles even while a child is live', async () => {
+  dir = mkdtempSync(join(tmpdir(), 'piweb-life-stop-'));
+  const script = join(dir, 'pi.mjs');
+  writeFileSync(
+    script,
+    `#!/usr/bin/env node
+import readline from 'node:readline';
+const send=e=>process.stdout.write(JSON.stringify(e)+'\\n');
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const command=JSON.parse(line);
+ if(command.type==='prompt') {
+   send({type:'agent_start'});
+   send({type:'message_end',message:{role:'user'}});
+   send({type:'extension_ui_request',method:'setWidget',widgetKey:'subagent-async',widgetLines:['PI_SUBAGENT_ASYNC_JSON:'+JSON.stringify({kind:'pi-subagents.async-status-snapshot',version:1,runs:[{id:'run',state:'running'}],omitted:{runs:0,children:0,byteLimitExceeded:false}})]});
+ }
+ if(command.type==='abort') setTimeout(()=>send({type:'agent_settled'}),20);
+});`,
+  );
+  chmodSync(script, 0o755);
+  Object.assign(process.env, {
+    PI_BIN: script,
+    PI_CWD: dir,
+    SESSIONS_DIR: join(dir, 'sessions'),
+    RPC_IDLE_TIMEOUT_MS: '60000',
+  });
+  vi.resetModules();
+  const rpc = await import('../src/agent/rpc-session.js');
+  const session = rpc.getRpcSession('life-folder', {});
+  const turn = session.prompt('long task');
+  await vi.waitFor(() => expect(session.hasLiveSubagents).toBe(true), { timeout: 1500 });
+  expect(rpc.abortRpcSession('life-folder')).toBe(true);
+  expect(rpc.retireRpcSessionWhenSettled('life-folder')).toBe(true);
+  // Still streaming: not retired before Pi settles the stopped turn.
+  expect(session.isAlive).toBe(true);
+  expect((await turn).aborted).toBe(true);
+  await vi.waitFor(() => expect(session.isAlive).toBe(false), { timeout: 1500 });
+  expect(rpc.rpcSessionIsStreaming('life-folder')).toBe(false);
+});

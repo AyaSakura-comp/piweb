@@ -1644,10 +1644,8 @@ async function newLifeSession() {
   button.disabled = true;
 
   try {
-    const result = await api('/api/life-session/new', {
-      method: 'POST',
-      body: JSON.stringify({ generation }),
-    });
+    const result = await archiveLifeWithoutWaiting(generation, navigation);
+    if (!result) return;
     if (navigation !== lifeNavigationGeneration || state.mode !== 'life') return;
     if (
       result?.life?.jid !== LIFE_JID ||
@@ -1680,6 +1678,41 @@ async function newLifeSession() {
     alert(err.message);
   } finally {
     button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
+}
+
+const LIFE_BUSY_ERROR = 'Life session still has active or queued work';
+const LIFE_ARCHIVE_WAIT_MS = 20_000;
+
+/**
+ * New Life is not held up by a running Life turn: stop it (Pi keeps what it
+ * already wrote, and the worker then releases the Life parent at once), and
+ * archive as soon as the worker lets go. The stopped conversation moves to the
+ * Sessions list like any other New Life.
+ */
+async function archiveLifeWithoutWaiting(generation, navigation) {
+  const deadline = Date.now() + LIFE_ARCHIVE_WAIT_MS;
+  let stopped = false;
+  for (;;) {
+    try {
+      return await api('/api/life-session/new', {
+        method: 'POST',
+        body: JSON.stringify({ generation }),
+      });
+    } catch (err) {
+      if (err.message !== LIFE_BUSY_ERROR || Date.now() > deadline) throw err;
+    }
+    if (navigation !== lifeNavigationGeneration || state.mode !== 'life') return null;
+    if (!stopped) {
+      stopped = true;
+      $('btn-life-new-session').setAttribute('aria-busy', 'true');
+      await api(`/api/sessions/${encodeURIComponent(LIFE_JID)}/commands`, {
+        method: 'POST',
+        body: JSON.stringify({ command: 'pi stop', args: {}, lifeGeneration: generation }),
+      }).catch(() => undefined);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
   }
 }
 

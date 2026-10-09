@@ -55,6 +55,7 @@ const LIFE_SESSION = {
 async function installLifeApi(
   page: Page,
   options: {
+    lifeBusyUntilStop?: boolean;
     failLife?: boolean;
     failLifeEvents?: boolean;
     failLifeNewAfterArchive?: boolean;
@@ -262,6 +263,16 @@ async function installLifeApi(
     if (path === '/api/life-session/new' && request.method() === 'POST') {
       if (request.postDataJSON()?.generation !== lifeGeneration) {
         return route.fulfill({ status: 409, json: { error: 'Life generation changed' } });
+      }
+      // The worker releases Life only after a stop has been processed.
+      if (
+        options.lifeBusyUntilStop &&
+        !commandBodies.some((body: any) => body?.command === 'pi stop')
+      ) {
+        return route.fulfill({
+          status: 409,
+          json: { error: 'Life session still has active or queued work' },
+        });
       }
       archivedLifeCount += 1;
       const archived = {
@@ -959,6 +970,29 @@ test('a failed New response reconciles to the fresh Life generation', async ({ p
   await expect(page.locator('#app')).toHaveClass(/life-mode/);
   await expect(page.locator('#messages .msg')).toHaveCount(0);
   await expect(page.locator('#session-name')).toHaveText('Life');
+});
+
+test('New Life stops a running Life turn instead of refusing', async ({ page }) => {
+  const api = await installLifeApi(page, { lifeEventCount: 2, lifeBusyUntilStop: true });
+  const dialogs: string[] = [];
+  page.on('dialog', (dialog) => {
+    dialogs.push(dialog.message());
+    void dialog.dismiss();
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+
+  await expect(page.locator('#messages .msg')).toHaveCount(2);
+  await page.getByRole('button', { name: 'New Life session' }).click();
+
+  await expect.poll(api.archivedLifeCount).toBe(1);
+  expect(api.commandBodies).toEqual([
+    expect.objectContaining({ command: 'pi stop', lifeGeneration: 'life-generation-1' }),
+  ]);
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
+  await expect(page.locator('#session-name')).toHaveText('Life');
+  await expect(page.locator('#btn-life-new-session')).not.toHaveAttribute('aria-busy', 'true');
+  expect(dialogs).toEqual([]);
 });
 
 for (const width of [320, 350, 360, 361, 374, 375]) {
