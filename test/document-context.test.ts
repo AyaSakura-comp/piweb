@@ -90,6 +90,15 @@ describe('currency dollars before LaTeX preprocessing', () => {
     expect(parseTypes(preprocessLaTeX(table))).toEqual(['paragraph']); // upstream bug
     expect(parseTypes(preprocessLaTeX(protectCurrencyDollars(table)))).toEqual(['table']);
   });
+  it('keeps two tables whose headers have a ($$) price-level cell', () => {
+    const levels = '| 活動 | 費用 ($$) |\n|---|---|\n| A | 免費 |';
+    const twoTables = `${levels}\n\n說明\n\n${levels}`;
+    expect(preprocessLaTeX(twoTables)).toMatch(/\\vert\{\}/); // upstream bug
+    const fixed = preprocessLaTeX(protectCurrencyDollars(twoTables));
+    expect(fixed).not.toMatch(/\\vert\{\}/);
+    expect(parseTypes(fixed)).toEqual(['table', 'paragraph', 'table']);
+    expect(protectCurrencyDollars('| $$x$$ | a |')).toBe('| $$x$$ | a |');
+  });
   it('escapes prefixed currency and unpaired cell dollars only', () => {
     expect(protectCurrencyDollars('價格 (NT$) 與 US$')).toBe('價格 (NT\\$) 與 US\\$');
     expect(protectCurrencyDollars('| $x$ | a $ b |')).toBe('| $x$ | a \\$ b |');

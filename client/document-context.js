@@ -46,7 +46,13 @@ function splitCode(line) {
   return parts;
 }
 
+// `$$` as a symbol (e.g. a "費用 ($$)" price-level header) pairs with the next
+// `$$` — often in a later table — as display math, and every `|` in between
+// becomes `\vert{}`. Math cannot span a cell, so an unpaired `$$` is literal.
+const DOUBLE_DOLLAR = /(?<!\\)\$\$/g;
+
 const escapeLoneDollars = (cell) => {
+  if ((cell.match(DOUBLE_DOLLAR) || []).length % 2) cell = cell.replace(DOUBLE_DOLLAR, '\\$\\$');
   const singles = cell.match(LONE_DOLLAR) || [];
   return singles.length % 2 ? cell.replace(LONE_DOLLAR, '\\$') : cell;
 };
