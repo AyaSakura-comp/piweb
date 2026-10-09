@@ -229,6 +229,8 @@ origin check.
 | rename / model sheet / edge-swipe drawer       | `public/app.js` (all client-side)                                                                                                                                                                                                                                                                                                                                                               |
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill                                                                                                                                                                                                                                                |
 | stay signed in                                 | persisted `auth.signingKey` + localStorage `piweb.token` auto-login                                                                                                                                                                                                                                                                                                                             |
+| host system metrics                            | `src/web/system-metrics.ts` (`GET /api/system-metrics`, /proc + /sys, 500 ms cache) + `public/system-metrics.js`; see [`docs/system-metrics.md`](docs/system-metrics.md)                                                                                                                                                                                                                        |
+| Claude TUI cleanup on delete                   | `src/agent/claude-tmux-reaper.ts` (worker, every 60 s; kills `piweb-cc-*` of trashed/purged channels)                                                                                                                                                                                                                                                                                           |
 | KV cache & extension commands                  | `src/commands/extension-runner.ts` (RPC command probe + run), `src/commands/catalog.ts` (`/kv status`, `/kv save`, `/kv restore`, `/kv prune`, `/kv help`), `src/commands/index.ts`, `src/web/server.ts` (`getMergedCommands()` via `meta.extension_commands`), `src/worker/index.ts` (`publishExtensionCommands()`)                                                                      |
 
 ### Context compaction is pi's, not piweb's
@@ -314,7 +316,9 @@ look like a passing comparison.
 pending queue. The transcript, settings and pi session directory are untouched,
 so `POST /:jid/restore` brings the session back exactly as it was. The trash is
 listed by `GET /api/sessions/deleted` and previewed read-only (writes to a
-trashed session are refused with 409).
+trashed session are refused with 409). A trashed or purged session's Claude
+Code TUI is closed by the worker within a minute (`claude-tmux-reaper.ts`); its
+Claude transcript stays, so a restore resumes the same conversation.
 
 `?permanent=1` permanently destroys one item. The trash sheet's batch endpoint,
 `POST /api/sessions/deleted/purge`, accepts only an exact non-empty unique
@@ -539,6 +543,7 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE`              | worker | mid-run steering / pre-emption                   |
 | `MAX_CONCURRENCY`, `POLL_INTERVAL_MS`                | worker | queue behaviour                                  |
 | `ARCHIVE_RETENTION_DAYS`                             | worker | archived session cleanup (default 30)            |
+| `PIWEB_HIDDEN_MODELS`                                | worker | comma-separated exact refs hidden from picker    |
 | `MAX_ATTACHMENT_BYTES`                               | both   | upload cap                                       |
 
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
@@ -595,6 +600,10 @@ systemctl --user daemon-reload && systemctl --user enable --now piweb-worker
 
 Config: `~/.config/piweb/config.env` (chmod 600). Paths **must** match the
 compose `.env`.
+
+The unit uses `Restart=always`: the worker exits 0 on SIGTERM, so an earlyoom
+kill would otherwise leave every queued message stranded. Both containers run
+with `oom_score_adj: -1000` so earlyoom and the kernel OOM killer skip them.
 
 ### Web tier + Tailscale
 
@@ -1263,6 +1272,9 @@ exact unit, mobile E2E and opt-in live smoke commands. Never replace transcript
 extraction with answer scraping. Bracketed paste needs a literal typed request
 outside Claude's pasted-content wrapper. Reset must check ownership and active
 operations before closing the pane. Keep this feature disabled by default.
+The worker's reaper closes `piweb-cc-*` sessions of trashed/purged channels; it
+only touches sessions proven owned by this DB (channel row or `@piweb_owner`
+stamp), never other instances' or non-Piweb tmux sessions.
 
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 

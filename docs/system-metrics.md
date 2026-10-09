@@ -25,4 +25,4 @@ The current Docker runtime exposes the host `/proc/stat`, `/proc/meminfo` and re
 - Evidence: `artifacts/playwright/test-results/system-metrics-*/` (screenshots and one continuous walkthrough video).
 - Covered: native NPU milliwatt conversion and correct field offset, malformed/unsupported/truncated binary layouts, sentinel omission, disappearance after a valid reading becomes invalid; drawer numbers and overflow, default interval, reachable 44px input, saving/reloading preference, invalid input reset, disappearing unavailable metrics, recovery preserving GPU 0% and NPU 0.00 W.
 - Typecheck: `npx tsc --noEmit`
-- Deployment is separate: rebuild/restart through the restart-service hub after deciding whether the other pre-existing dirty changes should also be deployed.
+- Deployment: `public/` hot-deploys by `docker cp`; the API lives in the web image, so it needs an image rebuild (ask first, see CLAUDE.md §3).
