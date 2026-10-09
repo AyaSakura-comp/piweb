@@ -17,6 +17,7 @@ import rehypeKatex from 'rehype-katex';
 // External leaf helpers. No old Markdown block parsing runs in this island.
 import { bindInlineYouTube, getYouTubeVideoId, renderCode } from './markdown.js';
 import { remarkOutboxMedia } from './outbox-media.js';
+import { continuesSource, tokenizeOutbox } from '../public/outbox-stream.js';
 import {
   documentDefinitions,
   normalizeDisplayMath,
@@ -115,13 +116,27 @@ const options = { components, remarkPlugins, rehypePlugins, skipHtml: true };
 const preprocessReply = (source) => preprocessLaTeX(protectCurrencyDollars(source));
 const preprocessDocument = (source) => normalizeDisplayMath(preprocessReply(source));
 
-function Reply({ source, animate, complete }) {
+function Reply({ source, media, animate, complete }) {
   const definitions = useMemo(() => documentDefinitions(preprocessReply(source)), [source]);
+  // Keyed by content so an unchanged table keeps the plugin list stable.
+  const mediaKey = JSON.stringify(media);
   const contextualPlugins = useMemo(
-    () => [...remarkPlugins, [remarkDocumentDefinitions, { definitions }]],
-    [definitions],
+    () => [
+      ...remarkPlugins.map((plugin) =>
+        plugin === remarkOutboxMedia
+          ? [remarkOutboxMedia, { media: JSON.parse(mediaKey) }]
+          : plugin,
+      ),
+      [remarkDocumentDefinitions, { definitions }],
+    ],
+    [definitions, mediaKey],
   );
-  if (!animate) return <CachedMarkdown {...options}>{preprocessReply(source)}</CachedMarkdown>;
+  if (!animate)
+    return (
+      <CachedMarkdown {...options} remarkPlugins={contextualPlugins}>
+        {preprocessReply(source)}
+      </CachedMarkdown>
+    );
   // Explicit requested settings: balanced smoothing, character reveal. Keep the
   // native 180ms fade; EOF does not toggle this branch or remount Streamdown.
   return (
@@ -248,6 +263,7 @@ function paint(record) {
       <Reply
         key={record.key}
         source={record.source}
+        media={record.media}
         complete={record.complete}
         animate={record.live && !record.motion.matches}
       />,
@@ -260,7 +276,7 @@ function paint(record) {
 
 export function canReuseLobehubRich(target, text) {
   const record = target && roots.get(target);
-  return !!record && !record.disposed && normalize(text).startsWith(record.source.trimEnd());
+  return !!record && !record.disposed && continuesSource(normalize(text), record.source);
 }
 
 export function updateLobehubRich(
@@ -268,14 +284,11 @@ export function updateLobehubRich(
   text,
   { complete = false, beforeAppend, afterAppend } = {},
 ) {
-  let source = normalize(text);
-  if (!complete) {
-    const outbox = source.search(/\[\[(?:image|video|file)\s*:/i);
-    if (outbox >= 0) source = source.slice(0, outbox);
-  }
+  const { source, media } = tokenizeOutbox(normalize(text), complete);
   const record = recordFor(target, true);
-  if (!source.startsWith(record.source) && source !== record.source.trimEnd()) record.key++;
+  if (!continuesSource(source, record.source)) record.key++;
   record.source = source;
+  record.media = media;
   record.complete = complete;
   record.beforeAppend = beforeAppend;
   record.afterAppend = afterAppend;
@@ -286,5 +299,6 @@ export function updateLobehubRich(
 export function renderLobehubStatic(target, text) {
   const record = recordFor(target, false);
   record.source = normalize(text);
+  record.media = [];
   paint(record);
 }

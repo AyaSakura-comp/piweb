@@ -1,4 +1,5 @@
 /** Legacy pure reveal helpers and the LobeHub reply-island boundary. */
+import { continuesSource } from './outbox-stream.js';
 export {
   readingGraphemes,
   readingFadeLevel,
@@ -363,22 +364,20 @@ function reusableBoundary(stream, source, complete) {
 
 export function canReuseStreamingRich(target, text) {
   const stream = target && streams.get(target);
-  return !!stream && normalize(text).startsWith(stream.source.trimEnd());
+  return !!stream && continuesSource(normalize(text), stream.source);
 }
 
 /** Source/connection fencing only; parsing, smoothing and fades are upstream. */
 export function updateStreamingRich(target, text, options = {}) {
-  let source = normalize(text);
-  if (!options.complete) {
-    const marker = source.search(/\[\[(?:image|video|file)\s*:/i);
-    if (marker >= 0) source = source.slice(0, marker);
-  }
+  // Outbox markers are tokenized by the renderer (outbox-stream.js), not cut here.
+  const source = normalize(text);
   const record = streams.get(target) || { source: '', revision: 0 };
   record.source = source;
   const revision = ++record.revision;
   streams.set(target, record);
   return import('./lobehub-rich.js').then(({ updateLobehubRich }) => {
-    if (streams.get(target) !== record || record.revision !== revision || !target.isConnected) return;
+    if (streams.get(target) !== record || record.revision !== revision || !target.isConnected)
+      return;
     return updateLobehubRich(target, source, options);
   });
 }

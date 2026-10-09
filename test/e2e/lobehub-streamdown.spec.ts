@@ -515,7 +515,8 @@ test('LobeHub never exposes unpublished local outbox paths and keeps the prefix 
   await expect(page.locator('#partial-msg')).toContainText('保留已讀的文字。');
   await expect(page.locator('#partial-msg')).not.toContainText('/home/private');
   await page.evaluate(() => ((window as any).__prefix = document.querySelector('#partial-msg p')));
-  await emit(page, 'event', event(4, '保留已讀的文字。\n\n![image](/media/lobe.svg)'));
+  await expect(page.locator('#partial-msg')).toContainText('尚未公開');
+  await emit(page, 'event', event(4, '保留已讀的文字。\n\n[[image: /media/lobe.svg]]\n\n尚未公開'));
   await partial(page, '');
   await expect(page.locator('.msg[data-event-id="4"] img')).toBeVisible();
   expect(
@@ -559,8 +560,11 @@ test('LobeHub embedded file images survive publication viewer and history', asyn
       /waiting|moving/,
     );
     await emit(page, 'event', events.at(-1));
-    await partial(page, `${prefix}\n\n[[file: /home/private/mem-used.png]]\n\n未公開的尾段`);
-    await expect(page.locator('#partial-msg p')).toHaveText(prefix);
+    await partial(
+      page,
+      `${prefix}\n\n[[file: /home/private/mem-used.png]]\n\n[[file: /home/private/mem-cache.png]]\n\n圖片之後仍可閱讀。`,
+    );
+    await expect(page.locator('#partial-msg p')).toHaveText([prefix, '圖片之後仍可閱讀。']);
     await expect(page.locator('#partial-msg')).not.toContainText('/home/private');
     await expect(page.locator('#partial-msg img')).toHaveCount(0);
     await page.screenshot({ path: info.outputPath(`${theme}-01-private-preview.png`) });
@@ -1300,5 +1304,63 @@ test('LobeHub keeps NT$ currency tables as tables in history and streaming', asy
     .toBe(true);
   await history.scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath('currency-tables.png') });
+  expect(errors).toEqual([]);
+});
+
+test('LobeHub keeps streaming text after an image marker and inserts the image without replay', async ({
+  page,
+}, info) => {
+  const { errors, events } = await setup(page);
+  const before = '第一段文字，在圖片之前。';
+  const after = '圖片之後的文字也要邊串流邊顯示。';
+  await partial(page, `${before}\n\n[[image: /home/u/.pi-outbox/lobe.png]]\n\n`);
+  await expect(page.locator('#partial-msg .msg-text')).toContainText(before);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__imgBody = document.querySelector('#partial-msg .msg-text');
+    w.__imgFirst = w.__imgBody.querySelector('p');
+  });
+  // An unfinished marker at the tail stays hidden, not printed as raw text.
+  await partial(page, `${before}\n\n[[image: /home/u/.pi-outbox/lobe.png]]\n\n${after}\n\n[[ima`);
+  const live = page.locator('#partial-msg .msg-text');
+  await expect(live).toContainText(after);
+  await expect(live).not.toContainText('[[');
+  await expect(live).not.toContainText('pi-outbox');
+  await page.screenshot({ path: info.outputPath('streaming-after-image.png') });
+  // The last partial is the whole reply, still naming the local file.
+  await partial(page, `${before}\n\n[[image: /home/u/.pi-outbox/lobe.png]]\n\n${after}`);
+  await page.waitForTimeout(1500);
+
+  events.push(event(70, `${before}\n\n[[image: /media/lobe.svg]]\n\n${after}`));
+  await emit(page, 'event', events.at(-1));
+  await partial(page, '');
+  const body = page.locator('.msg[data-event-id="70"] .msg-text');
+  // Sampled right at publication: only the new image may animate, not text.
+  const running = await body.evaluate((n) =>
+    n
+      .getAnimations({ subtree: true })
+      .filter(
+        (a) =>
+          (a as CSSAnimation).animationName === 'streamdown-fade-in' &&
+          a.playState === 'running' &&
+          !!((a.effect as KeyframeEffect).target as Element).textContent?.trim(),
+      )
+      .map((a) => ((a.effect as KeyframeEffect).target as Element).textContent),
+  );
+  await expect(body.locator('img.msg-inline-img')).toHaveCount(1);
+  await expect(body).toContainText(after);
+  // Same island and paragraph nodes: the image slots in; already-read text
+  // is neither remounted nor faded in a second time.
+  expect(
+    await body.evaluate((n) => {
+      const w = window as any;
+      return n === w.__imgBody && n.querySelector('p') === w.__imgFirst;
+    }),
+  ).toBe(true);
+  expect(running).toEqual([]);
+  await expect
+    .poll(() => body.evaluate((n) => (n.querySelector('img') as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await page.screenshot({ path: info.outputPath('final-with-image.png') });
   expect(errors).toEqual([]);
 });

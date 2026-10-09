@@ -1374,7 +1374,9 @@ test('final delivery continuous video walkthrough retains read text through whit
     prefix + '[[image: /tmp/video-proof-chart.svg]]\n\n圖片已發布，這段說明接在圖片後面。\n\n';
   await partial(page, mediaSource);
   await page.waitForTimeout(650);
-  await expect(page.locator('#partial-msg')).not.toContainText('圖片已發布');
+  // Text after an unpublished image keeps streaming; the local marker never shows.
+  await expect(page.locator('#partial-msg')).toContainText('圖片已發布');
+  await expect(page.locator('#partial-msg')).not.toContainText('[[image');
   await shot(page, info, 'delivery-video-07-media-tail-pending.png');
   await page.route('**/media/video-proof-chart.svg', (route) =>
     route.fulfill({
