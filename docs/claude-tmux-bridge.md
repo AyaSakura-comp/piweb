@@ -33,6 +33,15 @@ the worker user's host privileges. This is not a sandbox. Keep authentication an
 CSRF protections enabled. Missing credentials/startup dialogs require manual host
 setup; the bridge does not type secrets or accept arbitrary prompts.
 
+Piweb launches and resumes Claude with
+`--settings '{"remoteControlAtStartup":false}'` and `--no-chrome`.
+Remote Control is **off by default for this bridge**, independently of inherited
+user/project startup preferences; other Claude settings still load normally.
+This is a per-launch override, not a global settings edit. It does not stop
+existing sessions, remove old remote-session records, or change a separate
+Discord Claude launcher's explicit `--remote-control`. An already-loaded worker
+needs its next approved safe restart to pick up a changed launch policy.
+
 ## Lifecycle and data
 
 - Each channel gets a stable hashed tmux name and a `claude-tmux-session.json`
@@ -47,7 +56,12 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
 - Input uses a tmux buffer with bracketed paste for multiline safety, preceded by
   a literal typed request. Claude Code 2.1.278 wraps bracketed pastes in
   `pasted_content`; without that external request, it can treat the whole task
-  as quoted data and ask what to do instead of executing it.
+  as quoted data and ask what to do instead of executing it. Before Enter, the
+  bridge waits for the editable request text or a new numbered paste marker.
+  Marker whitespace is canonicalized to support terminal-wrapped forms such as
+  `[Pasted\n  text #1 +6 lines]`; reflow of an existing marker in the editable
+  prompt or pane history does not acknowledge a new paste. This does not change
+  the startup deadline, pane size, or retry policy.
 - Output comes exclusively from complete JSONL records, not scraped screen text.
   Thinking, tool calls and results become streamed Pi-shaped events. A
   `turn_duration` closes the parent turn only after pending child agents and
@@ -55,9 +69,21 @@ setup; the bridge does not type secrets or accept arbitrary prompts.
   are retained as bytes.
 - Uploads are staged through Piweb and provided as absolute paths. Local markdown
   media links are converted to outbox markers before delivery.
+- `CLAUDE_TMUX_TURN_TIMEOUT_MS` is an **inactivity** budget (default one hour),
+  not a wall-clock limit for the entire turn. New structured thinking/text/tool
+  events, tool results (including empty results), completion records, and changed
+  tracked background-command output renew the budget. A long benchmark with
+  continuing progress can exceed one hour without being interrupted. Unrecognized
+  records, invalid JSON, unchanged output and pane spinner/timer repainting do not
+  renew it. Pending transcript/output is read before checking the idle deadline.
+  A genuine idle timeout still sends Escape/Ctrl-C and reports the idle duration;
+  it does not retry or resubmit the prompt. Silent work exceeding the inactivity
+  budget can still time out; merely retaining a running-task flag is not progress.
 - Stop sends Ctrl-C, including for a running turn recovered after worker restart.
   The tmux session/context remains available for the next message. A dead pane
-  fails promptly instead of waiting for the full turn timeout.
+  fails promptly instead of waiting for the inactivity timeout. As with other
+  bridge code changes, an already-running worker needs an approved safe restart
+  to load the new timeout behavior; compiling it does not hot-patch active turns.
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.
@@ -101,7 +127,10 @@ npx vitest run test/claude-tmux.test.ts test/queue-claude-routing.test.ts
 
 Fake transcript/queue tests cover monitor/background-command continuation,
 publication before completion, identical-final suppression and distinct-final
-publication. They do not consume Claude quota or prove live-provider timing.
+publication. Virtual-clock regressions cover multi-budget thinking/tool activity,
+empty tool results, growing background output, completion at the poll boundary,
+and genuine idle/noise timeouts. They do not consume Claude quota or prove
+live-provider timing.
 
 ## Subagents
 

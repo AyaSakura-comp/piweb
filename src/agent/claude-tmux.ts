@@ -111,6 +111,8 @@ export function buildClaudeArgs(options: {
     '--disallowedTools',
     'AskUserQuestion',
     '--no-chrome',
+    '--settings',
+    JSON.stringify({ remoteControlAtStartup: false }),
     '--append-system-prompt',
     AUTONOMOUS_SYSTEM_PROMPT,
   );
@@ -253,6 +255,7 @@ export interface ClaudeTmuxDependencies {
   claudeBin: string;
   pollMs: number;
   startupTimeoutMs: number;
+  /** Maximum time without meaningful transcript or background-command output progress. */
   turnTimeoutMs: number;
 }
 
@@ -412,6 +415,26 @@ export async function invokeClaudeTmux(
     let nextPromptCheckAt = 0;
     let lastApprovedPrompt = '';
     let approvalCountForPrompt = 0;
+    const commandProgress = new Map<string, Pick<ClaudeCommand, 'state' | 'output' | 'exitCode'>>();
+    const commandsMadeProgress = (commands: ClaudeCommand[]) => {
+      let changed = false;
+      for (const command of commands) {
+        const previous = commandProgress.get(command.id);
+        if (
+          !previous ||
+          previous.state !== command.state ||
+          previous.output !== command.output ||
+          previous.exitCode !== command.exitCode
+        ) changed = true;
+        // Do not retain mutable tracker objects or count updatedAt/heartbeat churn.
+        commandProgress.set(command.id, {
+          state: command.state,
+          output: command.output,
+          exitCode: command.exitCode,
+        });
+      }
+      return changed;
+    };
     const refreshChildren = (force = false) => {
       if (transcriptPath && (force || Date.now() >= nextProjectionAt)) {
         childTracker?.refresh(transcriptPath);
@@ -485,8 +508,11 @@ export async function invokeClaudeTmux(
       ensureNotAborted();
     }
 
-    const deadline = Date.now() + deps.turnTimeoutMs;
-    while (!turnComplete && Date.now() < deadline) {
+    // This is an inactivity deadline, not a cap on a healthy multi-tool turn.
+    // Read pending records/output before checking it so a completion arriving
+    // during the final poll interval is not discarded.
+    let deadline = Date.now() + deps.turnTimeoutMs;
+    while (!turnComplete) {
       ensureNotAborted();
       if (!transcriptPath) transcriptPath = deps.findTranscript(state.sessionId);
       if (transcriptPath && existsSync(transcriptPath)) {
@@ -502,8 +528,29 @@ export async function invokeClaudeTmux(
           }
           childTracker.observe(record);
           const cmdUpdates = commandTracker.observe(record);
+          const commandActivity = commandsMadeProgress(cmdUpdates);
           if (cmdUpdates.length > 0) await publishCommands(cmdUpdates);
           const translated = translateClaudeTranscriptRecord(record);
+          const hasToolResult =
+            !record.isSidechain &&
+            record.type === 'user' &&
+            record.message?.role === 'user' &&
+            Array.isArray(record.message?.content) &&
+            record.message.content.some(
+              (part: any) =>
+                part?.type === 'tool_result' &&
+                typeof part.tool_use_id === 'string' &&
+                part.tool_use_id.length > 0,
+            );
+          if (
+            translated.events.length ||
+            translated.finalText !== undefined ||
+            translated.turnComplete ||
+            hasToolResult ||
+            commandActivity
+          ) {
+            deadline = Date.now() + deps.turnTimeoutMs;
+          }
           for (const event of translated.events) await opts?.onEvent?.(event);
           if (translated.informationalText && !finalText) {
             informationalFallback = translated.informationalText;
@@ -535,7 +582,11 @@ export async function invokeClaudeTmux(
       }
       refreshChildren(turnComplete);
       const pollUpdates = commandTracker.pollActiveOutputs();
-      if (pollUpdates.length > 0) await publishCommands(pollUpdates);
+      if (pollUpdates.length > 0) {
+        if (commandsMadeProgress(pollUpdates)) deadline = Date.now() + deps.turnTimeoutMs;
+        await publishCommands(pollUpdates);
+      }
+      if (!turnComplete && Date.now() >= deadline) break;
       if (!turnComplete) {
         await ensurePaneAlive(pane, deps);
         if (Date.now() >= nextPromptCheckAt) {
@@ -584,7 +635,11 @@ export async function invokeClaudeTmux(
     if (!turnComplete) {
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
       await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
-      return { ok: false, text: '', error: 'Claude Code tmux turn timed out' };
+      return {
+        ok: false,
+        text: '',
+        error: `Claude Code tmux turn timed out (no transcript or command-output progress for ${deps.turnTimeoutMs} ms)`,
+      };
     }
 
     if (transcriptPath) {
@@ -745,7 +800,10 @@ async function waitForReadyPane(
 }
 
 function pasteMarkers(screen: string): Set<string> {
-  return new Set(screen.match(/\[Pasted text #\d+(?: \+\d+ lines?)?\]/giu) ?? []);
+  // Narrow terminals wrap these markers across physical rows. Canonicalize
+  // whitespace so reflow of an old marker does not look like a new paste.
+  const markers = screen.match(/\[Pasted\s+text\s+#\d+(?:\s+\+\d+\s+lines?)?\]/giu) ?? [];
+  return new Set(markers.map((marker) => marker.replace(/\s+/gu, ' ')));
 }
 
 function currentPrompt(screen: string): string {
@@ -786,14 +844,13 @@ async function waitForPastedPrompt(
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     const input = currentPrompt(lastScreen);
     const normalizedInput = input.replace(/\s+/gu, ' ');
-    const currentMarkers = pasteMarkers(input);
     const hasNewMarker = [...pasteMarkers(lastScreen)].some(
       (marker) => !previousMarkers.has(marker),
     );
     // Match ordinary text only inside the editable prompt, never in stale pane
-    // history. Claude may render a bracketed multiline paste elsewhere in the
-    // current frame, but in that case its numbered marker must have changed.
-    if ((sample && normalizedInput.includes(sample)) || currentMarkers.size > 0 || hasNewMarker) {
+    // history. A paste marker must be new even inside the editable prompt:
+    // unchanged markers can survive a failed acknowledgement or merely reflow.
+    if ((sample && normalizedInput.includes(sample)) || hasNewMarker) {
       return;
     }
     await deps.sleep(deps.pollMs);

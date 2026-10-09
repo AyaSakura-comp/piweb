@@ -97,6 +97,21 @@ describe('Claude tmux launch contract', () => {
     expect(args).not.toContain('--session-id');
   });
 
+  it.each([false, true])('explicitly disables Remote Control for resume=%s', (resume) => {
+    const args = buildClaudeArgs({
+      sessionId: '550e8400-e29b-41d4-a716-446655440000',
+      modelRef: 'claude-code/opus',
+      resume,
+    });
+
+    const settingsIndex = args.indexOf('--settings');
+    expect(settingsIndex).toBeGreaterThan(-1);
+    expect(JSON.parse(args[settingsIndex + 1])).toEqual({ remoteControlAtStartup: false });
+    expect(args).not.toContain('--remote-control');
+    expect(args).toContain('--no-chrome');
+    expect(args).not.toContain('--setting-sources');
+  });
+
   it('uses a stable safe tmux name without exposing the channel folder', () => {
     const first = tmuxSessionName('guild/private project');
     const second = tmuxSessionName('guild/private project');
@@ -772,6 +787,98 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(1);
   });
 
+  it.each([
+    '[Pasted\n  text #1 +6 lines]',
+    '[Pasted text\n  #1 +6 lines]',
+    '[Pasted text #1\n  +6 lines]',
+    '[Pasted text #1 +6\r\n\tlines]',
+  ])('accepts a terminal-wrapped paste marker: %j', async (marker) => {
+    const fixture = createRuntimeFixture({ pasteLineCount: true });
+    const originalTmux = fixture.dependencies.tmux;
+    let observedWrappedMarker = false;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      if (args[0] === 'capture-pane' && screen.includes('❯ [Pasted text #1 +1 lines]')) {
+        observedWrappedMarker = true;
+        return screen.replace(
+          '❯ [Pasted text #1 +1 lines]',
+          `❯\u00a0Please carry out the following user request: ${marker}`,
+        );
+      }
+      return screen;
+    };
+
+    const result = await invokeClaudeTmux(
+      'web_claude1',
+      'line one\nline two\nline three\nline four\nline five\nline six\nline seven',
+      { dependencies: fixture.dependencies },
+    );
+
+    expect(observedWrappedMarker).toBe(true);
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submissionCount).toBe(1);
+    expect(fixture.pastes).toHaveLength(1);
+    expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(false);
+  });
+
+  it.each(['editable prompt', 'pane history'])(
+    'does not submit when only a stale marker reflows in the %s',
+    async (location) => {
+      const fixture = createRuntimeFixture({ pasteLineCount: true });
+      const originalTmux = fixture.dependencies.tmux;
+      let freshMarkerVisible = false;
+      let submittedBeforeFreshMarker = false;
+      fixture.dependencies.tmux = async (args) => {
+        if (args[0] === 'send-keys' && args.at(-1) === 'Enter' && fixture.pastes.length > 0) {
+          submittedBeforeFreshMarker ||= !freshMarkerVisible;
+        }
+        const screen = await originalTmux(args);
+        if (args[0] !== 'capture-pane' || !fixture.trustAccepted || fixture.submissionCount > 0) {
+          return screen;
+        }
+        if (screen.includes('❯ [Pasted text #1 +1 lines]')) {
+          freshMarkerVisible = true;
+          return screen.replace('[Pasted text #1 +1 lines]', '[Pasted\n  text #8 +1 lines]');
+        }
+        const marker =
+          fixture.pastes.length > 0 ? '[Pasted text #7 +1 lines]' : '[Pasted\n  text #7 +1 lines]';
+        return location === 'editable prompt'
+          ? `❯ ${marker}\nbypass permissions on`
+          : `Previous turn: ${marker}\n❯\nbypass permissions on`;
+      };
+
+      const result = await invokeClaudeTmux('web_claude1', 'first line\nsecond line', {
+        dependencies: fixture.dependencies,
+      });
+
+      expect(submittedBeforeFreshMarker).toBe(false);
+      expect(freshMarkerVisible).toBe(true);
+      expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+      expect(fixture.submissionCount).toBe(1);
+      expect(fixture.pastes).toHaveLength(1);
+    },
+  );
+
+  it('does not acknowledge an incomplete terminal-wrapped paste marker', async () => {
+    const fixture = createRuntimeFixture({ pasteLineCount: true });
+    const originalTmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      return args[0] === 'capture-pane'
+        ? screen.replace('[Pasted text #1 +1 lines]', '[Pasted\n  text #1 +1 lines')
+        : screen;
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', 'first line\nsecond line', {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Claude Code did not accept the pasted prompt');
+    expect(fixture.submissionCount).toBe(0);
+    expect(fixture.pastes).toHaveLength(1);
+  });
+
   it('sends Ctrl-C and preserves the tmux session when aborted', async () => {
     const fixture = createRuntimeFixture({ completeTurns: false });
     const controller = new AbortController();
@@ -951,6 +1058,104 @@ describe('Claude transcript translation', () => {
     expect(errorRecord.finalText).toContain("You've hit your session limit · resets at");
   });
 });
+
+describe('Claude tmux progress-aware timeout', () => {
+  it.each(['transcript', 'background-output', 'empty-tool-result'] as const)(
+    'keeps a long turn alive while %s makes progress', async (mode) => {
+      const { result, fixture, elapsed } = await runTimeoutScenario(mode);
+      expect(elapsed).toBeGreaterThan(fixture.dependencies.turnTimeoutMs);
+      expect(result).toMatchObject({ ok: true });
+      expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(false);
+      expect(fixture.submissionCount).toBe(1);
+    },
+  );
+
+  it('reads a completion waiting at the deadline before declaring a timeout', async () => {
+    const { result } = await runTimeoutScenario('boundary');
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+  });
+
+  it.each(['idle', 'noise', 'background-noise'] as const)(
+    'still interrupts %s without meaningful transcript or output progress', async (mode) => {
+      const { result, fixture, elapsed } = await runTimeoutScenario(mode);
+      expect(result).toMatchObject({ ok: false });
+      expect(result.error).toContain('tmux turn timed out');
+      expect(elapsed).toBeLessThanOrEqual(140);
+      expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(true);
+      expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(true);
+    },
+  );
+});
+
+async function runTimeoutScenario(
+  mode: 'transcript' | 'background-output' | 'empty-tool-result' | 'boundary' | 'idle' | 'noise' | 'background-noise',
+) {
+  const fixture = createRuntimeFixture({ completeTurns: false });
+  const output = join(fixture.root, 'benchmark.output');
+  writeFileSync(output, mode === 'background-noise' ? 'steady output\n' : '');
+  let elapsed = 0;
+  let ticks = 0;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => elapsed);
+  const append = (record: unknown) => appendFileSync(fixture.transcript, JSON.stringify(record) + '\n');
+  const tool = (id: string) => ({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'benchmark' } }] },
+  });
+  const tmux = fixture.dependencies.tmux;
+  fixture.dependencies.tmux = async (args) => {
+    const answer = await tmux(args);
+    if (args[0] === 'send-keys' && args.at(-1) === 'Enter' && fixture.submissionCount === 1) {
+      if (mode === 'background-output' || mode === 'background-noise') {
+        append(tool('background-tool'));
+        append({
+          type: 'user', toolUseResult: { backgroundTaskId: 'benchmark' },
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'background-tool',
+            content: `Command running in background with ID: benchmark. Output is being written to: ${output}` }] },
+        });
+        append({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Benchmark running.' }] } });
+        append({ type: 'system', subtype: 'turn_duration' });
+      } else if (mode === 'empty-tool-result') append(tool('tool-0'));
+    }
+    return answer;
+  };
+  fixture.dependencies.sleep = async () => {
+    if (!fixture.submissionCount) return;
+    elapsed += mode === 'boundary' ? 110 : 70;
+    ticks++;
+    if (mode === 'background-noise') {
+      append({ type: 'user', message: { role: 'user', content:
+        '<task-notification><task-id>benchmark</task-id><summary>heartbeat</summary></task-notification>' } });
+      // Bound the RED run: a broken heartbeat renewal eventually completes.
+      if (ticks === 6) {
+        append({ type: 'user', message: { role: 'user', content:
+          '<task-notification><task-id>benchmark</task-id><status>completed</status></task-notification>' } });
+        append({ type: 'system', subtype: 'turn_duration' });
+      }
+    } else if (mode === 'noise') {
+      appendFileSync(fixture.transcript, '{invalid-json}\n');
+      append({ type: 'progress', message: 'heartbeat' });
+    } else if (mode === 'background-output') {
+      appendFileSync(output, `benchmark chunk ${ticks}\n`);
+      if (ticks === 6) {
+        append({ type: 'user', message: { role: 'user', content:
+          '<task-notification><task-id>benchmark</task-id><status>completed</status></task-notification>' } });
+        append({ type: 'system', subtype: 'turn_duration' });
+      }
+    } else if (mode === 'boundary' || (ticks === 6 && mode !== 'idle')) fixture.appendTurn();
+    else if (mode === 'transcript') {
+      append({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: `Step ${ticks}` }] } });
+    } else if (mode === 'empty-tool-result') {
+      if (ticks % 2) append({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tool-${ticks - 1}`, content: '' }] } });
+      else append(tool(`tool-${ticks}`));
+    }
+  };
+  try {
+    const result = await invokeClaudeTmux('web_claude1', 'run benchmark', { dependencies: fixture.dependencies });
+    return { result, fixture, elapsed };
+  } finally {
+    clock.mockRestore();
+  }
+}
 
 function createRuntimeFixture(
   options: { completeTurns?: boolean; runningScreen?: boolean; pasteLineCount?: boolean } = {},
