@@ -1,6 +1,6 @@
 // One visible composer, two explicitly owned drafts. The Web bridge is fail-closed:
 // a side prompt is never allowed to fall through to the main message endpoint.
-export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
+export function createBtwWorkspace({ api, getSession, notify, buildMessage, streamRich, canReuseRich }) {
   const byId = (id) => document.getElementById(id);
   const textarea = byId('input');
   const main = byId('messages');
@@ -24,6 +24,14 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
   // still running on the worker (reported by the snapshot's `pending`).
   let remotePending = false;
   let pendingPoll = null;
+  // Questions still being answered, in order: { question, q, thinking, waiting,
+  // answer }. `thinking` and `answer` grow in place once their text arrives.
+  let live = [];
+  // The settled messages currently drawn, so a poll that changes nothing does
+  // not rebuild (and re-animate) the transcript under a streaming answer.
+  let settledKey = '';
+  // Bumped when a send settles: a snapshot requested before that is stale.
+  let threadRevision = 0;
   const sideBusy = () => sending || remotePending;
   let opening = false;
   let clearing = false;
@@ -103,38 +111,135 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     return [question, waiting];
   }
 
-  // Render a snapshot. Questions still being answered on the worker show as
-  // pending, and the snapshot is re-read until they finish.
-  function renderThread(thread) {
-    side.replaceChildren();
-    for (const message of thread?.messages || []) {
-      // The structured Web bridge must not hand untrusted HTML to the renderer.
-      if (message.role !== 'user' && message.role !== 'assistant') continue;
-      if (typeof message.content !== 'string') continue;
-      side.append(buildMessage(message));
-    }
-    const pending = sending
-      ? []
-      : (thread?.pending || []).filter((text) => typeof text === 'string' && text);
-    for (const text of pending) side.append(...pendingNodes(text));
-    remotePending = pending.length > 0;
-    clearTimeout(pendingPoll);
-    pendingPoll = remotePending ? setTimeout(pollPending, 3000) : null;
+  // The structured Web bridge must not hand untrusted HTML to the renderer.
+  const settledMessages = (thread) =>
+    (thread?.messages || []).filter(
+      (message) =>
+        (message.role === 'user' || message.role === 'assistant') &&
+        typeof message.content === 'string',
+    );
+  const atBottom = () => side.scrollHeight - side.scrollTop - side.clientHeight < 40;
+  const follow = { before: atBottom, after: (was) => was && (side.scrollTop = side.scrollHeight) };
+  const liveEntry = (question) => {
+    const [q, waiting] = pendingNodes(question);
+    return { question, q, thinking: null, waiting, answer: null };
+  };
+  const liveNodes = (entry) =>
+    [entry.q, entry.thinking, entry.answer || entry.waiting].filter(Boolean);
+  const dropLive = (entry) =>
+    [entry.q, entry.thinking, entry.waiting, entry.answer].forEach((node) => node?.remove());
+  // Same shape as the main transcript's live reasoning card: folded, with the
+  // reasoning growing inside, so a long think is visibly progressing.
+  function thinkingNode() {
+    const node = document.createElement('details');
+    node.className = 'event thinking partial btw-thinking';
+    const summary = document.createElement('summary');
+    summary.append(
+      Object.assign(document.createElement('span'), { className: 'event-chevron', textContent: '›' }),
+      Object.assign(document.createElement('span'), { className: 'label', textContent: '💭 Thinking…' }),
+    );
+    const wrap = document.createElement('div');
+    wrap.className = 'event-body-wrap';
+    wrap.append(Object.assign(document.createElement('div'), { className: 'event-body' }));
+    node.append(summary, wrap);
+    return node;
   }
+
+  /** Grow a pending question's reply in place as the worker reports it. */
+  function applyStreaming(thread) {
+    const streaming = (Array.isArray(thread?.streaming) ? thread.streaming : []).filter(
+      (item) => typeof item?.question === 'string' && typeof item.answer === 'string',
+    );
+    for (const entry of live) {
+      const index = streaming.findIndex((item) => item.question === entry.question);
+      if (index < 0) continue;
+      const [{ answer: text, thinking }] = streaming.splice(index, 1);
+      if (typeof thinking === 'string' && thinking) {
+        if (!entry.thinking) {
+          entry.thinking = thinkingNode();
+          if (entry.q.isConnected) entry.q.after(entry.thinking);
+        }
+        void streamRich(entry.thinking.querySelector('.event-body'), thinking, { follow });
+      }
+      if (!text) continue;
+      if (!entry.answer) {
+        entry.answer = document.createElement('div');
+        entry.answer.className = 'msg partial btw-streaming';
+        const body = document.createElement('div');
+        body.className = 'msg-body';
+        body.append(Object.assign(document.createElement('div'), { className: 'msg-text' }));
+        entry.answer.append(body);
+        // The header already says “BTW 回答中…”; the text replaces the dots.
+        if (entry.waiting.isConnected) entry.waiting.replaceWith(entry.answer);
+      }
+      void streamRich(entry.answer.querySelector('.msg-text'), text, { follow });
+    }
+  }
+
+  /**
+   * Draw settled messages. A just-finished answer that continues its streamed
+   * text keeps that node (finished in place) instead of being rebuilt.
+   */
+  function renderSettled(messages, finished = null) {
+    const key = JSON.stringify(messages);
+    if (key === settledKey && !finished) return;
+    settledKey = key;
+    const last = messages.at(-1);
+    const target = finished?.answer?.querySelector('.msg-text');
+    if (target && last?.role === 'assistant' && canReuseRich(target, last.content)) {
+      side.replaceChildren(...messages.slice(0, -1).map(buildMessage), finished.answer);
+      finished.answer.classList.remove('partial', 'btw-streaming');
+      void streamRich(target, last.content, { complete: true, follow });
+    } else {
+      side.replaceChildren(...messages.map(buildMessage));
+    }
+  }
+
+  // Render a snapshot. Questions still being answered on the worker show as
+  // pending with their reply so far, and the snapshot is re-read until they finish.
+  function renderThread(thread) {
+    const pending = (thread?.pending || []).filter((text) => typeof text === 'string' && text);
+    renderSettled(settledMessages(thread));
+    const pool = [...live];
+    const next = pending.map((question) => {
+      const index = pool.findIndex((entry) => entry.question === question);
+      return index < 0 ? liveEntry(question) : pool.splice(index, 1)[0];
+    });
+    pool.forEach(dropLive);
+    for (const entry of next) {
+      if (!entry.q.isConnected) side.append(...liveNodes(entry));
+    }
+    live = next;
+    applyStreaming(thread);
+    remotePending = live.length > 0;
+    schedulePoll();
+  }
+  function schedulePoll(delay = 700) {
+    clearTimeout(pendingPoll);
+    pendingPoll = sideBusy() ? setTimeout(pollPending, delay) : null;
+  }
+  // Re-read the snapshot while a side answer runs (ours or one restored from an
+  // earlier page load), one request at a time, to stream its reply.
   async function pollPending() {
     pendingPoll = null;
     const session = getSession();
-    if (!remotePending || !session || session.key !== owner || sending || clearing) return;
+    if (!sideBusy() || !session || session.key !== owner || clearing) return;
     const epoch = runEpoch;
+    const revision = threadRevision;
     try {
       const data = await api(`/api/sessions/${encodeURIComponent(session.jid)}/btw`);
-      if (epoch !== runEpoch || key() !== session.key || owner !== session.key || sending) return;
+      if (epoch !== runEpoch || key() !== session.key || owner !== session.key) return;
       if (!data?.available || data.generation !== generation) return;
-      const atBottom = side.scrollHeight - side.scrollTop - side.clientHeight < 40;
-      renderThread(data.thread);
-      if (atBottom) side.scrollTop = side.scrollHeight;
+      if (revision !== threadRevision) return schedulePoll();
+      const follows = atBottom();
+      // Our own send settles from its POST response; until then only its
+      // reply text is taken from the snapshot.
+      if (sending) applyStreaming(data.thread);
+      else renderThread(data.thread);
+      if (follows) side.scrollTop = side.scrollHeight;
+      schedulePoll();
     } catch {
-      if (epoch === runEpoch && remotePending) pendingPoll = setTimeout(pollPending, 5000);
+      if (epoch === runEpoch) schedulePoll(3000);
     }
     renderStatus();
   }
@@ -293,9 +398,11 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     send.disabled = true;
     // Show the question immediately and free the composer; the draft is put
     // back only if the bridge rejects it, so nothing is silently lost.
-    const pending = pendingNodes(text);
-    side.append(...pending);
+    const entry = liveEntry(text);
+    live = [entry];
+    side.append(entry.q, entry.waiting);
     side.scrollTop = side.scrollHeight;
+    schedulePoll(400);
     sideDraft = '';
     textarea.value = '';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -310,11 +417,10 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
       delivered = true;
       if (epoch !== runEpoch || key() !== session.key || owner !== session.key) return;
       if (response?.thread?.messages) {
-        side.replaceChildren(
-          ...response.thread.messages
-            .filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
-            .map(buildMessage),
-        );
+        const follows = atBottom();
+        renderSettled(settledMessages(response.thread), entry);
+        live = live.filter((item) => item !== entry);
+        if (follows) side.scrollTop = side.scrollHeight;
       }
     } catch (error) {
       if (epoch === runEpoch && key() === session.key && owner === session.key) {
@@ -332,11 +438,13 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
     } finally {
       if (epoch === runEpoch) {
         sending = false;
-        if (!delivered) pending.forEach((node) => node.remove());
-        else
-          pending.forEach(
-            (node) => node.isConnected && node.classList.contains('btw-waiting') && node.remove(),
-          );
+        threadRevision++;
+        if (live.includes(entry)) {
+          live = live.filter((item) => item !== entry);
+          if (!delivered) dropLive(entry);
+          else [entry.waiting, entry.thinking].forEach((node) => node?.remove());
+        }
+        schedulePoll();
         renderStatus();
       }
     }
@@ -470,6 +578,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
         throw new Error('尚未確認 BTW 已清除，請稍後重試');
       }
       side.replaceChildren();
+      settledKey = '[]';
       sideScroll = 0;
       notify('BTW 已清除，主對話保持不變');
     } catch (error) {
@@ -523,6 +632,8 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage }) {
       remotePending = false;
       clearTimeout(pendingPoll);
       pendingPoll = null;
+      live = [];
+      settledKey = '';
       clearing = false;
       opening = false;
       setTarget('main', false);

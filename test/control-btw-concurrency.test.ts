@@ -68,11 +68,16 @@ it('a running BTW side answer does not hold later controls in the queue', async 
   startControlLoop();
   // /pi status (row 2) finishes while the BTW send (row 1) is still running.
   await expect.poll(() => m.finishControl.mock.calls.map((call) => call[0])).toEqual([2]);
-  m.release({ ok: true, messages: [{ role: 'assistant', content: 'done' }] });
+  m.release({
+    ok: true,
+    messages: [{ role: 'assistant', content: 'done' }],
+    streaming: [{ question: 'next', answer: 'part', thinking: '' }],
+  });
   await expect.poll(() => m.finishControl.mock.calls.map((call) => call[0])).toEqual([2, 1]);
   expect(JSON.parse(m.finishControl.mock.calls[1][2])).toEqual({
     messages: [{ role: 'assistant', content: 'done' }],
     pending: [],
+    streaming: [{ question: 'next', answer: 'part', thinking: '' }],
   });
   await stopControlLoop();
 });

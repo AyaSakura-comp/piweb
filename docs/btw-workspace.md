@@ -46,6 +46,25 @@ until completion; it does not resend the question. This pending tracker is
 in-memory: recovery after a host worker/RPC process restart is not guaranteed.
 An ordinary side answer does not grant BTW support to AGY or Claude harnesses.
 
+## Streaming answers
+
+A side answer streams while it is written. The installed `pi-btw` (local branch
+`piweb-bridge` of `~/src/pi-btw`) watches the BTW sub-session during a Web send
+and keeps the latest assistant message per request; every `/btw:web snapshot`
+reports it as `streaming: [{ question, answer, thinking }]`. The worker passes
+that field through the private control result, and the web route already
+forwards the whole result as `thread`, so **no web-tier change or image
+rebuild** is involved.
+
+While its own send is in flight (or a pending answer was restored), the BTW view
+re-reads the snapshot one request at a time, about every 0.7 s. The reasoning
+grows in a folded `💭 Thinking…` card and the answer below it, through the same
+streaming renderer as the main reply. When the send's POST returns, the
+streamed answer node is finished in place rather than rebuilt; the thinking card
+goes away because the settled thread holds only questions and answers, exactly
+what a reopen shows. A snapshot requested before the send settled is ignored.
+An older `pi-btw` without `streaming` just shows the waiting dots as before.
+
 ## Commands and verification
 
 - Open **⋯ → BTW**, or use the pending-answer link to return to its side transcript.
@@ -60,7 +79,8 @@ npx playwright test test/e2e/btw-shared-composer.spec.ts
 ```
 
 The mobile fixture covers held side answers, main Send while pending, return
-without another snapshot, restored pending snapshots, confirmation/clear,
+without overlapping snapshots, streamed thinking/answer that finish in place,
+restored pending snapshots that stream, confirmation/clear,
 horizontal gestures, header geometry, reduced motion and main-history preservation.
 The API test checks authentication/generation with fixture control completion.
 Fake RPC tests exercise native clear, missing-command rejection, long-running

@@ -177,7 +177,13 @@ async function runControl(row: ControlRow): Promise<void> {
       if (!renewOwnership()) throw new Error('BTW session generation changed');
       result = {
         ok: true,
-        text: JSON.stringify({ messages: value.messages, pending: value.pending ?? [] }),
+        // `streaming`: side answers still being written, so the view can show
+        // the reply as it grows (older pi-btw builds omit it).
+        text: JSON.stringify({
+          messages: value.messages,
+          pending: value.pending ?? [],
+          streaming: Array.isArray(value.streaming) ? value.streaming : [],
+        }),
       };
     } else {
       result = await runCommand(channel, owned.command, args, {

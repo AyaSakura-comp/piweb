@@ -1766,6 +1766,14 @@ const btwWorkspace = createBtwWorkspace({
     kind: 'message', role: message.role, content: message.content,
     createdAt: message.createdAt || new Date().toISOString(), files: [],
   }),
+  // The side answer streams through the same renderer as the main reply.
+  streamRich: (target, text, { complete = false, follow } = {}) =>
+    updateStreamingRich(target, text, {
+      complete,
+      beforeAppend: follow?.before,
+      afterAppend: follow?.after,
+    }),
+  canReuseRich: canReuseStreamingRich,
 });
 const subagentsView = createSubagentsView({
   api,

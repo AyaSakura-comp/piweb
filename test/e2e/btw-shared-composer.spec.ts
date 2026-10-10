@@ -273,7 +273,8 @@ test('switches freely during a BTW run and keeps main send usable', async ({ pag
   let reads = 0;
   await page.route('**/api/sessions/*/btw', async (route) => {
     if (route.request().method() === 'GET') {
-      reads++;
+      // Only the opening snapshot answers; the streaming poll stays in flight.
+      if (++reads > 1) return hold.then(() => route.abort());
       return route.fulfill({
         json: { available: true, generation: 'web_btw_test', thread: { messages: [] } },
       });
@@ -308,7 +309,8 @@ test('switches freely during a BTW run and keeps main send usable', async ({ pag
   await switchBySwipe(page, true);
   await expect(page.locator('#btw-messages')).toContainText('side working');
   await expect(page.locator('.btw-waiting')).toBeVisible();
-  expect(reads).toBe(1);
+  // Switching back uses the in-memory view; only the single stream poll is out.
+  expect(reads).toBe(2);
   await page.screenshot({ path: info.outputPath('btw-running-switch.png') });
   await page.waitForTimeout(600);
   await switchBySwipe(page, false);
@@ -549,7 +551,8 @@ test('while BTW is answering, the menu and the link re-enter BTW immediately', a
   let reads = 0;
   await page.route('**/api/sessions/*/btw', async (route) => {
     if (route.request().method() === 'GET') {
-      reads++;
+      // Only the opening snapshot answers; the streaming poll stays in flight.
+      if (++reads > 1) return hold.then(() => route.abort());
       return route.fulfill({
         json: { available: true, generation: 'web_btw_test', thread: { messages: [] } },
       });
@@ -586,7 +589,125 @@ test('while BTW is answering, the menu and the link re-enter BTW immediately', a
     await expect(page.locator('#btw-card')).toBeVisible();
     await expect(page.locator('#btw-messages .btw-waiting')).toBeVisible();
   }
-  expect(reads).toBe(1);
+  // Re-entry uses the in-memory view; the stream poll never overlaps itself.
+  expect(reads).toBe(2);
   release();
   await expect(page.locator('#btw-messages')).toContainText('a');
+});
+
+test('a BTW answer streams in as it is written and finishes in place', async ({ page }, info) => {
+  routes(page);
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const partials = ['', 'Streaming **side**', 'Streaming **side** answer, still going'];
+  let reads = 0;
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    if (route.request().method() === 'GET') {
+      const answer = partials[Math.min(reads++, partials.length - 1)];
+      return route.fulfill({
+        json: {
+          available: true,
+          generation: 'web_btw_test',
+          thread: {
+            messages: [],
+            pending: reads > 1 ? ['side question'] : [],
+            streaming:
+              reads > 1
+                ? [{ question: 'side question', answer, thinking: 'Weighing the **question**' }]
+                : [],
+          },
+        },
+      });
+    }
+    await hold;
+    return route.fulfill({
+      json: {
+        thread: {
+          messages: [
+            { role: 'user', content: 'side question' },
+            { role: 'assistant', content: 'Streaming **side** answer, still going. Done.' },
+          ],
+          pending: [],
+          streaming: [],
+        },
+      },
+    });
+  });
+  await page.goto('/');
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: /BTW/ }).click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.locator('#input').fill('side question');
+  await page.locator('#btn-send').click();
+  const side = page.locator('#btw-messages');
+  const streaming = side.locator('.btw-streaming');
+  // The reasoning streams first, folded like the main transcript's card.
+  const thinking = side.locator('details.btw-thinking');
+  await expect(thinking).toHaveCount(1);
+  await expect(thinking).not.toHaveAttribute('open', '');
+  await thinking.locator('summary').click();
+  await expect(thinking.locator('.event-body')).toContainText('Weighing the question');
+  await expect(streaming).toContainText('Streaming side');
+  await expect(streaming.locator('strong')).toHaveText('side');
+  await expect(side.locator('.btw-waiting')).toHaveCount(0);
+  await expect(streaming).toContainText('still going');
+  await expect(side.locator('.msg')).toHaveCount(2);
+  await expect(page.locator('#btw-card')).toContainText('BTW 回答中');
+  await page.screenshot({ path: info.outputPath('btw-streaming.png'), animations: 'disabled' });
+  await streaming.evaluate((node) => node.setAttribute('data-was-streaming', '1'));
+  release();
+  await expect(side).toContainText('Done.');
+  await expect(page.locator('#btw-card')).not.toContainText('BTW 回答中');
+  await expect(side.locator('.btw-streaming')).toHaveCount(0);
+  // The settled thread keeps only question and answer, as on reopen.
+  await expect(side.locator('.btw-thinking')).toHaveCount(0);
+  // The streamed node finishes in place rather than being rebuilt.
+  await expect(side.locator('[data-was-streaming]')).toContainText('Done.');
+  await expect(side.locator('.msg')).toHaveCount(2);
+  await page.screenshot({ path: info.outputPath('btw-streamed-done.png'), animations: 'disabled' });
+});
+
+test('a BTW answer restored from an earlier page load streams its text', async ({ page }) => {
+  routes(page);
+  let reads = 0;
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    reads++;
+    const thread =
+      reads < 3
+        ? {
+            messages: [
+              { role: 'user', content: 'old q' },
+              { role: 'assistant', content: 'old a' },
+            ],
+            pending: ['slow q'],
+            streaming: [
+              { question: 'slow q', answer: reads === 1 ? '' : 'partial text', thinking: '' },
+            ],
+          }
+        : {
+            messages: [
+              { role: 'user', content: 'old q' },
+              { role: 'assistant', content: 'old a' },
+              { role: 'user', content: 'slow q' },
+              { role: 'assistant', content: 'partial text, complete' },
+            ],
+            pending: [],
+            streaming: [],
+          };
+    return route.fulfill({ json: { available: true, generation: 'web_btw_test', thread } });
+  });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await page.locator('#mi-btw').click();
+  const side = page.locator('#btw-messages');
+  await expect(side.locator('.btw-waiting')).toBeVisible();
+  await expect(side.locator('.btw-streaming')).toContainText('partial text');
+  await expect(side.locator('.btw-waiting')).toHaveCount(0);
+  await expect(side).toContainText('partial text, complete');
+  await expect(side.locator('.btw-streaming')).toHaveCount(0);
+  await expect(side.locator('.msg')).toHaveCount(4);
+  await expect(page.locator('#btw-card')).not.toContainText('BTW 回答中');
 });
