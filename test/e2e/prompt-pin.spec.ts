@@ -193,3 +193,37 @@ test('the next prompt pushes the pin out like a sticky header, and scrolling up 
   at = await place(120);
   expect(Math.abs(at.barTop - at.top)).toBeLessThan(1);
 });
+
+test('the pin follows rows that move without a scroll (layout changes)', async ({ page }) => {
+  routes(page);
+  await page.goto('/');
+  await expect(page.getByText('First question about the build')).toBeVisible();
+  const pin = page.locator('#prompt-pin');
+  const messages = page.locator('#messages');
+  // Second prompt 150px below the top edge: the first prompt is pinned.
+  await messages.evaluate((node) => {
+    node.style.overflowAnchor = 'none';
+    const second = [...node.querySelectorAll('.msg.msg-user')].find((row) => row.textContent?.includes('Second question'))!;
+    node.scrollTop += second.getBoundingClientRect().top - node.getBoundingClientRect().top - 150;
+  });
+  await expect(pin).toHaveText('First question about the build');
+  // Content inside the reply above grows with no scroll event (a reply still
+  // rendering, an image arriving): the second prompt's row moves down, away
+  // from the top, and back up when it shrinks again.
+  await page.waitForTimeout(300);
+  await messages.evaluate((node) => {
+    const second = [...node.querySelectorAll('.msg.msg-user')].find((row) => row.textContent?.includes('Second question'))!;
+    node.scrollTop += second.getBoundingClientRect().top - node.getBoundingClientRect().top + 60;
+  });
+  await expect(pin).toHaveText('Second question: why is the cache cold?');
+  await page.waitForTimeout(300);
+  await messages.evaluate((node) => {
+    const replies = [...node.querySelectorAll('.msg:not(.msg-user) .msg-text')];
+    const first = replies[0];
+    const spacer = document.createElement('div');
+    spacer.className = 'test-spacer';
+    spacer.style.height = '200px';
+    first.append(spacer);
+  });
+  await expect(pin).toHaveText('First question about the build');
+});

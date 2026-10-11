@@ -120,11 +120,18 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
 
   scroller.addEventListener('scroll', schedule, { passive: true });
   window.addEventListener('resize', schedule);
+  // Rows move without a scroll too: replies finish rendering, images and
+  // fonts load, details open. Any change inside re-checks (one per frame).
   new MutationObserver(schedule).observe(scroller, {
     childList: true,
+    subtree: true,
+    characterData: true,
     attributes: true,
-    attributeFilter: ['hidden'],
   });
+  scroller.addEventListener('load', schedule, true);
+  scroller.addEventListener('toggle', schedule, true);
+  new ResizeObserver(schedule).observe(scroller);
+  document.fonts?.addEventListener?.('loadingdone', schedule);
   bar.addEventListener('click', () => setExpanded(!expanded));
   bar.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
