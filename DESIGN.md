@@ -177,6 +177,10 @@ the top of the transcript, directly under the header (`public/prompt-pin.js`).
   transcript's top edge, so it follows the reader turn by turn and disappears
   once the prompt's own first line is back in view. Recomputed per animation
   frame on scroll, resize and transcript changes.
+  When that prompt is on an older page that is not loaded (a long tool loop
+  fills the newest page), the latest user message before the oldest loaded
+  event is fetched through `/events?before=` (up to 5×200 events), once per
+  page boundary.
 - **Folded (default)**: one line, the prompt's first non-empty line with an
   ellipsis, on the `--bg` surface with a bottom border; 44px tall. It overlays
   the transcript instead of pushing it, so appearing never moves the reading

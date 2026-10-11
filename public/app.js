@@ -1755,7 +1755,34 @@ function isMenuOpen() {
   return !$('more-menu').hidden;
 }
 
-createPromptPin({ scroller: $('messages') });
+createPromptPin({
+  scroller: $('messages'),
+  // The turn being read began before the oldest loaded page: find its prompt.
+  getEarlier: () => {
+    if (!state.activeJid || state.selectionPending || !state.hasMore || !state.oldest) return null;
+    const jid = state.activeJid;
+    const oldest = state.oldest;
+    return {
+      key: `${jid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}:${oldest}`,
+      load: async () => {
+        let before = oldest;
+        for (let page = 0; page < 5 && before; page++) {
+          const { events = [], hasMore } = await api(
+            withLifeGeneration(
+              `/api/sessions/${encodeURIComponent(jid)}/events?before=${before}&limit=200`,
+              jid,
+            ),
+          );
+          const prompt = events.findLast((event) => event.kind === 'message' && event.role === 'user');
+          if (prompt) return prompt.content || '';
+          if (!hasMore || !events.length) break;
+          before = Math.min(...events.map((event) => event.id));
+        }
+        return '';
+      },
+    };
+  },
+});
 const btwWorkspace = createBtwWorkspace({
   api,
   getSession: () => state.activeJid && !state.selectionPending ? {

@@ -81,3 +81,44 @@ test('the prompt of the turn being read pins one line under the header and expan
   await expect(pin).not.toContainText('Second question');
   expect(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).toBe(true);
 });
+
+test('a prompt on an older, unloaded page is fetched once and pinned', async ({ page }) => {
+  const tools = Array.from({ length: 30 }, (_, i) => ({
+    id: 100 + i,
+    kind: 'message',
+    role: 'assistant',
+    content: `Tool loop step ${i + 1}\n\n${longReply.slice(0, 200)}`,
+    files: [],
+    createdAt: '2026-01-01T00:00:02Z',
+  }));
+  const older = [
+    { id: 10, kind: 'message', role: 'user', content: 'Old prompt\nsecond line', files: [], createdAt: '2026-01-01T00:00:00Z' },
+    { id: 11, kind: 'message', role: 'assistant', content: 'early reply', files: [], createdAt: '2026-01-01T00:00:01Z' },
+    { id: 12, kind: 'message', role: 'user', content: 'Long tool loop prompt\nwith detail', files: [], createdAt: '2026-01-01T00:00:01Z' },
+  ];
+  const befores: string[] = [];
+  routes(page);
+  await page.route('**/api/sessions/*/events**', async (route) => {
+    const url = new URL(route.request().url());
+    const before = url.searchParams.get('before');
+    if (before) {
+      befores.push(before);
+      return route.fulfill({ json: { events: Number(before) <= 100 ? older : [], hasMore: false, session } });
+    }
+    return route.fulfill({ json: { events: tools, busy: false, hasMore: true, session } });
+  });
+  await page.goto('/');
+  await expect(page.getByText('Tool loop step 30')).toBeVisible();
+  await page.locator('#messages').evaluate((node) => {
+    node.scrollTop = node.scrollHeight - node.clientHeight - 300;
+  });
+  const pin = page.locator('#prompt-pin');
+  await expect(pin).toHaveText('Long tool loop prompt');
+  await pin.tap();
+  await expect(pin.locator('.prompt-pin-text')).toHaveText('Long tool loop prompt\nwith detail');
+  await page.locator('#messages').evaluate((node) => {
+    node.scrollTop = node.scrollHeight - node.clientHeight - 600;
+  });
+  await page.waitForTimeout(300);
+  expect(befores.filter((value) => value === '100')).toHaveLength(1);
+});
