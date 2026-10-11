@@ -269,7 +269,17 @@ for (const busy of [true, false]) {
     await expect(page.locator('#btw-card')).toBeVisible();
     await expect(page.locator('#btw-messages')).toContainText('BTW answer');
     await expect(entry).toBeHidden();
-    await page.locator('#btw-back').click();
+    const back = page.getByRole('button', { name: '返回主對話' });
+    await expect(back).toHaveText('‹ 主對話');
+    const backBox = (await back.boundingBox())!;
+    const btwComposer = (await page.locator('#composer-wrap').boundingBox())!;
+    expect(btwComposer.y - (backBox.y + backBox.height)).toBeLessThan(12);
+    expect(backBox.x + backBox.width).toBeGreaterThan(390 - 40);
+    await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+    await page.screenshot({ path: info.outputPath(`btw-back-${busy ? 'busy' : 'idle'}.png`) });
+    await back.click();
+    await expect(page.locator('#btw-card')).toBeHidden();
+    await expect(page.locator('#messages')).toBeVisible();
     await expect(entry).toBeVisible();
   });
 }

@@ -183,7 +183,8 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
 - **Main view**: no recipient row. A quiet 12px “BTW ›” link sits at the right
   end of the typing line, directly above the composer, whenever the session can
   use BTW (Pi models, not read-only); it reads “BTW 回答中 ›” while a side answer
-  is pending. Either opens BTW.
+  is pending. Either opens BTW. In the BTW view the same spot reads “‹ 主對話”
+  and returns to the main transcript, mirroring the header's back icon.
   The visually hidden `#btw-context-label` keeps the polite live announcement.
 - **Composer**: placeholder “問 BTW…”; the isolation note lives in the header.
 - **Motion**: horizontal `translateX` only, no rebound. Enter BTW 220ms and

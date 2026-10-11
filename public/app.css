@@ -1547,7 +1547,6 @@ svg {
   font-size: 12px;
 }
 .btw-pending-row button:active { background: var(--bg-hover); }
-.app.btw-active .btw-pending-row { display: none !important; }
 .btw-waiting {
   display: flex;
   align-items: center;
