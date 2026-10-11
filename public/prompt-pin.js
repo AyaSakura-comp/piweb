@@ -5,7 +5,10 @@
 // A long tool loop can push its prompt onto an older page that is not loaded.
 // `getEarlier()` then names that boundary ({ key, load }) and `load()` fetches
 // the latest prompt before it, once per boundary.
-export function createPromptPin({ scroller, getEarlier = () => null }) {
+// A slash command (`/claude-usage`, typed or from a header button) is stored as
+// a user message too, but it is not the prompt of the turn around it;
+// `isCommand(text)` says which user messages are such command echoes.
+export function createPromptPin({ scroller, getEarlier = () => null, isCommand = () => false }) {
   // A div, not a <button>: the expanded prompt scrolls inside it, and iOS does
   // not scroll content inside a native button.
   const bar = document.createElement('div');
@@ -44,6 +47,7 @@ export function createPromptPin({ scroller, getEarlier = () => null }) {
     const top = scroller.getBoundingClientRect().top + 4;
     const rows = scroller.querySelectorAll('.msg.msg-user');
     for (let index = rows.length - 1; index >= 0; index--) {
+      if (isCommand(rows[index].dataset.prompt || '')) continue;
       const line = rows[index].querySelector('.msg-text') || rows[index];
       if (line.getBoundingClientRect().top < top) return rows[index];
     }

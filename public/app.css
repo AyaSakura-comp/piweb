@@ -1556,6 +1556,10 @@ svg {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.6);
+  /* Own compositing layer: iOS can otherwise paint the momentum-scrolling
+     transcript over this overlay, so the text below shows through. */
+  transform: translateZ(0);
+  will-change: transform;
 }
 .prompt-pin:active { background: var(--bg-hover); }
 .prompt-pin-text {

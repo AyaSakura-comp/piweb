@@ -1755,8 +1755,21 @@ function isMenuOpen() {
   return !$('more-menu').hidden;
 }
 
+// A user message that is one known slash command (`/claude-usage`, `/pi model x`)
+// is a command echo, not a prompt. `/until <goal>` hands pi a goal, so it counts
+// as a prompt.
+function isCommandEchoText(text) {
+  const line = String(text || '').trim();
+  if (!line.startsWith('/') || line.includes('\n')) return false;
+  const raw = line.slice(1);
+  return state.commands.some(
+    (command) =>
+      command.name !== 'until goal' && (raw === command.name || raw.startsWith(`${command.name} `)),
+  );
+}
 createPromptPin({
   scroller: $('messages'),
+  isCommand: isCommandEchoText,
   // The turn being read began before the oldest loaded page: find its prompt.
   getEarlier: () => {
     if (!state.activeJid || state.selectionPending || !state.hasMore || !state.oldest) return null;
@@ -1773,7 +1786,9 @@ createPromptPin({
               jid,
             ),
           );
-          const prompt = events.findLast((event) => event.kind === 'message' && event.role === 'user');
+          const prompt = events.findLast(
+            (event) => event.kind === 'message' && event.role === 'user' && !isCommandEchoText(event.content),
+          );
           if (prompt) return prompt.content || '';
           if (!hasMore || !events.length) break;
           before = Math.min(...events.map((event) => event.id));

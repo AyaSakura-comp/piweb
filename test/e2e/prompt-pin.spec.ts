@@ -17,8 +17,10 @@ const prompts = [
   'Second question: why is the cache cold?\nIt should hit after the first turn.\nThird line of detail.',
 ];
 const events = prompts.flatMap((content, index) => [
-  { id: index * 2 + 1, kind: 'message', role: 'user', content, files: [], createdAt: '2026-01-01T00:00:00Z' },
-  { id: index * 2 + 2, kind: 'message', role: 'assistant', content: longReply, files: [], createdAt: '2026-01-01T00:00:01Z' },
+  { id: index * 3 + 1, kind: 'message', role: 'user', content, files: [], createdAt: '2026-01-01T00:00:00Z' },
+  // A header button's command echo is a user message, but not the turn's prompt.
+  { id: index * 3 + 2, kind: 'message', role: 'user', content: '/claude-usage', files: [], createdAt: '2026-01-01T00:00:01Z' },
+  { id: index * 3 + 3, kind: 'message', role: 'assistant', content: longReply, files: [], createdAt: '2026-01-01T00:00:01Z' },
 ]);
 
 function routes(page: import('playwright').Page) {
@@ -26,7 +28,8 @@ function routes(page: import('playwright').Page) {
     const path = decodeURIComponent(new URL(route.request().url()).pathname);
     if (route.request().method() === 'POST') return route.fulfill({ json: { ok: true } });
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
-    if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
+    if (path === '/api/commands')
+      return route.fulfill({ json: { commands: [{ name: 'claude-usage' }, { name: 'pi model' }] } });
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/sessions') return route.fulfill({ json: { sessions: [session] } });
     if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
@@ -95,6 +98,7 @@ test('a prompt on an older, unloaded page is fetched once and pinned', async ({ 
     { id: 10, kind: 'message', role: 'user', content: 'Old prompt\nsecond line', files: [], createdAt: '2026-01-01T00:00:00Z' },
     { id: 11, kind: 'message', role: 'assistant', content: 'early reply', files: [], createdAt: '2026-01-01T00:00:01Z' },
     { id: 12, kind: 'message', role: 'user', content: 'Long tool loop prompt\nwith detail', files: [], createdAt: '2026-01-01T00:00:01Z' },
+    { id: 13, kind: 'message', role: 'user', content: '/pi model openai-codex/gpt-6-luna', files: [], createdAt: '2026-01-01T00:00:02Z' },
   ];
   const befores: string[] = [];
   routes(page);
