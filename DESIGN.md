@@ -180,8 +180,10 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   不會加入主對話); a 6px accent dot marks live work. Right: trash icon
   (清除 BTW, with confirmation). Both actions are borderless 44×44px icon
   buttons with accessible names and tooltips; no boxed text buttons.
-- **Main view**: no persistent recipient row. While a BTW answer is pending, a
-  quiet 12px “BTW 回答中 ›” link shares the existing typing line and opens BTW.
+- **Main view**: no recipient row. A quiet 12px “BTW ›” link sits at the right
+  end of the typing line, directly above the composer, whenever the session can
+  use BTW (Pi models, not read-only); it reads “BTW 回答中 ›” while a side answer
+  is pending. Either opens BTW.
   The visually hidden `#btw-context-label` keeps the polite live announcement.
 - **Composer**: placeholder “問 BTW…”; the isolation note lives in the header.
 - **Motion**: horizontal `translateX` only, no rebound. Enter BTW 220ms and

@@ -1,6 +1,14 @@
 // One visible composer, two explicitly owned drafts. The Web bridge is fail-closed:
 // a side prompt is never allowed to fall through to the main message endpoint.
-export function createBtwWorkspace({ api, getSession, notify, buildMessage, streamRich, canReuseRich }) {
+export function createBtwWorkspace({
+  api,
+  getSession,
+  isAvailable = () => true,
+  notify,
+  buildMessage,
+  streamRich,
+  canReuseRich,
+}) {
   const byId = (id) => document.getElementById(id);
   const textarea = byId('input');
   const main = byId('messages');
@@ -56,22 +64,28 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage, stre
   });
   clear.setAttribute('aria-label', '清除 BTW 訊息');
   card.append(clear);
-  // Main view while a side answer is pending: a quiet link on the typing line.
+  // Main view: a quiet BTW entry on the typing line, right above the composer.
+  // It is always there for a Pi session and reads “BTW 回答中 ›” while a side
+  // answer is pending.
   const pendingRow = document.createElement('div');
   pendingRow.className = 'btw-pending-row';
   pendingRow.hidden = true;
   const pendingLink = Object.assign(document.createElement('button'), {
     type: 'button',
-    textContent: 'BTW 回答中 ›',
+    textContent: 'BTW ›',
   });
-  pendingLink.setAttribute('aria-label', '查看 BTW（回答中）');
+  pendingLink.setAttribute('aria-label', '開啟 BTW');
   pendingRow.append(pendingLink);
   const mainBlocked = () =>
     Boolean(byId('upload-progress') && !byId('upload-progress').hidden) || textarea.disabled;
   function renderControls() {
     send.disabled = target === 'btw' ? sideBusy() || clearing : mainBlocked();
     clear.disabled = sideBusy() || clearing || opening;
-    pendingRow.hidden = !(target === 'main' && sideBusy() && owner);
+    const session = getSession();
+    const pendingHere = sideBusy() && Boolean(owner) && owner === session?.key;
+    pendingRow.hidden = !(target === 'main' && session && !session.readOnly && isAvailable());
+    pendingLink.textContent = pendingHere ? 'BTW 回答中 ›' : 'BTW ›';
+    pendingLink.setAttribute('aria-label', pendingHere ? '查看 BTW（回答中）' : '開啟 BTW');
     contextLabel.textContent =
       target === 'main'
         ? `Main agent${sideBusy() ? ' · BTW 回答中' : ''}`
@@ -604,9 +618,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage, stre
     item.focus({ preventScroll: true });
   });
   pendingLink.addEventListener('click', () => {
-    if (!owner || owner !== key()) return;
-    setTarget('btw');
-    back.focus({ preventScroll: true });
+    void open();
   });
   byId('composer').addEventListener('submit', submit, true);
   // Capture before the main editor's keyboard slash/submit handlers run.
@@ -645,6 +657,7 @@ export function createBtwWorkspace({ api, getSession, notify, buildMessage, stre
       renderControls();
     },
     isSide: () => target === 'btw',
+    refresh: renderControls,
     close: goMain,
   };
 }

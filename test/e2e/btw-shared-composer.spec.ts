@@ -239,7 +239,38 @@ for (const model of ['agy/gemini-3-pro', 'claude-code/opus']) {
     await page.locator('#btn-more').click();
     await expect(page.locator('#more-menu')).toBeVisible();
     await expect(page.locator('#mi-btw')).toBeHidden();
+    await expect(page.getByRole('button', { name: '開啟 BTW' })).toBeHidden();
     expect(calls.filter((p) => p.endsWith('/btw'))).toEqual([]);
+  });
+}
+
+for (const busy of [true, false]) {
+  test(`main view always offers BTW above the composer (main ${busy ? 'busy' : 'idle'})`, async ({
+    page,
+  }, info) => {
+    routes(page, true, { ...session, busy });
+    await page.goto('/');
+    await expect(page.getByText('Main message')).toBeVisible();
+    const entry = page.getByRole('button', { name: '開啟 BTW' });
+    await expect(entry).toBeVisible();
+    await expect(entry).toHaveText('BTW ›');
+    // Right end of the line just above the composer, on the typing row when it shows.
+    const box = (await entry.boundingBox())!;
+    const composer = (await page.locator('#composer-wrap').boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(composer.y + 1);
+    expect(composer.y - (box.y + box.height)).toBeLessThan(12);
+    expect(box.x + box.width).toBeGreaterThan(390 - 40);
+    if (busy) {
+      const typing = (await page.locator('#typing').boundingBox())!;
+      expect(Math.abs(typing.y + typing.height / 2 - (box.y + box.height / 2))).toBeLessThan(8);
+    }
+    await page.screenshot({ path: info.outputPath(`btw-entry-${busy ? 'busy' : 'idle'}.png`) });
+    await entry.click();
+    await expect(page.locator('#btw-card')).toBeVisible();
+    await expect(page.locator('#btw-messages')).toContainText('BTW answer');
+    await expect(entry).toBeHidden();
+    await page.locator('#btw-back').click();
+    await expect(entry).toBeVisible();
   });
 }
 

@@ -1761,6 +1761,7 @@ const btwWorkspace = createBtwWorkspace({
     key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
     readOnly: state.previewingDeleted || state.mode === 'life',
   } : null,
+  isAvailable: () => isPiBtwSession(),
   notify: (message) => showToast(message),
   buildMessage: (message) => buildEventNode({
     kind: 'message', role: message.role, content: message.content,
@@ -1815,6 +1816,7 @@ function isPiBtwSession() {
 function syncBtwAvailability() {
   const available = isPiBtwSession();
   $('mi-btw').hidden = !available;
+  btwWorkspace.refresh();
   if (!available && btwWorkspace.isSide()) {
     btwWorkspace.close();
     showToast('BTW 僅支援 Pi 模型，已回主對話');
