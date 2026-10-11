@@ -1536,7 +1536,10 @@ svg {
 .btw-pending-row { display: flex; justify-content: flex-end; height: 25px; padding: 0 8px; flex: none; pointer-events: none; }
 .typing:not([hidden]) + .btw-pending-row { margin-top: -27px; }
 .btw-pending-row button {
+  position: relative;
   pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   min-width: 44px;
   padding: 0 8px;
   border: 0;
@@ -1547,6 +1550,8 @@ svg {
   font-size: 12px;
 }
 .btw-pending-row button:active { background: var(--bg-hover); }
+/* The row is 25px so it can share the typing line; the touch target is 44px. */
+.btw-pending-row button::after { content: ''; position: absolute; inset: -10px 0 -9px; }
 .btw-waiting {
   display: flex;
   align-items: center;

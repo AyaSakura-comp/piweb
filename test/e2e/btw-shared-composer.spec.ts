@@ -752,3 +752,25 @@ test('a BTW answer restored from an earlier page load streams its text', async (
   await expect(side.locator('.msg')).toHaveCount(4);
   await expect(page.locator('#btw-card')).not.toContainText('BTW 回答中');
 });
+
+test('a touch tap on the BTW switch toggles exactly once each way, across its 44px target', async ({
+  page,
+}) => {
+  routes(page, true, { ...session, busy: false });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  const entry = page.getByRole('button', { name: '開啟 BTW' });
+  const box = (await entry.boundingBox())!;
+  // Just above the 25px row, still inside the 44px touch target.
+  await page.touchscreen.tap(box.x + box.width / 2, box.y - 7);
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+  // The click synthesized after the touch must not switch straight back.
+  await page.waitForTimeout(400);
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.getByRole('button', { name: '返回主對話' }).tap();
+  await expect(page.locator('#btw-card')).toBeHidden();
+  await page.waitForTimeout(400);
+  await expect(page.locator('#btw-card')).toBeHidden();
+  await expect(entry).toBeVisible();
+});

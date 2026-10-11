@@ -84,12 +84,12 @@ export function createBtwWorkspace({
     const pendingHere = sideBusy() && Boolean(owner) && owner === session?.key;
     pendingRow.hidden =
       target === 'main' ? !(session && !session.readOnly && isAvailable()) : false;
-    pendingLink.textContent =
-      target === 'btw' ? '‹ 主對話' : pendingHere ? 'BTW 回答中 ›' : 'BTW ›';
-    pendingLink.setAttribute(
-      'aria-label',
-      target === 'btw' ? '返回主對話' : pendingHere ? '查看 BTW（回答中）' : '開啟 BTW',
-    );
+    // Write only on change: rewriting the text under a finger mid-tap is a
+    // content change iOS Safari may answer by dropping the click.
+    const text = target === 'btw' ? '‹ 主對話' : pendingHere ? 'BTW 回答中 ›' : 'BTW ›';
+    const label = target === 'btw' ? '返回主對話' : pendingHere ? '查看 BTW（回答中）' : '開啟 BTW';
+    if (pendingLink.textContent !== text) pendingLink.textContent = text;
+    if (pendingLink.getAttribute('aria-label') !== label) pendingLink.setAttribute('aria-label', label);
     contextLabel.textContent =
       target === 'main'
         ? `Main agent${sideBusy() ? ' · BTW 回答中' : ''}`
@@ -621,9 +621,30 @@ export function createBtwWorkspace({
     goMain();
     item.focus({ preventScroll: true });
   });
-  pendingLink.addEventListener('click', () => {
+  const switchView = () => {
     if (target === 'btw') goMain();
     else void open();
+  };
+  // A touch switches on lift rather than waiting for the synthesized click,
+  // which iOS can withhold; the click that may follow is then ignored.
+  let tapStart = null;
+  let tapHandledAt = 0;
+  pendingLink.addEventListener('pointerdown', (event) => {
+    tapStart = event.pointerType === 'mouse' ? null : { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  pendingLink.addEventListener('pointercancel', () => (tapStart = null));
+  pendingLink.addEventListener('pointerup', (event) => {
+    const start = tapStart;
+    tapStart = null;
+    if (!start || start.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) return;
+    event.preventDefault();
+    tapHandledAt = event.timeStamp;
+    switchView();
+  });
+  pendingLink.addEventListener('click', (event) => {
+    if (tapHandledAt && event.timeStamp - tapHandledAt < 800) return;
+    switchView();
   });
   byId('composer').addEventListener('submit', submit, true);
   // Capture before the main editor's keyboard slash/submit handlers run.
