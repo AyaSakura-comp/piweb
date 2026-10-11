@@ -176,8 +176,10 @@ the top of the transcript, directly under the header (`public/prompt-pin.js`).
 - **Which prompt**: the last user message whose row starts above the
   transcript's top edge, so it follows the reader turn by turn. Slash-command
   echoes (`/claude-usage`, `/pi model …`; not `/until <goal>`) are not prompts
-  and are skipped. Recomputed per animation frame on scroll, resize and
-  transcript changes.
+  and are skipped. Recomputed (at most once per animation frame) on scroll,
+  resize, any change inside the transcript (subtree mutations, image `load`,
+  `details` toggle, font loading): rows also move without a scroll while
+  replies render, and a pin computed only on scroll went stale.
 - **Sticky-header hand-off**: the next prompt's own row pushes the bar up and
   out of its clip once it comes within the bar's height (the bar's bottom edge
   rides on the row's top edge), so scrolling up a prompt settles back into its
