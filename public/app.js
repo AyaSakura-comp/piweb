@@ -28,6 +28,7 @@ import {
 } from './image-compression.js';
 import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
+import { createPromptPin } from './prompt-pin.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1754,6 +1755,7 @@ function isMenuOpen() {
   return !$('more-menu').hidden;
 }
 
+createPromptPin({ scroller: $('messages') });
 const btwWorkspace = createBtwWorkspace({
   api,
   getSession: () => state.activeJid && !state.selectionPending ? {
@@ -2991,6 +2993,7 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     );
 
     if (isUser) {
+      row.dataset.prompt = event.content || '';
       const avatar = el('div', 'avatar', 'U');
       row.append(avatar);
 

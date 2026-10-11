@@ -168,6 +168,26 @@ The existing palette and composer/viewer controls are unchanged. See
 [render-first reply reveal](docs/render-reveal.md) for software architecture,
 component/state ownership, the live-to-final workflow, buffering and evidence limits.
 
+## Pinned prompt
+
+While reading a turn whose prompt has scrolled away, that prompt is pinned to
+the top of the transcript, directly under the header (`public/prompt-pin.js`).
+
+- **Which prompt**: the last user message whose text starts above the
+  transcript's top edge, so it follows the reader turn by turn and disappears
+  once the prompt's own first line is back in view. Recomputed per animation
+  frame on scroll, resize and transcript changes.
+- **Folded (default)**: one line, the prompt's first non-empty line with an
+  ellipsis, on the `--bg` surface with a bottom border; 44px tall. It overlays
+  the transcript instead of pushing it, so appearing never moves the reading
+  position.
+- **Expanded**: a tap shows the whole prompt with its line breaks, up to
+  `min(40dvh, 320px)` and scrolling inside beyond that; a second tap folds it.
+  The bar is a `role="button"` div (Enter/Space too), not a `<button>`, because
+  iOS does not scroll content inside a native button. Reaching another turn's
+  prompt folds it again.
+- Hidden in the BTW view; it belongs to the main transcript.
+
 ## BTW side conversation
 
 BTW reuses the main shell and the single composer; only the transcript and a
