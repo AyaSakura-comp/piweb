@@ -1,6 +1,10 @@
-// Pins the prompt of the turn being read to the top of the transcript once its
-// first line has scrolled away. Collapsed it shows only that first line; a tap
-// expands the whole prompt in place, and another tap folds it again.
+// Pins the prompt of the turn being read to the top of the transcript once it
+// has scrolled away. Collapsed it shows only its first line; a tap expands the
+// whole prompt in place, and another tap folds it again.
+//
+// It behaves like a sticky section header: the next prompt's own row pushes the
+// pinned bar up and out as it reaches the top, and scrolling back up, the row
+// settles into its place while the previous prompt is pushed back down.
 //
 // A long tool loop can push its prompt onto an older page that is not loaded.
 // `getEarlier()` then names that boundary ({ key, load }) and `load()` fetches
@@ -16,7 +20,6 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   bar.tabIndex = 0;
   bar.id = 'prompt-pin';
   bar.className = 'prompt-pin';
-  bar.hidden = true;
   bar.setAttribute('aria-expanded', 'false');
   const text = document.createElement('span');
   text.className = 'prompt-pin-text';
@@ -25,7 +28,13 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   chevron.setAttribute('aria-hidden', 'true');
   chevron.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>';
   bar.append(text, chevron);
-  scroller.before(bar);
+  // The clip is the strip under the header; pushing the bar up slides it out
+  // of the strip rather than over the header.
+  const clip = document.createElement('div');
+  clip.className = 'prompt-pin-clip';
+  clip.hidden = true;
+  clip.append(bar);
+  scroller.before(clip);
 
   let current = null;
   let prompt = '';
@@ -42,22 +51,25 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     text.textContent = next ? prompt : prompt.split('\n').find((line) => line.trim()) || '';
   }
 
-  /** The last user prompt whose first line is above the transcript's top edge. */
-  function promptAbove() {
-    const top = scroller.getBoundingClientRect().top + 4;
-    const rows = scroller.querySelectorAll('.msg.msg-user');
-    for (let index = rows.length - 1; index >= 0; index--) {
-      if (isCommand(rows[index].dataset.prompt || '')) continue;
-      const line = rows[index].querySelector('.msg-text') || rows[index];
-      if (line.getBoundingClientRect().top < top) return rows[index];
+  /** Prompt rows (command echoes excluded), split at the transcript's top edge. */
+  function promptRows() {
+    const top = scroller.getBoundingClientRect().top;
+    let above = null;
+    let below = null;
+    for (const row of scroller.querySelectorAll('.msg.msg-user')) {
+      if (isCommand(row.dataset.prompt || '')) continue;
+      const offset = row.getBoundingClientRect().top - top;
+      if (offset < 0.5) above = row;
+      else {
+        below = { row, offset };
+        break;
+      }
     }
-    return null;
+    return { above, below };
   }
 
   /** Prompt (and identity) of the turn being read, or null when unknown yet. */
-  function resolve() {
-    if (scroller.hidden || !scroller.isConnected) return null;
-    const row = promptAbove();
+  function resolve(row) {
     if (row) return { id: row, prompt: row.dataset.prompt?.trim() || '' };
     const boundary = getEarlier();
     if (!boundary) return null;
@@ -78,12 +90,13 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
 
   function update() {
     frame = 0;
-    const found = resolve();
+    const rows = scroller.hidden || !scroller.isConnected ? null : promptRows();
+    const found = rows && resolve(rows.above);
     const row = found?.id;
     const next = found?.prompt || '';
     if (!row || !next) {
       current = null;
-      bar.hidden = true;
+      clip.hidden = true;
       return;
     }
     if (row !== current || next !== prompt) {
@@ -91,8 +104,15 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
       prompt = next;
       setExpanded(false);
     }
-    bar.style.top = `${scroller.offsetTop}px`;
-    bar.hidden = false;
+    clip.style.top = `${scroller.offsetTop}px`;
+    clip.hidden = false;
+    // The next prompt's row pushes the bar up as it comes within its height.
+    const height = bar.offsetHeight;
+    const push = rows.below && rows.below.offset < height ? height - rows.below.offset : 0;
+    bar.style.transform = push ? `translateY(${-push}px)` : '';
+    bar.inert = height > 0 && push >= height;
+    // Its shadow would linger at the top edge once the bar is pushed out.
+    bar.classList.toggle('pushed', push > 0);
   }
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(update);

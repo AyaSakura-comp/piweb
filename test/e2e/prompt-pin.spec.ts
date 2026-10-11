@@ -142,3 +142,54 @@ test('a prompt on an older, unloaded page is fetched once and pinned', async ({ 
   await page.waitForTimeout(300);
   expect(befores.filter((value) => value === '100')).toHaveLength(1);
 });
+
+test('the next prompt pushes the pin out like a sticky header, and scrolling up pushes the previous one back in', async ({
+  page,
+}, info) => {
+  routes(page);
+  await page.goto('/');
+  await expect(page.getByText('First question about the build')).toBeVisible();
+  const pin = page.locator('#prompt-pin');
+  const messages = page.locator('#messages');
+  // Put the second prompt's row `gap` px below the transcript's top edge.
+  const place = async (gap: number) => {
+    await messages.evaluate((node, g) => {
+      const rows = [...node.querySelectorAll('.msg.msg-user')].filter((row) => !row.textContent?.includes('/claude-usage'));
+      const second = rows[1] as HTMLElement;
+      node.scrollTop += second.getBoundingClientRect().top - node.getBoundingClientRect().top - g;
+    }, gap);
+    await page.waitForTimeout(80);
+    const top = (await messages.boundingBox())!.y;
+    const second = (await page.locator('.msg.msg-user', { hasText: 'Second question' }).boundingBox())!;
+    const bar = (await pin.boundingBox())!;
+    return { top, rowTop: second.y, barTop: bar.y, barBottom: bar.y + bar.height, text: await pin.locator('.prompt-pin-text').innerText() };
+  };
+
+  // Far below: the first prompt is pinned, untouched.
+  let at = await place(200);
+  expect(at.text).toBe('First question about the build');
+  expect(Math.abs(at.barTop - at.top)).toBeLessThan(1);
+
+  // Within the bar's height: the second prompt's row pushes the bar up; the
+  // bar's bottom edge rides on the row's top edge.
+  for (const gap of [30, 15, 4]) {
+    at = await place(gap);
+    expect(at.text).toBe('First question about the build');
+    expect(Math.abs(at.barBottom - at.rowTop)).toBeLessThan(1.5);
+    expect(at.barTop).toBeLessThan(at.top);
+    if (gap === 15) await page.screenshot({ path: info.outputPath('prompt-pin-pushed.png'), clip: { x: 0, y: 0, width: 390, height: 200 } });
+  }
+
+  // Past the edge: the second prompt is pinned.
+  at = await place(-40);
+  expect(at.text).toBe('Second question: why is the cache cold?');
+  expect(Math.abs(at.barTop - at.top)).toBeLessThan(1);
+
+  // Back up again: the second prompt's row settles into its place and the
+  // first prompt is pushed back down into the pin.
+  at = await place(25);
+  expect(at.text).toBe('First question about the build');
+  expect(Math.abs(at.barBottom - at.rowTop)).toBeLessThan(1.5);
+  at = await place(120);
+  expect(Math.abs(at.barTop - at.top)).toBeLessThan(1);
+});

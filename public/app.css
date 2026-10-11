@@ -1534,12 +1534,21 @@ svg {
 }
 /* Main view while a BTW answer is pending: one quiet link on the typing line. */
 /* The prompt of the turn being read, pinned under the header: one line folded,
-   the whole prompt when tapped. Overlays the transcript so it never shifts it. */
-.prompt-pin {
+   the whole prompt when tapped. Overlays the transcript so it never shifts it,
+   and the next prompt's row pushes it up out of this clip like a sticky header. */
+.prompt-pin-clip {
   position: absolute;
   left: 0;
   right: 0;
   z-index: 5;
+  overflow: hidden;
+  padding-bottom: 12px; /* room for the bar's shadow */
+  pointer-events: none;
+  /* Own compositing layer: iOS can otherwise paint the momentum-scrolling
+     transcript over this overlay, so the text below shows through. */
+  transform: translateZ(0);
+}
+.prompt-pin {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1553,13 +1562,10 @@ svg {
   line-height: 20px;
   text-align: left;
   cursor: pointer;
+  pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.6);
-  /* Own compositing layer: iOS can otherwise paint the momentum-scrolling
-     transcript over this overlay, so the text below shows through. */
-  transform: translateZ(0);
-  will-change: transform;
 }
 /* --bg-hover is translucent: tint OVER the opaque surface, never instead of it,
    or the transcript shows through while the bar is held. */
@@ -1583,8 +1589,9 @@ svg {
 .prompt-pin-chevron { flex: none; display: flex; width: 20px; height: 20px; color: var(--text-dim); transition: transform 160ms ease; }
 .prompt-pin-chevron svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .prompt-pin.expanded .prompt-pin-chevron { transform: rotate(180deg); }
+.prompt-pin.pushed { box-shadow: none; }
 @media (prefers-reduced-motion: reduce) { .prompt-pin-chevron { transition: none; } }
-.app.btw-active .prompt-pin { display: none !important; }
+.app.btw-active .prompt-pin-clip { display: none !important; }
 .btw-pending-row { display: flex; justify-content: flex-end; height: 25px; padding: 0 8px; flex: none; pointer-events: none; }
 .typing:not([hidden]) + .btw-pending-row { margin-top: -27px; }
 .btw-pending-row button {

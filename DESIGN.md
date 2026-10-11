@@ -173,10 +173,16 @@ component/state ownership, the live-to-final workflow, buffering and evidence li
 While reading a turn whose prompt has scrolled away, that prompt is pinned to
 the top of the transcript, directly under the header (`public/prompt-pin.js`).
 
-- **Which prompt**: the last user message whose text starts above the
-  transcript's top edge, so it follows the reader turn by turn and disappears
-  once the prompt's own first line is back in view. Recomputed per animation
-  frame on scroll, resize and transcript changes.
+- **Which prompt**: the last user message whose row starts above the
+  transcript's top edge, so it follows the reader turn by turn. Slash-command
+  echoes (`/claude-usage`, `/pi model …`; not `/until <goal>`) are not prompts
+  and are skipped. Recomputed per animation frame on scroll, resize and
+  transcript changes.
+- **Sticky-header hand-off**: the next prompt's own row pushes the bar up and
+  out of its clip once it comes within the bar's height (the bar's bottom edge
+  rides on the row's top edge), so scrolling up a prompt settles back into its
+  original place while the previous prompt is pushed back down into the pin.
+  The shadow is dropped while pushed, and a fully pushed-out bar is inert.
   When that prompt is on an older page that is not loaded (a long tool loop
   fills the newest page), the latest user message before the oldest loaded
   event is fetched through `/events?before=` (up to 5×200 events), once per
@@ -190,6 +196,9 @@ the top of the transcript, directly under the header (`public/prompt-pin.js`).
   The bar is a `role="button"` div (Enter/Space too), not a `<button>`, because
   iOS does not scroll content inside a native button. Reaching another turn's
   prompt folds it again.
+- Pressed, the translucent `--bg-hover` tint is layered over `--bg`, never in
+  place of it, so the transcript cannot show through a held bar. The clip sits
+  on its own compositing layer (`translateZ(0)`) for iOS momentum scrolling.
 - Hidden in the BTW view; it belongs to the main transcript.
 
 ## BTW side conversation
