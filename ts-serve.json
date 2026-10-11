@@ -1,9 +1,30 @@
 {
-  "TCP": { "443": { "HTTPS": true } },
-  "Web": {
-    "piweb.crayfish-monitor.ts.net:443": {
-      "Handlers": { "/": { "Proxy": "http://127.0.0.1:8099" } }
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    },
+    "8443": {
+      "HTTPS": true
     }
   },
-  "AllowFunnel": { "piweb.crayfish-monitor.ts.net:443": true }
+  "Web": {
+    "piweb.crayfish-monitor.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8099"
+        }
+      }
+    },
+    "piweb.crayfish-monitor.ts.net:8443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://172.24.0.1:8792"
+        }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "piweb.crayfish-monitor.ts.net:443": true,
+    "piweb.crayfish-monitor.ts.net:8443": true
+  }
 }
