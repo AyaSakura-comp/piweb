@@ -185,6 +185,11 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   use BTW (Pi models, not read-only); it reads “BTW 回答中 ›” while a side answer
   is pending. Either opens BTW. In the BTW view the same spot reads “‹ 主對話”
   and returns to the main transcript, mirroring the header's back icon.
+  The row stays 25px so it can share the typing line, but the link's touch
+  target is 44px tall (`::after`). A touch switches on `pointerup` (≤10px of
+  movement) and the click synthesized after it is ignored, because iOS Safari
+  can withhold that click; the label is only rewritten when it changes, so a
+  tap is never followed by a content change under the finger.
   The visually hidden `#btw-context-label` keeps the polite live announcement.
 - **Composer**: placeholder “問 BTW…”; the isolation note lives in the header.
 - **Motion**: horizontal `translateX` only, no rebound. Enter BTW 220ms and
