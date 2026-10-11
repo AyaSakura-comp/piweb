@@ -51,17 +51,23 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     text.textContent = next ? prompt : prompt.split('\n').find((line) => line.trim()) || '';
   }
 
-  /** Prompt rows (command echoes excluded), split at the transcript's top edge. */
+  /**
+   * Prompt rows (command echoes excluded), split at the transcript's top edge.
+   * A row counts as scrolled past only once its first line of text is above
+   * the edge: a just-sent prompt is placed flush with the edge, and its own
+   * "You" line and text must stay visible, not be covered by its own pin.
+   * The next row's push still follows the row's top edge.
+   */
   function promptRows() {
     const top = scroller.getBoundingClientRect().top;
     let above = null;
     let below = null;
     for (const row of scroller.querySelectorAll('.msg.msg-user')) {
       if (isCommand(row.dataset.prompt || '')) continue;
-      const offset = row.getBoundingClientRect().top - top;
-      if (offset < 0.5) above = row;
+      const line = row.querySelector('.msg-text') || row;
+      if (line.getBoundingClientRect().top - top < 0.5) above = row;
       else {
-        below = { row, offset };
+        below = { row, offset: row.getBoundingClientRect().top - top };
         break;
       }
     }
@@ -108,7 +114,7 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     clip.hidden = false;
     // The next prompt's row pushes the bar up as it comes within its height.
     const height = bar.offsetHeight;
-    const push = rows.below && rows.below.offset < height ? height - rows.below.offset : 0;
+    const push = rows.below && rows.below.offset < height ? Math.min(height, height - rows.below.offset) : 0;
     bar.style.transform = push ? `translateY(${-push}px)` : '';
     bar.inert = height > 0 && push >= height;
     // Its shadow would linger at the top edge once the bar is pushed out.

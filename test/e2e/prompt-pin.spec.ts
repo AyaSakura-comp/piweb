@@ -227,3 +227,28 @@ test('the pin follows rows that move without a scroll (layout changes)', async (
   });
   await expect(pin).toHaveText('First question about the build');
 });
+
+test('a prompt placed flush with the top edge (just sent) is not covered by its own pin', async ({ page }, info) => {
+  routes(page);
+  await page.goto('/');
+  await expect(page.getByText('First question about the build')).toBeVisible();
+  const messages = page.locator('#messages');
+  // Where the send scroll puts a new prompt: its row a hair above the edge.
+  await messages.evaluate((node) => {
+    const second = [...node.querySelectorAll('.msg.msg-user')].find((row) => row.textContent?.includes('Second question'))!;
+    node.scrollTop += second.getBoundingClientRect().top - node.getBoundingClientRect().top + 0.9;
+  });
+  await page.waitForTimeout(200);
+  const state = await page.locator('.msg.msg-user', { hasText: 'Second question' }).evaluate((node) => {
+    const head = node.querySelector('.msg-head')!.getBoundingClientRect();
+    const text = node.querySelector('.msg-text')!.getBoundingClientRect();
+    const hitHead = document.elementFromPoint(head.left + 10, head.top + head.height / 2);
+    const hitText = document.elementFromPoint(text.left + 10, text.top + 8);
+    return { head: node.contains(hitHead), text: node.contains(hitText) };
+  });
+  await page.screenshot({ path: info.outputPath('prompt-pin-flush.png'), clip: { x: 0, y: 0, width: 390, height: 200 } });
+  expect(state).toEqual({ head: true, text: true });
+  // Once its first line scrolls past, it is pinned as usual.
+  await messages.evaluate((node) => node.scrollBy(0, 60));
+  await expect(page.locator('#prompt-pin')).toHaveText('Second question: why is the cache cold?');
+});
