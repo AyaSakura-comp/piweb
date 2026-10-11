@@ -67,6 +67,22 @@ test('the prompt of the turn being read pins one line under the header and expan
   expect(folded.height).toBeLessThanOrEqual(46);
   await page.screenshot({ path: info.outputPath('prompt-pin-folded.png') });
 
+  // Held down, the bar stays opaque: the tint sits over --bg, not instead of it.
+  const pinBox = (await pin.boundingBox())!;
+  await page.mouse.move(pinBox.x + pinBox.width / 2, pinBox.y + pinBox.height / 2);
+  await page.mouse.down();
+  const pressed = await pin.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { color: style.backgroundColor, image: style.backgroundImage, active: node.matches(':active') };
+  });
+  await page.screenshot({ path: info.outputPath('prompt-pin-pressed.png'), clip: { x: 0, y: 0, width: 390, height: 160 } });
+  await page.mouse.up();
+  expect(pressed.active).toBe(true);
+  expect(pressed.color).toMatch(/^rgb\(/);
+  expect(pressed.image).toContain('gradient');
+  await expect(pin).toHaveAttribute('aria-expanded', 'true');
+  await pin.tap();
+  await expect(pin).toHaveAttribute('aria-expanded', 'false');
   await pin.tap();
   await expect(pin).toHaveAttribute('aria-expanded', 'true');
   const opened = (await pin.boundingBox())!;

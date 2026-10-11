@@ -1561,7 +1561,9 @@ svg {
   transform: translateZ(0);
   will-change: transform;
 }
-.prompt-pin:active { background: var(--bg-hover); }
+/* --bg-hover is translucent: tint OVER the opaque surface, never instead of it,
+   or the transcript shows through while the bar is held. */
+.prompt-pin:active { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg); }
 .prompt-pin-text {
   flex: 1;
   min-width: 0;
