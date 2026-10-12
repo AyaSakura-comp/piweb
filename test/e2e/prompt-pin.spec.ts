@@ -180,8 +180,18 @@ test('the next prompt pushes the pin out like a sticky header, and scrolling up 
     if (gap === 15) await page.screenshot({ path: info.outputPath('prompt-pin-pushed.png'), clip: { x: 0, y: 0, width: 390, height: 200 } });
   }
 
-  // Past the edge: the second prompt is pinned.
-  at = await place(-40);
+  // Its text just past the edge: the second prompt's bar slides down in, its
+  // bottom edge as far below the edge as the text has gone above it.
+  const textTop = await page
+    .locator('.msg.msg-user', { hasText: 'Second question' })
+    .evaluate((row) => row.querySelector('.msg-text')!.getBoundingClientRect().top - row.getBoundingClientRect().top);
+  at = await place(-(textTop + 15));
+  expect(at.text).toBe('Second question: why is the cache cold?');
+  expect(Math.abs(at.barBottom - at.top - 15)).toBeLessThan(1.5);
+  await page.screenshot({ path: info.outputPath('prompt-pin-entering.png'), clip: { x: 0, y: 0, width: 390, height: 200 } });
+
+  // Further past: fully in.
+  at = await place(-(textTop + 80));
   expect(at.text).toBe('Second question: why is the cache cold?');
   expect(Math.abs(at.barTop - at.top)).toBeLessThan(1);
 

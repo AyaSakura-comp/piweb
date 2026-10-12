@@ -3,8 +3,8 @@
 // whole prompt in place, and another tap folds it again.
 //
 // It behaves like a sticky section header: the next prompt's own row pushes the
-// pinned bar up and out as it reaches the top, and scrolling back up, the row
-// settles into its place while the previous prompt is pushed back down.
+// pinned bar up and out as it reaches the top, and its own bar slides down in
+// as the row's text scrolls past; scrolling back up runs the same in reverse.
 //
 // A long tool loop can push its prompt onto an older page that is not loaded.
 // `getEarlier()` then names that boundary ({ key, load }) and `load()` fetches
@@ -65,7 +65,8 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     for (const row of scroller.querySelectorAll('.msg.msg-user')) {
       if (isCommand(row.dataset.prompt || '')) continue;
       const line = row.querySelector('.msg-text') || row;
-      if (line.getBoundingClientRect().top - top < 0.5) above = row;
+      const offset = line.getBoundingClientRect().top - top;
+      if (offset < 0.5) above = { row, past: -offset };
       else {
         below = { row, offset: row.getBoundingClientRect().top - top };
         break;
@@ -97,7 +98,7 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   function update() {
     frame = 0;
     const rows = scroller.hidden || !scroller.isConnected ? null : promptRows();
-    const found = rows && resolve(rows.above);
+    const found = rows && resolve(rows.above?.row);
     const row = found?.id;
     const next = found?.prompt || '';
     if (!row || !next) {
@@ -112,9 +113,13 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     }
     clip.style.top = `${scroller.offsetTop}px`;
     clip.hidden = false;
-    // The next prompt's row pushes the bar up as it comes within its height.
+    // The next prompt's row pushes the bar up as it comes within its height,
+    // and the pinned prompt's own bar slides down into place as that prompt's
+    // text scrolls past the edge, rather than popping in over it.
     const height = bar.offsetHeight;
-    const push = rows.below && rows.below.offset < height ? Math.min(height, height - rows.below.offset) : 0;
+    const out = rows.below && rows.below.offset < height ? height - rows.below.offset : 0;
+    const enter = rows.above && rows.above.past < height ? height - rows.above.past : 0;
+    const push = Math.min(height, Math.max(out, enter));
     bar.style.transform = push ? `translateY(${-push}px)` : '';
     bar.inert = height > 0 && push >= height;
     // Its shadow would linger at the top edge once the bar is pushed out.

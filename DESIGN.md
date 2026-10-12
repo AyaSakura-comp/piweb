@@ -186,7 +186,10 @@ the top of the transcript, directly under the header (`public/prompt-pin.js`).
   out of its clip once it comes within the bar's height (the bar's bottom edge
   rides on the row's top edge), so scrolling up a prompt settles back into its
   original place while the previous prompt is pushed back down into the pin.
-  The shadow is dropped while pushed, and a fully pushed-out bar is inert.
+  The new prompt's own bar does not pop in: it slides down from the edge as
+  that prompt's text scrolls above it (bar bottom = how far the text has gone
+  past), fully in once the text is a bar's height past. It is scroll-linked,
+  not timed, so it reverses exactly when scrolling back. The shadow is dropped while pushed, and a fully pushed-out bar is inert.
   When that prompt is on an older page that is not loaded (a long tool loop
   fills the newest page), the latest user message before the oldest loaded
   event is fetched through `/events?before=` (up to 5×200 events), once per
