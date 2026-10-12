@@ -525,6 +525,23 @@ for (const desktop of [false, true]) {
       await expect(page.locator('#lightbox')).toBeVisible();
       await page.locator('#lb-close').click();
       await expect(page.locator('#attachments .chip-image')).toHaveCount(1);
+      // Confirming an edit of a pending attachment replaces it in place: the
+      // old copy does not stay behind as a second attachment.
+      const before = await page.locator('#attachments img').getAttribute('src');
+      await page.locator('#attachments img').click();
+      await present(page);
+      await edit.click();
+      await expect(confirm).toBeEnabled();
+      await page.getByRole('button', { name: '紅色', exact: true }).click();
+      await draw(page, !desktop);
+      const redrawn = await centerPixel(canvas);
+      expect(redrawn[0]).toBeGreaterThan(redrawn[2]);
+      await reachable(confirm);
+      await confirm.click();
+      await expect(dialog).not.toBeVisible();
+      await expect(page.locator('#lightbox')).toBeHidden();
+      await expect(page.locator('#attachments .chip-image')).toHaveCount(1);
+      expect(await page.locator('#attachments img').getAttribute('src')).not.toBe(before);
       await reachable(page.locator('#btn-send'));
       await present(page);
       await page.locator('#btn-send').click();
@@ -558,7 +575,7 @@ for (const desktop of [false, true]) {
           c.getContext('2d')!.drawImage(img, 0, 0);
           return [...c.getContext('2d')!.getImageData(c.width / 2, c.height / 2, 1, 1).data];
         }),
-      ).toEqual(drawn);
+      ).toEqual(redrawn);
       await sentImage.scrollIntoViewIfNeeded();
       await present(page);
       await page.screenshot({ path: info.outputPath('05-sent.png'), animations: 'disabled' });

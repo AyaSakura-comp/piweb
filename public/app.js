@@ -3543,6 +3543,21 @@ function addFiles(fileList, { camera = false } = {}) {
   if (added > 0) renderAttachments();
 }
 
+/** Swaps an attachment's file (an annotated copy) while keeping its place. */
+function replaceAttachment(i, file) {
+  const old = state.attachments[i];
+  if (!old || state.uploading) return;
+  const ext = MIME_EXT_MAP[file.type] || file.type.split('/')[1]?.split('+')[0] || 'bin';
+  state.attachments[i] = {
+    ...old,
+    name: file.name || `annotated-${Date.now()}.${ext}`,
+    file,
+    url: URL.createObjectURL(file),
+  };
+  if (old.url) URL.revokeObjectURL(old.url);
+  renderAttachments();
+}
+
 function removeAttachment(i) {
   if (state.uploading) return;
   const [gone] = state.attachments.splice(i, 1);
@@ -4035,7 +4050,11 @@ const imageAnnotator = createImageAnnotator({
   onConfirm: (file, destination) => {
     if (!canAnnotateImage() || state.activeJid !== destination.jid ||
       sessionSelectionGeneration !== destination.selection) return false;
-    addFiles([file]);
+    // Annotating an image still waiting in the composer replaces it in place;
+    // an image from the transcript is added as a new attachment.
+    const index = state.attachments.findIndex((a) => a.url && a.url === destination.source);
+    if (index >= 0) replaceAttachment(index, file);
+    else addFiles([file]);
     closeLightbox();
     return true;
   },
@@ -4044,7 +4063,7 @@ $('lb-annotate').addEventListener('click', () => {
   const url = lb.urls[lb.index];
   if (!url || isLightboxVideo(url) || !canAnnotateImage()) return;
   resetLightboxTransform(false);
-  void imageAnnotator.open(url, { jid: state.activeJid, selection: sessionSelectionGeneration });
+  void imageAnnotator.open(url, { jid: state.activeJid, selection: sessionSelectionGeneration, source: url });
 });
 
 function openLightbox(url, urls) {
