@@ -1556,7 +1556,10 @@ svg {
   min-height: 44px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  /* A grey surface, set apart from the transcript under it: --bg-hover's tint
+     over the opaque --bg (the tint is translucent; alone, the transcript would
+     show through). */
+  background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg);
   color: var(--text-2);
   font-size: 14px;
   line-height: 20px;
@@ -1567,9 +1570,8 @@ svg {
   -webkit-tap-highlight-color: transparent;
   box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.6);
 }
-/* --bg-hover is translucent: tint OVER the opaque surface, never instead of it,
-   or the transcript shows through while the bar is held. */
-.prompt-pin:active { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg); }
+/* Held down, a second tint layer, still over the opaque --bg. */
+.prompt-pin:active { background: linear-gradient(var(--bg-hover), var(--bg-hover)), linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg); }
 .prompt-pin-text {
   flex: 1;
   min-width: 0;
