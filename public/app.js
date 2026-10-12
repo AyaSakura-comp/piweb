@@ -983,13 +983,14 @@ function renderHeaderBadge() {
     return;
   }
   const session = state.sessions.find((s) => s.jid === state.activeJid);
-  if (!session || !session.badge || state.previewingDeleted) {
+  const badge = sessionBadge(session);
+  if (!session || !badge || state.previewingDeleted) {
     host.hidden = true;
     return;
   }
   host.hidden = false;
-  host.className = `provider-badge ${session.badge.kind}`;
-  host.textContent = session.badge.label;
+  host.className = `provider-badge ${badge.kind}`;
+  host.textContent = badge.label;
   host.title = session.runningModel || session.provider;
 }
 
@@ -1095,8 +1096,9 @@ function renderSessions(force = false) {
       item.append(name);
     }
 
-    if (session.badge) {
-      const badge = el('span', `provider-badge ${session.badge.kind}`, session.badge.label);
+    const sessionBadgeInfo = sessionBadge(session);
+    if (sessionBadgeInfo) {
+      const badge = el('span', `provider-badge ${sessionBadgeInfo.kind}`, sessionBadgeInfo.label);
       // The full model id is long; keep it to the tooltip/long-press.
       badge.title = session.runningModel || session.provider;
       item.append(badge);
@@ -2173,6 +2175,26 @@ async function awaitOverride(jid, ref, attempts = 6) {
   }
 }
 
+/**
+ * The Anthropic API (billed per token), apart from the Claude Code
+ * subscription's OPUS/SONNET/HAIKU: same family names with an "API:" prefix.
+ * Mirrors providerBadge() on the server.
+ */
+function anthropicBadge(modelRef = '') {
+  const id = modelRef.toLowerCase();
+  const family = ['opus', 'sonnet', 'haiku', 'fable'].find((name) => id.includes(name)) || 'claude';
+  return { label: `API:${family.toUpperCase()}`, kind: 'claude' };
+}
+
+/**
+ * A session's badge. The server sends it, but an Anthropic API session is
+ * labelled here too, so the label does not wait on a web image rebuild.
+ */
+function sessionBadge(session) {
+  if (session?.provider === 'anthropic') return anthropicBadge(session.runningModel || '');
+  return session?.badge || null;
+}
+
 /** Same labels the session badges use, so the two views agree. */
 function providerBadgeFor(provider, modelRef = '') {
   // The Codex GPT-5.6 line has three variants (Terra/Sol/Luna); show which one
@@ -2191,6 +2213,10 @@ function providerBadgeFor(provider, modelRef = '') {
     if (id.includes('haiku')) return el('span', 'provider-badge claude', 'HAIKU');
     if (id.includes('fable')) return el('span', 'provider-badge claude', 'FABLE');
     return el('span', 'provider-badge claude', 'CLAUDE');
+  }
+  if (provider === 'anthropic') {
+    const { label, kind } = anthropicBadge(modelRef);
+    return el('span', `provider-badge ${kind}`, label);
   }
   const map = {
     nvim: ['NV', 'nv'],

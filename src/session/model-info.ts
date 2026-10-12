@@ -131,6 +131,17 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       if (id.includes('fable')) return { label: 'FABLE', kind: 'claude' };
       return { label: 'CLAUDE', kind: 'claude' };
     }
+    case 'anthropic': {
+      // The Anthropic API directly (billed per token), as opposed to the
+      // tmux-backed Claude Code subscription above: same family names, with an
+      // "API:" prefix so the two read apart.
+      const id = modelId.toLowerCase();
+      if (id.includes('opus')) return { label: 'API:OPUS', kind: 'claude' };
+      if (id.includes('sonnet')) return { label: 'API:SONNET', kind: 'claude' };
+      if (id.includes('haiku')) return { label: 'API:HAIKU', kind: 'claude' };
+      if (id.includes('fable')) return { label: 'API:FABLE', kind: 'claude' };
+      return { label: 'API:CLAUDE', kind: 'claude' };
+    }
     case 'xai':
       return { label: 'XAI', kind: 'xai' };
     case 'openrouter':

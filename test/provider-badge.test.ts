@@ -55,6 +55,13 @@ describe('providerBadge', () => {
     });
   });
 
+  it('labels the Anthropic API provider API:<family>, apart from Claude Code', () => {
+    expect(providerBadge('anthropic', 'claude-opus-5-5')).toEqual({ label: 'API:OPUS', kind: 'claude' });
+    expect(providerBadge('anthropic', 'anthropic/claude-sonnet-5-5')).toEqual({ label: 'API:SONNET', kind: 'claude' });
+    expect(providerBadge('anthropic', 'claude-haiku-5-5')).toEqual({ label: 'API:HAIKU', kind: 'claude' });
+    expect(providerBadge('anthropic')).toEqual({ label: 'API:CLAUDE', kind: 'claude' });
+  });
+
   it('shows KIMI for the ModelCorp provider', () => {
     expect(providerBadge('modelcorp', 'kimi-k3')).toEqual({ label: 'KIMI', kind: 'kimi' });
   });
