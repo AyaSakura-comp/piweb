@@ -3046,6 +3046,12 @@ function renderPartial(text, thinking = '') {
 
 /** Build one event for live append or paged history (which never replays). */
 function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
+  // A tool's own step log (browser_intent: "click 'API'", "verifying"…), shown
+  // under its call while it runs. Not an `.event`: the running-tool clock reads
+  // the last .event.tool/.event.tool_result row as "finished".
+  if (event.kind === 'tool_result' && event.role === 'tool-progress') {
+    return el('div', 'tool-progress', event.content || '');
+  }
   const isAgyBackgroundCommand = event.kind === 'system' && (event.role === 'agy-command' || event.role === 'claude-command');
   if (isAgyBackgroundCommand) {
     try {

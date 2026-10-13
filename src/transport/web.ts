@@ -144,6 +144,36 @@ function snapshot(buf: LiveBuffer): string {
 
 const liveBuffers = new Map<string, LiveBuffer>();
 
+/**
+ * Tool progress. A tool that reports its steps (browser_intent's planner: "click
+ * 'API'", "verifying"…) sends one `details.message` per update. Without this the
+ * phone saw only the call and then, minutes later, the answer. New lines are
+ * batched into one `tool_result` row (role `tool-progress`) per PROGRESS_MS:
+ * tool chatter, so it never marks a session unread, and it stays in history.
+ * Streamed output without a message (bash) is left alone.
+ */
+const PROGRESS_MS = 500;
+const toolProgress = new Map<string, { lines: string[]; timer?: NodeJS.Timeout; fence?: ChannelWriteFence }>();
+
+function flushToolProgress(jid: string, key: string): void {
+  const entry = toolProgress.get(key);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = undefined;
+  if (!entry.lines.length) return;
+  const content = entry.lines.join('\n');
+  entry.lines = [];
+  writeEvent(
+    { channelJid: jid, kind: 'tool_result', role: 'tool-progress', content: truncate(content, config.maxEventChars) },
+    entry.fence,
+  );
+}
+
+export function toolProgressLine(event: any): string | undefined {
+  const message = event?.partialResult?.details?.message;
+  return typeof message === 'string' && message.trim() ? message.trim().slice(0, 300) : undefined;
+}
+
 function liveBufferKey(jid: string, fence?: ChannelWriteFence): string {
   return `${jid}\u0000${fence?.expectedFolder ?? ''}\u0000${fence?.expectedStorageToken ?? ''}\u0000${fence?.expectedOwnershipEpoch ?? ''}`;
 }
@@ -486,8 +516,38 @@ export const webTransport: Transport = {
         return;
       }
 
-      // Tool results arrive as their own role=tool message after the call.
-      if (config.streamTools && event.type === 'message_end' && event.message?.role === 'tool') {
+      if (config.streamTools && event.type === 'tool_execution_update') {
+        const line = toolProgressLine(event);
+        if (!line) return;
+        const key = `${liveBufferKey(jid, fence)}\u0000${event.toolCallId ?? ''}`;
+        let entry = toolProgress.get(key);
+        if (!entry) {
+          entry = { lines: [], fence };
+          toolProgress.set(key, entry);
+        }
+        entry.lines.push(line);
+        if (!entry.timer) {
+          entry.timer = setTimeout(() => flushToolProgress(jid, key), PROGRESS_MS);
+          entry.timer.unref?.();
+        }
+        return;
+      }
+
+      // The last lines must land before the result row, not after it.
+      if (event.type === 'tool_execution_end') {
+        const key = `${liveBufferKey(jid, fence)}\u0000${event.toolCallId ?? ''}`;
+        flushToolProgress(jid, key);
+        toolProgress.delete(key);
+        return;
+      }
+
+      // Tool results arrive as their own message after the call. pi names the
+      // role `toolResult`; only checking `tool` meant no pi result ever showed.
+      if (
+        config.streamTools &&
+        event.type === 'message_end' &&
+        (event.message?.role === 'tool' || event.message?.role === 'toolResult')
+      ) {
         const parts = event.message.content ?? [];
         const text = parts
           .map((c: any) => {
