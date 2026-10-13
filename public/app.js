@@ -3622,6 +3622,12 @@ const cameraComposer = createCameraComposer({
   canOpen: () => Boolean(state.activeJid && !state.selectionPending && !state.uploading && !input.disabled && !btwWorkspace.isSide()),
   onCapture: file => addFiles([file], { camera: true }),
 });
+// Tapping the message box means typing: the keyboard would come up over the
+// live camera, so put the camera away (animated, like ✕). Only a real tap does
+// this — the app focusing the box itself (after a send, a quote) does not.
+input.addEventListener('pointerdown', () => {
+  if (cameraComposer.active) cameraComposer.dismiss();
+});
 
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();

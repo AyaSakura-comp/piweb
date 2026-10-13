@@ -311,6 +311,17 @@ test('camera split: drag open, resize, zoom, send snapshot and text, then close'
   });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(page.locator('#camera-pane')).toBeHidden();
+  // Tapping the message box puts the camera away (animated) so the keyboard
+  // does not come up over it; the box keeps focus for typing.
+  await reopen();
+  await page.locator('#input').tap();
+  await expect(page.locator('#input')).toBeFocused();
+  await expect(page.locator('#camera-pane')).toBeHidden();
+  // The app focusing the box itself (no tap) leaves the camera open.
+  await reopen();
+  await page.locator('#input').focus();
+  await page.waitForTimeout(600);
+  await expect(page.locator('#camera-pane')).toBeVisible();
   expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
 });
