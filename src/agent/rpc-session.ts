@@ -28,6 +28,7 @@ import { beginChannelOperation, finishChannelOperation, getChannel, touchChannel
 import { logger } from '../logger.js';
 import { repairSessionForContinue, resolveChannelSessionDir } from '../session/path.js';
 import { formatStreamError, resolvePiSpawn } from './invoke.js';
+import { piDefaultModelRef } from './pi-default-model.js';
 import type { AgentResult } from '../types.js';
 
 export interface RpcSessionOpts {
@@ -883,6 +884,8 @@ function keyFor(folder: string): string {
 
 /** Prepare a parent without replacing it while independent subagents are live. */
 export async function prepareRpcSession(folder: string, opts: RpcSessionOpts): Promise<RpcSession> {
+  // No override: follow Pi's default as it is now (see pi-default-model.ts).
+  if (!opts.model) opts = { ...opts, model: piDefaultModelRef() };
   const session = sessions.get(keyFor(folder));
   if (session?.isAlive && session.hasLiveSubagents && !session.matchesOptions(opts)) {
     await session.updateLiveSettings(opts);

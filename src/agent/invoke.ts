@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
+import { piDefaultModelRef } from './pi-default-model.js';
 import { publishParent } from '../session/parent-publication.js';
 import { logger } from '../logger.js';
 import { downloadAttachments } from '../session/media.js';
@@ -163,7 +164,9 @@ export async function invokeAgent(
   const args: string[] = ['--session-dir', sessionDir, '--continue'];
 
   // Model
-  const model = opts?.model || config.piModel;
+  // No override: Pi's default as it is now, not the model saved in the session
+  // file that `--continue` would restore (see pi-default-model.ts).
+  const model = opts?.model || config.piModel || piDefaultModelRef();
   if (model) args.push('--model', model);
 
   // Thinking

@@ -1119,7 +1119,13 @@ Consequences worth knowing:
   image gets `500 image input is not supported … mmproj` even though the badge
   says qwen. The queue appends a plain-language hint for that specific error.
 - pi's default is already `local-llama/qwen3.6-35b-q4` (`~/.pi/agent/settings.json`),
-  and piweb leaves `PI_MODEL` unset so it follows that default.
+  and piweb leaves `PI_MODEL` unset so it follows that default — live: a
+  session without a model override is spawned with `--model <pi default>`, read
+  fresh from settings.json per run (`src/agent/pi-default-model.ts`). Without
+  it, `--continue` restores the model saved in the session file, so after the
+  switch-qwen-model skill moves qwen-mtp ↔ Strata old sessions kept calling the
+  stopped engine. A warm RPC parent whose model no longer matches is retired at
+  its next prompt. No piweb restart is needed after switching models.
 - To send images to a local model, `qwen-mtp` must be the one running. It is
   `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
   standalone `llama-server` on 8001.
