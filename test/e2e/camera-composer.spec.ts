@@ -314,6 +314,14 @@ test('camera split: drag open, resize, zoom, send snapshot and text, then close'
   // Tapping the message box puts the camera away (animated) so the keyboard
   // does not come up over it; the box keeps focus for typing.
   await reopen();
+  // While the finger is still down the box must stay put: iOS completes the tap
+  // (focus + keyboard) only if the box is still under the finger, so nothing
+  // may collapse on pointerdown alone.
+  const inputBox = (await page.locator('#input').boundingBox())!;
+  await page.locator('#input').dispatchEvent('pointerdown', { pointerType: 'touch', isPrimary: true });
+  await page.waitForTimeout(600);
+  await expect(page.locator('#camera-pane')).toBeVisible();
+  expect((await page.locator('#input').boundingBox())!.y).toBeCloseTo(inputBox.y, 0);
   await page.locator('#input').tap();
   await expect(page.locator('#input')).toBeFocused();
   await expect(page.locator('#camera-pane')).toBeHidden();
