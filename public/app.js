@@ -3625,11 +3625,19 @@ const cameraComposer = createCameraComposer({
 // Tapping the message box means typing: the keyboard would come up over the
 // live camera, so put the camera away (animated, like ✕). Only a real tap does
 // this — the app focusing the box itself (after a send, a quote) does not.
-// Dismiss on the focus the tap produces, not on pointerdown: collapsing the
-// camera moves the box out from under the finger, and iOS then never finishes
-// the tap — no focus, no keyboard.
+// On touch, the tap's touchend focuses the box itself (a focus() inside a
+// touch handler is what makes iOS raise the keyboard) and only then collapses
+// the camera. Left to iOS, the first tap was lost while the camera was open —
+// typing needed a second tap. Nothing moves on pointerdown, so the finger
+// stays on the box. A mouse or pen tap falls through to the focus listener.
 let inputTappedAt = -Infinity;
 input.addEventListener('pointerdown', () => { inputTappedAt = performance.now(); });
+input.addEventListener('touchend', (event) => {
+  if (!cameraComposer.active || document.activeElement === input || event.touches.length) return;
+  event.preventDefault();
+  input.focus({ preventScroll: true });
+  cameraComposer.dismiss();
+}, { passive: false });
 input.addEventListener('focus', () => {
   if (cameraComposer.active && performance.now() - inputTappedAt < 1500) cameraComposer.dismiss();
 });
