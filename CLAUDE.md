@@ -700,7 +700,11 @@ rebuilding for frontend fixes.
 
 A hot-deployed file lives only in the current container. Anything that
 recreates `piweb-app` (an image rebuild, `docker compose up` deciding to
-recreate) resets it to the image contents — so **commit the change** too; the
+recreate, the restart-service skill's `restart-piweb.sh`) resets it to the image
+contents. On 2026-10-13 an agent ran `restart-piweb.sh` to "fix" a slow first
+reply after switching Qwen models (the real cause was Strata's engine being
+unloaded) and silently rolled the frontend back five days; after any recreate,
+`diff -rq` the live `public/` against the checkout and re-copy what differs — so **commit the change** too; the
 next legitimate image build then includes it.
 
 ### Auth
