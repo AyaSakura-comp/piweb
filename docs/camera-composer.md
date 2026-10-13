@@ -87,6 +87,23 @@ Fuji's server-side film/FLUX processing, burst uploader and gallery are not port
 PiWeb sends the explicitly staged locally rendered images per Send. Physical aperture
 and hardware autofocus are not claimed.
 
+## Tapping the message box
+
+Tapping the message box while the camera is open means the user wants to type,
+so the camera is put away (animated, like ✕) and the box takes focus.
+
+- On touch, the tap's `touchend` calls `input.focus()` itself and only then
+  dismisses the camera. A `focus()` inside a touch handler is what makes iOS
+  raise the keyboard; left to iOS, the first tap was lost while the camera was
+  open and typing needed a second tap.
+- Nothing collapses on `pointerdown`. Collapsing then moved the box out from
+  under the finger, and iOS never completed the tap (no focus, no keyboard).
+- A mouse/pen tap dismisses on the focus it produces. The app focusing the box
+  itself (after a send or a quote) never closes the camera.
+- Chromium e2e (`camera-composer.spec.ts`) covers the dismiss, the
+  no-move-on-pointerdown rule and programmatic focus; the one-tap iOS keyboard
+  was confirmed on a real iPhone.
+
 ## Verification
 
 `test/e2e/camera-composer.spec.ts`: mobile Chromium fake camera, follows multiple

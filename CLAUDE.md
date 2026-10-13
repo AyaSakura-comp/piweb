@@ -990,6 +990,8 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   observer keep controls and available preview height synchronized. Fuji radial blur is simulated, defaults off
   at f/16, and is composited into capture; pinch must not fall through to resize/dismiss. See
   [`docs/camera-composer.md`](docs/camera-composer.md) for the default research prompt and mobile test limitations.
+  Tapping the message box puts the camera away and focuses the box from the tap's `touchend` (iOS keyboard in
+  one tap); never collapse on `pointerdown` — see "Tapping the message box" there.
 - **Image lightbox (Swipe, Pinch-to-zoom & Pan)**: tapping an image opens an in-app viewer (`openLightbox`)
   rather than a new tab. It opens instantly on the images already in the loaded
   transcript, then widens to the whole session album (`/api/sessions/:jid/media`,
