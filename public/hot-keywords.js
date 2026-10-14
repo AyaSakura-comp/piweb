@@ -4,7 +4,9 @@
 // file in the media dir; the page fetches it on every (re)connect.
 //
 // Multi-select: tapping a chip toggles it and adds or removes that word in the
-// message box; nothing is ever sent. Editing the word out of the box, or
+// message box; nothing is ever sent. A tap leaves the iPhone keyboard exactly
+// as it was: the chip never takes focus (which would close the keyboard) and
+// never focuses the box (which would open it). Editing the word out of the box, or
 // sending, releases the chip. More chips than fit scroll sideways.
 export const HOT_KEYWORDS_URL = '/media/piweb-shared/hot-keywords.json';
 const MAX_CHIPS = 10;
@@ -28,10 +30,35 @@ export function createHotKeywords({ container, input, fetchImpl = fetch }) {
       button.dataset.word = item.word;
       button.setAttribute('aria-pressed', String(selected.has(item.word)));
       button.title = `這週用了 ${item.count} 次`;
-      button.addEventListener('click', () => toggle(item.word));
+      bindTap(button, () => toggle(item.word));
       container.append(button);
     }
     container.hidden = items.length === 0;
+  }
+
+  // iOS moves focus on the compatibility mousedown that follows touchend, so a
+  // tap is handled on touchend itself and its default (focus change + click)
+  // cancelled; a finger that moved is a sideways scroll of the row, not a tap.
+  // Mouse: keep focus where it is on mousedown and act on click.
+  function bindTap(button, onTap) {
+    let start = null;
+    button.addEventListener('touchstart', (event) => {
+      const touch = event.touches[0];
+      start = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null;
+    }, { passive: true });
+    button.addEventListener('touchmove', (event) => {
+      const touch = event.touches[0];
+      if (start && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) start = null;
+    }, { passive: true });
+    button.addEventListener('touchcancel', () => { start = null; });
+    button.addEventListener('touchend', (event) => {
+      if (!start) return;
+      start = null;
+      event.preventDefault();
+      onTap();
+    });
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', onTap);
   }
 
   function setInput(value) {
@@ -54,8 +81,8 @@ export function createHotKeywords({ container, input, fetchImpl = fetch }) {
       selected.add(word);
       setInput(draft.trim() ? `${draft.replace(/\s+$/, '')} ${word}` : word);
     }
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    // Keep the caret at the end when typing is under way; never focus the box.
+    if (document.activeElement === input) input.setSelectionRange(input.value.length, input.value.length);
     render();
   }
 

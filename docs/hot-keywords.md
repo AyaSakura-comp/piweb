@@ -3,7 +3,10 @@
 Standard sessions show up to ten chips above the composer: the words the user
 typed most in the last 7 days. They are multi-select: a tap toggles a chip and
 adds or removes its word in the message box (appended after any draft); nothing
-is sent. A chip is released when its word leaves the box — edited away, or the
+is sent. A tap leaves the iPhone keyboard as it was — open stays open, closed
+stays closed: the chip acts on `touchend` and cancels its default, so focus
+never moves to the chip, and the box is never focused. A finger that moved
+more than 10px is a sideways scroll of the row, not a tap. A chip is released when its word leaves the box — edited away, or the
 box emptied by sending. More chips than fit scroll sideways in the same row.
 Life keeps its own quick tags in that spot, and BTW hides the row.
 

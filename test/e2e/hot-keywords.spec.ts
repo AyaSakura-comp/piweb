@@ -60,6 +60,12 @@ test('top ten keywords sit above the composer, scroll sideways and multi-select 
   await expect.poll(() => row.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
   await row.evaluate((node) => node.scrollTo({ left: 0 }));
 
+  // A finger dragging the row sideways is a scroll, not a tap.
+  await row.locator('.hot-keyword[data-word="qwen"]').dispatchEvent('touchstart', { touches: [{ identifier: 1, clientX: 200, clientY: 760 }] });
+  await row.locator('.hot-keyword[data-word="qwen"]').dispatchEvent('touchmove', { touches: [{ identifier: 1, clientX: 140, clientY: 760 }] });
+  await row.locator('.hot-keyword[data-word="qwen"]').dispatchEvent('touchend', { touches: [] });
+  await expect(page.locator('#input')).toHaveValue('');
+
   const box = page.locator('#input');
   const chip = (word: string) => row.locator(`.hot-keyword[data-word="${word}"]`);
   // Multi-select: each tap adds its word; the chips stay pressed.
@@ -67,12 +73,16 @@ test('top ten keywords sit above the composer, scroll sideways and multi-select 
   await chip('push').tap();
   await chip('影片').tap();
   await expect(box).toHaveValue('commit push 影片');
-  await expect(box).toBeFocused();
+  // The keyboard is left alone: a tap neither focuses the box (opening it)...
+  await expect(box).not.toBeFocused();
   for (const word of ['commit', 'push', '影片']) await expect(chip(word)).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: info.outputPath('hot-keywords-selected.png') });
 
-  // Tapping a pressed chip takes its word back out.
+  // ...nor takes focus from it (closing it).
+  await box.focus();
   await chip('push').tap();
+  await expect(box).toBeFocused();
+  // Tapping a pressed chip takes its word back out.
   await expect(box).toHaveValue('commit 影片');
   await expect(chip('push')).toHaveAttribute('aria-pressed', 'false');
 
