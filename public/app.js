@@ -347,11 +347,41 @@ function hideSelectionActions(clearSelection = false) {
   }
 }
 
+// A tap outside a selection only ends the selection (the overlay's backdrop
+// catches it). When that tap lands on a control under the backdrop — the BTW
+// switch and the keyword chips sit right under the last transcript line — iOS
+// can still deliver the click to the control once the overlay is gone. Drop
+// that click: ending a selection never also switches to BTW or presses a chip.
+let selectionDismissTapAt = -Infinity;
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    if (event.target?.closest?.('#sel-backdrop')) selectionDismissTapAt = event.timeStamp;
+  },
+  true,
+);
+document.addEventListener(
+  'click',
+  (event) => {
+    if (event.timeStamp - selectionDismissTapAt > 700) return;
+    if (!event.target?.closest?.('button, a, [role="button"]')) return;
+    selectionDismissTapAt = -Infinity;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  },
+  true,
+);
+
 function showSelectionActions(text, rect) {
   selectedText = text;
   if (!state.previewingDeleted && text) {
     state.pendingQuote = text;
-    renderQuotePreview();
+    // The first selection opens the quote bar, which scrolls the transcript up
+    // by its height (renderQuotePreview); the selection moved with it.
+    const shift = renderQuotePreview();
+    if (shift) {
+      rect = { left: rect.left, width: rect.width, top: rect.top - shift, bottom: rect.bottom - shift };
+    }
   }
   $('selection-quote').disabled = state.previewingDeleted;
   const actions = $('selection-actions');
@@ -456,12 +486,24 @@ $('selection-quote').addEventListener('click', () => {
   $('input').focus();
 });
 
+// Returns how far the transcript was scrolled to make room (px, may be < 0).
 function renderQuotePreview() {
   const preview = $('quote-preview');
+  const composer = $('composer-wrap');
+  const before = composer.offsetHeight;
   preview.hidden = !state.pendingQuote;
   $('quote-preview-text').textContent = state.pendingQuote
     ? `「${quotePreview(state.pendingQuote)}」`
     : '';
+  // The quote bar grows the composer upward over the transcript's last lines —
+  // exactly where the text being quoted often is. Scroll by the same height so
+  // the lines above the composer stay put on screen (and back when it closes).
+  const shift = composer.hidden || !before ? 0 : composer.offsetHeight - before;
+  if (!shift) return 0;
+  const messages = $('messages');
+  const from = messages.scrollTop;
+  messages.scrollTop = from + shift;
+  return messages.scrollTop - from;
 }
 
 $('quote-preview-remove').addEventListener('pointerdown', (e) => {
