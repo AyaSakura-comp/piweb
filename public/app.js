@@ -29,6 +29,7 @@ import {
 import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { createPromptPin } from './prompt-pin.js';
+import { createHotKeywords } from './hot-keywords.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -3622,6 +3623,8 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
   });
 }
+
+createHotKeywords({ container: $('hot-keywords'), input });
 
 const cameraComposer = createCameraComposer({
   send: $('btn-send'), anchor: $('messages'),

@@ -2855,6 +2855,24 @@ export function setMeta(key: string, value: string): void {
   ).run(key, value);
 }
 
+/** User messages typed into standard sessions over the last `days` days (hot keywords). */
+export function listRecentUserMessages(days: number): string[] {
+  return (
+    db
+      .prepare(
+        `select e.content from web_events e join channels c on c.jid = e.channel_jid
+          where e.kind = 'message' and e.role = 'user' and c.kind = 'standard'
+            and e.created_at >= datetime('now', ?)`,
+      )
+      .all(`-${Math.max(1, Math.floor(days))} days`) as Array<{ content: string }>
+  ).map((row) => row.content);
+}
+
+/** Newest web event id: a cheap "anything new?" check. */
+export function latestWebEventId(): number {
+  return (db.prepare('select coalesce(max(rowid), 0) as id from web_events').get() as { id: number }).id;
+}
+
 export function getMeta(key: string): string | undefined {
   const row = db.prepare('select value from meta where key = ?').get(key) as
     | { value: string }

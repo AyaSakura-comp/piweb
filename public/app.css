@@ -1976,6 +1976,19 @@ svg {
   display: flex;
 }
 
+/* Hot keywords: the same chips in standard sessions (Life keeps its own tags
+   in this spot); more than fit scroll sideways. */
+.hot-keywords {
+  display: flex;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.app.life-mode .hot-keywords,
+.app.btw-active .hot-keywords {
+  display: none;
+}
+
 .life-tag {
   flex: none;
   padding: 5px 12px;

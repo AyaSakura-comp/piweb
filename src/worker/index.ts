@@ -24,6 +24,7 @@ import { webTransport } from '../transport/web.js';
 import { startProcessingLoop, stopProcessingLoop } from '../agent/queue.js';
 import { startControlLoop, stopControlLoop } from './control.js';
 import { startSessionTitleLoop, stopSessionTitleLoop } from './session-title.js';
+import { startHotKeywordsLoop } from './hot-keywords-job.js';
 import { startSubscriptionLoop, stopSubscriptionLoop } from './subscriptions.js';
 import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
@@ -31,6 +32,7 @@ import { startClaudeTmuxReaper } from '../agent/claude-tmux-reaper.js';
 import { discoverPiExtensionCommands } from '../commands/extension-runner.js';
 
 // Both of these return their own stop function rather than exporting one.
+let stopHotKeywords: () => void = () => {};
 let stopScheduler: () => void = () => {};
 let stopArchiveCleanup: () => void = () => {};
 let stopClaudeTmuxReaper: () => void = () => {};
@@ -152,6 +154,7 @@ export async function startWorker(): Promise<void> {
   startProcessingLoop();
   startControlLoop();
   startSessionTitleLoop();
+  stopHotKeywords = startHotKeywordsLoop();
   stopScheduler = startScheduler();
   stopArchiveCleanup = startArchiveCleanup();
   stopClaudeTmuxReaper = startClaudeTmuxReaper();
@@ -187,6 +190,8 @@ export async function stopWorker(): Promise<void> {
   if (modelRefreshTimer) clearInterval(modelRefreshTimer);
   if (extCommandRefreshTimer) clearInterval(extCommandRefreshTimer);
   if (trashSweepTimer) clearInterval(trashSweepTimer);
+  stopHotKeywords();
+  stopHotKeywords = () => {};
   const controlStopped = stopControlLoop();
   stopScheduler();
   stopArchiveCleanup();
