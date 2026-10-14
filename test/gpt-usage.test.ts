@@ -26,22 +26,15 @@ async function authFile(credential: Record<string, unknown>): Promise<string> {
   return path;
 }
 
-function usageHeaders(): HeadersInit {
-  return {
-    'x-codex-plan-type': 'pro',
-    'x-codex-active-limit': 'premium',
-    'x-codex-credits-balance': '12.5',
-    'x-codex-credits-has-credits': 'True',
-    'x-codex-credits-unlimited': 'False',
-    'x-codex-primary-used-percent': '37',
-    'x-codex-primary-window-minutes': '300',
-    'x-codex-primary-reset-at': '1786429200',
-    'x-codex-primary-reset-after-seconds': '3600',
-    'x-codex-secondary-used-percent': '52',
-    'x-codex-secondary-window-minutes': '10080',
-    'x-codex-secondary-reset-at': '1787000000',
-    'x-codex-secondary-reset-after-seconds': '570800',
-  };
+function usageResponse(status = 200): Response {
+  return new Response(JSON.stringify({
+    plan_type: 'pro', rate_limit_reached_type: 'premium',
+    credits: { balance: '12.5', has_credits: true, unlimited: false },
+    rate_limit: {
+      primary_window: { used_percent: 37, limit_window_seconds: 18000, reset_at: 1786429200, reset_after_seconds: 3600 },
+      secondary_window: { used_percent: 52, limit_window_seconds: 604800, reset_at: 1787000000, reset_after_seconds: 570800 },
+    },
+  }), { status, headers: { 'content-type': 'application/json' } });
 }
 
 afterEach(async () => {
@@ -50,7 +43,7 @@ afterEach(async () => {
 });
 
 describe('getGptUsage', () => {
-  it('reads pi OAuth credentials and aborts the Codex probe after receiving usage headers', async () => {
+  it('reads pi OAuth credentials and reads usage JSON without submitting a model prompt', async () => {
     const authPath = await authFile({
       type: 'oauth',
       access: jwt('account-123'),
@@ -59,19 +52,16 @@ describe('getGptUsage', () => {
     });
     let capturedSignal: AbortSignal | undefined;
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe('https://chatgpt.com/backend-api/codex/responses');
+      expect(String(input)).toBe('https://chatgpt.com/backend-api/wham/usage');
       expect(init?.headers).toMatchObject({
         Authorization: expect.stringMatching(/^Bearer /),
         'chatgpt-account-id': 'account-123',
         originator: 'pi',
       });
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        model: 'gpt-5.5',
-        stream: true,
-        store: false,
-      });
+      expect(init?.method).toBe('GET');
+      expect(init?.body).toBeUndefined();
       capturedSignal = init?.signal ?? undefined;
-      return new Response(null, { status: 429, headers: usageHeaders() });
+      return usageResponse();
     });
 
     const usage = await getGptUsage({ authPath, fetchImpl: fetchImpl as typeof fetch });
@@ -81,7 +71,7 @@ describe('getGptUsage', () => {
     expect(usage).toMatchObject({
       plan: 'pro',
       activeLimit: 'premium',
-      httpStatus: 429,
+      httpStatus: 200,
       credits: { balance: 12.5, hasCredits: 'True', unlimited: 'False' },
       primary: { usedPercent: 37, windowMinutes: 300 },
       secondary: { usedPercent: 52, windowMinutes: 10080 },
@@ -116,7 +106,7 @@ describe('getGptUsage', () => {
           Authorization: `Bearer ${newAccess}`,
           'chatgpt-account-id': 'new-account',
         });
-        return new Response(null, { status: 200, headers: usageHeaders() });
+        return usageResponse();
       });
 
     await getGptUsage({ authPath, fetchImpl, now: () => 1_000_000 });
@@ -143,6 +133,28 @@ describe('getGptUsage', () => {
     );
   });
 
+  it.each([400, 403, 429, 500])('does not blame login for HTTP %s', async (status) => {
+    const authPath = await authFile({ type: 'oauth', access: jwt('account-123'), refresh: 'secret-refresh', expires: Date.now() + 3600000 });
+    const fetchImpl = vi.fn(async () => new Response('private upstream body', { status }));
+    const error = await getGptUsage({ authPath, fetchImpl: fetchImpl as typeof fetch }).catch(e => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain(`HTTP ${status}`);
+    expect(error.message).not.toMatch(/login|Token may|private upstream/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { rate_limit: {} }, { rate_limit: { primary_window: { used_percent: 'unknown' } } }])('rejects missing or invalid usage windows', async (body) => {
+    const authPath = await authFile({ type: 'oauth', access: jwt('account-123'), refresh: 'refresh', expires: Date.now() + 3600000 });
+    await expect(getGptUsage({ authPath, fetchImpl: vi.fn(async () => Response.json(body)) as typeof fetch })).rejects.toThrow('no valid usage windows');
+  });
+
+  it('accepts a single weekly window and zero usage', async () => {
+    const authPath = await authFile({ type: 'oauth', access: jwt('account-123'), refresh: 'refresh', expires: Date.now() + 3600000 });
+    const result = await getGptUsage({ authPath, fetchImpl: vi.fn(async () => Response.json({rate_limit: {secondary_window: {used_percent: 0, limit_window_seconds: 604800}}})) as typeof fetch });
+    expect(result.primary.usedPercent).toBeNull();
+    expect(result.secondary).toMatchObject({usedPercent: 0, windowMinutes: 10080});
+  });
+
   it('rejects responses that contain no Codex rate-limit headers', async () => {
     const authPath = await authFile({
       type: 'oauth',
@@ -153,7 +165,7 @@ describe('getGptUsage', () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 401 }));
 
     await expect(getGptUsage({ authPath, fetchImpl: fetchImpl as typeof fetch })).rejects.toThrow(
-      'No X-Codex-* headers returned (HTTP 401)',
+      'authentication failed (HTTP 401)',
     );
   });
 });

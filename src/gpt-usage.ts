@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 const OPENAI_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
-const RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
+const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const JWT_AUTH_CLAIM = 'https://api.openai.com/auth';
 const DEFAULT_MODEL = 'gpt-5.5';
 
@@ -214,25 +214,40 @@ async function refreshCredential(
   return refreshed;
 }
 
-function numberHeader(headers: Headers, name: string): number | null {
-  const raw = headers.get(name);
-  if (raw == null || raw === '') return null;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
-}
+function parseWindow(raw: unknown): GptUsageWindow {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      usedPercent: null,
+      windowMinutes: null,
+      resetAt: null,
+      resetAfterSeconds: null,
+    };
+  }
+  const w = raw as Record<string, unknown>;
+  const usedPercent =
+    typeof w.used_percent === 'number' && Number.isFinite(w.used_percent) ? w.used_percent : null;
+  const limitWindowSeconds =
+    typeof w.limit_window_seconds === 'number' && Number.isFinite(w.limit_window_seconds)
+      ? w.limit_window_seconds
+      : null;
+  const windowMinutes = limitWindowSeconds != null ? Math.round(limitWindowSeconds / 60) : null;
+  const resetAt =
+    typeof w.reset_at === 'number' && Number.isFinite(w.reset_at) ? w.reset_at : null;
+  const resetAfterSeconds =
+    typeof w.reset_after_seconds === 'number' && Number.isFinite(w.reset_after_seconds)
+      ? w.reset_after_seconds
+      : null;
 
-function usageWindow(headers: Headers, prefix: 'primary' | 'secondary'): GptUsageWindow {
   return {
-    usedPercent: numberHeader(headers, `x-codex-${prefix}-used-percent`),
-    windowMinutes: numberHeader(headers, `x-codex-${prefix}-window-minutes`),
-    resetAt: numberHeader(headers, `x-codex-${prefix}-reset-at`),
-    resetAfterSeconds: numberHeader(headers, `x-codex-${prefix}-reset-after-seconds`),
+    usedPercent,
+    windowMinutes,
+    resetAt,
+    resetAfterSeconds,
   };
 }
 
 /**
- * Query ChatGPT/Codex quota using pi's OAuth credential. The response stream is
- * aborted as soon as its headers arrive, so the probe consumes negligible quota.
+ * Query ChatGPT/Codex quota using pi's OAuth credential via the WHAM usage endpoint.
  */
 export async function getGptUsage(options: GptUsageOptions = {}): Promise<GptUsageData> {
   const authPath = options.authPath || defaultAuthPath();
@@ -258,57 +273,90 @@ export async function getGptUsage(options: GptUsageOptions = {}): Promise<GptUsa
 
   const controller = new AbortController();
   let response: Response;
+  let json: any = null;
   try {
-    response = await fetchImpl(RESPONSES_URL, {
-      method: 'POST',
+    response = await fetchImpl(USAGE_URL, {
+      method: 'GET',
       headers: {
         Authorization: `Bearer ${credential.access}`,
         'chatgpt-account-id': accountId,
         originator: 'pi',
-        'OpenAI-Beta': 'responses=experimental',
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
         'User-Agent': 'piweb',
       },
-      body: JSON.stringify({
-        model: options.model || DEFAULT_MODEL,
-        instructions: '',
-        input: [
-          {
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text: 'hi' }],
-          },
-        ],
-        stream: true,
-        store: false,
-      }),
       signal: controller.signal,
     });
+    if (response.status === 401) {
+      throw new Error('authentication failed (HTTP 401)');
+    }
+    if (!response.ok) {
+      throw new Error(`Codex usage request failed (HTTP ${response.status})`);
+    }
+    json = await response.json();
   } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('authentication failed') ||
+        error.message.startsWith('Codex usage request failed'))
+    ) {
+      throw error;
+    }
     throw new Error(`Codex usage request failed: ${errorMessage(error)}`, { cause: error });
   } finally {
     controller.abort();
   }
 
+  const rawCredits = json?.credits;
+  let balance: number | null = null;
+  if (rawCredits?.balance != null) {
+    const num = Number(rawCredits.balance);
+    balance = Number.isFinite(num) ? num : null;
+  }
+
+  let hasCredits: string | null = null;
+  if (rawCredits?.has_credits === true) {
+    hasCredits = 'True';
+  } else if (rawCredits?.has_credits === false) {
+    hasCredits = 'False';
+  } else if (typeof rawCredits?.has_credits === 'string') {
+    hasCredits = rawCredits.has_credits;
+  }
+
+  let unlimited: string | null = null;
+  if (rawCredits?.unlimited === true) {
+    unlimited = 'True';
+  } else if (rawCredits?.unlimited === false) {
+    unlimited = 'False';
+  } else if (typeof rawCredits?.unlimited === 'string') {
+    unlimited = rawCredits.unlimited;
+  }
+
+  let activeLimit: string | null = null;
+  if (typeof json?.rate_limit_reached_type === 'string') {
+    activeLimit = json.rate_limit_reached_type;
+  } else if (json?.rate_limit_reached_type && typeof json.rate_limit_reached_type === 'object') {
+    activeLimit =
+      (json.rate_limit_reached_type as any).type ?? JSON.stringify(json.rate_limit_reached_type);
+  }
+
+  const primary = parseWindow(json?.rate_limit?.primary_window);
+  const secondary = parseWindow(json?.rate_limit?.secondary_window);
+
+  if (primary.usedPercent == null && secondary.usedPercent == null) {
+    throw new Error('no valid usage windows returned in rate limit data');
+  }
+
   const usage: GptUsageData = {
-    plan: response.headers.get('x-codex-plan-type'),
-    activeLimit: response.headers.get('x-codex-active-limit'),
+    plan: json?.plan_type ? String(json.plan_type) : null,
+    activeLimit,
     credits: {
-      balance: numberHeader(response.headers, 'x-codex-credits-balance'),
-      hasCredits: response.headers.get('x-codex-credits-has-credits'),
-      unlimited: response.headers.get('x-codex-credits-unlimited'),
+      balance,
+      hasCredits,
+      unlimited,
     },
-    primary: usageWindow(response.headers, 'primary'),
-    secondary: usageWindow(response.headers, 'secondary'),
+    primary,
+    secondary,
     httpStatus: response.status,
   };
-
-  if (usage.primary.usedPercent == null && usage.secondary.usedPercent == null) {
-    throw new Error(
-      `No X-Codex-* headers returned (HTTP ${response.status}). Token may be invalid — try pi → /login again.`,
-    );
-  }
 
   return usage;
 }
@@ -372,6 +420,8 @@ export function formatGptUsage(data: GptUsageData): string {
   }
   if (data.httpStatus === 429) {
     lines.push('', '⚠️ 目前短窗已達上限 (429)，要等重置或換模型/本機 qwen。');
+  } else if (primary.usedPercent !== null && primary.usedPercent >= 100) {
+    lines.push('', '⚠️ 目前短窗已達上限，要等重置或換模型/本機 qwen。');
   }
   return lines.join('\n');
 }
