@@ -4043,7 +4043,20 @@ const lb = {
   lastTap: 0,
   lastTapX: 0,
   lastTapY: 0,
-  isHD: false,
+  lastTouchAt: 0,
+  committed: 1,
+  fitW: 0,
+  fitH: 0,
+  stageCx: 0,
+  stageCy: 0,
+  pinchMax: 4,
+  lastPinchX: 0,
+  lastPinchY: 0,
+  panBounds: { x: 0, y: 0 },
+  panVX: 0,
+  panVY: 0,
+  panT: 0,
+  commitTimer: 0,
 };
 
 const LB_VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
@@ -4067,7 +4080,111 @@ function releaseLightboxVideo() {
   video.hidden = true;
 }
 
+/*
+ * Zoom stays sharp at rest. A pinch or double-tap scales with a transform
+ * (cheap, a little soft mid-gesture); once it settles, the zoom is baked into
+ * the image's layout size so the browser re-rasterises it from the full
+ * resolution bitmap. `lb.committed` is the part of `lb.scale` held by layout
+ * and the transform carries only the remainder, so re-basing never moves the
+ * picture. Layout never exceeds one image pixel per device pixel, which keeps
+ * the rasterised layer no larger than the decoded image itself.
+ */
+function lbFitSize() {
+  const img = $('lb-img');
+  if (lb.committed === 1 && img) {
+    lb.fitW = img.offsetWidth;
+    lb.fitH = img.offsetHeight;
+  }
+  return { w: lb.fitW || 1, h: lb.fitH || 1 };
+}
+
+/** The zoom at which one image pixel lands on one device pixel. */
+function lbNativeScale() {
+  const { w } = lbFitSize();
+  return ($('lb-img').naturalWidth || w) / (w * Math.max(1, window.devicePixelRatio || 1));
+}
+
+function lbMaxScale() {
+  return Math.min(10, Math.max(4, lbNativeScale() * 2));
+}
+
+function setLightboxCommitted(target) {
+  const img = $('lb-img');
+  if (!img || lbMedia() !== img) return;
+  const { w, h } = lbFitSize();
+  lb.committed = target;
+  if (target === 1) {
+    img.classList.remove('zoomed');
+    img.style.width = img.style.height = img.style.borderRadius = '';
+  } else {
+    img.classList.add('zoomed');
+    img.style.width = `${w * target}px`;
+    img.style.height = `${h * target}px`;
+    img.style.borderRadius = `${14 * target}px`;
+  }
+  img.style.transition = 'none';
+  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale / lb.committed})`;
+  void img.offsetWidth; // flush, so a following transition starts from this frame
+}
+
+function scheduleLightboxCommit(delay = 0) {
+  clearTimeout(lb.commitTimer);
+  lb.commitTimer = setTimeout(() => {
+    if (lb.isPinching || lb.isPanning || $('lightbox').hidden) return;
+    const target = lb.scale > 1.01 ? Math.min(lb.scale, Math.max(1, lbNativeScale())) : 1;
+    if (Math.abs(target - lb.committed) > 0.01) setLightboxCommitted(target);
+  }, delay);
+}
+
+/** Pan limits at a zoom: the picture may not pull away from a screen edge. */
+function lbPanBounds(scale = lb.scale) {
+  const stage = $('lb-stage');
+  const { w, h } = lbFitSize();
+  return {
+    x: Math.max(0, (w * scale - stage.clientWidth) / 2),
+    y: Math.max(0, (h * scale - stage.clientHeight) / 2),
+  };
+}
+
+function rubberBand(value, limit) {
+  if (value > limit) return limit + (value - limit) / 3;
+  if (value < -limit) return -limit + (value + limit) / 3;
+  return value;
+}
+
+function clampLightboxPan() {
+  const b = lbPanBounds();
+  lb.x = Math.max(-b.x, Math.min(b.x, lb.x));
+  lb.y = Math.max(-b.y, Math.min(b.y, lb.y));
+}
+
+/** Zoom to `scale`, keeping the image point under (clientX, clientY) in place. */
+function zoomLightboxAt(scale, clientX, clientY, animate = true) {
+  const rect = $('lb-stage').getBoundingClientRect();
+  const dx = clientX - (rect.left + rect.width / 2);
+  const dy = clientY - (rect.top + rect.height / 2);
+  const k = scale / lb.scale;
+  lb.x = dx - (dx - lb.x) * k;
+  lb.y = dy - (dy - lb.y) * k;
+  lb.scale = scale;
+  clampLightboxPan();
+  applyLightboxTransform(animate);
+  scheduleLightboxCommit(animate ? 300 : 150);
+}
+
+/** Double-tap: zoom in to where the finger is (native detail, 2.5–4×), or back out. */
+function toggleLightboxZoomAt(clientX, clientY) {
+  if (lb.scale > 1.05) {
+    resetLightboxTransform(true);
+    return;
+  }
+  const target = Math.min(lbMaxScale(), Math.max(2.5, Math.min(4, lbNativeScale())));
+  zoomLightboxAt(target, clientX, clientY);
+}
+
 function resetLightboxTransform(animate = false) {
+  clearTimeout(lb.commitTimer);
+  if (lb.committed !== 1) setLightboxCommitted(1);
   lb.scale = 1;
   lb.x = 0;
   lb.y = 0;
@@ -4089,7 +4206,7 @@ function applyLightboxTransform(animate = false) {
   const img = lbMedia();
   if (!img) return;
   img.style.transition = animate ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
-  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale})`;
+  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale / lb.committed})`;
 }
 
 /** Every image and video currently in the transcript, in reading order. */
@@ -4257,83 +4374,10 @@ function syncFilmstrip() {
   });
 }
 
-function updateHDBtnState() {
-  const btn = $('lb-hd');
-  if (!btn) return;
-  const url = lb.urls[lb.index];
-  const isVideo = isLightboxVideo(url);
-  btn.hidden = isVideo;
-  if (isVideo) return;
-
-  btn.setAttribute('aria-pressed', String(Boolean(lb.isHD)));
-  btn.classList.toggle('active', Boolean(lb.isHD));
-  const span = btn.querySelector('span');
-  if (span) {
-    span.textContent = lb.isHD ? '已開高畫質' : '高畫質';
-  }
-  btn.title = lb.isHD ? '切換回適配螢幕 (目前為高畫質)' : '載入高畫質照片 (100% 原圖細節)';
-}
-
-function enableHDMode() {
-  const img = $('lb-img');
-  if (!img || img.hidden) return;
-  const stage = $('lb-stage').getBoundingClientRect();
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const naturalW = img.naturalWidth || stage.width;
-  const naturalH = img.naturalHeight || stage.height;
-
-  const pixelW = naturalW / dpr;
-  const fitRatio = Math.min(stage.width / naturalW, stage.height / naturalH);
-  const fitW = naturalW * fitRatio;
-  const targetW = Math.max(pixelW, fitW * 1.5, stage.width * 0.95);
-  const scaleRatio = targetW / naturalW;
-  const targetH = naturalH * scaleRatio;
-
-  lb.isHD = true;
-  img.classList.add('is-hd');
-  img.style.setProperty('--hd-width', `${Math.round(targetW)}px`);
-  img.style.setProperty('--hd-height', `${Math.round(targetH)}px`);
-
-  lb.scale = 1;
-  lb.x = 0;
-  if (targetH > stage.height) {
-    lb.y = (targetH - stage.height) / 2;
-  } else {
-    lb.y = 0;
-  }
-
-  applyLightboxTransform(true);
-  updateHDBtnState();
-  showToast('已載入高畫質照片');
-}
-
-function disableHDMode() {
-  lb.isHD = false;
-  const img = $('lb-img');
-  if (img) {
-    img.classList.remove('is-hd');
-    img.style.removeProperty('--hd-width');
-    img.style.removeProperty('--hd-height');
-  }
-  updateHDBtnState();
-}
-
-function toggleHDMode(forceState) {
-  const shouldBeHD = typeof forceState === 'boolean' ? forceState : !lb.isHD;
-  if (shouldBeHD) {
-    enableHDMode();
-  } else {
-    disableHDMode();
-    resetLightboxTransform(true);
-    showToast('已切換為適配螢幕');
-  }
-}
-
 function closeLightbox() {
   imageAnnotator.close();
   lightboxAlbumGeneration++;
   releaseLightboxVideo();
-  disableHDMode();
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
   resetLightboxTransform(false);
@@ -4347,7 +4391,6 @@ function showLightboxImage(direction = 0) {
   const url = lb.urls[lb.index];
   const isVideo = isLightboxVideo(url);
   $('lb-annotate').hidden = isVideo || !canAnnotateImage();
-  disableHDMode();
   // Leaving a video must stop it; landing on one swaps the visible element.
   releaseLightboxVideo();
   $('lb-img').hidden = isVideo;
@@ -4381,7 +4424,6 @@ function showLightboxImage(direction = 0) {
 
   $('lb-count').textContent = `${lb.index + 1} / ${lb.urls.length}`;
   $('lb-open').href = url;
-  updateHDBtnState();
   $('lb-prev').disabled = lb.index === 0;
   $('lb-next').disabled = lb.index === lb.urls.length - 1;
   syncFilmstrip();
@@ -4511,6 +4553,14 @@ lightboxEl.addEventListener(
         x: (t1.clientX + t2.clientX) / 2,
         y: (t1.clientY + t2.clientY) / 2,
       };
+      lb.lastPinchX = lb.pinchCenter.x;
+      lb.lastPinchY = lb.pinchCenter.y;
+      const rect = $('lb-stage').getBoundingClientRect();
+      lb.stageCx = rect.left + rect.width / 2;
+      lb.stageCy = rect.top + rect.height / 2;
+      lb.pinchMax = lbMaxScale();
+      clearTimeout(lb.commitTimer);
+      lbMedia().style.transition = 'none';
       return;
     }
 
@@ -4518,6 +4568,7 @@ lightboxEl.addEventListener(
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       const now = Date.now();
+      lb.lastTouchAt = now;
 
       // Double-tap zoom toggle
       if (
@@ -4526,21 +4577,22 @@ lightboxEl.addEventListener(
       ) {
         if (e.cancelable) e.preventDefault();
         lb.lastTap = 0;
-        if (lb.isHD || lb.scale > 1.1) {
-          toggleHDMode(false);
-        } else {
-          toggleHDMode(true);
-        }
+        lb.isPanning = false;
+        lb.drag = null;
+        toggleLightboxZoomAt(touch.clientX, touch.clientY);
         return;
       }
       lb.lastTap = now;
       lb.lastTapX = touch.clientX;
       lb.lastTapY = touch.clientY;
 
-      if (lb.isHD || lb.scale > 1.05) {
+      if (lb.scale > 1.05) {
         lb.isPanning = true;
         lb.panStartX = touch.clientX - lb.x;
         lb.panStartY = touch.clientY - lb.y;
+        lb.panBounds = lbPanBounds();
+        lb.panVX = lb.panVY = 0;
+        lb.panT = now;
       } else {
         lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
       }
@@ -4563,12 +4615,17 @@ lightboxEl.addEventListener(
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
       const ratio = dist / (lb.pinchDist || 1);
-      lb.scale = Math.min(6, Math.max(0.6, lb.startScale * ratio));
+      const scale = Math.min(lb.pinchMax * 1.5, Math.max(0.5, lb.startScale * ratio));
+      const k = scale / lb.startScale;
 
+      // The image point first pinched stays under the fingers' midpoint.
       const cx = (t1.clientX + t2.clientX) / 2;
       const cy = (t1.clientY + t2.clientY) / 2;
-      lb.x = lb.startX + (cx - lb.pinchCenter.x);
-      lb.y = lb.startY + (cy - lb.pinchCenter.y);
+      lb.x = cx - lb.stageCx - (lb.pinchCenter.x - lb.stageCx - lb.startX) * k;
+      lb.y = cy - lb.stageCy - (lb.pinchCenter.y - lb.stageCy - lb.startY) * k;
+      lb.scale = scale;
+      lb.lastPinchX = cx;
+      lb.lastPinchY = cy;
 
       applyLightboxTransform(false);
       return;
@@ -4578,8 +4635,15 @@ lightboxEl.addEventListener(
     if (lb.isPanning && e.touches.length === 1) {
       if (e.cancelable) e.preventDefault();
       const touch = e.touches[0];
-      lb.x = touch.clientX - lb.panStartX;
-      lb.y = touch.clientY - lb.panStartY;
+      const now = Date.now();
+      const x = rubberBand(touch.clientX - lb.panStartX, lb.panBounds.x);
+      const y = rubberBand(touch.clientY - lb.panStartY, lb.panBounds.y);
+      const dt = Math.max(1, now - lb.panT);
+      lb.panVX = 0.6 * ((x - lb.x) / dt) + 0.4 * lb.panVX;
+      lb.panVY = 0.6 * ((y - lb.y) / dt) + 0.4 * lb.panVY;
+      lb.panT = now;
+      lb.x = x;
+      lb.y = y;
       applyLightboxTransform(false);
       return;
     }
@@ -4610,29 +4674,32 @@ lightboxEl.addEventListener(
 function endLightboxTouch(e) {
   if (lb.isPinching) {
     lb.isPinching = false;
-    if (lb.isHD) {
-      if (lb.scale < 0.6) {
-        toggleHDMode(false);
-      } else if (lb.scale > 4) {
-        lb.scale = 4;
-        applyLightboxTransform(true);
-      }
+    if (lb.scale < 1.05) {
+      resetLightboxTransform(true);
+    } else if (lb.scale > lb.pinchMax) {
+      zoomLightboxAt(lb.pinchMax, lb.lastPinchX, lb.lastPinchY);
     } else {
-      if (lb.scale < 1.05) {
-        resetLightboxTransform(true);
-      } else if (lb.scale > 5) {
-        lb.scale = 5;
-        applyLightboxTransform(true);
-      }
+      clampLightboxPan();
+      applyLightboxTransform(true);
+      scheduleLightboxCommit(300);
     }
     return;
   }
 
   if (lb.isPanning) {
     lb.isPanning = false;
-    if (!lb.isHD && lb.scale < 1.05) {
+    if (lb.scale < 1.05) {
       resetLightboxTransform(true);
+      return;
     }
+    // A flick carries on a little, then settles inside the edges.
+    if (Date.now() - lb.panT < 80) {
+      lb.x += lb.panVX * 160;
+      lb.y += lb.panVY * 160;
+    }
+    clampLightboxPan();
+    applyLightboxTransform(true);
+    scheduleLightboxCommit(300);
     return;
   }
 
@@ -4672,21 +4739,17 @@ function endLightboxTouch(e) {
 lightboxEl.addEventListener('touchend', endLightboxTouch);
 lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
 
-$('lb-hd')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  toggleHDMode();
-});
-
 let mousePanning = false;
 let mouseStartX = 0;
 let mouseStartY = 0;
 
 $('lb-stage')?.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !$('lightbox') || $('lightbox').hidden) return;
-  if (lb.isHD || lb.scale > 1.05) {
+  if (lb.scale > 1.05) {
     mousePanning = true;
     mouseStartX = e.clientX - lb.x;
     mouseStartY = e.clientY - lb.y;
+    lb.panBounds = lbPanBounds();
     lbMedia().style.transition = 'none';
     e.preventDefault();
   }
@@ -4694,15 +4757,49 @@ $('lb-stage')?.addEventListener('mousedown', (e) => {
 
 window.addEventListener('mousemove', (e) => {
   if (!mousePanning) return;
-  lb.x = e.clientX - mouseStartX;
-  lb.y = e.clientY - mouseStartY;
+  lb.x = rubberBand(e.clientX - mouseStartX, lb.panBounds.x);
+  lb.y = rubberBand(e.clientY - mouseStartY, lb.panBounds.y);
   applyLightboxTransform(false);
 });
 
 window.addEventListener('mouseup', () => {
-  if (mousePanning) {
-    mousePanning = false;
-  }
+  if (!mousePanning) return;
+  mousePanning = false;
+  clampLightboxPan();
+  applyLightboxTransform(true);
+  scheduleLightboxCommit(300);
+});
+
+// Desktop: double-click zooms at the pointer; a trackpad pinch (ctrl+wheel)
+// zooms continuously and a plain wheel pans while zoomed in.
+$('lb-img')?.addEventListener('dblclick', (e) => {
+  if (Date.now() - lb.lastTouchAt < 800) return; // already handled as a double-tap
+  toggleLightboxZoomAt(e.clientX, e.clientY);
+});
+
+$('lb-stage')?.addEventListener(
+  'wheel',
+  (e) => {
+    if ($('lightbox').hidden || lbMedia() !== $('lb-img')) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const scale = Math.min(lbMaxScale(), Math.max(1, lb.scale * Math.exp(-e.deltaY * 0.01)));
+      if (scale <= 1.01) resetLightboxTransform(false);
+      else zoomLightboxAt(scale, e.clientX, e.clientY, false);
+    } else if (lb.scale > 1.05) {
+      e.preventDefault();
+      lb.x -= e.deltaX;
+      lb.y -= e.deltaY;
+      clampLightboxPan();
+      applyLightboxTransform(false);
+    }
+  },
+  { passive: false },
+);
+
+// Rotating the phone changes the fit size the zoom is measured against.
+window.addEventListener('resize', () => {
+  if (!$('lightbox').hidden && lb.scale !== 1) resetLightboxTransform(false);
 });
 
 // ── recently deleted ─────────────────────────────────────────────────────

@@ -234,13 +234,14 @@ test('a chat video stays in the image album, between the images', async ({ page 
   expect(errors).toEqual([]);
 });
 
-test('HD button loads high-definition photo and toggles between HD and fit mode', async ({ page }, info) => {
+test('zoom is gesture-only and settles crisp: double-tap bakes the zoom into layout size', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  const big = png(40, 120, 200, 2400, 1600);
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
   await page.route('**/media/web_lightbox-album/*', (route) => {
     const name = new URL(route.request().url()).pathname.split('/').pop()!;
-    return route.fulfill({ contentType: 'image/png', body: colours[name] || colours['middle.png'] });
+    return route.fulfill({ contentType: 'image/png', body: name === 'middle.png' ? big : colours[name] });
   });
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -257,30 +258,54 @@ test('HD button loads high-definition photo and toggles between HD and fit mode'
   await page.goto('/');
   await page.locator('#messages img[src$="middle.png"]').click();
   await expect(page.locator('#lightbox')).toBeVisible();
+  await expect(page.locator('#lb-count')).toHaveText('2 / 3');
+  await page.waitForTimeout(600);
 
-  const hdBtn = page.locator('#lb-hd');
-  const lbImg = page.locator('#lb-img');
-  await expect(hdBtn).toBeVisible();
-  await expect(hdBtn).toHaveText('高畫質');
-  await expect(hdBtn).toHaveAttribute('aria-pressed', 'false');
-  await expect(lbImg).not.toHaveClass(/is-hd/);
+  // Toolbar: icon targets only, no mode button, counter on one line.
+  await expect(page.locator('#lb-hd')).toHaveCount(0);
+  const bar = await page.evaluate(() => {
+    const count = document.getElementById('lb-count')!.getBoundingClientRect();
+    const buttons = [...document.querySelectorAll('.lb-bar .icon-btn')]
+      .filter((b) => !(b as HTMLElement).hidden)
+      .map((b) => b.getBoundingClientRect());
+    return { countH: count.height, sizes: buttons.map((r) => [r.width, r.height]) };
+  });
+  expect(bar.countH).toBeLessThan(26);
+  for (const [w, h] of bar.sizes) expect([w, h]).toEqual([44, 44]);
+  await page.screenshot({ path: info.outputPath('01-fit.png') });
 
-  // Click HD button to enable HD mode
-  await hdBtn.click();
-  await expect(hdBtn).toHaveClass(/active/);
-  await expect(hdBtn).toHaveText('已開高畫質');
-  await expect(hdBtn).toHaveAttribute('aria-pressed', 'true');
-  await expect(lbImg).toHaveClass(/is-hd/);
-  await expect(page.locator('#toast')).toContainText('已載入高畫質照片');
-  await page.screenshot({ path: info.outputPath('04-hd-mode-active.png') });
+  const img = page.locator('#lb-img');
+  const fit = await img.evaluate((el) => (el as HTMLImageElement).offsetWidth);
+  const box = (await page.locator('#lb-stage').boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  const tap = async (x: number, y: number) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await tap(cx, cy);
+  await page.waitForTimeout(80);
+  await tap(cx, cy);
+  await page.waitForTimeout(700);
 
-  // Click HD button again to toggle back to fit mode
-  await hdBtn.click();
-  await expect(hdBtn).not.toHaveClass(/active/);
-  await expect(hdBtn).toHaveText('高畫質');
-  await expect(hdBtn).toHaveAttribute('aria-pressed', 'false');
-  await expect(lbImg).not.toHaveClass(/is-hd/);
-  await expect(page.locator('#toast')).toContainText('已切換為適配螢幕');
+  // At rest the zoom lives in layout (re-rasterised sharp), not in a scaled bitmap.
+  await expect(img).toHaveClass(/zoomed/);
+  const zoomed = await img.evaluate((el) => ({
+    w: (el as HTMLImageElement).offsetWidth,
+    transform: getComputedStyle(el).transform,
+  }));
+  expect(zoomed.w).toBeGreaterThan(fit * 2.4);
+  expect(zoomed.transform).toMatch(/^matrix\(1, 0, 0, 1,/);
+  await expect(page.locator('#toast')).toBeHidden();
+  await page.screenshot({ path: info.outputPath('02-zoomed-crisp.png') });
 
+  await tap(cx, cy);
+  await page.waitForTimeout(80);
+  await tap(cx, cy);
+  await page.waitForTimeout(500);
+  await expect(img).not.toHaveClass(/zoomed/);
+  expect(await img.evaluate((el) => (el as HTMLImageElement).offsetWidth)).toBe(fit);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });
