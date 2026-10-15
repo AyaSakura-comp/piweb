@@ -149,12 +149,17 @@ test('switches keyword window days from the settings dialog and persists to loca
   await expect(select).toBeVisible();
   await expect(select).toHaveValue('1');
 
-  // Change to 7 days
+  // Change to 7 days: immediately switches to 7-day items
   await select.selectOption('7');
   await expect(row.locator('.hot-keyword')).toHaveText(['commit', 'qwen']);
   expect(await page.evaluate(() => localStorage.getItem('piweb.hot_keywords_days'))).toBe('7');
 
+  // Change back to 1 day: immediately switches to 1-day items
+  await select.selectOption('1');
+  await expect(row.locator('.hot-keyword')).toHaveText(['deploy', 'push']);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.hot_keywords_days'))).toBe('1');
+
   // Close settings
   await page.locator('#btn-settings-close').click();
-  await expect(row.locator('.hot-keyword')).toHaveText(['commit', 'qwen']);
+  await expect(row.locator('.hot-keyword')).toHaveText(['deploy', 'push']);
 });

@@ -42,18 +42,18 @@ export function createHotKeywords({ container, input, select, fetchImpl = fetch,
 
   function applyWindow() {
     let windowItems = cachedData?.windows?.[selectedDays];
-    if (!Array.isArray(windowItems) && String(cachedData?.windowDays) === selectedDays) {
-      windowItems = cachedData?.items;
+    if (!Array.isArray(windowItems)) {
+      if (!cachedData?.windows) {
+        windowItems = cachedData?.items;
+      } else if (String(cachedData?.windowDays) === selectedDays) {
+        windowItems = cachedData?.items;
+      }
     }
     items = Array.isArray(windowItems)
       ? windowItems
           .filter((item) => typeof item?.word === 'string' && item.word)
           .slice(0, MAX_CHIPS)
-      : Array.isArray(cachedData?.items)
-        ? cachedData.items
-            .filter((item) => typeof item?.word === 'string' && item.word)
-            .slice(0, MAX_CHIPS)
-        : [];
+      : [];
     render();
     sync();
   }
@@ -65,6 +65,7 @@ export function createHotKeywords({ container, input, select, fetchImpl = fetch,
       storageImpl?.setItem(HOT_KEYWORDS_STORAGE_KEY, selectedDays);
     } catch {}
     applyWindow();
+    void refresh();
   }
 
   function render() {
