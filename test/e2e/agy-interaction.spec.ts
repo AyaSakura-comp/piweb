@@ -123,6 +123,10 @@ test.describe('agy end-to-end model interaction and streaming lifecycle', () => 
 
     await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
 
+    await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+      route.fulfill({ json: { items: [] } }),
+    );
+
     await page.route('**/api/**', async (route: Route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -183,6 +187,20 @@ test.describe('agy end-to-end model interaction and streaming lifecycle', () => 
         return route.fulfill({ json: { ok: true } });
       }
 
+      if (path.endsWith('/commands-running')) {
+        return route.fulfill({ json: { commands: [], limited: false } });
+      }
+      if (path.endsWith('/btw')) {
+        return route.fulfill({ json: { available: false } });
+      }
+      if (path.endsWith('/hot-keywords')) {
+        return route.fulfill({ json: { keywords: [] } });
+      }
+      if (path.endsWith('/system-metrics')) {
+        return route.fulfill({ json: {} });
+      }
+
+      console.warn('Unhandled fixture route:', path);
       return route.fulfill({ status: 404, json: { error: `Unhandled fixture route: ${path}` } });
     });
 

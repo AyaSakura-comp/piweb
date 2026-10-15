@@ -24,3 +24,4 @@ process.env.DB_PATH = resolve(root, 'gateway.db');
 process.env.SESSIONS_DIR = resolve(root, 'sessions');
 process.env.WEB_MEDIA_DIR = resolve(root, 'web-media');
 process.env.WEB_UPLOAD_DIR = resolve(root, 'web-uploads');
+process.env.AGY_TOKEN_PATH = resolve(root, 'antigravity-oauth-token');

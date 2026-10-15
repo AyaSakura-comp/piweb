@@ -14,7 +14,7 @@
  * "simplify" the header away.
  */
 import { constants } from 'node:fs';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
@@ -31,7 +31,7 @@ const USER_AGENT = 'antigravity-cli/1.1.13';
 const QUOTA_TIMEOUT_MS = 10_000;
 
 export function agyTokenPath(): string {
-  return join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  return process.env.AGY_TOKEN_PATH || join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
 }
 
 export interface AgyQuotaBucket {
@@ -68,7 +68,13 @@ interface AgyTokenDependencies {
   fetchImpl: typeof fetch;
   now: () => number;
   readAuth: () => Promise<AgyAuth>;
+  writeAuth?: (auth: AgyAuth) => Promise<void>;
   oauthClientCandidates: () => Promise<OAuthClient[]>;
+}
+
+async function writeAgyAuth(auth: AgyAuth): Promise<void> {
+  const path = agyTokenPath();
+  await writeFile(path, `${JSON.stringify(auth, null, 2)}\n`, { mode: 0o600 });
 }
 
 async function readAgyAuth(): Promise<AgyAuth> {
@@ -151,6 +157,7 @@ const DEFAULT_TOKEN_DEPENDENCIES: AgyTokenDependencies = {
   fetchImpl: fetch,
   now: Date.now,
   readAuth: readAgyAuth,
+  writeAuth: writeAgyAuth,
   oauthClientCandidates: findAgyOAuthClientCandidates,
 };
 
@@ -249,8 +256,15 @@ export async function getAgyAccessToken(
   try {
     let auth = await withAbort(dependencies.readAuth(), controller.signal);
     const expiry = auth.token.expiry ? Date.parse(auth.token.expiry) : NaN;
-    if (forceRefresh || (Number.isFinite(expiry) && expiry - dependencies.now() < 60_000)) {
+    if (forceRefresh || (Number.isFinite(expiry) && expiry - dependencies.now() < 300_000)) {
       auth = await withAbort(refreshAgyAuth(auth, dependencies), controller.signal);
+      if (dependencies.writeAuth) {
+        try {
+          await dependencies.writeAuth(auth);
+        } catch {
+          // Failure to write to disk should not block in-memory token return
+        }
+      }
     }
     return auth.token.access_token;
   } catch (error: any) {
@@ -262,6 +276,18 @@ export async function getAgyAccessToken(
     );
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** Ensure agy has a valid on-disk token before CLI invocation, refreshing and persisting if needed. */
+export async function ensureFreshAgyToken(
+  forceRefresh = false,
+  overrides: Partial<AgyTokenDependencies> = {},
+): Promise<string | undefined> {
+  try {
+    return await getAgyAccessToken(forceRefresh, overrides);
+  } catch {
+    return undefined;
   }
 }
 

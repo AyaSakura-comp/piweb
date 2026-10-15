@@ -30,6 +30,7 @@ import type { AgentResult, ThinkingLevel } from '../types.js';
 import type { AvailableModelInfo } from './model-catalog.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
 import { snapshotAgySubagents, watchAgySubagents } from './agy-subagents.js';
+import { ensureFreshAgyToken } from '../agy-usage.js';
 export { convertLocalMediaLinks } from './local-media-links.js';
 
 export const AGY_PROVIDER = 'agy';
@@ -40,7 +41,8 @@ export const AGY_PROVIDER = 'agy';
  * stdin **must** be closed: given an open stdin pipe, `agy models` waits on it
  * and never returns, so an execFile-style call only ever ends in a timeout kill.
  */
-function runAgy(args: string[], timeoutMs: number): Promise<string> {
+async function runAgy(args: string[], timeoutMs: number, allowRetry = true): Promise<string> {
+  await ensureFreshAgyToken().catch(() => undefined);
   return new Promise((resolve, reject) => {
     const proc = spawn(config.agyBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [];
@@ -56,15 +58,30 @@ function runAgy(args: string[], timeoutMs: number): Promise<string> {
       clearTimeout(timer);
       reject(error);
     });
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       clearTimeout(timer);
       if (code === 0) {
         resolve(Buffer.concat(out).toString('utf8'));
         return;
       }
+      const errText = Buffer.concat(err).toString('utf8').trim();
+      if (allowRetry && /sign in|not logged in/i.test(errText)) {
+        logger.info('agy auth failed; attempting token refresh and retry');
+        const refreshed = await ensureFreshAgyToken(true).catch(() => undefined);
+        if (refreshed) {
+          try {
+            const retried = await runAgy(args, timeoutMs, false);
+            resolve(retried);
+            return;
+          } catch (retryErr) {
+            reject(retryErr);
+            return;
+          }
+        }
+      }
       reject(
         new Error(
-          `agy ${args.join(' ')} exited with ${code}: ${Buffer.concat(err).toString('utf8').trim()}`,
+          `agy ${args.join(' ')} exited with ${code}: ${errText}`,
         ),
       );
     });
@@ -663,6 +680,8 @@ export async function invokeAgy(
 
   const turnStartedAt = Date.now();
   const printTimeoutMs = parseDurationMs(config.agyPrintTimeout) ?? 3_600_000;
+
+  await ensureFreshAgyToken().catch(() => undefined);
 
   return new Promise<AgentResult>((resolve) => {
     // detached makes agy a process-group leader so the whole group can be

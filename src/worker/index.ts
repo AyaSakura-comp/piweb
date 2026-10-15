@@ -122,7 +122,10 @@ async function publishModelCatalog(): Promise<void> {
     await reloadModelConfig().catch((err: any) => {
       logger.warn({ err: err.message }, 'Failed to reload pi model config');
     });
-    const models = listAvailableModels({ forceRefresh: true });
+    await listAgyModels({ forceRefresh: true }).catch((err: any) => {
+      logger.warn({ err: err.message }, 'Failed to list agy models for catalog publish');
+    });
+    const models = listAvailableModels();
     setMeta('models', JSON.stringify(models));
     logger.debug({ count: models.length }, 'Published model catalog');
   } catch (err: any) {

@@ -65,6 +65,7 @@ import type { RegisteredChannel } from '../types.js';
 import { getGptUsageText } from '../gpt-usage.js';
 import { getAgyUsageReport } from '../agy-usage.js';
 import { getClaudeUsageText, ClaudeUsageError } from '../claude-usage.js';
+import { isAgyModelRef, listAgyModels } from '../agent/agy.js';
 import { discoverPiExtensionCommands, executePiExtensionCommand } from './extension-runner.js';
 
 export interface CommandResult {
@@ -108,7 +109,7 @@ export async function runCommand(
         result = await cmdCompact(channel, args.instructions);
         break;
       case 'pi model':
-        result = cmdModelSet(channel, args.model ?? '');
+        result = await cmdModelSet(channel, args.model ?? '', options.assertOwnership);
         break;
       case 'pi reset-model':
         result = await cmdModelReset(channel, options.assertOwnership);
@@ -385,14 +386,28 @@ function cmdTaskList(channel: RegisteredChannel): CommandResult {
 
 // ── model / thinking / cwd ──
 
-function cmdModelSet(channel: RegisteredChannel, selectedRef: string): CommandResult {
+async function cmdModelSet(
+  channel: RegisteredChannel,
+  selectedRef: string,
+  assertOwnership?: () => void,
+): Promise<CommandResult> {
   if (!selectedRef.trim()) return { ok: false, text: 'Please choose a model.' };
 
-  const models = listAvailableModels({ forceRefresh: true });
-  const selectedModel = resolveModelReference(selectedRef, models);
+  assertOwnership?.();
+  let models = listAvailableModels();
+  let selectedModel = resolveModelReference(selectedRef, models);
+
+  if (!selectedModel && isAgyModelRef(selectedRef) && config.agyEnabled) {
+    await listAgyModels({ forceRefresh: true }).catch(() => []);
+    models = listAvailableModels();
+    selectedModel = resolveModelReference(selectedRef, models);
+  }
+
   if (!selectedModel) {
     return { ok: false, text: `Model is no longer available: ${selectedRef}` };
   }
+
+  assertOwnership?.();
 
   noteHarnessSelection(channel, harnessForModel(channel.modelOverride || config.piModel || ''));
   const thinkingResolution = mutateOwnedChannel(channel, () => {

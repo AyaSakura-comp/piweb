@@ -2,7 +2,7 @@ import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS, type ThinkingLevel } from '../types.js';
 import { getModelSupportedThinkingLevels } from './pi-ai-compat.js';
-import { cachedAgyModels, listAgyModels } from './agy.js';
+import { cachedAgyModels, listAgyModels, AGY_PROVIDER, isAgyModelRef, agyModelId } from './agy.js';
 import { config } from '../config.js';
 import { listClaudeTmuxModels } from './claude-tmux.js';
 
@@ -138,13 +138,29 @@ export function resolveModelReference(
       normalize(m.name).includes(normalized),
   );
 
-  if (partialMatches.length === 0) return undefined;
+  if (partialMatches.length > 0) {
+    // Prefer exact startsWith on canonical ref, otherwise the first sorted match.
+    partialMatches.sort(
+      (a, b) => scoreModelMatch(b, raw) - scoreModelMatch(a, raw) || a.ref.localeCompare(b.ref),
+    );
+    return partialMatches[0];
+  }
 
-  // Prefer exact startsWith on canonical ref, otherwise the first sorted match.
-  partialMatches.sort(
-    (a, b) => scoreModelMatch(b, raw) - scoreModelMatch(a, raw) || a.ref.localeCompare(b.ref),
-  );
-  return partialMatches[0];
+  // If explicitly an agy model ref and agy is enabled, synthesize valid model info
+  if (isAgyModelRef(raw) && config.agyEnabled) {
+    const id = agyModelId(raw);
+    return {
+      ref: `${AGY_PROVIDER}/${id}`,
+      provider: AGY_PROVIDER,
+      id,
+      name: id,
+      reasoning: true,
+      supportsXhigh: false,
+      supportedThinkingLevels: ['off', 'minimal', 'low', 'medium', 'high'],
+    };
+  }
+
+  return undefined;
 }
 
 export function autocompleteModels(query: string, limit = 25): AvailableModelInfo[] {
