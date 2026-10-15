@@ -2849,6 +2849,24 @@ svg {
   font-size: 13px;
 }
 
+.settings-select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  max-width: 170px;
+}
+
+.settings-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .settings-chevron {
   color: var(--text-dim);
   font-size: 24px;

@@ -3666,7 +3666,7 @@ function fileToBase64(file) {
   });
 }
 
-createHotKeywords({ container: $('hot-keywords'), input });
+createHotKeywords({ container: $('hot-keywords'), input, select: $('hot-keywords-days') });
 
 const cameraComposer = createCameraComposer({
   send: $('btn-send'), anchor: $('messages'),

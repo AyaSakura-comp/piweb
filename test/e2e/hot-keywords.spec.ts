@@ -118,3 +118,43 @@ test('refetches when the page comes back, and shows no empty row without a file'
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await expect(page.locator('#hot-keywords .hot-keyword')).toHaveText(['deploy']);
 });
+
+test('switches keyword window days from the settings dialog and persists to localStorage', async ({ page }) => {
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({
+      json: {
+        generatedAt: '2026-10-15T00:00:00Z',
+        windowDays: 1,
+        items: [{ word: 'deploy', count: 10 }, { word: 'push', count: 9 }],
+        windows: {
+          '1': [{ word: 'deploy', count: 10 }, { word: 'push', count: 9 }],
+          '7': [{ word: 'commit', count: 30 }, { word: 'qwen', count: 25 }],
+        },
+      },
+    }),
+  );
+  await mockApi(page, []);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+
+  const row = page.locator('#hot-keywords');
+  await expect(row).toBeVisible();
+  // Default is 1 day
+  await expect(row.locator('.hot-keyword')).toHaveText(['deploy', 'push']);
+
+  // Open settings via menu
+  await page.locator('#btn-menu').click();
+  await page.locator('#btn-settings').click();
+  const select = page.locator('#hot-keywords-days');
+  await expect(select).toBeVisible();
+  await expect(select).toHaveValue('1');
+
+  // Change to 7 days
+  await select.selectOption('7');
+  await expect(row.locator('.hot-keyword')).toHaveText(['commit', 'qwen']);
+  expect(await page.evaluate(() => localStorage.getItem('piweb.hot_keywords_days'))).toBe('7');
+
+  // Close settings
+  await page.locator('#btn-settings-close').click();
+  await expect(row.locator('.hot-keyword')).toHaveText(['commit', 'qwen']);
+});

@@ -3,7 +3,12 @@ import { dirname, join } from 'node:path';
 import { config } from '../config.js';
 import { latestWebEventId, listRecentUserMessages } from '../db.js';
 import { logger } from '../logger.js';
-import { HOT_KEYWORD_WINDOW_DAYS, rankHotKeywords } from '../agent/hot-keywords.js';
+import {
+  HOT_KEYWORD_WINDOW_DAYS,
+  SUPPORTED_HOT_KEYWORD_WINDOWS,
+  rankHotKeywords,
+  type HotKeyword,
+} from '../agent/hot-keywords.js';
 
 /**
  * Keeps `<WEB_MEDIA_DIR>/piweb-shared/hot-keywords.json` current: recounted
@@ -20,13 +25,22 @@ let timer: NodeJS.Timeout | undefined;
 let countedThrough = -1;
 
 export function publishHotKeywords(): void {
-  const items = rankHotKeywords(listRecentUserMessages(HOT_KEYWORD_WINDOW_DAYS));
+  const windows: Record<number, HotKeyword[]> = {};
+  for (const days of SUPPORTED_HOT_KEYWORD_WINDOWS) {
+    windows[days] = rankHotKeywords(listRecentUserMessages(days));
+  }
+  const items = windows[HOT_KEYWORD_WINDOW_DAYS] ?? windows[1] ?? [];
   const target = join(config.webMediaDir, HOT_KEYWORDS_RELATIVE_PATH);
   mkdirSync(dirname(target), { recursive: true });
   const temp = `${target}.${process.pid}.tmp`;
   writeFileSync(
     temp,
-    JSON.stringify({ generatedAt: new Date().toISOString(), windowDays: HOT_KEYWORD_WINDOW_DAYS, items }),
+    JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      windowDays: HOT_KEYWORD_WINDOW_DAYS,
+      items,
+      windows,
+    }),
     { mode: 0o644 },
   );
   renameSync(temp, target);

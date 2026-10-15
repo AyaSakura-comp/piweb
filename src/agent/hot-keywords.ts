@@ -6,7 +6,8 @@
  */
 
 export const HOT_KEYWORD_COUNT = 10;
-export const HOT_KEYWORD_WINDOW_DAYS = 7;
+export const HOT_KEYWORD_WINDOW_DAYS = 1;
+export const SUPPORTED_HOT_KEYWORD_WINDOWS = [1, 3, 7, 14, 30] as const;
 
 // Function words and filler that rank high in any chat but say nothing about
 // what the user works on. Tuned on the user's own month of prompts.

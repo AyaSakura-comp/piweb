@@ -559,10 +559,24 @@
                 <span class="settings-row-label">Appearance</span>
                 <span class="settings-value" data-theme-label>Light mode</span>
               </button>
+              <label class="settings-row" for="hot-keywords-days">
+                <span class="settings-row-icon">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
+                </span>
+                <span class="settings-row-label">熱門關鍵字統計區間</span>
+                <select class="settings-select" id="hot-keywords-days" aria-describedby="hot-keywords-days-help">
+                  <option value="1">過去 1 天（預設）</option>
+                  <option value="3">過去 3 天</option>
+                  <option value="7">過去 7 天</option>
+                  <option value="14">過去 14 天</option>
+                  <option value="30">過去 30 天</option>
+                </select>
+              </label>
             </div>
           </section>
 
           <p class="settings-footnote" id="auto-scroll-help">送出提問會置頂；關閉時，回覆不會自動往下捲，仍可點選 Jump to present。</p>
+          <p class="settings-footnote" id="hot-keywords-days-help">熱門關鍵字從最新 prompt 往前回推；設定儲存於此瀏覽器。</p>
 
           <section class="settings-section" aria-labelledby="settings-monitor-title">
             <h3 id="settings-monitor-title">主機監控</h3>

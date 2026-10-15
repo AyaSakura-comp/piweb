@@ -2855,14 +2855,17 @@ export function setMeta(key: string, value: string): void {
   ).run(key, value);
 }
 
-/** User messages typed into standard sessions over the last `days` days (hot keywords). */
+/** User messages typed into standard sessions over the last `days` days from the latest prompt (hot keywords). */
 export function listRecentUserMessages(days: number): string[] {
   return (
     db
       .prepare(
         `select e.content from web_events e join channels c on c.jid = e.channel_jid
           where e.kind = 'message' and e.role = 'user' and c.kind = 'standard'
-            and e.created_at >= datetime('now', ?)`,
+            and e.created_at >= (
+              select datetime(coalesce(max(created_at), datetime('now')), ?) from web_events
+               where kind = 'message' and role = 'user'
+            )`,
       )
       .all(`-${Math.max(1, Math.floor(days))} days`) as Array<{ content: string }>
   ).map((row) => row.content);

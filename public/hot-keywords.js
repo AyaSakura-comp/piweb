@@ -9,6 +9,8 @@
 // never focuses the box (which would open it). Editing the word out of the box, or
 // sending, releases the chip. More chips than fit scroll sideways.
 export const HOT_KEYWORDS_URL = '/media/piweb-shared/hot-keywords.json';
+export const HOT_KEYWORDS_STORAGE_KEY = 'piweb.hot_keywords_days';
+export const DEFAULT_WINDOW_DAYS = '1';
 const MAX_CHIPS = 10;
 
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -16,9 +18,54 @@ const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const wordPattern = (word) =>
   /^[\w-]+$/.test(word) ? new RegExp(`(^|[^\\w-])${escapeRe(word)}(?![\\w-])`, 'i') : new RegExp(escapeRe(word));
 
-export function createHotKeywords({ container, input, fetchImpl = fetch }) {
+export function createHotKeywords({ container, input, select, fetchImpl = fetch, storage = null }) {
+  let storageImpl = storage;
+  if (!storageImpl) {
+    try { storageImpl = localStorage; } catch {}
+  }
+  let selectedDays = DEFAULT_WINDOW_DAYS;
+  try {
+    const stored = storageImpl?.getItem(HOT_KEYWORDS_STORAGE_KEY);
+    if (stored) selectedDays = String(stored);
+  } catch {}
+
+  let cachedData = null;
   let items = [];
   const selected = new Set();
+
+  if (select) {
+    select.value = selectedDays;
+    select.addEventListener('change', () => {
+      setWindowDays(select.value);
+    });
+  }
+
+  function applyWindow() {
+    let windowItems = cachedData?.windows?.[selectedDays];
+    if (!Array.isArray(windowItems) && String(cachedData?.windowDays) === selectedDays) {
+      windowItems = cachedData?.items;
+    }
+    items = Array.isArray(windowItems)
+      ? windowItems
+          .filter((item) => typeof item?.word === 'string' && item.word)
+          .slice(0, MAX_CHIPS)
+      : Array.isArray(cachedData?.items)
+        ? cachedData.items
+            .filter((item) => typeof item?.word === 'string' && item.word)
+            .slice(0, MAX_CHIPS)
+        : [];
+    render();
+    sync();
+  }
+
+  function setWindowDays(days) {
+    selectedDays = String(days);
+    if (select && select.value !== selectedDays) select.value = selectedDays;
+    try {
+      storageImpl?.setItem(HOT_KEYWORDS_STORAGE_KEY, selectedDays);
+    } catch {}
+    applyWindow();
+  }
 
   function render() {
     container.replaceChildren();
@@ -29,7 +76,7 @@ export function createHotKeywords({ container, input, fetchImpl = fetch }) {
       button.textContent = item.word;
       button.dataset.word = item.word;
       button.setAttribute('aria-pressed', String(selected.has(item.word)));
-      button.title = `這週用了 ${item.count} 次`;
+      button.title = `${selectedDays} 天內用了 ${item.count} 次`;
       bindTap(button, () => toggle(item.word));
       container.append(button);
     }
@@ -103,14 +150,8 @@ export function createHotKeywords({ container, input, fetchImpl = fetch }) {
     try {
       const res = await fetchImpl(HOT_KEYWORDS_URL, { credentials: 'same-origin', cache: 'no-cache' });
       if (!res.ok) return;
-      const data = await res.json();
-      items = Array.isArray(data?.items)
-        ? data.items
-            .filter((item) => typeof item?.word === 'string' && item.word)
-            .slice(0, MAX_CHIPS)
-        : [];
-      render();
-      sync();
+      cachedData = await res.json();
+      applyWindow();
     } catch {
       // No file yet, offline, or signed out: keep whatever is shown.
     }
@@ -131,5 +172,12 @@ export function createHotKeywords({ container, input, fetchImpl = fetch }) {
   window.addEventListener('online', () => void refresh());
   render();
   void refresh();
-  return { refresh, sync, get items() { return items; }, get selected() { return [...selected]; } };
+  return {
+    refresh,
+    sync,
+    setWindowDays,
+    get windowDays() { return selectedDays; },
+    get items() { return items; },
+    get selected() { return [...selected]; }
+  };
 }
