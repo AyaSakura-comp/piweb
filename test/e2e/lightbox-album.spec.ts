@@ -233,3 +233,54 @@ test('a chat video stays in the image album, between the images', async ({ page 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test('HD button loads high-definition photo and toggles between HD and fit mode', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.route('**/media/web_lightbox-album/*', (route) => {
+    const name = new URL(route.request().url()).pathname.split('/').pop()!;
+    return route.fulfill({ contentType: 'image/png', body: colours[name] || colours['middle.png'] });
+  });
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/me') return route.fulfill({ json: { authed: true } });
+    if (path === '/api/sessions') return route.fulfill({ json: { sessions: [session] } });
+    if (path.endsWith('/events'))
+      return route.fulfill({ json: { events, busy: false, session, hasMore: false, partial: null } });
+    if (path.endsWith('/media')) return route.fulfill({ json: { items: album } });
+    if (path.endsWith('/stream'))
+      return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
+    return route.fulfill({ json: { commands: [], models: [], sessions: [] } });
+  });
+
+  await page.goto('/');
+  await page.locator('#messages img[src$="middle.png"]').click();
+  await expect(page.locator('#lightbox')).toBeVisible();
+
+  const hdBtn = page.locator('#lb-hd');
+  const lbImg = page.locator('#lb-img');
+  await expect(hdBtn).toBeVisible();
+  await expect(hdBtn).toHaveText('高畫質');
+  await expect(hdBtn).toHaveAttribute('aria-pressed', 'false');
+  await expect(lbImg).not.toHaveClass(/is-hd/);
+
+  // Click HD button to enable HD mode
+  await hdBtn.click();
+  await expect(hdBtn).toHaveClass(/active/);
+  await expect(hdBtn).toHaveText('已開高畫質');
+  await expect(hdBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect(lbImg).toHaveClass(/is-hd/);
+  await expect(page.locator('#toast')).toContainText('已載入高畫質照片');
+  await page.screenshot({ path: info.outputPath('04-hd-mode-active.png') });
+
+  // Click HD button again to toggle back to fit mode
+  await hdBtn.click();
+  await expect(hdBtn).not.toHaveClass(/active/);
+  await expect(hdBtn).toHaveText('高畫質');
+  await expect(hdBtn).toHaveAttribute('aria-pressed', 'false');
+  await expect(lbImg).not.toHaveClass(/is-hd/);
+  await expect(page.locator('#toast')).toContainText('已切換為適配螢幕');
+
+  expect(errors).toEqual([]);
+});

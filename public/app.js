@@ -4043,6 +4043,7 @@ const lb = {
   lastTap: 0,
   lastTapX: 0,
   lastTapY: 0,
+  isHD: false,
 };
 
 const LB_VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
@@ -4256,10 +4257,83 @@ function syncFilmstrip() {
   });
 }
 
+function updateHDBtnState() {
+  const btn = $('lb-hd');
+  if (!btn) return;
+  const url = lb.urls[lb.index];
+  const isVideo = isLightboxVideo(url);
+  btn.hidden = isVideo;
+  if (isVideo) return;
+
+  btn.setAttribute('aria-pressed', String(Boolean(lb.isHD)));
+  btn.classList.toggle('active', Boolean(lb.isHD));
+  const span = btn.querySelector('span');
+  if (span) {
+    span.textContent = lb.isHD ? '已開高畫質' : '高畫質';
+  }
+  btn.title = lb.isHD ? '切換回適配螢幕 (目前為高畫質)' : '載入高畫質照片 (100% 原圖細節)';
+}
+
+function enableHDMode() {
+  const img = $('lb-img');
+  if (!img || img.hidden) return;
+  const stage = $('lb-stage').getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const naturalW = img.naturalWidth || stage.width;
+  const naturalH = img.naturalHeight || stage.height;
+
+  const pixelW = naturalW / dpr;
+  const fitRatio = Math.min(stage.width / naturalW, stage.height / naturalH);
+  const fitW = naturalW * fitRatio;
+  const targetW = Math.max(pixelW, fitW * 1.5, stage.width * 0.95);
+  const scaleRatio = targetW / naturalW;
+  const targetH = naturalH * scaleRatio;
+
+  lb.isHD = true;
+  img.classList.add('is-hd');
+  img.style.setProperty('--hd-width', `${Math.round(targetW)}px`);
+  img.style.setProperty('--hd-height', `${Math.round(targetH)}px`);
+
+  lb.scale = 1;
+  lb.x = 0;
+  if (targetH > stage.height) {
+    lb.y = (targetH - stage.height) / 2;
+  } else {
+    lb.y = 0;
+  }
+
+  applyLightboxTransform(true);
+  updateHDBtnState();
+  showToast('已載入高畫質照片');
+}
+
+function disableHDMode() {
+  lb.isHD = false;
+  const img = $('lb-img');
+  if (img) {
+    img.classList.remove('is-hd');
+    img.style.removeProperty('--hd-width');
+    img.style.removeProperty('--hd-height');
+  }
+  updateHDBtnState();
+}
+
+function toggleHDMode(forceState) {
+  const shouldBeHD = typeof forceState === 'boolean' ? forceState : !lb.isHD;
+  if (shouldBeHD) {
+    enableHDMode();
+  } else {
+    disableHDMode();
+    resetLightboxTransform(true);
+    showToast('已切換為適配螢幕');
+  }
+}
+
 function closeLightbox() {
   imageAnnotator.close();
   lightboxAlbumGeneration++;
   releaseLightboxVideo();
+  disableHDMode();
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
   resetLightboxTransform(false);
@@ -4273,6 +4347,7 @@ function showLightboxImage(direction = 0) {
   const url = lb.urls[lb.index];
   const isVideo = isLightboxVideo(url);
   $('lb-annotate').hidden = isVideo || !canAnnotateImage();
+  disableHDMode();
   // Leaving a video must stop it; landing on one swaps the visible element.
   releaseLightboxVideo();
   $('lb-img').hidden = isVideo;
@@ -4306,6 +4381,7 @@ function showLightboxImage(direction = 0) {
 
   $('lb-count').textContent = `${lb.index + 1} / ${lb.urls.length}`;
   $('lb-open').href = url;
+  updateHDBtnState();
   $('lb-prev').disabled = lb.index === 0;
   $('lb-next').disabled = lb.index === lb.urls.length - 1;
   syncFilmstrip();
@@ -4450,26 +4526,18 @@ lightboxEl.addEventListener(
       ) {
         if (e.cancelable) e.preventDefault();
         lb.lastTap = 0;
-        if (lb.scale > 1.1) {
-          lb.scale = 1;
-          lb.x = 0;
-          lb.y = 0;
+        if (lb.isHD || lb.scale > 1.1) {
+          toggleHDMode(false);
         } else {
-          lb.scale = 2.5;
-          const stage = $('lb-stage').getBoundingClientRect();
-          const centerX = stage.left + stage.width / 2;
-          const centerY = stage.top + stage.height / 2;
-          lb.x = (centerX - touch.clientX) * 1.5;
-          lb.y = (centerY - touch.clientY) * 1.5;
+          toggleHDMode(true);
         }
-        applyLightboxTransform(true);
         return;
       }
       lb.lastTap = now;
       lb.lastTapX = touch.clientX;
       lb.lastTapY = touch.clientY;
 
-      if (lb.scale > 1.05) {
+      if (lb.isHD || lb.scale > 1.05) {
         lb.isPanning = true;
         lb.panStartX = touch.clientX - lb.x;
         lb.panStartY = touch.clientY - lb.y;
@@ -4542,18 +4610,27 @@ lightboxEl.addEventListener(
 function endLightboxTouch(e) {
   if (lb.isPinching) {
     lb.isPinching = false;
-    if (lb.scale < 1.05) {
-      resetLightboxTransform(true);
-    } else if (lb.scale > 5) {
-      lb.scale = 5;
-      applyLightboxTransform(true);
+    if (lb.isHD) {
+      if (lb.scale < 0.6) {
+        toggleHDMode(false);
+      } else if (lb.scale > 4) {
+        lb.scale = 4;
+        applyLightboxTransform(true);
+      }
+    } else {
+      if (lb.scale < 1.05) {
+        resetLightboxTransform(true);
+      } else if (lb.scale > 5) {
+        lb.scale = 5;
+        applyLightboxTransform(true);
+      }
     }
     return;
   }
 
   if (lb.isPanning) {
     lb.isPanning = false;
-    if (lb.scale < 1.05) {
+    if (!lb.isHD && lb.scale < 1.05) {
       resetLightboxTransform(true);
     }
     return;
@@ -4594,6 +4671,39 @@ function endLightboxTouch(e) {
 
 lightboxEl.addEventListener('touchend', endLightboxTouch);
 lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
+
+$('lb-hd')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleHDMode();
+});
+
+let mousePanning = false;
+let mouseStartX = 0;
+let mouseStartY = 0;
+
+$('lb-stage')?.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || !$('lightbox') || $('lightbox').hidden) return;
+  if (lb.isHD || lb.scale > 1.05) {
+    mousePanning = true;
+    mouseStartX = e.clientX - lb.x;
+    mouseStartY = e.clientY - lb.y;
+    lbMedia().style.transition = 'none';
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!mousePanning) return;
+  lb.x = e.clientX - mouseStartX;
+  lb.y = e.clientY - mouseStartY;
+  applyLightboxTransform(false);
+});
+
+window.addEventListener('mouseup', () => {
+  if (mousePanning) {
+    mousePanning = false;
+  }
+});
 
 // ── recently deleted ─────────────────────────────────────────────────────
 
