@@ -20,7 +20,8 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
 
 const QUOTA_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
-const USER_AGENT = 'antigravity-cli/1.1.13';
+const USER_AGENT =
+  'antigravity/cli/1.3.6 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)';
 
 /**
  * The control loop drains commands strictly serially and does not schedule its
@@ -40,6 +41,7 @@ export interface AgyQuotaBucket {
   window: string;
   resetTime: string;
   description?: string;
+  disabled?: boolean;
   remainingFraction: number;
 }
 
@@ -410,9 +412,13 @@ export function formatAgyUsage(groups: AgyQuotaGroup[], now = Date.now()): strin
   for (const group of groups) {
     lines.push('', `▸ ${group.displayName}`);
     for (const bucket of group.buckets ?? []) {
+      const label = windowLabel(bucket).padEnd(6, ' ');
+      if (bucket.disabled) {
+        lines.push(`  ⚪ ${label} 已停用（受週窗上限限制）`);
+        continue;
+      }
       const remaining = Number(bucket.remainingFraction ?? 0);
       const usedPercent = Math.round((1 - remaining) * 100);
-      const label = windowLabel(bucket).padEnd(6, ' ');
       lines.push(`  ${dot(remaining)} ${label} 已用 ${usedPercent}% ${bar(remaining)}`);
       lines.push(`     ${localTime(bucket.resetTime)} ${humanizeUntil(bucket.resetTime, now)}`);
     }

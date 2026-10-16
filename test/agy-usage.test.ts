@@ -76,6 +76,37 @@ describe('formatAgyUsage', () => {
   it('says so plainly when no quota is reported', () => {
     expect(formatAgyUsage([], NOW)).toContain('沒有回報任何額度資訊');
   });
+
+  it('renders a disabled 5h bucket as disabled instead of 0% used', () => {
+    const out = formatAgyUsage(
+      [
+        {
+          displayName: 'Claude and GPT models',
+          buckets: [
+            {
+              bucketId: '3p-weekly',
+              displayName: 'Weekly Limit Remaining',
+              window: 'weekly',
+              resetTime: '2026-10-21T17:56:46Z',
+              remainingFraction: 0,
+            },
+            {
+              bucketId: '3p-5h',
+              displayName: 'Five Hour Limit Remaining',
+              window: '5h',
+              resetTime: '2026-10-16T06:14:38Z',
+              disabled: true,
+              remainingFraction: 1,
+            },
+          ],
+        },
+      ],
+      NOW,
+    );
+    expect(out).toContain('🔴 週窗     已用 100% ██████████');
+    expect(out).toContain('⚪ 5小時窗   已停用（受週窗上限限制）');
+    expect(out).not.toContain('已用 0%');
+  });
 });
 
 describe('humanizeUntil', () => {
@@ -209,7 +240,7 @@ describe('fetchAgyQuota', () => {
     }) as unknown as typeof fetch;
 
     await fetchAgyQuota(fake, 'test-token').catch(() => undefined);
-    if (seen) expect(String(seen.headers['User-Agent'])).toMatch(/^antigravity-cli\//);
+    if (seen) expect(String(seen.headers['User-Agent'])).toMatch(/^antigravity\/cli\//);
   });
 
   // The control loop is serial and schedules its next tick only after the
