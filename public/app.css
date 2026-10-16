@@ -2461,7 +2461,7 @@ svg {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 96px;
+  bottom: calc(var(--composer-h, 84px) + 12px);
   z-index: 50;
   padding: 8px 14px;
   background: var(--accent);
@@ -4570,7 +4570,7 @@ dialog.sheet::backdrop {
 
 /* Keep "Jump to present" above the dock (its height is published by app.js). */
 .app.has-stream-player .jump-live {
-  bottom: calc(96px + var(--stream-player-h, 0px));
+  bottom: calc(var(--composer-h, 84px) + 12px + var(--stream-player-h, 0px));
 }
 
 /* Audio attachments: a track row that plays in the dock. */

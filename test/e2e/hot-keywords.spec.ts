@@ -50,6 +50,11 @@ test('top ten keywords sit above the composer, scroll sideways and multi-select 
   const rowBox = (await row.boundingBox())!;
   const composer = (await page.locator('#composer').boundingBox())!;
   expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(composer.y + 1);
+  // When "Jump to present ↓" is visible, it must float above the hot-keywords row and never cover the chips.
+  await page.evaluate(() => document.getElementById('jump-live')!.classList.add('visible'));
+  const jumpBox = (await page.locator('#jump-live').boundingBox())!;
+  expect(jumpBox.y + jumpBox.height).toBeLessThanOrEqual(rowBox.y);
+  await page.evaluate(() => document.getElementById('jump-live')!.classList.remove('visible'));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('hot-keywords.png') });
 

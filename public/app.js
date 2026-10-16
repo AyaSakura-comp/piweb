@@ -68,9 +68,17 @@ const streamPlayer = createStreamPlayer(document, globalThis, {
     ) ?? null,
 });
 if (typeof ResizeObserver === 'function') {
-  new ResizeObserver(() => {
+  const composerWrap = $('composer-wrap');
+  const syncBottomChrome = () => {
     document.documentElement.style.setProperty('--stream-player-h', `${streamDock.offsetHeight}px`);
-  }).observe(streamDock);
+    if (composerWrap) {
+      document.documentElement.style.setProperty('--composer-h', `${composerWrap.offsetHeight}px`);
+    }
+  };
+  const bottomChromeObserver = new ResizeObserver(syncBottomChrome);
+  bottomChromeObserver.observe(streamDock);
+  if (composerWrap) bottomChromeObserver.observe(composerWrap);
+  syncBottomChrome();
 }
 // Transcript re-renders drop the node an embedded player stands in for;
 // re-home it (same item re-rendered, else the dock) before playback notices.
