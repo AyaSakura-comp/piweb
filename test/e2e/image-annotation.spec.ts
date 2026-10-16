@@ -39,6 +39,9 @@ async function setup(page: Page) {
     }),
   );
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
   await page.route('**/media/web_annotation/chart.svg', (route) =>
     route.fulfill({ contentType: 'image/svg+xml', body: svg }),
   );
@@ -228,6 +231,13 @@ test('two-finger zoom preserves strokes and resumes drawing only after every fin
     touchPoints: [{ ...spread[0], x: 100 }],
   });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(canvas).toHaveClass(/zoomed/);
+  const settled = await canvas.evaluate((node: HTMLCanvasElement) => ({
+    w: node.offsetWidth,
+    transform: getComputedStyle(node).transform,
+  }));
+  expect(settled.w).toBeGreaterThan(base.width * 2);
+  expect(settled.transform).toMatch(/^matrix\(1, 0, 0, 1,/);
   expect(await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(original);
   await page.getByRole('button', { name: '藍色', exact: true }).click();
   const start = { x: stage.x + stage.width * 0.35, y: stage.y + stage.height * 0.45, id: 1 };

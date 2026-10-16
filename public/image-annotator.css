@@ -83,7 +83,12 @@
   transform-origin: center;
   touch-action: none;
   cursor: crosshair;
+  will-change: transform;
   background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 / 16px 16px;
+}
+#annotation-canvas.zoomed {
+  max-width: none;
+  max-height: none;
 }
 .annotation-tools {
   padding: 12px 12px calc(12px + env(safe-area-inset-bottom));

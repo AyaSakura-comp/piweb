@@ -57,7 +57,8 @@ export function createImageAnnotator({ onConfirm, onError }) {
   const touches = new Map();
   let navigating = false;
   let gesture = null;
-  let view = { scale: 1, x: 0, y: 0 };
+  let view = { scale: 1, x: 0, y: 0, committed: 1 };
+  let commitTimer = null;
   let fittedWidth = 1;
   let fittedHeight = 1;
 
@@ -65,6 +66,30 @@ export function createImageAnnotator({ onConfirm, onError }) {
     confirm.disabled = !image || saving;
     undo.disabled = !strokes.length || saving || Boolean(active);
     clear.disabled = !strokes.length || saving;
+  }
+
+  function nativeScale() {
+    return (canvas.width || fittedWidth) / (fittedWidth * Math.max(1, window.devicePixelRatio || 1));
+  }
+
+  function setCommitted(target) {
+    if (!image || !dialog.open) return;
+    view.committed = target;
+    canvas.classList.toggle('zoomed', target > 1.01);
+    canvas.style.width = `${fittedWidth * target}px`;
+    canvas.style.height = `${fittedHeight * target}px`;
+    canvas.style.transition = 'none';
+    canvas.style.transform = `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale / view.committed})`;
+    void canvas.offsetWidth;
+  }
+
+  function scheduleCommit(delay = 140) {
+    clearTimeout(commitTimer);
+    commitTimer = setTimeout(() => {
+      if (navigating || !image || !dialog.open) return;
+      const target = view.scale > 1.01 ? Math.min(view.scale, Math.max(1, nativeScale(), view.scale)) : 1;
+      if (Math.abs(target - view.committed) > 0.01) setCommitted(target);
+    }, delay);
   }
 
   function fit() {
@@ -75,19 +100,36 @@ export function createImageAnnotator({ onConfirm, onError }) {
     );
     fittedWidth = Math.max(1, canvas.width * ratio);
     fittedHeight = Math.max(1, canvas.height * ratio);
-    canvas.style.width = `${fittedWidth}px`;
-    canvas.style.height = `${fittedHeight}px`;
-    applyView();
+    canvas.style.width = `${fittedWidth * view.committed}px`;
+    canvas.style.height = `${fittedHeight * view.committed}px`;
+    applyView(false);
     if (navigating && touches.size >= 2) beginGesture();
   }
   new ResizeObserver(fit).observe(stage);
 
-  function applyView() {
-    const limitX = Math.max(0, (fittedWidth * view.scale - stage.clientWidth) / 2);
-    const limitY = Math.max(0, (fittedHeight * view.scale - stage.clientHeight) / 2);
-    view.x = Math.max(-limitX, Math.min(limitX, view.x));
-    view.y = Math.max(-limitY, Math.min(limitY, view.y));
-    canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  function panLimits(scale = view.scale) {
+    return {
+      x: Math.max(0, (fittedWidth * scale - stage.clientWidth) / 2),
+      y: Math.max(0, (fittedHeight * scale - stage.clientHeight) / 2),
+    };
+  }
+
+  function rubberBand(value, limit) {
+    if (value > limit) return limit + (value - limit) / 3;
+    if (value < -limit) return -limit + (value + limit) / 3;
+    return value;
+  }
+
+  function clampView() {
+    const limit = panLimits();
+    view.x = Math.max(-limit.x, Math.min(limit.x, view.x));
+    view.y = Math.max(-limit.y, Math.min(limit.y, view.y));
+  }
+
+  function applyView(animate = false, clamp = true) {
+    if (clamp) clampView();
+    canvas.style.transition = animate ? 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+    canvas.style.transform = `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale / view.committed})`;
   }
 
   function gesturePoints() {
@@ -100,6 +142,7 @@ export function createImageAnnotator({ onConfirm, onError }) {
   }
 
   function beginGesture() {
+    clearTimeout(commitTimer);
     const p = gesturePoints();
     const r = stage.getBoundingClientRect();
     gesture = {
@@ -115,9 +158,12 @@ export function createImageAnnotator({ onConfirm, onError }) {
     const p = gesturePoints();
     const r = stage.getBoundingClientRect();
     view.scale = Math.max(1, Math.min(8, (gesture.scale * p.distance) / gesture.distance));
-    view.x = p.x - (r.left + r.width / 2) - gesture.anchorX * view.scale;
-    view.y = p.y - (r.top + r.height / 2) - gesture.anchorY * view.scale;
-    applyView();
+    const rawX = p.x - (r.left + r.width / 2) - gesture.anchorX * view.scale;
+    const rawY = p.y - (r.top + r.height / 2) - gesture.anchorY * view.scale;
+    const limit = panLimits(view.scale);
+    view.x = rubberBand(rawX, limit.x);
+    view.y = rubberBand(rawY, limit.y);
+    applyView(false, false);
   }
 
   function paintStroke(stroke) {
@@ -146,11 +192,10 @@ export function createImageAnnotator({ onConfirm, onError }) {
     sync();
   }
 
-  function point(event) {
-    const r = canvas.getBoundingClientRect();
+  function point(event, rect = canvas.getBoundingClientRect()) {
     return {
-      x: Math.max(0, Math.min(canvas.width, ((event.clientX - r.left) * canvas.width) / r.width)),
-      y: Math.max(0, Math.min(canvas.height, ((event.clientY - r.top) * canvas.height) / r.height)),
+      x: Math.max(0, Math.min(canvas.width, ((event.clientX - rect.left) * canvas.width) / rect.width)),
+      y: Math.max(0, Math.min(canvas.height, ((event.clientY - rect.top) * canvas.height) / rect.height)),
     };
   }
   stage.addEventListener('pointerdown', (event) => {
@@ -175,10 +220,11 @@ export function createImageAnnotator({ onConfirm, onError }) {
       return;
     event.preventDefault();
     stage.setPointerCapture(event.pointerId);
+    const rect = canvas.getBoundingClientRect();
     const stroke = {
       colour,
-      width: (Number(widthSelect.value) * canvas.width) / canvas.getBoundingClientRect().width,
-      points: [point(event)],
+      width: (Number(widthSelect.value) * canvas.width) / rect.width,
+      points: [point(event, rect)],
     };
     strokes.push(stroke);
     active = { pointerId: event.pointerId, stroke };
@@ -196,10 +242,16 @@ export function createImageAnnotator({ onConfirm, onError }) {
     }
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
-    const p = point(event);
-    const previous = active.stroke.points.at(-1);
-    active.stroke.points.push(p);
-    paintStroke({ ...active.stroke, points: [previous, p] });
+    const rect = canvas.getBoundingClientRect();
+    const samples = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
+    const events = samples.length ? samples : [event];
+    const segment = [active.stroke.points.at(-1)];
+    for (const sample of events) {
+      const p = point(sample, rect);
+      active.stroke.points.push(p);
+      segment.push(p);
+    }
+    paintStroke({ ...active.stroke, points: segment });
   });
   function finishPointer(event, cancelled = false) {
     touches.delete(event.pointerId);
@@ -212,13 +264,56 @@ export function createImageAnnotator({ onConfirm, onError }) {
       gesture = null;
       if (touches.size >= 2) beginGesture();
       // Never turn the remaining pinch finger into a drawing pointer.
-      if (!touches.size) navigating = false;
+      if (!touches.size) {
+        navigating = false;
+        if (view.scale <= 1.02) {
+          view.scale = 1;
+          view.x = 0;
+          view.y = 0;
+          setCommitted(1);
+        } else {
+          applyView(true, true);
+          scheduleCommit(160);
+        }
+      }
     }
     if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
   }
   stage.addEventListener('pointerup', (event) => finishPointer(event));
   stage.addEventListener('pointercancel', (event) => finishPointer(event, true));
   stage.addEventListener('lostpointercapture', (event) => finishPointer(event, true));
+  stage.addEventListener(
+    'wheel',
+    (event) => {
+      if (!image || saving || !dialog.open) return;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const r = stage.getBoundingClientRect();
+        const dx = event.clientX - (r.left + r.width / 2);
+        const dy = event.clientY - (r.top + r.height / 2);
+        const nextScale = Math.max(1, Math.min(8, view.scale * Math.exp(-event.deltaY * 0.01)));
+        const k = nextScale / view.scale;
+        view.x = dx - (dx - view.x) * k;
+        view.y = dy - (dy - view.y) * k;
+        view.scale = nextScale;
+        if (view.scale <= 1.01) {
+          view.scale = 1;
+          view.x = 0;
+          view.y = 0;
+          setCommitted(1);
+        } else {
+          applyView(false, true);
+          scheduleCommit(140);
+        }
+      } else if (view.scale > 1.01) {
+        event.preventDefault();
+        view.x -= event.deltaX;
+        view.y -= event.deltaY;
+        applyView(false, true);
+      }
+    },
+    { passive: false },
+  );
 
   for (const button of dialog.querySelectorAll('[data-colour]')) {
     button.addEventListener('click', () => {
@@ -243,13 +338,16 @@ export function createImageAnnotator({ onConfirm, onError }) {
 
   function close() {
     generation++;
+    clearTimeout(commitTimer);
     controller?.abort();
     controller = undefined;
     active = null;
     touches.clear();
     navigating = false;
     gesture = null;
-    view = { scale: 1, x: 0, y: 0 };
+    view = { scale: 1, x: 0, y: 0, committed: 1 };
+    canvas.classList.remove('zoomed');
+    canvas.style.transition = '';
     canvas.style.transform = '';
     image = null;
     context = null;

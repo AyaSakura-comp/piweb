@@ -4123,7 +4123,7 @@ function setLightboxCommitted(target) {
     img.style.borderRadius = `${14 * target}px`;
   }
   img.style.transition = 'none';
-  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale / lb.committed})`;
+  img.style.transform = `translate3d(${lb.x}px, ${lb.y}px, 0) scale(${lb.scale / lb.committed})`;
   void img.offsetWidth; // flush, so a following transition starts from this frame
 }
 
@@ -4169,7 +4169,7 @@ function zoomLightboxAt(scale, clientX, clientY, animate = true) {
   lb.scale = scale;
   clampLightboxPan();
   applyLightboxTransform(animate);
-  scheduleLightboxCommit(animate ? 300 : 150);
+  scheduleLightboxCommit(animate ? 240 : 120);
 }
 
 /** Double-tap: zoom in to where the finger is (native detail, 2.5–4×), or back out. */
@@ -4194,19 +4194,19 @@ function resetLightboxTransform(animate = false) {
   const img = lbMedia();
   if (img) {
     if (animate) {
-      img.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)';
+      img.style.transition = 'transform 0.2s cubic-bezier(0.2, 0, 0.2, 1)';
     } else {
       img.style.transition = 'none';
     }
-    img.style.transform = 'translate(0px, 0px) scale(1)';
+    img.style.transform = 'translate3d(0px, 0px, 0) scale(1)';
   }
 }
 
 function applyLightboxTransform(animate = false) {
   const img = lbMedia();
   if (!img) return;
-  img.style.transition = animate ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
-  img.style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.scale / lb.committed})`;
+  img.style.transition = animate ? 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+  img.style.transform = `translate3d(${lb.x}px, ${lb.y}px, 0) scale(${lb.scale / lb.committed})`;
 }
 
 /** Every image and video currently in the transcript, in reading order. */
@@ -4592,7 +4592,7 @@ lightboxEl.addEventListener(
         lb.panStartY = touch.clientY - lb.y;
         lb.panBounds = lbPanBounds();
         lb.panVX = lb.panVY = 0;
-        lb.panT = now;
+        lb.panT = performance.now();
       } else {
         lb.drag = { x: touch.clientX, y: touch.clientY, axis: null };
       }
@@ -4635,12 +4635,12 @@ lightboxEl.addEventListener(
     if (lb.isPanning && e.touches.length === 1) {
       if (e.cancelable) e.preventDefault();
       const touch = e.touches[0];
-      const now = Date.now();
+      const now = performance.now();
       const x = rubberBand(touch.clientX - lb.panStartX, lb.panBounds.x);
       const y = rubberBand(touch.clientY - lb.panStartY, lb.panBounds.y);
-      const dt = Math.max(1, now - lb.panT);
-      lb.panVX = 0.6 * ((x - lb.x) / dt) + 0.4 * lb.panVX;
-      lb.panVY = 0.6 * ((y - lb.y) / dt) + 0.4 * lb.panVY;
+      const dt = Math.max(0.5, now - lb.panT);
+      lb.panVX = 0.65 * ((x - lb.x) / dt) + 0.35 * lb.panVX;
+      lb.panVY = 0.65 * ((y - lb.y) / dt) + 0.35 * lb.panVY;
       lb.panT = now;
       lb.x = x;
       lb.y = y;
@@ -4661,9 +4661,9 @@ lightboxEl.addEventListener(
       const img = lbMedia();
       if (lb.drag.axis === 'x') {
         const atEnd = (dx > 0 && lb.index === 0) || (dx < 0 && lb.index === lb.urls.length - 1);
-        img.style.transform = `translateX(${atEnd ? dx / 4 : dx}px)`;
+        img.style.transform = `translate3d(${atEnd ? dx / 4 : dx}px, 0, 0)`;
       } else if (lb.drag.axis === 'y') {
-        img.style.transform = `translateY(${dy}px)`;
+        img.style.transform = `translate3d(0, ${dy}px, 0)`;
         img.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 400));
       }
     }
@@ -4681,7 +4681,7 @@ function endLightboxTouch(e) {
     } else {
       clampLightboxPan();
       applyLightboxTransform(true);
-      scheduleLightboxCommit(300);
+      scheduleLightboxCommit(240);
     }
     return;
   }
@@ -4693,13 +4693,13 @@ function endLightboxTouch(e) {
       return;
     }
     // A flick carries on a little, then settles inside the edges.
-    if (Date.now() - lb.panT < 80) {
+    if (performance.now() - lb.panT < 80) {
       lb.x += lb.panVX * 160;
       lb.y += lb.panVY * 160;
     }
     clampLightboxPan();
     applyLightboxTransform(true);
-    scheduleLightboxCommit(300);
+    scheduleLightboxCommit(240);
     return;
   }
 
@@ -4715,7 +4715,7 @@ function endLightboxTouch(e) {
     const dy = touch ? touch.clientY - drag.y : 0;
 
     if (drag.axis === 'y' && Math.abs(dy) > SWIPE_DISMISS_PX) {
-      img.style.transform = `translateY(${dy > 0 ? 120 : -120}%)`;
+      img.style.transform = `translate3d(0, ${dy > 0 ? 120 : -120}%, 0)`;
       img.style.opacity = '0';
       lightboxEl.style.transition = 'opacity 0.18s ease';
       lightboxEl.style.opacity = '0';
@@ -4731,7 +4731,7 @@ function endLightboxTouch(e) {
       if (stepLightbox(dx < 0 ? 1 : -1)) return;
     }
 
-    img.style.transform = 'translateX(0)';
+    img.style.transform = 'translate3d(0, 0, 0)';
     img.style.opacity = '1';
   }
 }
