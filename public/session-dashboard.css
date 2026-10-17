@@ -341,10 +341,10 @@
     place-items: center;
     pointer-events: none;
     transition:
-      left 0.08s ease,
-      top 0.08s ease,
-      width 0.08s ease,
-      height 0.08s ease;
+      left 0.22s cubic-bezier(0.22, 1.32, 0.36, 1),
+      top 0.22s cubic-bezier(0.22, 1.32, 0.36, 1),
+      width 0.22s cubic-bezier(0.22, 1.32, 0.36, 1),
+      height 0.22s cubic-bezier(0.22, 1.32, 0.36, 1);
   }
 
   .dashboard-drop-preview[hidden] {

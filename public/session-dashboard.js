@@ -1997,6 +1997,130 @@ export function createSessionDashboard({
   let activeResizerCount = 0;
 
   // ── 2D Layout & Both Horizontal and Vertical Splitters ─────────────────────
+  // ── Inertial Spring Physics & Collision Bounce Engine ─────────────────────
+  const prefersReducedMotion = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+  function triggerWallImpactBounce(targetEl, axis, sign) {
+    if (!targetEl || prefersReducedMotion()) return;
+    try {
+      const tx = axis === 'x' ? `${sign * 5}px` : '0px';
+      const ty = axis === 'y' ? `${sign * 5}px` : '0px';
+      const sx = axis === 'x' ? 0.972 : 1.012;
+      const sy = axis === 'y' ? 0.972 : 1.012;
+      const ox = axis === 'x' ? `${-sign * 2.5}px` : '0px';
+      const oy = axis === 'y' ? `${-sign * 2.5}px` : '0px';
+      targetEl.animate(
+        [
+          { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
+          { transform: `translate3d(${tx}, ${ty}, 0) scale(${sx}, ${sy})`, offset: 0.28 },
+          { transform: `translate3d(${ox}, ${oy}, 0) scale(${2 - sx}, ${2 - sy})`, offset: 0.62 },
+          { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
+        ],
+        {
+          duration: 380,
+          easing: 'cubic-bezier(0.22, 1.35, 0.36, 1)',
+        },
+      );
+    } catch {
+      // Ignore Web Animations API errors on detached nodes
+    }
+  }
+
+  function animatePaneLayoutTransition( mutateLayoutFn ) {
+    if (!active || prefersReducedMotion() || gridEl.hidden) {
+      mutateLayoutFn();
+      return;
+    }
+
+    // 1. FIRST: record current bounding boxes of all visible panes
+    const firstRects = new Map();
+    for (const [jid, pane] of panes.entries()) {
+      if (gridEl.contains(pane.el)) {
+        const r = pane.el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          firstRects.set(jid, r);
+        }
+      }
+    }
+
+    // 2. Execute layout mutation & DOM update
+    mutateLayoutFn();
+
+    // 3. LAST + INVERT + PLAY with inertial impact overshoot bounce
+    for (const [jid, pane] of panes.entries()) {
+      if (!gridEl.contains(pane.el)) continue;
+      const lastRect = pane.el.getBoundingClientRect();
+      if (lastRect.width <= 0 || lastRect.height <= 0) continue;
+      const firstRect = firstRects.get(jid);
+
+      try {
+        pane.el.getAnimations?.().forEach((anim) => anim.cancel());
+        if (firstRect) {
+          const dx = firstRect.left - lastRect.left;
+          const dy = firstRect.top - lastRect.top;
+          const dw = firstRect.width - lastRect.width;
+          const dh = firstRect.height - lastRect.height;
+          if (Math.hypot(dx, dy) < 2 && Math.hypot(dw, dh) < 2) continue;
+
+          const sx = Math.max(0.25, Math.min(3.5, firstRect.width / lastRect.width));
+          const sy = Math.max(0.25, Math.min(3.5, firstRect.height / lastRect.height));
+          // Inertial impact overshoot when arriving at the target slot
+          const overX = Math.max(-14, Math.min(14, -dx * 0.085));
+          const overY = Math.max(-14, Math.min(14, -dy * 0.085));
+          const reboundX = -overX * 0.38;
+          const reboundY = -overY * 0.38;
+          const impactScaleX = Math.abs(dx) > Math.abs(dy) ? 0.978 : 1.016;
+          const impactScaleY = Math.abs(dy) >= Math.abs(dx) ? 0.978 : 1.016;
+
+          pane.el.style.transformOrigin = '0 0';
+          const anim = pane.el.animate(
+            [
+              {
+                transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`,
+              },
+              {
+                transform: `translate3d(${overX}px, ${overY}px, 0) scale(${impactScaleX}, ${impactScaleY})`,
+                offset: 0.62,
+              },
+              {
+                transform: `translate3d(${reboundX}px, ${reboundY}px, 0) scale(${2 - impactScaleX * 0.992}, ${2 - impactScaleY * 0.992})`,
+                offset: 0.84,
+              },
+              {
+                transform: 'translate3d(0, 0, 0) scale(1, 1)',
+              },
+            ],
+            {
+              duration: 460,
+              easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)',
+            },
+          );
+          anim.onfinish = () => {
+            pane.el.style.transformOrigin = '';
+          };
+        } else {
+          // Newly added pane: pop in with spring collision bounce
+          pane.el.animate(
+            [
+              { transform: 'scale(0.88)', opacity: 0.35 },
+              { transform: 'scale(1.032)', opacity: 1, offset: 0.62 },
+              { transform: 'scale(0.99)', opacity: 1, offset: 0.84 },
+              { transform: 'scale(1)', opacity: 1 },
+            ],
+            {
+              duration: 420,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+            },
+          );
+        }
+      } catch {
+        // Ignore animation errors in headless/unsupported environments
+      }
+    }
+  }
+
   function createAxisSplitter({
     axis, // 'x' (vertical bar resizing width) or 'y' (horizontal bar resizing height)
     label,
@@ -2019,11 +2143,22 @@ export function createSessionDashboard({
       : '上下拖拉調整視窗高度（雙擊平均對齊）';
     splitter.innerHTML = '<span class="dashboard-splitter-grip" aria-hidden="true"></span>';
 
+    let springRafId = 0;
+    const cancelSpring = () => {
+      if (springRafId) {
+        cancelAnimationFrame(springRafId);
+        springRafId = 0;
+      }
+    };
+
     const equalizePair = () => {
-      const [w1, w2] = getWeights();
-      const avg = (w1 + w2) / 2;
-      setWeights(avg, avg);
-      saveState();
+      cancelSpring();
+      animatePaneLayoutTransition(() => {
+        const [w1, w2] = getWeights();
+        const avg = (w1 + w2) / 2;
+        setWeights(avg, avg);
+        saveState();
+      });
     };
 
     splitter.addEventListener('dblclick', equalizePair);
@@ -2043,6 +2178,7 @@ export function createSessionDashboard({
       e.preventDefault();
       e.stopPropagation();
       if (!firstEl || !secondEl) return;
+      cancelSpring();
 
       // Support double-tap on touch screens to equalize adjacent panes
       if (e.pointerType !== 'mouse') {
@@ -2076,12 +2212,43 @@ export function createSessionDashboard({
         // Ignore synthetic pointer events without active pointerId
       }
 
-      // 120Hz+ zero-lag direct style mutation on every pointermove / coalesced event
-      const applyPosition = (clientPos) => {
-        const delta = clientPos - startPos;
-        const clampedFirstPx = Math.max(minPx, Math.min(totalPx - minPx, firstSize + delta));
-        const firstRatio = clampedFirstPx / totalPx;
+      let currentFirstPx = firstSize;
+      let lastMovePos = startPos;
+      let lastMoveTime = performance.now();
+      let velocityPxPerSec = 0;
+      let hitBoundDuringDrag = 0; // -1 (hit min), 1 (hit max), 0 (none)
+
+      const applyFirstPx = (px) => {
+        const clamped = Math.max(minPx, Math.min(totalPx - minPx, px));
+        currentFirstPx = clamped;
+        const firstRatio = clamped / totalPx;
         setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
+        return clamped;
+      };
+
+      // 120Hz+ zero-lag direct style mutation on every pointermove / coalesced event
+      const applyPosition = (clientPos, nowTime) => {
+        const dt = Math.max(1, nowTime - lastMoveTime);
+        const instVel = ((clientPos - lastMovePos) / dt) * 1000;
+        velocityPxPerSec = velocityPxPerSec * 0.35 + instVel * 0.65;
+        lastMovePos = clientPos;
+        lastMoveTime = nowTime;
+
+        const rawFirstPx = firstSize + (clientPos - startPos);
+        if (rawFirstPx <= minPx) {
+          if (hitBoundDuringDrag !== -1) {
+            hitBoundDuringDrag = -1;
+            triggerWallImpactBounce(firstEl, axis, -1);
+          }
+        } else if (rawFirstPx >= totalPx - minPx) {
+          if (hitBoundDuringDrag !== 1) {
+            hitBoundDuringDrag = 1;
+            triggerWallImpactBounce(secondEl, axis, 1);
+          }
+        } else {
+          hitBoundDuringDrag = 0;
+        }
+        applyFirstPx(rawFirstPx);
       };
 
       const onMove = (moveEvent) => {
@@ -2092,7 +2259,7 @@ export function createSessionDashboard({
             : null;
         const latest = coalesced && coalesced.length > 0 ? coalesced[coalesced.length - 1] : moveEvent;
         const currentPos = isHorizontalDrag ? latest.clientX : latest.clientY;
-        applyPosition(currentPos);
+        applyPosition(currentPos, performance.now());
       };
 
       let ended = false;
@@ -2108,6 +2275,68 @@ export function createSessionDashboard({
         window.removeEventListener('pointerup', onEnd);
         window.removeEventListener('pointercancel', onEnd);
         saveState();
+
+        // Inertial collision bounce upon release:
+        // Give the released splitter a crisp micro-rebound / throw spring settle
+        // while keeping the final committed target size exact (`restPx = currentFirstPx`).
+        const timeSinceMove = performance.now() - lastMoveTime;
+        let kickVel = timeSinceMove < 90 ? velocityPxPerSec * 0.32 : 0;
+        if (Math.abs(kickVel) < 90) {
+          const totalDelta = currentFirstPx - firstSize;
+          if (Math.abs(totalDelta) > 6) {
+            kickVel = Math.sign(totalDelta) * Math.min(260, Math.abs(totalDelta) * 3.2);
+          }
+        }
+        kickVel = Math.max(-780, Math.min(780, kickVel));
+
+        if (!prefersReducedMotion() && Math.abs(kickVel) >= 40) {
+          const restPx = currentFirstPx;
+          let disp = 0; // displacement from restPx
+          let vel = kickVel;
+          let lastFrame = performance.now();
+          let bouncedWall = false;
+
+          const stepSpring = (now) => {
+            const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
+            lastFrame = now;
+            // Underdamped spring (omega = 31 rad/s, zeta = 0.56) -> crisp collision bounce & settle within ~240ms
+            const stiffness = 980;
+            const damping = 36;
+            const accel = -stiffness * disp - damping * vel;
+            vel += accel * dt;
+            disp += vel * dt;
+
+            let candidatePx = restPx + disp;
+            if (candidatePx < minPx) {
+              candidatePx = minPx;
+              disp = minPx - restPx;
+              vel = -vel * 0.58; // Elastic wall collision rebound!
+              if (!bouncedWall) {
+                bouncedWall = true;
+                triggerWallImpactBounce(firstEl, axis, -1);
+              }
+            } else if (candidatePx > totalPx - minPx) {
+              candidatePx = totalPx - minPx;
+              disp = totalPx - minPx - restPx;
+              vel = -vel * 0.58; // Elastic wall collision rebound!
+              if (!bouncedWall) {
+                bouncedWall = true;
+                triggerWallImpactBounce(secondEl, axis, 1);
+              }
+            }
+
+            if (Math.abs(disp) < 0.35 && Math.abs(vel) < 8) {
+              applyFirstPx(restPx);
+              saveState();
+              springRafId = 0;
+              return;
+            }
+
+            applyFirstPx(candidatePx);
+            springRafId = requestAnimationFrame(stepSpring);
+          };
+          springRafId = requestAnimationFrame(stepSpring);
+        }
       };
 
       window.addEventListener('pointermove', onMove);
@@ -2398,25 +2627,27 @@ export function createSessionDashboard({
     const jids = allJids();
     if (jids.length === 0) return;
 
-    if (preset === 'horizontal') {
-      direction = 'row';
-      groups = jids.map((jid) => ({
-        weight: 1,
-        items: [{ jid, weight: 1 }],
-      }));
-    } else if (preset === 'vertical') {
-      direction = 'column';
-      groups = jids.map((jid) => ({
-        weight: 1,
-        items: [{ jid, weight: 1 }],
-      }));
-    } else if (preset === 'grid') {
-      direction = 'row';
-      groups = buildBalancedGridGroups(jids);
-    }
+    animatePaneLayoutTransition(() => {
+      if (preset === 'horizontal') {
+        direction = 'row';
+        groups = jids.map((jid) => ({
+          weight: 1,
+          items: [{ jid, weight: 1 }],
+        }));
+      } else if (preset === 'vertical') {
+        direction = 'column';
+        groups = jids.map((jid) => ({
+          weight: 1,
+          items: [{ jid, weight: 1 }],
+        }));
+      } else if (preset === 'grid') {
+        direction = 'row';
+        groups = buildBalancedGridGroups(jids);
+      }
 
-    saveState();
-    rebuildGrid();
+      saveState();
+      rebuildGrid();
+    });
   }
 
   function togglePaneAxis(jid) {
@@ -2425,20 +2656,22 @@ export function createSessionDashboard({
     const loc = findJidLocation(jid);
     if (!loc) return;
 
-    const grp = groups[loc.gIdx];
-    if (grp.items.length > 1) {
-      // Currently stacked with another pane -> extract to its own outer group next to this one
-      const [removed] = grp.items.splice(loc.iIdx, 1);
-      groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [removed] });
-    } else if (groups.length > 1) {
-      // Currently in its own outer group -> merge into neighbor group to stack perpendicularly
-      const targetGroupIdx = loc.gIdx > 0 ? loc.gIdx - 1 : 1;
-      const [removedGroup] = groups.splice(loc.gIdx, 1);
-      const neighbor = groups[loc.gIdx > 0 ? targetGroupIdx : 0];
-      neighbor.items.push(...removedGroup.items);
-    }
-    saveState();
-    rebuildGrid();
+    animatePaneLayoutTransition(() => {
+      const grp = groups[loc.gIdx];
+      if (grp.items.length > 1) {
+        // Currently stacked with another pane -> extract to its own outer group next to this one
+        const [removed] = grp.items.splice(loc.iIdx, 1);
+        groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [removed] });
+      } else if (groups.length > 1) {
+        // Currently in its own outer group -> merge into neighbor group to stack perpendicularly
+        const targetGroupIdx = loc.gIdx > 0 ? loc.gIdx - 1 : 1;
+        const [removedGroup] = groups.splice(loc.gIdx, 1);
+        const neighbor = groups[loc.gIdx > 0 ? targetGroupIdx : 0];
+        neighbor.items.push(...removedGroup.items);
+      }
+      saveState();
+      rebuildGrid();
+    });
   }
 
   // ── Public Operations ──────────────────────────────────────────────────────
@@ -2479,42 +2712,48 @@ export function createSessionDashboard({
   function addPane(jid, dropTarget = null) {
     if (!jid || jid === 'web:life') return;
     const wasAlreadyIn = allJids().includes(jid);
-    if (dropTarget && dropTarget.mode === 'pane') {
-      placeSessionAt(jid, dropTarget);
-    } else if (!wasAlreadyIn) {
-      const nextJids = [...allJids(), jid];
-      if (nextJids.length >= 4) {
-        direction = 'row';
-        groups = buildBalancedGridGroups(nextJids);
-      } else {
-        groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+    animatePaneLayoutTransition(() => {
+      if (dropTarget && dropTarget.mode === 'pane') {
+        placeSessionAt(jid, dropTarget);
+      } else if (!wasAlreadyIn) {
+        const nextJids = [...allJids(), jid];
+        if (nextJids.length >= 4) {
+          direction = 'row';
+          groups = buildBalancedGridGroups(nextJids);
+        } else {
+          groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+        }
       }
-    }
-    saveState();
-    if (!active && wideQuery.matches) {
-      setActive(true);
-    } else {
-      rebuildGrid();
-      onRenderSessionListDecorations();
-    }
+      saveState();
+      if (!active && wideQuery.matches) {
+        setActive(true);
+      } else {
+        rebuildGrid();
+        onRenderSessionListDecorations();
+      }
+    });
   }
 
   function removePane(jid) {
     if (!allJids().includes(jid)) return;
-    detachJidFromGroups(jid);
-    disposePane(jid);
-    saveState();
-    rebuildGrid();
-    onRenderSessionListDecorations();
+    animatePaneLayoutTransition(() => {
+      detachJidFromGroups(jid);
+      disposePane(jid);
+      saveState();
+      rebuildGrid();
+      onRenderSessionListDecorations();
+    });
   }
 
   function equalizeWeights() {
-    for (const g of groups) {
-      g.weight = 1;
-      for (const it of g.items) it.weight = 1;
-    }
-    saveState();
-    rebuildGrid();
+    animatePaneLayoutTransition(() => {
+      for (const g of groups) {
+        g.weight = 1;
+        for (const it of g.items) it.weight = 1;
+      }
+      saveState();
+      rebuildGrid();
+    });
   }
 
   // ── 2D Directional Drop & Swap Detection & Visual Preview ──────────────────
