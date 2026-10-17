@@ -27,6 +27,7 @@ export function createSessionDashboard({
   onMarkSeen,
   onApplySessionTitle,
   showToast,
+  isAutoScrollEnabled = () => false,
 }) {
   const wideQuery = window.matchMedia('(min-width: 768px)');
   let active = false;
@@ -424,11 +425,13 @@ export function createSessionDashboard({
       disposed: false,
       partialThinkingEl: null,
       partialMsgEl: null,
+      userScrolledUp: false,
     };
 
     const isNearBottom = () =>
-      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 80;
+      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 28;
     const scrollToBottom = (instant = false) => {
+      pane.userScrolledUp = false;
       messagesEl.scrollTo({
         top: messagesEl.scrollHeight,
         behavior: instant ? 'auto' : 'smooth',
@@ -438,10 +441,22 @@ export function createSessionDashboard({
     messagesEl.addEventListener(
       'scroll',
       () => {
-        jumpBtn.classList.toggle('visible', !isNearBottom());
+        const near = isNearBottom();
+        if (near) pane.userScrolledUp = false;
+        jumpBtn.classList.toggle('visible', !near);
       },
       { passive: true },
     );
+    // Any explicit user touch/wheel/pointer interaction on the message list locks out auto-scroll
+    for (const evtName of ['wheel', 'touchmove', 'pointerdown']) {
+      messagesEl.addEventListener(
+        evtName,
+        () => {
+          if (!isNearBottom()) pane.userScrolledUp = true;
+        },
+        { passive: true },
+      );
+    }
     jumpBtn.addEventListener('click', () => scrollToBottom(false));
 
     messagesEl.addEventListener('click', (e) => {
@@ -493,11 +508,27 @@ export function createSessionDashboard({
       removePane(jid);
     });
 
+    // iPadOS / iOS optimization: prevent tapping the Send button from blurring
+    // the textarea and dismissing the virtual keyboard during multi-session work.
+    let hadFocusBeforeSend = false;
+    sendBtn.addEventListener('pointerdown', (e) => {
+      hadFocusBeforeSend = document.activeElement === textarea;
+      if (hadFocusBeforeSend) {
+        e.preventDefault();
+      }
+    });
+
     const autoGrow = () => {
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(140, textarea.scrollHeight)}px`;
     };
     textarea.addEventListener('input', autoGrow);
+    textarea.addEventListener('focus', () => {
+      paneEl.classList.add('pane-focused');
+    });
+    textarea.addEventListener('blur', () => {
+      paneEl.classList.remove('pane-focused');
+    });
     textarea.addEventListener('keydown', (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -508,10 +539,18 @@ export function createSessionDashboard({
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const keepKeyboardOpen = hadFocusBeforeSend || document.activeElement === textarea;
+      hadFocusBeforeSend = false;
       const text = textarea.value.trim();
-      if (!text) return;
+      if (!text) {
+        if (keepKeyboardOpen) textarea.focus({ preventScroll: true });
+        return;
+      }
       textarea.value = '';
       autoGrow();
+      if (keepKeyboardOpen && document.activeElement !== textarea) {
+        textarea.focus({ preventScroll: true });
+      }
 
       if (text.startsWith('/')) {
         const handled = await trySendCommand(text, jid);
@@ -573,10 +612,17 @@ export function createSessionDashboard({
     pane.splitDownBtn.hidden = allJids().length < 2;
   }
 
+  function shouldFollowPane(pane) {
+    if (!isAutoScrollEnabled()) return false;
+    if (pane.userScrolledUp) return false;
+    return (
+      pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <= 28
+    );
+  }
+
   function appendPaneEvent(pane, event, live = false) {
     pane.cursor = Math.max(pane.cursor, event.id || 0);
-    const follow =
-      pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <= 90;
+    const follow = live ? shouldFollowPane(pane) : false;
 
     if (live && pane.partialMsgEl && event.kind === 'message' && event.role !== 'user') {
       pane.partialMsgEl.remove();
@@ -595,17 +641,19 @@ export function createSessionDashboard({
       pane.messagesEl.append(node);
     }
 
-    if (follow || !live) {
+    if (follow) {
       pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
       pane.jumpBtn.classList.remove('visible');
-    } else {
-      pane.jumpBtn.classList.add('visible');
+    } else if (live) {
+      const near =
+        pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
+        28;
+      pane.jumpBtn.classList.toggle('visible', !near);
     }
   }
 
   function renderPanePartial(pane, text = '', thinking = '') {
-    const follow =
-      pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <= 90;
+    const follow = shouldFollowPane(pane);
 
     if (!thinking) {
       if (pane.partialThinkingEl) {
@@ -651,6 +699,11 @@ export function createSessionDashboard({
 
     if (follow) {
       pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+    } else {
+      const near =
+        pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
+        28;
+      pane.jumpBtn.classList.toggle('visible', !near);
     }
   }
 
@@ -825,7 +878,13 @@ export function createSessionDashboard({
     return splitter;
   }
 
-  function rebuildGrid() {
+  let lastLayoutSignature = '';
+
+  function computeLayoutSignature() {
+    return `${direction}|${groups.map((g) => g.items.map((it) => it.jid).join(',')).join(';')}`;
+  }
+
+  function rebuildGrid(forceRebuildDOM = false) {
     normalizeGroups();
     syncNavCounts();
     renderQuickPicks();
@@ -835,6 +894,7 @@ export function createSessionDashboard({
       gridEl.hidden = true;
       emptyEl.hidden = false;
       gridEl.replaceChildren();
+      lastLayoutSignature = '';
       return;
     }
 
@@ -860,6 +920,33 @@ export function createSessionDashboard({
     for (const jid of [...panes.keys()]) {
       if (!jids.includes(jid)) disposePane(jid);
     }
+
+    // iPadOS Safari critical fix: NEVER call replaceChildren() when the group/pane
+    // topology hasn't changed! Re-parenting a focused <textarea> on iOS/iPadOS WebKit
+    // immediately blurs it and collapses the software keyboard (especially on the 5s poll).
+    const nextSignature = computeLayoutSignature();
+    if (!forceRebuildDOM && nextSignature === lastLayoutSignature && gridEl.children.length > 0) {
+      const groupEls = [...gridEl.querySelectorAll(':scope > .dashboard-group')];
+      groups.forEach((group, gIdx) => {
+        const groupEl = groupEls[gIdx];
+        if (groupEl) groupEl.style.flex = `${group.weight} 1 0px`;
+        group.items.forEach((item) => {
+          const pane = panes.get(item.jid);
+          if (pane) pane.el.style.flex = `${item.weight} 1 0px`;
+        });
+      });
+      return;
+    }
+
+    // Capture focused textarea state before structural DOM changes so iPad keyboard stays open
+    const prevFocusedEl =
+      gridEl.contains(document.activeElement) && document.activeElement?.tagName === 'TEXTAREA'
+        ? document.activeElement
+        : null;
+    const selStart = prevFocusedEl ? prevFocusedEl.selectionStart : null;
+    const selEnd = prevFocusedEl ? prevFocusedEl.selectionEnd : null;
+
+    lastLayoutSignature = nextSignature;
 
     const outerAxis = direction === 'row' ? 'x' : 'y';
     const innerAxis = direction === 'row' ? 'y' : 'x';
@@ -936,6 +1023,17 @@ export function createSessionDashboard({
     });
 
     gridEl.replaceChildren(...gridChildren);
+
+    if (prevFocusedEl && gridEl.contains(prevFocusedEl)) {
+      prevFocusedEl.focus({ preventScroll: true });
+      try {
+        if (selStart != null && selEnd != null) {
+          prevFocusedEl.setSelectionRange(selStart, selEnd);
+        }
+      } catch {
+        // Ignore selection errors
+      }
+    }
   }
 
   // ── Layout Mutations (Horizontal, Vertical, 2D Grid, Directional Drop) ─────
@@ -1078,6 +1176,7 @@ export function createSessionDashboard({
     if (active === nextActive) return;
     active = nextActive;
     syncNavCounts();
+    syncDashboardVisualViewport();
 
     if (active) {
       rebuildGrid();
@@ -1346,6 +1445,14 @@ export function createSessionDashboard({
         tileBtn.type = 'button';
         tileBtn.innerHTML =
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>';
+        tileBtn.addEventListener('pointerdown', (e) => {
+          if (
+            gridEl.contains(document.activeElement) &&
+            document.activeElement?.tagName === 'TEXTAREA'
+          ) {
+            e.preventDefault();
+          }
+        });
         tileBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           if (allJids().includes(jid) && active) {
@@ -1424,12 +1531,27 @@ export function createSessionDashboard({
     }
   });
 
+  // iPadOS optimization: prevent toolbar and sidebar tile buttons from stealing
+  // focus and dismissing the virtual keyboard when a pane input is already focused.
+  const preventTouchFocusSteal = (btn) => {
+    btn.addEventListener('pointerdown', (e) => {
+      if (
+        gridEl.contains(document.activeElement) &&
+        document.activeElement?.tagName === 'TEXTAREA'
+      ) {
+        e.preventDefault();
+      }
+    });
+  };
+
   for (const btn of presetsEl.querySelectorAll('.dashboard-preset-btn')) {
+    preventTouchFocusSteal(btn);
     btn.addEventListener('click', () => {
       applyPreset(btn.dataset.preset);
     });
   }
 
+  preventTouchFocusSteal(btnEqualize);
   btnEqualize.addEventListener('click', () => {
     equalizeWeights();
     showToast?.('已平均對齊所有並排視窗');
@@ -1447,9 +1569,32 @@ export function createSessionDashboard({
     setActive(false);
   });
 
+  preventTouchFocusSteal(btnDrawerToggle);
   btnDrawerToggle.addEventListener('click', () => {
     app.classList.toggle('drawer-collapsed');
   });
+
+  // iPadOS visualViewport keyboard inset sync: shrink #dashboard-view height
+  // dynamically when the iPad software keyboard opens so bottom panes are never
+  // covered by the keyboard and never trigger document-level scroll/blur jumps.
+  function syncDashboardVisualViewport() {
+    if (!active) {
+      root.style.removeProperty('--dashboard-vv-h');
+      return;
+    }
+    const vv = window.visualViewport;
+    if (vv && vv.height > 200) {
+      root.style.setProperty('--dashboard-vv-h', `${Math.round(vv.height)}px`);
+    } else {
+      root.style.removeProperty('--dashboard-vv-h');
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncDashboardVisualViewport);
+    window.visualViewport.addEventListener('scroll', syncDashboardVisualViewport);
+  }
+  window.addEventListener('resize', syncDashboardVisualViewport);
 
   wideQuery.addEventListener('change', (e) => {
     if (!e.matches && active) {

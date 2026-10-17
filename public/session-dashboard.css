@@ -159,7 +159,7 @@
     flex: 1;
     min-width: 0;
     min-height: 0;
-    height: 100dvh;
+    height: var(--dashboard-vv-h, 100dvh);
     background: var(--bg-dark);
   }
 
@@ -547,6 +547,19 @@
 
   .dashboard-pane.dragging-pane {
     opacity: 0.55;
+  }
+
+  .dashboard-pane.pane-focused {
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+  }
+
+  /* iPadOS / iOS WebKit: keep input font-size >= 16px on touch devices so Safari
+     never auto-zooms or scrolls the viewport when focusing a pane textarea */
+  @media (pointer: coarse) {
+    .dashboard-pane-composer textarea,
+    .dashboard-grid.density-compact .dashboard-pane-composer textarea {
+      font-size: 16px;
+    }
   }
 
   .dashboard-pane-header {

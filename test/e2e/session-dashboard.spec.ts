@@ -194,11 +194,20 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
 
     // Send a message in the 12th pane ("12 4get 私密搜尋引擎") and verify live update
     const pane12 = page.locator('.dashboard-pane[data-jid="web:s12"]');
-    await pane12.locator('.dashboard-pane-input').fill('測試第 12 個視窗即時發送訊息');
+    const input12 = pane12.locator('.dashboard-pane-input');
+    await input12.focus();
+    await input12.fill('測試第 12 個視窗即時發送訊息');
     await pane12.locator('.dashboard-pane-send').click();
     await expect.poll(() => sentMessages.length).toBe(1);
     expect(sentMessages[0]).toEqual({ jid: 'web:s12', text: '測試第 12 個視窗即時發送訊息' });
     await expect(pane12).toContainText('測試第 12 個視窗即時發送訊息');
+
+    // Verify iPad focus & scroll stability: focusing a pane input and triggering
+    // equalizeWeights / background session sync must NOT blur the input or scroll jump
+    await input12.focus();
+    await expect(input12).toBeFocused();
+    await page.locator('#btn-dashboard-equalize').click();
+    await expect(input12).toBeFocused();
 
     expect(errors).toEqual([]);
   });
