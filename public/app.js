@@ -30,7 +30,7 @@ import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=dashboard-spring-bounce-1';
+import { createSessionDashboard } from './session-dashboard.js?v=dashboard-spring-bounce-2';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -2507,10 +2507,10 @@ function currentSessionModelInfo(targetJid = thinkingSheetTargetJid || state.act
   const ref = (session.model || session.runningModel || '').trim().toLowerCase();
   if (!ref) return undefined;
   return (
-    state.models.find((m) => m.ref.toLowerCase() === ref) ||
-    state.models.find((m) => m.id.toLowerCase() === ref) ||
-    state.models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === ref) ||
-    state.models.find((m) => ref.endsWith(`/${m.id.toLowerCase()}`))
+    state.models.find((m) => String(m.ref || '').toLowerCase() === ref) ||
+    state.models.find((m) => String(m.id || '').toLowerCase() === ref) ||
+    state.models.find((m) => `${m.provider || ''}/${m.id || ''}`.toLowerCase() === ref) ||
+    state.models.find((m) => m.id && ref.endsWith(`/${String(m.id).toLowerCase()}`))
   );
 }
 

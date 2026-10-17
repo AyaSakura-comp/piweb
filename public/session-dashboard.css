@@ -476,6 +476,24 @@
     background: var(--bg-dark);
   }
 
+  .dashboard-grid.spring-bouncing .dashboard-group,
+  .dashboard-grid.spring-bouncing .dashboard-pane,
+  .dashboard-grid.resizing-active .dashboard-group,
+  .dashboard-grid.resizing-active .dashboard-pane {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .dashboard-group.spring-expanded-target,
+  .dashboard-pane.spring-expanded-target {
+    z-index: 25;
+  }
+
+  .dashboard-group.spring-compressed-target,
+  .dashboard-pane.spring-compressed-target {
+    z-index: 20;
+  }
+
   .dashboard-group-column {
     flex-direction: column;
   }
@@ -581,6 +599,8 @@
     justify-content: space-between;
     gap: 6px;
     height: 44px;
+    min-width: 0;
+    overflow: hidden;
     padding: 0 4px 0 10px;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
@@ -631,7 +651,9 @@
     display: flex;
     align-items: center;
     gap: 0;
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
   }
 
   /* 38x38px borderless outline-icon buttons inside pane headers so all session
@@ -770,6 +792,7 @@
 
   .dashboard-pane-messages {
     flex: 1;
+    min-width: 0;
     min-height: 0;
     padding: 10px 4px 6px;
   }
@@ -779,11 +802,19 @@
   }
 
   .dashboard-pane-composer-wrap {
+    min-width: 0;
+    overflow: hidden;
     padding: 0 8px 8px;
   }
 
+  .dashboard-pane-composer {
+    min-width: 0;
+    overflow: hidden;
+  }
+
   .dashboard-pane-composer textarea {
-    flex: 1;
+    flex: 1 1 0px;
+    width: 0;
     min-width: 0;
     background: none;
     border: 0;
@@ -909,19 +940,27 @@
   }
 
   .dashboard-splitter.splitter-vertical:hover .dashboard-splitter-grip,
-  .dashboard-splitter.splitter-vertical.dragging .dashboard-splitter-grip {
+  .dashboard-splitter.splitter-vertical.dragging .dashboard-splitter-grip,
+  .dashboard-splitter.splitter-vertical.impact-bounce .dashboard-splitter-grip {
     opacity: 1;
-    height: 56px;
+    height: 58px;
     background: var(--accent);
-    transform: scaleX(1.25);
+    transform: scaleX(1.35);
+    box-shadow: 0 0 12px var(--accent);
   }
 
   .dashboard-splitter.splitter-horizontal:hover .dashboard-splitter-grip,
-  .dashboard-splitter.splitter-horizontal.dragging .dashboard-splitter-grip {
+  .dashboard-splitter.splitter-horizontal.dragging .dashboard-splitter-grip,
+  .dashboard-splitter.splitter-horizontal.impact-bounce .dashboard-splitter-grip {
     opacity: 1;
-    width: 56px;
+    width: 58px;
     background: var(--accent);
-    transform: scaleY(1.25);
+    transform: scaleY(1.35);
+    box-shadow: 0 0 12px var(--accent);
+  }
+
+  .dashboard-splitter.impact-bounce {
+    background: rgb(88 101 242 / 0.42);
   }
 
   /* Tablet touch-drag ghost */

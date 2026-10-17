@@ -2002,25 +2002,39 @@ export function createSessionDashboard({
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
-  function triggerWallImpactBounce(targetEl, axis, sign) {
+  function triggerWallImpactBounce(targetEl, axis, sign, intensity = 1) {
     if (!targetEl || prefersReducedMotion()) return;
     try {
-      const tx = axis === 'x' ? `${sign * 5}px` : '0px';
-      const ty = axis === 'y' ? `${sign * 5}px` : '0px';
-      const sx = axis === 'x' ? 0.972 : 1.012;
-      const sy = axis === 'y' ? 0.972 : 1.012;
-      const ox = axis === 'x' ? `${-sign * 2.5}px` : '0px';
-      const oy = axis === 'y' ? `${-sign * 2.5}px` : '0px';
+      const k = Math.max(0.6, Math.min(1.8, intensity));
+      const shift1 = Math.round(12 * k) * sign;
+      const shift2 = Math.round(-6 * k) * sign;
+      const shift3 = Math.round(2.5 * k) * sign;
+      const tx1 = axis === 'x' ? `${shift1}px` : '0px';
+      const ty1 = axis === 'y' ? `${shift1}px` : '0px';
+      const tx2 = axis === 'x' ? `${shift2}px` : '0px';
+      const ty2 = axis === 'y' ? `${shift2}px` : '0px';
+      const tx3 = axis === 'x' ? `${shift3}px` : '0px';
+      const ty3 = axis === 'y' ? `${shift3}px` : '0px';
+
+      const squash = 1 - 0.036 * k;
+      const stretch = 1 + 0.02 * k;
+      const sx1 = axis === 'x' ? squash : stretch;
+      const sy1 = axis === 'y' ? squash : stretch;
+      const sx2 = axis === 'x' ? 1 + 0.022 * k : 1 - 0.012 * k;
+      const sy2 = axis === 'y' ? 1 + 0.022 * k : 1 - 0.012 * k;
+
+      targetEl.getAnimations?.().forEach((a) => a.cancel());
       targetEl.animate(
         [
           { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
-          { transform: `translate3d(${tx}, ${ty}, 0) scale(${sx}, ${sy})`, offset: 0.28 },
-          { transform: `translate3d(${ox}, ${oy}, 0) scale(${2 - sx}, ${2 - sy})`, offset: 0.62 },
+          { transform: `translate3d(${tx1}, ${ty1}, 0) scale(${sx1}, ${sy1})`, offset: 0.24 },
+          { transform: `translate3d(${tx2}, ${ty2}, 0) scale(${sx2}, ${sy2})`, offset: 0.56 },
+          { transform: `translate3d(${tx3}, ${ty3}, 0) scale(0.994, 0.994)`, offset: 0.82 },
           { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
         ],
         {
-          duration: 380,
-          easing: 'cubic-bezier(0.22, 1.35, 0.36, 1)',
+          duration: 480,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
         },
       );
     } catch {
@@ -2028,7 +2042,96 @@ export function createSessionDashboard({
     }
   }
 
-  function animatePaneLayoutTransition( mutateLayoutFn ) {
+  function triggerSplitterReleaseCollision(firstEl, secondEl, splitterEl, axis, sign, intensity = 1) {
+    if (prefersReducedMotion()) return;
+    const k = Math.max(0.85, Math.min(1.85, intensity));
+    // Complementary squash-and-stretch along the perpendicular axis + glowing divider
+    // while `stepSpring` drives the primary axis flex-grow overshoot and multi-stage rebound!
+    const compressedEl = sign >= 0 ? secondEl : firstEl;
+    const expandedEl = sign >= 0 ? firstEl : secondEl;
+    try {
+      if (compressedEl) {
+        compressedEl.getAnimations?.().forEach((a) => a.cancel());
+        compressedEl.classList.add('spring-compressed-target');
+        const animC = compressedEl.animate(
+          [
+            { transform: 'scale(1, 1)' },
+            {
+              transform:
+                axis === 'x'
+                  ? `scale(1, ${1 + 0.024 * k})`
+                  : `scale(${1 + 0.024 * k}, 1)`,
+              offset: 0.2,
+            },
+            {
+              transform:
+                axis === 'x'
+                  ? `scale(1, ${1 - 0.012 * k})`
+                  : `scale(${1 - 0.012 * k}, 1)`,
+              offset: 0.54,
+            },
+            { transform: 'scale(1, 1)' },
+          ],
+          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        );
+        animC.onfinish = () => {
+          compressedEl.classList.remove('spring-compressed-target');
+        };
+      }
+      if (expandedEl) {
+        expandedEl.getAnimations?.().forEach((a) => a.cancel());
+        expandedEl.classList.add('spring-expanded-target');
+        const animE = expandedEl.animate(
+          [
+            { transform: 'scale(1, 1)' },
+            {
+              transform:
+                axis === 'x'
+                  ? `scale(1, ${1 - 0.02 * k})`
+                  : `scale(${1 - 0.02 * k}, 1)`,
+              offset: 0.2,
+            },
+            {
+              transform:
+                axis === 'x'
+                  ? `scale(1, ${1 + 0.01 * k})`
+                  : `scale(${1 + 0.01 * k}, 1)`,
+              offset: 0.54,
+            },
+            { transform: 'scale(1, 1)' },
+          ],
+          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        );
+        animE.onfinish = () => {
+          expandedEl.classList.remove('spring-expanded-target');
+        };
+      }
+      if (splitterEl) {
+        splitterEl.getAnimations?.().forEach((a) => a.cancel());
+        splitterEl.classList.add('impact-bounce');
+        splitterEl.animate(
+          [
+            { transform: 'scale(1, 1)' },
+            {
+              transform: axis === 'x' ? 'scaleX(1.5)' : 'scaleY(1.5)',
+              offset: 0.2,
+            },
+            {
+              transform: axis === 'x' ? 'scaleX(1.2)' : 'scaleY(1.2)',
+              offset: 0.54,
+            },
+            { transform: 'scale(1, 1)' },
+          ],
+          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        );
+        setTimeout(() => splitterEl.classList.remove('impact-bounce'), 540);
+      }
+    } catch {
+      // Ignore Web Animations API errors
+    }
+  }
+
+  function animatePaneLayoutTransition(mutateLayoutFn) {
     if (!active || prefersReducedMotion() || gridEl.hidden) {
       mutateLayoutFn();
       return;
@@ -2048,7 +2151,7 @@ export function createSessionDashboard({
     // 2. Execute layout mutation & DOM update
     mutateLayoutFn();
 
-    // 3. LAST + INVERT + PLAY with inertial impact overshoot bounce
+    // 3. LAST + INVERT + PLAY with pronounced inertial impact overshoot bounce
     for (const [jid, pane] of panes.entries()) {
       if (!gridEl.contains(pane.el)) continue;
       const lastRect = pane.el.getBoundingClientRect();
@@ -2066,13 +2169,27 @@ export function createSessionDashboard({
 
           const sx = Math.max(0.25, Math.min(3.5, firstRect.width / lastRect.width));
           const sy = Math.max(0.25, Math.min(3.5, firstRect.height / lastRect.height));
-          // Inertial impact overshoot when arriving at the target slot
-          const overX = Math.max(-14, Math.min(14, -dx * 0.085));
-          const overY = Math.max(-14, Math.min(14, -dy * 0.085));
-          const reboundX = -overX * 0.38;
-          const reboundY = -overY * 0.38;
-          const impactScaleX = Math.abs(dx) > Math.abs(dy) ? 0.978 : 1.016;
-          const impactScaleY = Math.abs(dy) >= Math.abs(dx) ? 0.978 : 1.016;
+          // Pronounced inertial impact overshoot & multi-stage rebound when arriving at target slot
+          const signX = dx === 0 ? (dw > 0 ? -1 : 1) : -Math.sign(dx);
+          const signY = dy === 0 ? (dh > 0 ? -1 : 1) : -Math.sign(dy);
+          const overX =
+            Math.abs(dx) > 4
+              ? Math.max(-28, Math.min(28, -dx * 0.14))
+              : Math.abs(dw) > 8
+                ? signX * Math.min(18, Math.abs(dw) * 0.12)
+                : 0;
+          const overY =
+            Math.abs(dy) > 4
+              ? Math.max(-28, Math.min(28, -dy * 0.14))
+              : Math.abs(dh) > 8
+                ? signY * Math.min(18, Math.abs(dh) * 0.12)
+                : 0;
+          const reboundX = -overX * 0.48;
+          const reboundY = -overY * 0.48;
+          const settleX = overX * 0.18;
+          const settleY = overY * 0.18;
+          const impactScaleX = Math.abs(dx) >= Math.abs(dy) ? 0.962 : 1.028;
+          const impactScaleY = Math.abs(dy) > Math.abs(dx) ? 0.962 : 1.028;
 
           pane.el.style.transformOrigin = '0 0';
           const anim = pane.el.animate(
@@ -2082,18 +2199,22 @@ export function createSessionDashboard({
               },
               {
                 transform: `translate3d(${overX}px, ${overY}px, 0) scale(${impactScaleX}, ${impactScaleY})`,
-                offset: 0.62,
+                offset: 0.54,
               },
               {
-                transform: `translate3d(${reboundX}px, ${reboundY}px, 0) scale(${2 - impactScaleX * 0.992}, ${2 - impactScaleY * 0.992})`,
-                offset: 0.84,
+                transform: `translate3d(${reboundX}px, ${reboundY}px, 0) scale(${2 - impactScaleX * 0.99}, ${2 - impactScaleY * 0.99})`,
+                offset: 0.76,
+              },
+              {
+                transform: `translate3d(${settleX}px, ${settleY}px, 0) scale(0.996, 0.996)`,
+                offset: 0.9,
               },
               {
                 transform: 'translate3d(0, 0, 0) scale(1, 1)',
               },
             ],
             {
-              duration: 460,
+              duration: 520,
               easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)',
             },
           );
@@ -2104,13 +2225,13 @@ export function createSessionDashboard({
           // Newly added pane: pop in with spring collision bounce
           pane.el.animate(
             [
-              { transform: 'scale(0.88)', opacity: 0.35 },
-              { transform: 'scale(1.032)', opacity: 1, offset: 0.62 },
-              { transform: 'scale(0.99)', opacity: 1, offset: 0.84 },
+              { transform: 'scale(0.84)', opacity: 0.35 },
+              { transform: 'scale(1.048)', opacity: 1, offset: 0.56 },
+              { transform: 'scale(0.982)', opacity: 1, offset: 0.8 },
               { transform: 'scale(1)', opacity: 1 },
             ],
             {
-              duration: 420,
+              duration: 460,
               easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
             },
           );
@@ -2148,6 +2269,7 @@ export function createSessionDashboard({
       if (springRafId) {
         cancelAnimationFrame(springRafId);
         springRafId = 0;
+        gridEl.classList.remove('spring-bouncing');
       }
     };
 
@@ -2238,12 +2360,12 @@ export function createSessionDashboard({
         if (rawFirstPx <= minPx) {
           if (hitBoundDuringDrag !== -1) {
             hitBoundDuringDrag = -1;
-            triggerWallImpactBounce(firstEl, axis, -1);
+            triggerWallImpactBounce(firstEl, axis, -1, 1.35);
           }
         } else if (rawFirstPx >= totalPx - minPx) {
           if (hitBoundDuringDrag !== 1) {
             hitBoundDuringDrag = 1;
-            triggerWallImpactBounce(secondEl, axis, 1);
+            triggerWallImpactBounce(secondEl, axis, 1, 1.35);
           }
         } else {
           hitBoundDuringDrag = 0;
@@ -2276,63 +2398,81 @@ export function createSessionDashboard({
         window.removeEventListener('pointercancel', onEnd);
         saveState();
 
-        // Inertial collision bounce upon release:
-        // Give the released splitter a crisp micro-rebound / throw spring settle
-        // while keeping the final committed target size exact (`restPx = currentFirstPx`).
+        // Pronounced Inertial Collision & Bounce upon release:
+        // Whether the user flicks fast or drags and releases, give the divider and both
+        // adjacent panes a clearly visible inertial overshoot & elastic rebound (24px..52px peak)
+        // before locking cleanly onto `restPx`.
+        const totalDelta = currentFirstPx - firstSize;
         const timeSinceMove = performance.now() - lastMoveTime;
-        let kickVel = timeSinceMove < 90 ? velocityPxPerSec * 0.32 : 0;
-        if (Math.abs(kickVel) < 90) {
-          const totalDelta = currentFirstPx - firstSize;
-          if (Math.abs(totalDelta) > 6) {
-            kickVel = Math.sign(totalDelta) * Math.min(260, Math.abs(totalDelta) * 3.2);
-          }
-        }
-        kickVel = Math.max(-780, Math.min(780, kickVel));
+        const dragSign =
+          Math.abs(totalDelta) > 2
+            ? Math.sign(totalDelta)
+            : Math.abs(velocityPxPerSec) > 20
+              ? Math.sign(velocityPxPerSec)
+              : 0;
 
-        if (!prefersReducedMotion() && Math.abs(kickVel) >= 40) {
+        if (!prefersReducedMotion() && dragSign !== 0 && Math.abs(totalDelta) > 3) {
           const restPx = currentFirstPx;
-          let disp = 0; // displacement from restPx
-          let vel = kickVel;
+          const speedBoost = timeSinceMove < 120 ? Math.min(950, Math.abs(velocityPxPerSec) * 0.8) : 0;
+          const distBoost = Math.min(1150, Math.max(760, Math.abs(totalDelta) * 10.5));
+          let vel = dragSign * Math.min(1950, Math.max(850, distBoost + speedBoost));
+          let disp = 0;
           let lastFrame = performance.now();
           let bouncedWall = false;
+
+          // Allow the spring overshoot to visibly compress the neighbor past the soft drag limit
+          // (down to a 28px rubber-band floor) before bouncing back off the elastic wall!
+          const hardMinPx = 28;
+          const applySpringPx = (px) => {
+            const clamped = Math.max(hardMinPx, Math.min(totalPx - hardMinPx, px));
+            const firstRatio = clamped / totalPx;
+            setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
+            return clamped;
+          };
+
+          // Trigger synchronized visual impact squash-and-rebound on both adjacent panes + splitter bar
+          const intensity = Math.min(1.9, Math.max(1.15, Math.abs(vel) / 600));
+          triggerSplitterReleaseCollision(firstEl, secondEl, splitter, axis, dragSign, intensity);
+          gridEl.classList.add('spring-bouncing');
 
           const stepSpring = (now) => {
             const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
             lastFrame = now;
-            // Underdamped spring (omega = 31 rad/s, zeta = 0.56) -> crisp collision bounce & settle within ~240ms
-            const stiffness = 980;
-            const damping = 36;
+            // Underdamped spring (omega ≈ 20.5 rad/s, zeta ≈ 0.25) -> pronounced 35–68px overshoot & 3 elastic rebounds
+            const stiffness = 420;
+            const damping = 10.5;
             const accel = -stiffness * disp - damping * vel;
             vel += accel * dt;
             disp += vel * dt;
 
             let candidatePx = restPx + disp;
-            if (candidatePx < minPx) {
-              candidatePx = minPx;
-              disp = minPx - restPx;
-              vel = -vel * 0.58; // Elastic wall collision rebound!
+            if (candidatePx < hardMinPx) {
+              candidatePx = hardMinPx;
+              disp = hardMinPx - restPx;
+              vel = -vel * 0.72; // Strong elastic wall collision rebound!
               if (!bouncedWall) {
                 bouncedWall = true;
-                triggerWallImpactBounce(firstEl, axis, -1);
+                triggerWallImpactBounce(firstEl, axis, -1, 1.5);
               }
-            } else if (candidatePx > totalPx - minPx) {
-              candidatePx = totalPx - minPx;
-              disp = totalPx - minPx - restPx;
-              vel = -vel * 0.58; // Elastic wall collision rebound!
+            } else if (candidatePx > totalPx - hardMinPx) {
+              candidatePx = totalPx - hardMinPx;
+              disp = totalPx - hardMinPx - restPx;
+              vel = -vel * 0.72; // Strong elastic wall collision rebound!
               if (!bouncedWall) {
                 bouncedWall = true;
-                triggerWallImpactBounce(secondEl, axis, 1);
+                triggerWallImpactBounce(secondEl, axis, 1, 1.5);
               }
             }
 
-            if (Math.abs(disp) < 0.35 && Math.abs(vel) < 8) {
+            if (Math.abs(disp) < 0.4 && Math.abs(vel) < 10) {
+              gridEl.classList.remove('spring-bouncing');
               applyFirstPx(restPx);
               saveState();
               springRafId = 0;
               return;
             }
 
-            applyFirstPx(candidatePx);
+            applySpringPx(candidatePx);
             springRafId = requestAnimationFrame(stepSpring);
           };
           springRafId = requestAnimationFrame(stepSpring);

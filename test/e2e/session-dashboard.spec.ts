@@ -21,9 +21,9 @@ const sessions = sessionDefinitions.map((d, i) => ({
   folder: `web_s${d.id}`,
   kind: 'standard',
   deleted: false,
-  model: 'agy/gemini-3-pro',
-  provider: 'agy',
-  runningModel: 'gemini-3-pro',
+  model: d.id === '01' ? 'openai/gpt-5' : 'agy/gemini-3-pro',
+  provider: d.id === '01' ? 'openai' : 'agy',
+  runningModel: d.id === '01' ? 'gpt-5' : 'gemini-3-pro',
   badge: d.badge,
   busy: d.busy,
   lastReplyId: 2,
@@ -54,8 +54,14 @@ const eventsBySession: Record<string, any[]> = Object.fromEntries(
   ]),
 );
 
+test.use({
+  viewport: { width: 1440, height: 900 },
+  isMobile: false,
+  hasTouch: false,
+  video: { mode: 'on', size: { width: 1440, height: 900 } },
+});
+
 test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () => {
-  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
   test('scales smoothly from 1 to 12 concurrent sessions across horizontal, vertical, and 2D grid layouts with splitters', async ({
     page,
@@ -70,7 +76,15 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
 
     await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
     await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
-      route.fulfill({ json: { items: [] } }),
+      route.fulfill({
+        json: {
+          items: [
+            { word: 'update doc, commit and push', count: 18 },
+            { word: 'video record and check', count: 14 },
+            { word: '檢查 ROCm GPU 狀態', count: 9 },
+          ],
+        },
+      }),
     );
     await page.route('**/api/**', async (route) => {
       const url = new URL(route.request().url());
@@ -78,8 +92,48 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       if (path === '/api/me') return route.fulfill({ json: { authed: true } });
       if (path === '/api/sessions') return route.fulfill({ json: { sessions } });
       if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
-      if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
-      if (path === '/api/models') return route.fulfill({ json: { models: [] } });
+      if (path === '/api/commands')
+        return route.fulfill({
+          json: {
+            commands: [
+              { name: 'pi status', description: 'Show session status' },
+              { name: 'pi new', description: 'Start a fresh pi session' },
+              { name: 'agy-usage', description: 'Check Antigravity quota' },
+            ],
+          },
+        });
+      if (path === '/api/models')
+        return route.fulfill({
+          json: {
+            models: [
+              {
+                ref: 'openai/gpt-5',
+                id: 'gpt-5',
+                name: 'GPT-5',
+                label: 'GPT-5',
+                provider: 'openai',
+                reasoning: true,
+              },
+              {
+                ref: 'agy/gemini-3-pro',
+                id: 'gemini-3-pro',
+                name: 'Gemini 3 Pro',
+                label: 'Gemini 3 Pro',
+                provider: 'agy',
+                reasoning: true,
+                current: true,
+              },
+              {
+                ref: 'claude/claude-opus-4-6',
+                id: 'claude-opus-4-6',
+                name: 'Claude Opus 4.6',
+                label: 'Claude Opus 4.6',
+                provider: 'claude',
+                reasoning: true,
+              },
+            ],
+          },
+        });
 
       const matchEvents = path.match(/^\/api\/sessions\/([^/]+)\/events$/);
       if (matchEvents) {
@@ -94,6 +148,35 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
               ? { content: 'ROCm 7.x hipBLASLt stream running @ 92.4 tok/s…' }
               : null,
             session,
+          },
+        });
+      }
+
+      const matchBtw = path.match(/^\/api\/sessions\/([^/]+)\/btw$/);
+      if (matchBtw && route.request().method() === 'GET') {
+        const jid = matchBtw[1];
+        const session = sessions.find((s) => s.jid === jid)!;
+        return route.fulfill({
+          json: {
+            available: true,
+            generation: `gen-${jid}`,
+            thread: {
+              modelRef: session?.model || 'openai/gpt-5',
+              thinkingLevel: 'high',
+              contextMessages: 4,
+              messages: [
+                {
+                  role: 'user',
+                  content: '這個視窗的 BTW 側聊可以獨立運作嗎？',
+                  createdAt: '2026-10-18T01:07:55Z',
+                },
+                {
+                  role: 'assistant',
+                  content: '可以！每個並排視窗都有自己獨立的 BTW 側聊上下文與切換列。',
+                  createdAt: '2026-10-18T01:08:00Z',
+                },
+              ],
+            },
           },
         });
       }
@@ -164,7 +247,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       }
 
       // When 2 panes are open, verify DESIGN.md button compliance, per-pane controls (Model, Thinking, ⋯ menu, Hot Keywords, Quote, Attachments, BTW),
-      // and test drag-and-swap pane order (dragging pane 1 header onto pane 2 center swaps order)
+      // and test drag-and-swap pane order with inertial spring collision bounce
       if (count === 2) {
         const exitBox = (await page.locator('#btn-dashboard-exit').boundingBox())!;
         const eqBox = (await page.locator('#btn-dashboard-equalize').boundingBox())!;
@@ -183,22 +266,61 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         await expect(pane1.locator('.pane-attach-btn')).toBeVisible();
         await expect(pane1.locator('.pane-paste-btn')).toBeVisible();
 
-        // Test opening Thinking level sheet from Pane 1's top header
+        // 1. Test opening Thinking level sheet from Pane 1's top header
         await pane1.locator('.pane-thinking-btn').click();
         await expect(page.locator('#thinking-sheet')).toBeVisible();
+        await page.waitForTimeout(250);
         await page.locator('#btn-thinking-close').click();
         await expect(page.locator('#thinking-sheet')).toBeHidden();
 
-        // Test opening Pane 1's ⋯ overflow menu
+        // 2. Test opening Model sheet from Pane 1's top header
+        await pane1.locator('.pane-model-btn').click();
+        await expect(page.locator('#model-sheet')).toBeVisible();
+        await page.waitForTimeout(250);
+        await page.locator('#btn-model-close').click();
+        await expect(page.locator('#model-sheet')).toBeHidden();
+
+        // 3. Test opening Pane 1's ⋯ overflow menu & toggling BTW side chat
         await pane1.locator('.pane-more-btn').click();
         await expect(pane1.locator('.pane-more-menu')).toBeVisible();
         await expect(pane1.locator('.pane-more-menu [data-action="search"]')).toBeVisible();
+        await expect(pane1.locator('.pane-more-menu [data-action="btw"]')).toBeVisible();
         await expect(pane1.locator('.pane-more-menu [data-action="subagents"]')).toBeVisible();
         await expect(pane1.locator('.pane-more-menu [data-action="media"]')).toBeVisible();
-        await pane1.locator('.pane-more-btn').click();
-        await expect(pane1.locator('.pane-more-menu')).toBeHidden();
+        await page.screenshot({ path: info.outputPath('panes-02-overflow-menu.png') });
+        await pane1.locator('.pane-more-menu [data-action="btw"]').click();
+        await expect(pane1.locator('.pane-btw-card')).toBeVisible();
+        await expect(pane1.locator('.dashboard-pane-btw-messages')).toContainText(
+          '每個並排視窗都有自己獨立的 BTW 側聊上下文與切換列',
+        );
+        await page.screenshot({ path: info.outputPath('panes-02-btw-sidechat.png') });
+        // Switch back to main conversation via ‹ 主對話 on the typing line
+        await pane1.locator('.pane-btw-switch-btn').click();
+        await expect(pane1.locator('.pane-btw-card')).toBeHidden();
 
-        // Verify 2 distinct panes before swap
+        // 4. Test Hot Keywords quick input chip & Image Attachment thumbnail preview in Pane 1
+        await expect(pane1.locator('.pane-hot-keywords .life-tag').first()).toBeVisible();
+        await pane1.locator('.pane-hot-keywords .life-tag').first().click();
+        await expect(pane1.locator('.dashboard-pane-input')).toHaveValue(
+          'update doc, commit and push',
+        );
+        // Attach a 1x1 PNG image to verify square thumbnail preview + compression checkbox
+        const pngBuffer = Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          'base64',
+        );
+        await pane1.locator('input[type="file"]').setInputFiles({
+          name: 'strix-halo-chart.png',
+          mimeType: 'image/png',
+          buffer: pngBuffer,
+        });
+        await expect(pane1.locator('.pane-attachments .chip.chip-image')).toBeVisible();
+        await expect(pane1.locator('.pane-compression-options')).toBeVisible();
+        await page.screenshot({ path: info.outputPath('panes-02-attachments-hotkeywords.png') });
+        await pane1.locator('.pane-attachments .chip-remove').click();
+        await pane1.locator('.dashboard-pane-input').fill('');
+
+        // 5. Verify 2 distinct panes before swap & watch inertial FLIP collision bounce on swap
         const orderBefore = (await page
           .locator('.dashboard-pane')
           .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid))) as string[];
@@ -209,6 +331,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         await page
           .locator(`.dashboard-pane[data-jid="${firstJid}"] .dashboard-pane-header`)
           .dragTo(page.locator(`.dashboard-pane[data-jid="${secondJid}"]`));
+        await page.waitForTimeout(480);
 
         const orderAfterSwap = await page
           .locator('.dashboard-pane')
@@ -219,10 +342,52 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         await page
           .locator(`.dashboard-pane[data-jid="${secondJid}"] .dashboard-pane-header`)
           .dragTo(page.locator(`.dashboard-pane[data-jid="${firstJid}"]`));
+        await page.waitForTimeout(480);
         const orderRestored = await page
           .locator('.dashboard-pane')
           .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
         expect(orderRestored).toEqual([firstJid, secondJid]);
+      }
+
+      // When 4 panes are open (2x2 grid), test both horizontal and vertical splitter drag & inertial collision bounce
+      if (count === 4) {
+        const col1 = page.locator('.dashboard-group').first();
+        const pane1InCol1 = col1.locator('.dashboard-pane').first();
+        const vSplit4 = page.locator('.dashboard-splitter.splitter-vertical').first();
+        const vBox4 = (await vSplit4.boundingBox())!;
+        await page.mouse.move(vBox4.x + vBox4.width / 2, vBox4.y + vBox4.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(vBox4.x + vBox4.width / 2 + 110, vBox4.y + vBox4.height / 2, {
+          steps: 18,
+        });
+        const wAtRelease4 = (await col1.boundingBox())!.width;
+        await page.mouse.up();
+        let maxW4 = wAtRelease4;
+        for (let s = 0; s < 6; s++) {
+          await page.waitForTimeout(20);
+          const w = (await col1.boundingBox())!.width;
+          if (w > maxW4) maxW4 = w;
+        }
+        expect(maxW4).toBeGreaterThan(wAtRelease4 + 18);
+        await page.waitForTimeout(480);
+
+        const hSplit4 = page.locator('.dashboard-splitter.splitter-horizontal').first();
+        const hBox4 = (await hSplit4.boundingBox())!;
+        await page.mouse.move(hBox4.x + hBox4.width / 2, hBox4.y + hBox4.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(hBox4.x + hBox4.width / 2, hBox4.y + hBox4.height / 2 + 95, {
+          steps: 18,
+        });
+        const hAtRelease4 = (await pane1InCol1.boundingBox())!.height;
+        await page.mouse.up();
+        let maxH4 = hAtRelease4;
+        for (let s = 0; s < 6; s++) {
+          await page.waitForTimeout(20);
+          const h = (await pane1InCol1.boundingBox())!.height;
+          if (h > maxH4) maxH4 = h;
+        }
+        expect(maxH4).toBeGreaterThan(hAtRelease4 + 18);
+        await page.waitForTimeout(480);
       }
 
       // Capture milestone screenshots across 1..12
@@ -248,27 +413,48 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
     await page.mouse.down();
     await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
-    await page.mouse.move(vBox.x + vBox.width / 2 + 90, vBox.y + vBox.height / 2, { steps: 24 });
+    await page.mouse.move(vBox.x + vBox.width / 2 + 80, vBox.y + vBox.height / 2, { steps: 24 });
+    const widthAtRelease = (await firstColEl.boundingBox())!.width;
     await page.mouse.up();
     await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
+
+    // Sample column 1 width over the first 120ms after release to prove visible inertial overshoot (> 15px beyond release point)
+    let maxOvershootWidth = widthAtRelease;
+    for (let s = 0; s < 6; s++) {
+      await page.waitForTimeout(20);
+      const w = (await firstColEl.boundingBox())!.width;
+      if (w > maxOvershootWidth) maxOvershootWidth = w;
+    }
+    expect(maxOvershootWidth).toBeGreaterThan(widthAtRelease + 15);
+    await page.waitForTimeout(520);
 
     const hSplit = page.locator('.dashboard-splitter.splitter-horizontal').first();
     const hBox = (await hSplit.boundingBox())!;
     await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2);
     await page.mouse.down();
     await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
-    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 65, { steps: 24 });
+    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 52, { steps: 24 });
+    const heightAtRelease = (await firstPaneInCol1.boundingBox())!.height;
     await page.mouse.up();
     await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
 
-    // Verify resized dimensions increased as expected and DO NOT snap back after background poll / rebuildGrid
+    // Sample row 1 height over the first 120ms after release to prove visible vertical inertial overshoot (> 15px beyond release point)
+    let maxOvershootHeight = heightAtRelease;
+    for (let s = 0; s < 6; s++) {
+      await page.waitForTimeout(20);
+      const h = (await firstPaneInCol1.boundingBox())!.height;
+      if (h > maxOvershootHeight) maxOvershootHeight = h;
+    }
+    expect(maxOvershootHeight).toBeGreaterThan(heightAtRelease + 15);
+
+    // Wait for inertial spring bounce settle (~600ms) and verify resized dimensions remain locked
+    await page.waitForTimeout(600);
     const resizedCol1Width = (await firstColEl.boundingBox())!.width;
     const resizedPane1Height = (await firstPaneInCol1.boundingBox())!.height;
-    expect(resizedCol1Width).toBeGreaterThan(initialCol1Width + 60);
-    expect(resizedPane1Height).toBeGreaterThan(initialPane1Height + 45);
+    expect(resizedCol1Width).toBeGreaterThan(initialCol1Width + 50);
+    expect(resizedPane1Height).toBeGreaterThan(initialPane1Height + 40);
 
-    // Wait across a simulated session list refresh / storage cycle and verify sizes remain locked
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(250);
     const widthAfterSync = (await firstColEl.boundingBox())!.width;
     const heightAfterSync = (await firstPaneInCol1.boundingBox())!.height;
     expect(Math.abs(widthAfterSync - resizedCol1Width)).toBeLessThanOrEqual(2);
@@ -287,10 +473,11 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(pane12).toContainText('測試第 12 個視窗即時發送訊息');
 
     // Verify iPad focus & scroll stability: focusing a pane input and triggering
-    // equalizeWeights / background session sync must NOT blur the input or scroll jump
+    // equalizeWeights (with FLIP bounce animation) must NOT blur the input or scroll jump
     await input12.focus();
     await expect(input12).toBeFocused();
     await page.locator('#btn-dashboard-equalize').click();
+    await page.waitForTimeout(500);
     await expect(input12).toBeFocused();
 
     expect(errors).toEqual([]);
