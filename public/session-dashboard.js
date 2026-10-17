@@ -7,8 +7,8 @@
  */
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
-const MIN_PANE_WIDTH_PX = 220;
-const MIN_PANE_HEIGHT_PX = 160;
+const MIN_PANE_WIDTH_PX = 140;
+const MIN_PANE_HEIGHT_PX = 95;
 
 export function createSessionDashboard({
   app,
@@ -299,7 +299,7 @@ export function createSessionDashboard({
     quickPicksEl.replaceChildren();
     const jids = allJids();
     const sessions = getSessions().filter((s) => !s.deleted && s.kind !== 'life');
-    for (const s of sessions.slice(0, 6)) {
+    for (const s of sessions.slice(0, 12)) {
       const inDash = jids.includes(s.jid);
       const chip = el('button', `dashboard-quick-chip${inDash ? ' added' : ''}`);
       chip.type = 'button';
@@ -841,6 +841,9 @@ export function createSessionDashboard({
     emptyEl.hidden = true;
     gridEl.hidden = false;
     gridEl.style.flexDirection = direction;
+    gridEl.dataset.paneCount = String(jids.length);
+    gridEl.classList.toggle('density-compact', jids.length >= 6);
+    gridEl.classList.toggle('density-ultra', jids.length >= 9);
 
     // Ensure pane instances exist for all active jids
     for (const jid of jids) {
@@ -1040,12 +1043,7 @@ export function createSessionDashboard({
       }));
     } else if (preset === 'grid') {
       direction = 'row';
-      const cols = Math.ceil(Math.sqrt(jids.length));
-      const newGroups = Array.from({ length: cols }, () => ({ weight: 1, items: [] }));
-      jids.forEach((jid, idx) => {
-        newGroups[idx % cols].items.push({ jid, weight: 1 });
-      });
-      groups = newGroups.filter((g) => g.items.length > 0);
+      groups = buildBalancedGridGroups(jids);
     }
 
     saveState();
@@ -1099,12 +1097,28 @@ export function createSessionDashboard({
     onRenderSessionListDecorations();
   }
 
+  function buildBalancedGridGroups(jids) {
+    const cols = Math.min(4, Math.ceil(Math.sqrt(jids.length)));
+    const newGroups = Array.from({ length: cols }, () => ({ weight: 1, items: [] }));
+    jids.forEach((jid, idx) => {
+      newGroups[idx % cols].items.push({ jid, weight: 1 });
+    });
+    return newGroups.filter((g) => g.items.length > 0);
+  }
+
   function addPane(jid, dropTarget = null) {
     if (!jid || jid === 'web:life') return;
-    if (dropTarget) {
+    const wasAlreadyIn = allJids().includes(jid);
+    if (dropTarget && dropTarget.mode === 'pane') {
       placeSessionAt(jid, dropTarget);
-    } else if (!allJids().includes(jid)) {
-      groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+    } else if (!wasAlreadyIn) {
+      const nextJids = [...allJids(), jid];
+      if (nextJids.length >= 4) {
+        direction = 'row';
+        groups = buildBalancedGridGroups(nextJids);
+      } else {
+        groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+      }
     }
     saveState();
     if (!active && wideQuery.matches) {

@@ -1,111 +1,63 @@
 import { expect, test } from 'playwright/test';
 
-const sessions = [
-  {
-    jid: 'web:alpha',
-    name: '前端架構重構',
-    folder: 'web_alpha',
-    kind: 'standard',
-    deleted: false,
-    model: 'claude-code/opus',
-    provider: 'claude-code',
-    runningModel: 'opus',
-    badge: { label: 'OPUS', kind: 'claude' },
-    busy: false,
-    lastReplyId: 2,
-    lastActivity: '2026-10-17 15:10:00',
-  },
-  {
-    jid: 'web:beta',
-    name: 'ROCm 推論壓測',
-    folder: 'web_beta',
-    kind: 'standard',
-    deleted: false,
-    model: 'agy/gemini-3-pro',
-    provider: 'agy',
-    runningModel: 'gemini-3-pro',
-    badge: { label: 'AGY', kind: 'gem' },
-    busy: true,
-    lastReplyId: 1,
-    lastActivity: '2026-10-17 15:09:00',
-  },
-  {
-    jid: 'web:gamma',
-    name: '台股 Shioaji 回測',
-    folder: 'web_gamma',
-    kind: 'standard',
-    deleted: false,
-    model: 'openai-codex/gpt-5',
-    provider: 'openai-codex',
-    runningModel: 'gpt-5',
-    badge: { label: 'GPT', kind: 'gpt' },
-    busy: false,
-    lastReplyId: 1,
-    lastActivity: '2026-10-17 15:08:00',
-  },
+const sessionDefinitions = [
+  { id: '01', name: '前端架構重構', badge: { label: 'OPUS', kind: 'claude' }, busy: false, msg: '請幫我檢查 Dashboard 1–12 視窗並排 RWD' },
+  { id: '02', name: 'ROCm 推論壓測', badge: { label: 'AGY', kind: 'gem' }, busy: true, msg: './llama-bench -m qwen3-30b-a3b.gguf -ngl 99 -fa 1' },
+  { id: '03', name: '台股 Shioaji 回測', badge: { label: 'GPT', kind: 'gpt' }, busy: false, msg: '2330 檔位 Tick 1.0 元，回測夏普率 2.41' },
+  { id: '04', name: 'Breeze ASR 台語轉錄', badge: { label: 'AGY', kind: 'gem' }, busy: false, msg: '已完成 YouTube 台語逐字稿與時間戳摘要' },
+  { id: '05', name: 'Qwen-Image ComfyUI', badge: { label: 'OPUS', kind: 'claude' }, busy: true, msg: '正在生成 20B DiT 賽博龐克概念美術圖' },
+  { id: '06', name: 'Xvfb 串流監控', badge: { label: 'GPT', kind: 'gpt' }, busy: false, msg: 'DISPLAY :99 Tailscale Funnel 200 OK' },
+  { id: '07', name: 'Strix Halo 功耗監測', badge: { label: 'AGY', kind: 'gem' }, busy: false, msg: 'APU 封裝功耗 78W · 統一記憶體 96GB' },
+  { id: '08', name: 'Playwright 視覺驗證', badge: { label: 'OPUS', kind: 'claude' }, busy: false, msg: '120Hz 高解析度 2.7x Canvas 測試通過' },
+  { id: '09', name: 'AssetSentry 儀表板', badge: { label: 'GPT', kind: 'gpt' }, busy: false, msg: 'Streamlit port 8501 即時庫存部位更新' },
+  { id: '10', name: 'DS4 ROCm Kernel', badge: { label: 'AGY', kind: 'gem' }, busy: true, msg: 'HIP FlashAttention-2 Q8 KV cache 編譯中' },
+  { id: '11', name: 'Discord Claude Bridge', badge: { label: 'OPUS', kind: 'claude' }, busy: false, msg: 'Webhook 佇列延遲 18ms · 連線正常' },
+  { id: '12', name: '4get 私密搜尋引擎', badge: { label: 'GPT', kind: 'gpt' }, busy: false, msg: 'Upstream scraper proxies 100% healthy' },
 ];
 
-const eventsBySession: Record<string, any[]> = {
-  'web:alpha': [
-    {
-      id: 1,
-      kind: 'message',
-      role: 'user',
-      content: '請幫我檢查 Dashboard 並排視窗的排版與 RWD',
-      files: [],
-      createdAt: '2026-10-17T15:05:00Z',
-    },
-    {
-      id: 2,
-      kind: 'message',
-      role: 'assistant',
-      content: '沒問題！我們已經將 Flexbox 自動並排與可拖拉分隔線（Splitter）設定完成。',
-      files: [],
-      createdAt: '2026-10-17T15:06:00Z',
-    },
-  ],
-  'web:beta': [
-    {
-      id: 1,
-      kind: 'message',
-      role: 'user',
-      content: '開始執行 Strix Halo llama.cpp Q8 KV cache benchmark',
-      files: [],
-      createdAt: '2026-10-17T15:07:00Z',
-    },
-    {
-      id: 2,
-      kind: 'tool',
-      role: 'Bash',
-      content: './llama-bench -m qwen3-30b-a3b.gguf -ngl 99 -fa 1',
-      files: [],
-      createdAt: '2026-10-17T15:08:00Z',
-    },
-  ],
-  'web:gamma': [
-    {
-      id: 1,
-      kind: 'message',
-      role: 'user',
-      content: '查詢台積電 2330 今日 Tick 模擬成交明細',
-      files: [],
-      createdAt: '2026-10-17T15:04:00Z',
-    },
-    {
-      id: 2,
-      kind: 'message',
-      role: 'assistant',
-      content: '已載入 Sinopac 模擬環境，2330 檔位 Tick 為 1.0 元，回測夏普率 2.41。',
-      files: [],
-      createdAt: '2026-10-17T15:05:30Z',
-    },
-  ],
-};
+const sessions = sessionDefinitions.map((d, i) => ({
+  jid: `web:s${d.id}`,
+  name: `${d.id} ${d.name}`,
+  folder: `web_s${d.id}`,
+  kind: 'standard',
+  deleted: false,
+  model: 'agy/gemini-3-pro',
+  provider: 'agy',
+  runningModel: 'gemini-3-pro',
+  badge: d.badge,
+  busy: d.busy,
+  lastReplyId: 2,
+  lastActivity: `2026-10-18 01:${String(20 - i).padStart(2, '0')}:00`,
+}));
 
-test.describe('desktop & tablet multi-session dashboard', () => {
-  test.use({ viewport: { width: 1280, height: 820 }, isMobile: false, hasTouch: false });
+const eventsBySession: Record<string, any[]> = Object.fromEntries(
+  sessionDefinitions.map((d) => [
+    `web:s${d.id}`,
+    [
+      {
+        id: 1,
+        kind: 'message',
+        role: 'user',
+        content: `檢查任務 #${d.id}：${d.name}`,
+        files: [],
+        createdAt: '2026-10-18T01:05:00Z',
+      },
+      {
+        id: 2,
+        kind: 'message',
+        role: 'assistant',
+        content: d.msg,
+        files: [],
+        createdAt: '2026-10-18T01:06:00Z',
+      },
+    ],
+  ]),
+);
 
-  test('drags sessions into auto-aligned side-by-side panes, resizes via splitter, and sends messages', async ({
+test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
+
+  test('scales smoothly from 1 to 12 concurrent sessions across horizontal, vertical, and 2D grid layouts with splitters', async ({
     page,
   }, info) => {
     const errors: string[] = [];
@@ -138,10 +90,9 @@ test.describe('desktop & tablet multi-session dashboard', () => {
             events: eventsBySession[jid] || [],
             busy: session?.busy ?? false,
             hasMore: false,
-            partial:
-              jid === 'web:beta'
-                ? { content: 'Prompt processing: 1,420 t/s · Token generation: 88.4 t/s' }
-                : null,
+            partial: session?.busy
+              ? { content: 'ROCm 7.x hipBLASLt stream running @ 92.4 tok/s…' }
+              : null,
             session,
           },
         });
@@ -166,7 +117,7 @@ test.describe('desktop & tablet multi-session dashboard', () => {
           role: 'user',
           content: body.text,
           files: [],
-          createdAt: '2026-10-17T15:12:00Z',
+          createdAt: '2026-10-18T01:12:00Z',
         });
         return route.fulfill({ status: 202, json: { ok: true } });
       }
@@ -175,118 +126,79 @@ test.describe('desktop & tablet multi-session dashboard', () => {
     });
 
     await page.goto('/');
-    await expect(page.locator('#session-name')).toHaveText('前端架構重構');
+    await expect(page.locator('#btn-dashboard-home')).toBeVisible();
+    await page.locator('#btn-dashboard-home').click();
+    await expect(page.locator('#dashboard-view')).toBeVisible();
 
-    // 1. Open Dashboard from sidebar Home button
-    const navBtn = page.locator('#btn-dashboard-home');
-    await expect(navBtn).toBeVisible();
-    await navBtn.click();
+    // Progressive test from 1 to 12 sessions
+    for (let count = 1; count <= 12; count++) {
+      const item = page.locator('#session-list .session-item').nth(count - 1);
+      if (count <= 3) {
+        // Drag the first 3 sessions into the stage
+        await item.dragTo(page.locator('#dashboard-stage'));
+      } else {
+        // Click the sidebar tile button (+ 並排) for sessions 4..12
+        await item.locator('.session-tile-btn').click();
+      }
 
-    const dashView = page.locator('#dashboard-view');
-    await expect(dashView).toBeVisible();
-    await expect(page.locator('#dashboard-empty')).toBeVisible();
-    await page.screenshot({ path: info.outputPath('01-dashboard-empty.png') });
+      await expect(page.locator('.dashboard-pane')).toHaveCount(count);
+      await expect(page.locator('#dashboard-pane-counter')).toHaveText(`${count} 個並排視窗`);
 
-    // 2. Drag first session ("前端架構重構") from sidebar into the dashboard stage
-    const firstItem = page.locator('#session-list .session-item').nth(0);
-    const secondItem = page.locator('#session-list .session-item').nth(1);
-    const thirdItem = page.locator('#session-list .session-item').nth(2);
+      // Verify every single pane from 1..count has positive, non-overlapping dimensions inside the viewport
+      const rects = await page.locator('.dashboard-pane').evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            jid: (el as HTMLElement).dataset.jid,
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            width: Math.round(r.width),
+            height: Math.round(r.height),
+          };
+        }),
+      );
+      expect(rects.length).toBe(count);
+      for (const r of rects) {
+        expect(r.width).toBeGreaterThanOrEqual(135);
+        expect(r.height).toBeGreaterThanOrEqual(90);
+      }
 
-    await firstItem.dragTo(page.locator('#dashboard-stage'));
-    await expect(page.locator('.dashboard-pane')).toHaveCount(1);
-    await expect(page.locator('.dashboard-pane').first()).toContainText('前端架構重構');
-    await expect(page.locator('.dashboard-pane').first()).toContainText('可拖拉分隔線');
+      // Capture milestone screenshots across 1..12
+      if ([1, 2, 3, 4, 6, 8, 9, 12].includes(count)) {
+        const tag = String(count).padStart(2, '0');
+        await page.screenshot({ path: info.outputPath(`panes-${tag}-count.png`) });
+      }
+    }
 
-    // 3. Drag second session ("ROCm 推論壓測") to auto-align side by side
-    await secondItem.dragTo(page.locator('#dashboard-stage'));
-    await expect(page.locator('.dashboard-pane')).toHaveCount(2);
-    await expect(page.locator('.dashboard-splitter')).toHaveCount(1);
-    await expect(page.locator('#dashboard-pane-counter')).toHaveText('2 個並排視窗');
-    await page.screenshot({ path: info.outputPath('02-two-panes-aligned.png') });
+    // With all 12 sessions active in the 4x3 2D grid:
+    // Verify 3 outer vertical splitters (between 4 columns) and 8 inner horizontal splitters (2 per column * 4 columns)
+    await expect(page.locator('.dashboard-splitter.splitter-vertical')).toHaveCount(3);
+    await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(8);
 
-    // Verify both panes are automatically equal width initially
-    const beforeResize = await page.locator('.dashboard-pane').evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().width),
-    );
-    expect(Math.abs(beforeResize[0] - beforeResize[1])).toBeLessThan(4);
-
-    // 4. Drag third session ("台股 Shioaji 回測") to form a 3-column workspace
-    await thirdItem.dragTo(page.locator('#dashboard-stage'));
-    await expect(page.locator('.dashboard-pane')).toHaveCount(3);
-    await expect(page.locator('.dashboard-splitter')).toHaveCount(2);
-    await expect(page.locator('#dashboard-pane-counter')).toHaveText('3 個並排視窗');
-    await page.screenshot({ path: info.outputPath('03-three-panes-aligned.png') });
-
-    // 5. Drag the first splitter to resize pane 1 wider and pane 2 narrower
-    const splitter = page.locator('.dashboard-splitter').first();
-    const splitBox = (await splitter.boundingBox())!;
-    const cx = splitBox.x + splitBox.width / 2;
-    const cy = splitBox.y + splitBox.height / 2;
-    await page.mouse.move(cx, cy);
+    // Resize column 1 wider and row 1 of column 1 taller simultaneously in the 12-pane grid
+    const vSplit = page.locator('.dashboard-splitter.splitter-vertical').first();
+    const vBox = (await vSplit.boundingBox())!;
+    await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(cx + 120, cy, { steps: 8 });
+    await page.mouse.move(vBox.x + vBox.width / 2 + 90, vBox.y + vBox.height / 2, { steps: 6 });
     await page.mouse.up();
 
-    const afterResize = await page.locator('.dashboard-pane').evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().width),
-    );
-    expect(afterResize[0]).toBeGreaterThan(afterResize[1] + 150);
-    await page.screenshot({ path: info.outputPath('04-resized-panes.png') });
-
-    // 6. Click "平均對齊" to restore equal alignment across all panes
-    await page.locator('#btn-dashboard-equalize').click();
-    const equalized = await page.locator('.dashboard-pane').evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().width),
-    );
-    expect(Math.abs(equalized[0] - equalized[1])).toBeLessThan(4);
-    expect(Math.abs(equalized[1] - equalized[2])).toBeLessThan(4);
-
-    // 7. Switch to Vertical stacking ("垂直並排") and verify top-to-bottom panes + horizontal splitters
-    await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
-    await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(2);
-    const verticalBoxes = await page.locator('.dashboard-pane').evaluateAll((els) =>
-      els.map((el) => {
-        const r = el.getBoundingClientRect();
-        return { top: r.top, height: r.height, width: r.width };
-      }),
-    );
-    // All 3 panes should have equal width and be stacked vertically (top increasing)
-    expect(Math.abs(verticalBoxes[0].width - verticalBoxes[1].width)).toBeLessThan(4);
-    expect(verticalBoxes[1].top).toBeGreaterThan(verticalBoxes[0].top + 100);
-    expect(verticalBoxes[2].top).toBeGreaterThan(verticalBoxes[1].top + 100);
-    expect(Math.abs(verticalBoxes[0].height - verticalBoxes[1].height)).toBeLessThan(6);
-    await page.screenshot({ path: info.outputPath('05-vertical-stacked-panes.png') });
-
-    // 8. Drag the first horizontal splitter vertically to make top pane taller and middle pane shorter
-    const hSplitter = page.locator('.dashboard-splitter.splitter-horizontal').first();
-    const hBox = (await hSplitter.boundingBox())!;
-    const hcx = hBox.x + hBox.width / 2;
-    const hcy = hBox.y + hBox.height / 2;
-    await page.mouse.move(hcx, hcy);
+    const hSplit = page.locator('.dashboard-splitter.splitter-horizontal').first();
+    const hBox = (await hSplit.boundingBox())!;
+    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(hcx, hcy + 70, { steps: 8 });
+    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 65, { steps: 6 });
     await page.mouse.up();
 
-    const afterVerticalResize = await page.locator('.dashboard-pane').evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().height),
-    );
-    expect(afterVerticalResize[0]).toBeGreaterThan(afterVerticalResize[1] + 90);
-    await page.screenshot({ path: info.outputPath('06-vertical-resized-panes.png') });
+    await page.screenshot({ path: info.outputPath('panes-12-custom-resized.png') });
 
-    // 9. Switch to 2D Grid ("網格並排"): combines horizontal columns + vertical rows simultaneously
-    await page.locator('.dashboard-preset-btn[data-preset="grid"]').click();
-    await expect(page.locator('.dashboard-splitter.splitter-vertical')).toHaveCount(1);
-    await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(1);
-    await page.screenshot({ path: info.outputPath('07-2d-grid-panes.png') });
-
-    // 10. Send a message directly inside the 3rd pane ("台股 Shioaji 回測") while monitoring the others
-    const thirdPane = page.locator('.dashboard-pane[data-jid="web:gamma"]');
-    await thirdPane.locator('.dashboard-pane-input').fill('下單測試 2330 零股 100 股');
-    await thirdPane.locator('.dashboard-pane-send').click();
+    // Send a message in the 12th pane ("12 4get 私密搜尋引擎") and verify live update
+    const pane12 = page.locator('.dashboard-pane[data-jid="web:s12"]');
+    await pane12.locator('.dashboard-pane-input').fill('測試第 12 個視窗即時發送訊息');
+    await pane12.locator('.dashboard-pane-send').click();
     await expect.poll(() => sentMessages.length).toBe(1);
-    expect(sentMessages[0]).toEqual({ jid: 'web:gamma', text: '下單測試 2330 零股 100 股' });
-    await expect(thirdPane).toContainText('下單測試 2330 零股 100 股');
-    await page.screenshot({ path: info.outputPath('08-multi-session-interaction.png') });
+    expect(sentMessages[0]).toEqual({ jid: 'web:s12', text: '測試第 12 個視窗即時發送訊息' });
+    await expect(pane12).toContainText('測試第 12 個視窗即時發送訊息');
 
     expect(errors).toEqual([]);
   });

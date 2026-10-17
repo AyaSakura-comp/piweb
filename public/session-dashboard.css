@@ -470,8 +470,8 @@
 
   .dashboard-group {
     flex: 1 1 0px;
-    min-width: 220px;
-    min-height: 160px;
+    min-width: 140px;
+    min-height: 95px;
     display: flex;
     align-items: stretch;
     overflow: hidden;
@@ -489,12 +489,60 @@
   .dashboard-pane {
     position: relative;
     flex: 1 1 0px;
-    min-width: 220px;
-    min-height: 160px;
+    min-width: 140px;
+    min-height: 95px;
     display: flex;
     flex-direction: column;
     background: var(--bg);
     overflow: hidden;
+  }
+
+  /* Compact density adaptations for 6–12 concurrent session panes */
+  .dashboard-grid.density-compact .dashboard-pane-header {
+    height: 36px;
+    padding: 0 6px 0 9px;
+  }
+
+  .dashboard-grid.density-compact .pane-session-name {
+    font-size: 12.5px;
+  }
+
+  .dashboard-grid.density-compact .dashboard-pane-actions .icon-btn {
+    width: 26px;
+    height: 26px;
+  }
+
+  .dashboard-grid.density-compact .dashboard-pane-actions .icon-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .dashboard-grid.density-compact .dashboard-pane-messages {
+    padding: 6px 2px 4px;
+    font-size: 13px;
+  }
+
+  .dashboard-grid.density-compact .dashboard-pane-composer-wrap {
+    padding: 0 6px 6px;
+  }
+
+  .dashboard-grid.density-compact .dashboard-pane-composer textarea {
+    padding: 5px 3px;
+    font-size: 12.5px;
+  }
+
+  .dashboard-grid.density-ultra .dashboard-pane-header {
+    height: 32px;
+    padding: 0 4px 0 8px;
+  }
+
+  .dashboard-grid.density-ultra .pane-session-name {
+    font-size: 12px;
+  }
+
+  .dashboard-grid.density-ultra .dashboard-pane-messages {
+    padding: 4px 2px 2px;
+    font-size: 12.5px;
   }
 
   .dashboard-pane.dragging-pane {
