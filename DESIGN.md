@@ -253,28 +253,44 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
   for **水平 / 垂直 / 網格**. Right: borderless 44×44px outline-icon buttons for
   **均分視窗大小** (`#btn-dashboard-equalize`) and **清空並排** (`#btn-dashboard-clear`);
   no boxed text buttons or accent-filled primary actions.
-- **Pane headers & actions**: `--bg` surface with `1px solid var(--border)` bottom
-  border. All pane header actions (split toggle, focus single session, remove pane)
-  use borderless 44×44px outline-icon buttons (`36×36px` in compact 6–12 pane density).
+- **Pane headers, full single-session parity & native positions**: `--bg` surface with
+  `1px solid var(--border)` bottom border. Every tiled pane provides full single-session
+  feature parity in the exact native locations:
+  - **Top header bar**: inline session rename, model badge, Status (`ℹ️`), Usage (`📊`),
+    Model selector (`🤖`), Thinking level selector (`💡` with active level dot), per-pane
+    `⋯` overflow menu (Search in pane, New pi session, BTW side chat, Subagents, Media
+    gallery, Split horizontal/vertical, Focus single session, Delete session), plus
+    direct Split, Expand, and Close (`×`) borderless outline-icon buttons (`36×36px`).
+  - **Under header**: per-pane search bar (`🔍`), per-pane BTW side-chat ownership card
+    (`BTW 側聊 · 不會加入主對話` with `‹` back and trash clear), and per-pane `createPromptPin`
+    sticky prompt bar.
+  - **Above composer**: per-pane typing indicator row + `BTW ›` / `‹ 主對話` quick toggle
+    link, slash-command autocomplete popup (`/pi …`), upload progress bar, `引用` quote
+    reply preview bar (with `❝` quote buttons on every message and text-selection quote),
+    image/multimedia attachment thumbnail preview strip with lightbox + image editor (`✎`),
+    image compression toggle (`壓縮圖片`), and `createHotKeywords` quick-input chip bar.
 - **Drag-and-swap & directional drop zones**: dragging a session from the sidebar or
   dragging any pane header over another pane highlights a 5-way drop target:
   dropping in the center (`22%..78%`) swaps the two panes in-place (`⇄ 交換視窗順序`),
   while dropping near the left/right/top/bottom edge splits along that axis.
-- **120Hz+ zero-lag splitters & 28–36px touch hit-zones**: visual splitters stay slim
-  (`10px` desktop, `12px` coarse pointer) with a visible iPadOS Split-View style pill
-  handle (`40–44px`), while an invisible `::before` hit-target expands the draggable
-  touch zone to `28px` (`36px` on `@media (pointer: coarse)`) so fingers can grab any
-  horizontal or vertical divider effortlessly without hitting adjacent scrollbars.
+- **120Hz+ zero-lag splitters, 28–36px touch hit-zones & inertial spring collision bounce**:
+  visual splitters stay slim (`10px` desktop, `12px` coarse pointer) with a visible
+  iPadOS Split-View style pill handle (`40–44px`), while an invisible `::before`
+  hit-target expands the draggable touch zone to `28px` (`36px` on `@media (pointer: coarse)`).
   Dragging `.dashboard-splitter` processes high-rate `getCoalescedEvents()` samples
-  synchronously with `.resizing-active` (`transition: none !important`, `will-change: flex-grow`,
-  and `pointer-events: none` on pane subtrees), and double-click / touch double-tap
-  equalizes the adjacent pair.
-- **iPadOS virtual keyboard & scroll stability**: background `/api/sessions` polls
-  skip DOM reconstruction when the session signature is unchanged, dynamic index/JID
-  lookup in splitter callbacks prevents resized weights from snapping back on poll,
-  toolbar/pane buttons prevent focus theft on `pointerdown`, and touch inputs keep
-  `font-size: 16px` with `visualViewport` height tracking (`--dashboard-vv-h`) and
-  user-intent scroll guards.
+  synchronously with `.resizing-active`. Releasing a horizontal or vertical splitter
+  drives an underdamped spring oscillation (`stiffness = 420, damping = 10.5`, rubber-band
+  cushion down to `28px`) with a 35–68px inertial overshoot, 3-stage elastic rebound,
+  and synchronized perpendicular squash-and-stretch on both adjacent panes before
+  locking onto the target weights. Pane moves, swaps, layout switches, and equalization
+  animate via a multi-stage FLIP spring collision bounce (`animatePaneLayoutTransition`).
+- **Auto-scroll to latest & iPadOS virtual keyboard stability**: activating Dashboard
+  or hydrating a pane automatically scrolls every tiled pane to the latest message and
+  re-pins after lazy media layout. Background `/api/sessions` polls skip DOM
+  reconstruction when the session signature is unchanged, dynamic index/JID lookup in
+  splitter callbacks prevents resized weights from snapping back on poll, toolbar/pane
+  buttons prevent focus theft on `pointerdown`, and touch inputs keep `font-size: 16px`
+  with `visualViewport` height tracking (`--dashboard-vv-h`).
 
 ## Verification
 
