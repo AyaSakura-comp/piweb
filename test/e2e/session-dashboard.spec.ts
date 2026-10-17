@@ -219,6 +219,11 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(8);
 
     // Resize column 1 wider and row 1 of column 1 taller simultaneously at 120Hz+ (24 steps) in the 12-pane grid
+    const firstColEl = page.locator('.dashboard-group').first();
+    const firstPaneInCol1 = firstColEl.locator('.dashboard-pane').first();
+    const initialCol1Width = (await firstColEl.boundingBox())!.width;
+    const initialPane1Height = (await firstPaneInCol1.boundingBox())!.height;
+
     const vSplit = page.locator('.dashboard-splitter.splitter-vertical').first();
     const vBox = (await vSplit.boundingBox())!;
     await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
@@ -236,6 +241,19 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 65, { steps: 24 });
     await page.mouse.up();
     await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
+
+    // Verify resized dimensions increased as expected and DO NOT snap back after background poll / rebuildGrid
+    const resizedCol1Width = (await firstColEl.boundingBox())!.width;
+    const resizedPane1Height = (await firstPaneInCol1.boundingBox())!.height;
+    expect(resizedCol1Width).toBeGreaterThan(initialCol1Width + 60);
+    expect(resizedPane1Height).toBeGreaterThan(initialPane1Height + 45);
+
+    // Wait across a simulated session list refresh / storage cycle and verify sizes remain locked
+    await page.waitForTimeout(300);
+    const widthAfterSync = (await firstColEl.boundingBox())!.width;
+    const heightAfterSync = (await firstPaneInCol1.boundingBox())!.height;
+    expect(Math.abs(widthAfterSync - resizedCol1Width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(heightAfterSync - resizedPane1Height)).toBeLessThanOrEqual(2);
 
     await page.screenshot({ path: info.outputPath('panes-12-custom-resized.png') });
 

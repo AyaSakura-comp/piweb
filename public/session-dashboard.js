@@ -814,6 +814,8 @@ export function createSessionDashboard({
     panes.delete(jid);
   }
 
+  let activeResizerCount = 0;
+
   // ── 2D Layout & Both Horizontal and Vertical Splitters ─────────────────────
   function createAxisSplitter({
     axis, // 'x' (vertical bar resizing width) or 'y' (horizontal bar resizing height)
@@ -861,9 +863,14 @@ export function createSessionDashboard({
       const [startW1, startW2] = getWeights();
       const totalWeight = startW1 + startW2;
 
+      activeResizerCount++;
       splitter.classList.add('dragging');
       gridEl.classList.add('resizing-active');
-      splitter.setPointerCapture(e.pointerId);
+      try {
+        splitter.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore synthetic pointer events without active pointerId
+      }
 
       // 120Hz+ zero-lag direct style mutation on every pointermove / coalesced event
       const applyPosition = (clientPos) => {
@@ -874,6 +881,7 @@ export function createSessionDashboard({
       };
 
       const onMove = (moveEvent) => {
+        if (moveEvent.pointerId !== e.pointerId) return;
         const coalesced =
           typeof moveEvent.getCoalescedEvents === 'function'
             ? moveEvent.getCoalescedEvents()
@@ -883,18 +891,24 @@ export function createSessionDashboard({
         applyPosition(currentPos);
       };
 
-      const onEnd = () => {
+      let ended = false;
+      const onEnd = (endEvent) => {
+        if (ended || (endEvent && endEvent.pointerId !== e.pointerId)) return;
+        ended = true;
+        activeResizerCount = Math.max(0, activeResizerCount - 1);
         splitter.classList.remove('dragging');
-        gridEl.classList.remove('resizing-active');
-        splitter.removeEventListener('pointermove', onMove);
-        splitter.removeEventListener('pointerup', onEnd);
-        splitter.removeEventListener('pointercancel', onEnd);
+        if (activeResizerCount === 0) {
+          gridEl.classList.remove('resizing-active');
+        }
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onEnd);
+        window.removeEventListener('pointercancel', onEnd);
         saveState();
       };
 
-      splitter.addEventListener('pointermove', onMove);
-      splitter.addEventListener('pointerup', onEnd);
-      splitter.addEventListener('pointercancel', onEnd);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onEnd);
+      window.addEventListener('pointercancel', onEnd);
     });
 
     return splitter;
@@ -907,6 +921,11 @@ export function createSessionDashboard({
   }
 
   function rebuildGrid(forceRebuildDOM = false) {
+    // Never interrupt an active splitter drag with a background poll rebuild
+    if (activeResizerCount > 0 && !forceRebuildDOM) {
+      return;
+    }
+
     normalizeGroups();
     syncNavCounts();
     renderQuickPicks();
@@ -990,6 +1009,8 @@ export function createSessionDashboard({
           const nextItem = group.items[itemIdx + 1];
           const nextPane = panes.get(nextItem.jid);
           if (nextPane) {
+            const firstJid = item.jid;
+            const secondJid = nextItem.jid;
             itemChildren.push(
               createAxisSplitter({
                 axis: innerAxis,
@@ -999,10 +1020,18 @@ export function createSessionDashboard({
                     : `Resize horizontal panes ${itemIdx + 1} and ${itemIdx + 2}`,
                 firstEl: pane.el,
                 secondEl: nextPane.el,
-                getWeights: () => [item.weight, nextItem.weight],
+                getWeights: () => {
+                  const loc1 = findJidLocation(firstJid);
+                  const loc2 = findJidLocation(secondJid);
+                  const w1 = loc1 ? groups[loc1.gIdx].items[loc1.iIdx].weight : 1;
+                  const w2 = loc2 ? groups[loc2.gIdx].items[loc2.iIdx].weight : 1;
+                  return [w1, w2];
+                },
                 setWeights: (w1, w2) => {
-                  item.weight = w1;
-                  nextItem.weight = w2;
+                  const loc1 = findJidLocation(firstJid);
+                  const loc2 = findJidLocation(secondJid);
+                  if (loc1) groups[loc1.gIdx].items[loc1.iIdx].weight = w1;
+                  if (loc2) groups[loc2.gIdx].items[loc2.iIdx].weight = w2;
                   pane.el.style.flex = `${w1} 1 0px`;
                   nextPane.el.style.flex = `${w2} 1 0px`;
                 },
@@ -1020,8 +1049,6 @@ export function createSessionDashboard({
     groupEls.forEach((groupEl, gIdx) => {
       gridChildren.push(groupEl);
       if (gIdx < groupEls.length - 1) {
-        const g1 = groups[gIdx];
-        const g2 = groups[gIdx + 1];
         const nextGroupEl = groupEls[gIdx + 1];
         gridChildren.push(
           createAxisSplitter({
@@ -1032,10 +1059,13 @@ export function createSessionDashboard({
                 : `Resize rows ${gIdx + 1} and ${gIdx + 2}`,
             firstEl: groupEl,
             secondEl: nextGroupEl,
-            getWeights: () => [g1.weight, g2.weight],
+            getWeights: () => [
+              groups[gIdx]?.weight ?? 1,
+              groups[gIdx + 1]?.weight ?? 1,
+            ],
             setWeights: (w1, w2) => {
-              g1.weight = w1;
-              g2.weight = w2;
+              if (groups[gIdx]) groups[gIdx].weight = w1;
+              if (groups[gIdx + 1]) groups[gIdx + 1].weight = w2;
               groupEl.style.flex = `${w1} 1 0px`;
               nextGroupEl.style.flex = `${w2} 1 0px`;
             },
