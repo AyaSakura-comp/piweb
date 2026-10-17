@@ -1,14 +1,14 @@
 /**
- * Desktop & Tablet Multi-Session Tiling Dashboard (>= 768px)
+ * Desktop & Tablet Multi-Session 2D Tiling Dashboard (>= 768px)
  *
- * Allows dragging sessions from the left sidebar (or clicking the Dashboard entry /
- * pin buttons) into an auto-aligned side-by-side workspace where each pane is a
- * live, interactive session with its own SSE stream, composer, stop action, and
- * draggable resize splitters.
+ * Supports both horizontal (left/right columns) and vertical (top/bottom rows)
+ * automatic alignment and directional drop zones (left, right, top, bottom),
+ * with independent draggable vertical AND horizontal resize splitters.
  */
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const MIN_PANE_WIDTH_PX = 220;
+const MIN_PANE_HEIGHT_PX = 160;
 
 export function createSessionDashboard({
   app,
@@ -31,10 +31,16 @@ export function createSessionDashboard({
   const wideQuery = window.matchMedia('(min-width: 768px)');
   let active = false;
   let panes = new Map(); // jid -> pane state
-  let orderedJids = [];
-  let weights = new Map(); // jid -> relative flex weight (default 1)
+  /**
+   * 2D Grid State:
+   * - `direction`: 'row' (columns of rows) or 'column' (rows of columns)
+   * - `groups`: Array<{ weight: number, items: Array<{ jid: string, weight: number }> }>
+   */
+  let direction = 'row';
+  let groups = [];
   let dragSourceJid = null;
   let pointerDrag = null;
+  let currentDropTarget = null; // { mode: 'stage' | 'pane', jid?: string, zone: 'left' | 'right' | 'top' | 'bottom' }
 
   // ── 1. Sidebar Dashboard Entry ("首頁 Dashboard") ──────────────────────────
   const navEntry = document.createElement('button');
@@ -45,13 +51,15 @@ export function createSessionDashboard({
   navEntry.innerHTML = `
     <span class="dashboard-nav-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="8" height="16" rx="2" />
-        <rect x="13" y="4" width="8" height="16" rx="2" />
+        <rect x="3" y="3" width="8" height="8" rx="1.8" />
+        <rect x="13" y="3" width="8" height="8" rx="1.8" />
+        <rect x="3" y="13" width="8" height="8" rx="1.8" />
+        <rect x="13" y="13" width="8" height="8" rx="1.8" />
       </svg>
     </span>
     <span class="dashboard-nav-text">
       <strong>Dashboard</strong>
-      <small>多視窗並排工作區</small>
+      <small>水平／垂直多視窗並排</small>
     </span>
     <span class="dashboard-nav-count" id="dashboard-nav-count" hidden>0</span>
   `;
@@ -66,8 +74,10 @@ export function createSessionDashboard({
   topbarBtn.setAttribute('aria-label', '開啟並排 Dashboard');
   topbarBtn.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="3" y="4" width="8" height="16" rx="2" />
-      <rect x="13" y="4" width="8" height="16" rx="2" />
+      <rect x="3" y="3" width="8" height="8" rx="1.8" />
+      <rect x="13" y="3" width="8" height="8" rx="1.8" />
+      <rect x="3" y="13" width="8" height="8" rx="1.8" />
+      <rect x="13" y="13" width="8" height="8" rx="1.8" />
     </svg>
   `;
   const btnMore = document.getElementById('btn-more');
@@ -86,15 +96,30 @@ export function createSessionDashboard({
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
         </button>
         <svg class="dashboard-toolbar-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="8" height="16" rx="2" />
-          <rect x="13" y="4" width="8" height="16" rx="2" />
+          <rect x="3" y="3" width="8" height="8" rx="1.8" />
+          <rect x="13" y="3" width="8" height="8" rx="1.8" />
+          <rect x="3" y="13" width="8" height="8" rx="1.8" />
+          <rect x="13" y="13" width="8" height="8" rx="1.8" />
         </svg>
         <h2>Session Dashboard</h2>
         <span class="dashboard-toolbar-badge" id="dashboard-pane-counter">0 個並排視窗</span>
       </div>
-      <span class="dashboard-toolbar-hint">從左側將 Session 拖曳至此即可自動對齊並排，拖拉中間分隔線可調整視窗寬度</span>
+      <div class="dashboard-layout-presets" id="dashboard-layout-presets" role="group" aria-label="並排佈局切換" hidden>
+        <button type="button" class="dashboard-preset-btn" data-preset="horizontal" title="全部水平左右並排">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg>
+          <span>水平並排</span>
+        </button>
+        <button type="button" class="dashboard-preset-btn" data-preset="vertical" title="全部垂直上下並排">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="8" rx="1.5"/><rect x="4" y="13" width="16" height="8" rx="1.5"/></svg>
+          <span>垂直並排</span>
+        </button>
+        <button type="button" class="dashboard-preset-btn" data-preset="grid" title="2D 網格並排（自動水平＋垂直對齊）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+          <span>網格並排</span>
+        </button>
+      </div>
       <div class="dashboard-toolbar-actions">
-        <button type="button" class="dashboard-action-btn" id="btn-dashboard-equalize" title="平均對齊所有視窗寬度" hidden>
+        <button type="button" class="dashboard-action-btn" id="btn-dashboard-equalize" title="平均對齊所有水平與垂直視窗大小" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
           <span>平均對齊</span>
         </button>
@@ -111,19 +136,20 @@ export function createSessionDashboard({
         <div class="dashboard-empty-card">
           <div class="dashboard-empty-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-              <rect x="3" y="4" width="8" height="16" rx="2" />
-              <rect x="13" y="4" width="8" height="16" rx="2" />
-              <path d="M8 12h8m-3-3 3 3-3 3" />
+              <rect x="3" y="3" width="8" height="8" rx="1.8" />
+              <rect x="13" y="3" width="8" height="8" rx="1.8" />
+              <rect x="3" y="13" width="8" height="8" rx="1.8" />
+              <rect x="13" y="13" width="8" height="8" rx="1.8" />
             </svg>
           </div>
-          <h3>拖曳 Session 到這裡並排處理</h3>
-          <p>從左側列表將任意 Session 拖過來（或點選下方快速加入），系統會自動對齊並排，並可隨時拖拉中間分隔線調整視窗大小。</p>
+          <h3>拖曳 Session 到這裡（支援水平＆垂直並排）</h3>
+          <p>將左側 Session 拖曳到任一視窗的<strong>左、右、上、下邊緣</strong>即可自由組合水平或垂直分割，也可隨時切換上方「水平並排／垂直並排／網格並排」，或拖拉水平與垂直分隔線調整視窗大小。</p>
           <div class="dashboard-quick-picks" id="dashboard-quick-picks" role="group" aria-label="快速加入並排"></div>
         </div>
       </div>
       <div class="dashboard-grid" id="dashboard-grid" role="region" aria-label="Tiled session panes" hidden></div>
-      <div class="dashboard-drop-indicator" id="dashboard-drop-indicator" hidden>
-        <span>放開以加入並排視窗</span>
+      <div class="dashboard-drop-preview" id="dashboard-drop-preview" hidden>
+        <span class="dashboard-drop-label" id="dashboard-drop-label">放開以加入並排視窗</span>
       </div>
     </div>
   `;
@@ -133,54 +159,102 @@ export function createSessionDashboard({
   const emptyEl = root.querySelector('#dashboard-empty');
   const quickPicksEl = root.querySelector('#dashboard-quick-picks');
   const gridEl = root.querySelector('#dashboard-grid');
-  const dropIndicatorEl = root.querySelector('#dashboard-drop-indicator');
+  const dropPreviewEl = root.querySelector('#dashboard-drop-preview');
+  const dropLabelEl = root.querySelector('#dashboard-drop-label');
   const counterEl = root.querySelector('#dashboard-pane-counter');
+  const presetsEl = root.querySelector('#dashboard-layout-presets');
   const navCountEl = navEntry.querySelector('#dashboard-nav-count');
   const btnEqualize = root.querySelector('#btn-dashboard-equalize');
   const btnClear = root.querySelector('#btn-dashboard-clear');
   const btnExit = root.querySelector('#btn-dashboard-exit');
   const btnDrawerToggle = root.querySelector('#btn-dashboard-drawer');
 
-  // ── Persistence ────────────────────────────────────────────────────────────
+  // ── State Helpers ──────────────────────────────────────────────────────────
+  function allJids() {
+    const out = [];
+    for (const g of groups) {
+      for (const item of g.items) {
+        if (item.jid && !out.includes(item.jid)) out.push(item.jid);
+      }
+    }
+    return out;
+  }
+
+  function normalizeGroups() {
+    const seen = new Set();
+    const cleaned = [];
+    for (const g of groups) {
+      if (!g || !Array.isArray(g.items)) continue;
+      const items = [];
+      for (const it of g.items) {
+        if (!it || typeof it.jid !== 'string' || !it.jid || seen.has(it.jid)) continue;
+        seen.add(it.jid);
+        items.push({
+          jid: it.jid,
+          weight: Number.isFinite(it.weight) && it.weight > 0.1 ? Number(it.weight) : 1,
+        });
+      }
+      if (items.length > 0) {
+        cleaned.push({
+          weight: Number.isFinite(g.weight) && g.weight > 0.1 ? Number(g.weight) : 1,
+          items,
+        });
+      }
+    }
+    groups = cleaned;
+  }
+
   function loadSavedState() {
     try {
       const raw = JSON.parse(localStorage.getItem(DASHBOARD_STORAGE_KEY) || 'null');
-      if (!raw || typeof raw !== 'object') return { jids: [], weights: {} };
-      return {
-        jids: Array.isArray(raw.jids) ? raw.jids.filter((j) => typeof j === 'string') : [],
-        weights: raw.weights && typeof raw.weights === 'object' ? raw.weights : {},
-      };
+      if (!raw || typeof raw !== 'object') return;
+      if (raw.direction === 'column' || raw.direction === 'row') {
+        direction = raw.direction;
+      }
+      if (Array.isArray(raw.groups)) {
+        groups = raw.groups;
+        normalizeGroups();
+        return;
+      }
+      // Migrate legacy 1D `{ jids, weights }` format
+      if (Array.isArray(raw.jids)) {
+        const wMap = raw.weights && typeof raw.weights === 'object' ? raw.weights : {};
+        groups = raw.jids
+          .filter((j) => typeof j === 'string' && j)
+          .map((jid) => ({
+            weight: Number(wMap[jid]) > 0.1 ? Number(wMap[jid]) : 1,
+            items: [{ jid, weight: 1 }],
+          }));
+        normalizeGroups();
+      }
     } catch {
-      return { jids: [], weights: {} };
+      groups = [];
     }
   }
 
   function saveState() {
     try {
-      const weightObj = {};
-      for (const jid of orderedJids) {
-        weightObj[jid] = Number((weights.get(jid) ?? 1).toFixed(4));
-      }
+      normalizeGroups();
       localStorage.setItem(
         DASHBOARD_STORAGE_KEY,
         JSON.stringify({
-          jids: orderedJids,
-          weights: weightObj,
+          direction,
+          groups: groups.map((g) => ({
+            weight: Number(g.weight.toFixed(4)),
+            items: g.items.map((it) => ({
+              jid: it.jid,
+              weight: Number(it.weight.toFixed(4)),
+            })),
+          })),
         }),
       );
     } catch {
-      // Ignore quota errors
+      // Ignore storage quota errors
     }
   }
 
-  const initialSaved = loadSavedState();
-  for (const [jid, w] of Object.entries(initialSaved.weights)) {
-    const num = Number(w);
-    if (Number.isFinite(num) && num > 0.1) weights.set(jid, num);
-  }
-  orderedJids = [...new Set(initialSaved.jids)];
+  loadSavedState();
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -188,24 +262,45 @@ export function createSessionDashboard({
     return node;
   }
 
+  function currentLayoutMode() {
+    const jids = allJids();
+    if (jids.length <= 1) return 'horizontal';
+    const hasMultiPerGroup = groups.some((g) => g.items.length > 1);
+    if (direction === 'row' && !hasMultiPerGroup) return 'horizontal';
+    if (direction === 'column' && !hasMultiPerGroup) return 'vertical';
+    if (groups.length === 1 && direction === 'row' && hasMultiPerGroup) return 'vertical';
+    if (groups.length === 1 && direction === 'column' && hasMultiPerGroup) return 'horizontal';
+    return 'grid';
+  }
+
   function syncNavCounts() {
-    const count = orderedJids.length;
+    const jids = allJids();
+    const count = jids.length;
     navCountEl.textContent = String(count);
     navCountEl.hidden = count === 0;
     counterEl.textContent = `${count} 個並排視窗`;
+    presetsEl.hidden = count < 2;
     btnEqualize.hidden = count < 2;
     btnClear.hidden = count === 0;
     navEntry.setAttribute('aria-pressed', String(active));
     navEntry.classList.toggle('active', active);
     app.classList.toggle('dashboard-active', active);
     root.hidden = !active;
+
+    const mode = currentLayoutMode();
+    for (const btn of presetsEl.querySelectorAll('.dashboard-preset-btn')) {
+      const isCurrent = btn.dataset.preset === mode;
+      btn.classList.toggle('active', isCurrent);
+      btn.setAttribute('aria-pressed', String(isCurrent));
+    }
   }
 
   function renderQuickPicks() {
     quickPicksEl.replaceChildren();
+    const jids = allJids();
     const sessions = getSessions().filter((s) => !s.deleted && s.kind !== 'life');
     for (const s of sessions.slice(0, 6)) {
-      const inDash = orderedJids.includes(s.jid);
+      const inDash = jids.includes(s.jid);
       const chip = el('button', `dashboard-quick-chip${inDash ? ' added' : ''}`);
       chip.type = 'button';
       chip.dataset.jid = s.jid;
@@ -232,7 +327,7 @@ export function createSessionDashboard({
     // Header
     const header = el('header', 'dashboard-pane-header');
     header.draggable = true;
-    header.title = '拖曳標題列可交換並排順序';
+    header.title = '拖曳標題列至其他視窗的上下左右邊緣可水平或垂直分割';
 
     const titleWrap = el('div', 'dashboard-pane-title');
     const hash = el('span', 'hash', '#');
@@ -249,7 +344,15 @@ export function createSessionDashboard({
     stopBtn.title = 'Stop task';
     stopBtn.setAttribute('aria-label', `Stop ${session?.name || jid}`);
     stopBtn.hidden = true;
-    stopBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+    stopBtn.innerHTML =
+      '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
+    const splitDownBtn = el('button', 'icon-btn pane-split-dir-btn');
+    splitDownBtn.type = 'button';
+    splitDownBtn.title = '切換此視窗為垂直（上下）或水平（左右）並排';
+    splitDownBtn.setAttribute('aria-label', `Toggle vertical/horizontal split for ${session?.name || jid}`);
+    splitDownBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="8" rx="1.5"/><rect x="4" y="13" width="16" height="8" rx="1.5"/></svg>';
 
     const focusBtn = el('button', 'icon-btn pane-expand-btn');
     focusBtn.type = 'button';
@@ -265,7 +368,7 @@ export function createSessionDashboard({
     closeBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
-    actions.append(stopBtn, focusBtn, closeBtn);
+    actions.append(stopBtn, splitDownBtn, focusBtn, closeBtn);
     header.append(titleWrap, actions);
 
     // Messages scroller
@@ -305,6 +408,7 @@ export function createSessionDashboard({
       badgeEl,
       spinnerEl,
       stopBtn,
+      splitDownBtn,
       focusBtn,
       closeBtn,
       messagesEl,
@@ -322,7 +426,6 @@ export function createSessionDashboard({
       partialMsgEl: null,
     };
 
-    // Scroll & Jump to present
     const isNearBottom = () =>
       messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 80;
     const scrollToBottom = (instant = false) => {
@@ -341,7 +444,6 @@ export function createSessionDashboard({
     );
     jumpBtn.addEventListener('click', () => scrollToBottom(false));
 
-    // Image click inside pane -> open lightbox
     messagesEl.addEventListener('click', (e) => {
       const img = e.target.closest?.('.msg-files img, .msg-text img');
       if (img && img.src) {
@@ -352,7 +454,6 @@ export function createSessionDashboard({
       }
     });
 
-    // Header reorder via HTML5 drag & drop
     header.addEventListener('dragstart', (e) => {
       if (e.target.closest('button')) {
         e.preventDefault();
@@ -368,14 +469,19 @@ export function createSessionDashboard({
     header.addEventListener('dragend', () => {
       dragSourceJid = null;
       paneEl.classList.remove('dragging-pane');
+      hideDropPreview();
     });
 
-    // Actions
     stopBtn.addEventListener('click', async () => {
       await api(`/api/sessions/${encodeURIComponent(jid)}/commands`, {
         method: 'POST',
         body: JSON.stringify({ command: 'pi stop', args: {} }),
       }).catch((err) => alert(err.message));
+    });
+
+    // Quick toggle: move this pane under its neighbor (vertical stack) or out to its own column
+    splitDownBtn.addEventListener('click', () => {
+      togglePaneAxis(jid);
     });
 
     focusBtn.addEventListener('click', () => {
@@ -387,7 +493,6 @@ export function createSessionDashboard({
       removePane(jid);
     });
 
-    // Auto-grow textarea & Enter to send
     const autoGrow = () => {
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(140, textarea.scrollHeight)}px`;
@@ -465,6 +570,7 @@ export function createSessionDashboard({
     pane.spinnerEl.hidden = !busy;
     pane.stopBtn.hidden = !busy;
     pane.typingEl.hidden = !busy;
+    pane.splitDownBtn.hidden = allJids().length < 2;
   }
 
   function appendPaneEvent(pane, event, live = false) {
@@ -645,65 +751,62 @@ export function createSessionDashboard({
     panes.delete(jid);
   }
 
-  // ── Layout & Resizable Splitters ───────────────────────────────────────────
-  function applyPaneWeights() {
-    for (const jid of orderedJids) {
-      const pane = panes.get(jid);
-      if (!pane) continue;
-      const w = Math.max(0.15, weights.get(jid) ?? 1);
-      weights.set(jid, w);
-      pane.el.style.flex = `${w} 1 0px`;
-      pane.el.style.minWidth = `${MIN_PANE_WIDTH_PX}px`;
-    }
-  }
-
-  function createSplitter(leftJid, rightJid, index) {
-    const splitter = el('div', 'dashboard-splitter');
+  // ── 2D Layout & Both Horizontal and Vertical Splitters ─────────────────────
+  function createAxisSplitter({
+    axis, // 'x' (vertical bar resizing width) or 'y' (horizontal bar resizing height)
+    label,
+    firstEl,
+    secondEl,
+    getWeights,
+    setWeights,
+  }) {
+    const isHorizontalDrag = axis === 'x';
+    const splitter = el(
+      'div',
+      `dashboard-splitter ${isHorizontalDrag ? 'splitter-vertical' : 'splitter-horizontal'}`,
+    );
     splitter.setAttribute('role', 'separator');
-    splitter.setAttribute('aria-orientation', 'vertical');
-    splitter.setAttribute('aria-label', `Resize panes ${index + 1} and ${index + 2}`);
+    splitter.setAttribute('aria-orientation', isHorizontalDrag ? 'vertical' : 'horizontal');
+    splitter.setAttribute('aria-label', label);
     splitter.tabIndex = 0;
-    splitter.title = '拖拉調整左右視窗大小（雙擊平均對齊）';
+    splitter.title = isHorizontalDrag
+      ? '左右拖拉調整視窗寬度（雙擊平均對齊）'
+      : '上下拖拉調整視窗高度（雙擊平均對齊）';
     splitter.innerHTML = '<span class="dashboard-splitter-grip" aria-hidden="true"></span>';
 
     splitter.addEventListener('dblclick', () => {
-      const avg = ((weights.get(leftJid) ?? 1) + (weights.get(rightJid) ?? 1)) / 2;
-      weights.set(leftJid, avg);
-      weights.set(rightJid, avg);
-      applyPaneWeights();
+      const [w1, w2] = getWeights();
+      const avg = (w1 + w2) / 2;
+      setWeights(avg, avg);
       saveState();
     });
 
     splitter.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      const leftPane = panes.get(leftJid)?.el;
-      const rightPane = panes.get(rightJid)?.el;
-      if (!leftPane || !rightPane) return;
+      if (!firstEl || !secondEl) return;
 
-      const startX = e.clientX;
-      const leftRect = leftPane.getBoundingClientRect();
-      const rightRect = rightPane.getBoundingClientRect();
-      const totalPx = leftRect.width + rightRect.width;
-      if (totalPx <= MIN_PANE_WIDTH_PX * 2) return;
+      const startPos = isHorizontalDrag ? e.clientX : e.clientY;
+      const firstRect = firstEl.getBoundingClientRect();
+      const secondRect = secondEl.getBoundingClientRect();
+      const firstSize = isHorizontalDrag ? firstRect.width : firstRect.height;
+      const secondSize = isHorizontalDrag ? secondRect.width : secondRect.height;
+      const totalPx = firstSize + secondSize;
+      const minPx = isHorizontalDrag ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
+      if (totalPx <= minPx * 2) return;
 
-      const startLeftW = weights.get(leftJid) ?? 1;
-      const startRightW = weights.get(rightJid) ?? 1;
-      const totalWeight = startLeftW + startRightW;
+      const [startW1, startW2] = getWeights();
+      const totalWeight = startW1 + startW2;
 
       splitter.classList.add('dragging');
       splitter.setPointerCapture(e.pointerId);
 
       const onMove = (moveEvent) => {
-        const dx = moveEvent.clientX - startX;
-        const clampedLeftPx = Math.max(
-          MIN_PANE_WIDTH_PX,
-          Math.min(totalPx - MIN_PANE_WIDTH_PX, leftRect.width + dx),
-        );
-        const leftRatio = clampedLeftPx / totalPx;
-        weights.set(leftJid, totalWeight * leftRatio);
-        weights.set(rightJid, totalWeight * (1 - leftRatio));
-        applyPaneWeights();
+        const currentPos = isHorizontalDrag ? moveEvent.clientX : moveEvent.clientY;
+        const delta = currentPos - startPos;
+        const clampedFirstPx = Math.max(minPx, Math.min(totalPx - minPx, firstSize + delta));
+        const firstRatio = clampedFirstPx / totalPx;
+        setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
       };
 
       const onEnd = () => {
@@ -723,10 +826,12 @@ export function createSessionDashboard({
   }
 
   function rebuildGrid() {
+    normalizeGroups();
     syncNavCounts();
     renderQuickPicks();
 
-    if (orderedJids.length === 0) {
+    const jids = allJids();
+    if (jids.length === 0) {
       gridEl.hidden = true;
       emptyEl.hidden = false;
       gridEl.replaceChildren();
@@ -735,13 +840,13 @@ export function createSessionDashboard({
 
     emptyEl.hidden = true;
     gridEl.hidden = false;
+    gridEl.style.flexDirection = direction;
 
-    // Ensure pane instances exist for all orderedJids
-    for (const jid of orderedJids) {
+    // Ensure pane instances exist for all active jids
+    for (const jid of jids) {
       if (!panes.has(jid)) {
         const pane = createPaneDOM(jid);
         panes.set(jid, pane);
-        if (!weights.has(jid)) weights.set(jid, 1);
         if (active) void hydratePane(pane);
       } else {
         syncPaneHeader(panes.get(jid));
@@ -750,20 +855,223 @@ export function createSessionDashboard({
 
     // Remove stale panes
     for (const jid of [...panes.keys()]) {
-      if (!orderedJids.includes(jid)) disposePane(jid);
+      if (!jids.includes(jid)) disposePane(jid);
     }
 
-    // Assemble panes + splitters in order without destroying existing pane DOM
-    const children = [];
-    orderedJids.forEach((jid, idx) => {
-      const pane = panes.get(jid);
-      if (pane) children.push(pane.el);
-      if (idx < orderedJids.length - 1) {
-        children.push(createSplitter(jid, orderedJids[idx + 1], idx));
+    const outerAxis = direction === 'row' ? 'x' : 'y';
+    const innerAxis = direction === 'row' ? 'y' : 'x';
+    const innerDirection = direction === 'row' ? 'column' : 'row';
+
+    const groupEls = groups.map((group) => {
+      const groupEl = el('div', `dashboard-group dashboard-group-${innerDirection}`);
+      groupEl.style.flexDirection = innerDirection;
+      groupEl.style.flex = `${group.weight} 1 0px`;
+
+      const itemChildren = [];
+      group.items.forEach((item, itemIdx) => {
+        const pane = panes.get(item.jid);
+        if (!pane) return;
+        pane.el.style.flex = `${item.weight} 1 0px`;
+        itemChildren.push(pane.el);
+
+        if (itemIdx < group.items.length - 1) {
+          const nextItem = group.items[itemIdx + 1];
+          const nextPane = panes.get(nextItem.jid);
+          if (nextPane) {
+            itemChildren.push(
+              createAxisSplitter({
+                axis: innerAxis,
+                label:
+                  innerAxis === 'y'
+                    ? `Resize vertical panes ${itemIdx + 1} and ${itemIdx + 2}`
+                    : `Resize horizontal panes ${itemIdx + 1} and ${itemIdx + 2}`,
+                firstEl: pane.el,
+                secondEl: nextPane.el,
+                getWeights: () => [item.weight, nextItem.weight],
+                setWeights: (w1, w2) => {
+                  item.weight = w1;
+                  nextItem.weight = w2;
+                  pane.el.style.flex = `${w1} 1 0px`;
+                  nextPane.el.style.flex = `${w2} 1 0px`;
+                },
+              }),
+            );
+          }
+        }
+      });
+
+      groupEl.replaceChildren(...itemChildren);
+      return groupEl;
+    });
+
+    const gridChildren = [];
+    groupEls.forEach((groupEl, gIdx) => {
+      gridChildren.push(groupEl);
+      if (gIdx < groupEls.length - 1) {
+        const g1 = groups[gIdx];
+        const g2 = groups[gIdx + 1];
+        const nextGroupEl = groupEls[gIdx + 1];
+        gridChildren.push(
+          createAxisSplitter({
+            axis: outerAxis,
+            label:
+              outerAxis === 'x'
+                ? `Resize columns ${gIdx + 1} and ${gIdx + 2}`
+                : `Resize rows ${gIdx + 1} and ${gIdx + 2}`,
+            firstEl: groupEl,
+            secondEl: nextGroupEl,
+            getWeights: () => [g1.weight, g2.weight],
+            setWeights: (w1, w2) => {
+              g1.weight = w1;
+              g2.weight = w2;
+              groupEl.style.flex = `${w1} 1 0px`;
+              nextGroupEl.style.flex = `${w2} 1 0px`;
+            },
+          }),
+        );
       }
     });
-    gridEl.replaceChildren(...children);
-    applyPaneWeights();
+
+    gridEl.replaceChildren(...gridChildren);
+  }
+
+  // ── Layout Mutations (Horizontal, Vertical, 2D Grid, Directional Drop) ─────
+  function detachJidFromGroups(jid) {
+    for (const g of groups) {
+      const idx = g.items.findIndex((it) => it.jid === jid);
+      if (idx !== -1) g.items.splice(idx, 1);
+    }
+    normalizeGroups();
+  }
+
+  function findJidLocation(jid) {
+    for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+      const iIdx = groups[gIdx].items.findIndex((it) => it.jid === jid);
+      if (iIdx !== -1) return { gIdx, iIdx };
+    }
+    return null;
+  }
+
+  function placeSessionAt(jid, target = null) {
+    if (!jid || jid === 'web:life') return;
+    if (target?.mode === 'pane' && target.jid === jid && allJids().length === 1) return;
+
+    detachJidFromGroups(jid);
+
+    if (!target || groups.length === 0) {
+      groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+      return;
+    }
+
+    const zone = target.zone || 'right';
+    const loc = target.jid ? findJidLocation(target.jid) : null;
+
+    if (direction === 'row') {
+      // Outer groups are columns (left/right); inner items are rows (top/bottom)
+      if (zone === 'left' || zone === 'right') {
+        const insertAt = loc
+          ? zone === 'left'
+            ? loc.gIdx
+            : loc.gIdx + 1
+          : zone === 'left'
+            ? 0
+            : groups.length;
+        groups.splice(insertAt, 0, { weight: 1, items: [{ jid, weight: 1 }] });
+      } else {
+        // 'top' or 'bottom'
+        if (loc) {
+          const grp = groups[loc.gIdx];
+          const insertItemAt = zone === 'top' ? loc.iIdx : loc.iIdx + 1;
+          grp.items.splice(insertItemAt, 0, { jid, weight: 1 });
+        } else {
+          // Stage-level top/bottom drop: switch to column direction if single row
+          if (groups.every((g) => g.items.length === 1) && groups.length === 1) {
+            const grp = groups[0];
+            if (zone === 'top') grp.items.unshift({ jid, weight: 1 });
+            else grp.items.push({ jid, weight: 1 });
+          } else {
+            const firstGrp = groups[0];
+            if (zone === 'top') firstGrp.items.unshift({ jid, weight: 1 });
+            else firstGrp.items.push({ jid, weight: 1 });
+          }
+        }
+      }
+    } else {
+      // direction === 'column': Outer groups are rows (top/bottom); inner items are columns (left/right)
+      if (zone === 'top' || zone === 'bottom') {
+        const insertAt = loc
+          ? zone === 'top'
+            ? loc.gIdx
+            : loc.gIdx + 1
+          : zone === 'top'
+            ? 0
+            : groups.length;
+        groups.splice(insertAt, 0, { weight: 1, items: [{ jid, weight: 1 }] });
+      } else {
+        // 'left' or 'right'
+        if (loc) {
+          const grp = groups[loc.gIdx];
+          const insertItemAt = zone === 'left' ? loc.iIdx : loc.iIdx + 1;
+          grp.items.splice(insertItemAt, 0, { jid, weight: 1 });
+        } else {
+          const firstGrp = groups[0];
+          if (zone === 'left') firstGrp.items.unshift({ jid, weight: 1 });
+          else firstGrp.items.push({ jid, weight: 1 });
+        }
+      }
+    }
+  }
+
+  function applyPreset(preset) {
+    const jids = allJids();
+    if (jids.length === 0) return;
+
+    if (preset === 'horizontal') {
+      direction = 'row';
+      groups = jids.map((jid) => ({
+        weight: 1,
+        items: [{ jid, weight: 1 }],
+      }));
+    } else if (preset === 'vertical') {
+      direction = 'column';
+      groups = jids.map((jid) => ({
+        weight: 1,
+        items: [{ jid, weight: 1 }],
+      }));
+    } else if (preset === 'grid') {
+      direction = 'row';
+      const cols = Math.ceil(Math.sqrt(jids.length));
+      const newGroups = Array.from({ length: cols }, () => ({ weight: 1, items: [] }));
+      jids.forEach((jid, idx) => {
+        newGroups[idx % cols].items.push({ jid, weight: 1 });
+      });
+      groups = newGroups.filter((g) => g.items.length > 0);
+    }
+
+    saveState();
+    rebuildGrid();
+  }
+
+  function togglePaneAxis(jid) {
+    const jids = allJids();
+    if (jids.length < 2) return;
+    const loc = findJidLocation(jid);
+    if (!loc) return;
+
+    const grp = groups[loc.gIdx];
+    if (grp.items.length > 1) {
+      // Currently stacked with another pane -> extract to its own outer group next to this one
+      const [removed] = grp.items.splice(loc.iIdx, 1);
+      groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [removed] });
+    } else if (groups.length > 1) {
+      // Currently in its own outer group -> merge into neighbor group to stack perpendicularly
+      const targetGroupIdx = loc.gIdx > 0 ? loc.gIdx - 1 : 1;
+      const [removedGroup] = groups.splice(loc.gIdx, 1);
+      const neighbor = groups[loc.gIdx > 0 ? targetGroupIdx : 0];
+      neighbor.items.push(...removedGroup.items);
+    }
+    saveState();
+    rebuildGrid();
   }
 
   // ── Public Operations ──────────────────────────────────────────────────────
@@ -791,21 +1099,12 @@ export function createSessionDashboard({
     onRenderSessionListDecorations();
   }
 
-  function addPane(jid, insertIndex = -1) {
+  function addPane(jid, dropTarget = null) {
     if (!jid || jid === 'web:life') return;
-    if (!orderedJids.includes(jid)) {
-      if (insertIndex >= 0 && insertIndex <= orderedJids.length) {
-        orderedJids.splice(insertIndex, 0, jid);
-      } else {
-        orderedJids.push(jid);
-      }
-      if (!weights.has(jid)) weights.set(jid, 1);
-    } else if (insertIndex >= 0) {
-      const currentIdx = orderedJids.indexOf(jid);
-      if (currentIdx !== insertIndex) {
-        orderedJids.splice(currentIdx, 1);
-        orderedJids.splice(insertIndex > currentIdx ? insertIndex - 1 : insertIndex, 0, jid);
-      }
+    if (dropTarget) {
+      placeSessionAt(jid, dropTarget);
+    } else if (!allJids().includes(jid)) {
+      groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
     }
     saveState();
     if (!active && wideQuery.matches) {
@@ -817,10 +1116,8 @@ export function createSessionDashboard({
   }
 
   function removePane(jid) {
-    const idx = orderedJids.indexOf(jid);
-    if (idx === -1) return;
-    orderedJids.splice(idx, 1);
-    weights.delete(jid);
+    if (!allJids().includes(jid)) return;
+    detachJidFromGroups(jid);
     disposePane(jid);
     saveState();
     rebuildGrid();
@@ -828,24 +1125,121 @@ export function createSessionDashboard({
   }
 
   function equalizeWeights() {
-    for (const jid of orderedJids) weights.set(jid, 1);
-    applyPaneWeights();
-    saveState();
-  }
-
-  // ── Drag-and-drop from Sidebar & Between Panes ─────────────────────────────
-  function computeDropIndex(clientX) {
-    const paneEls = [...gridEl.querySelectorAll('.dashboard-pane')];
-    for (let i = 0; i < paneEls.length; i++) {
-      const rect = paneEls[i].getBoundingClientRect();
-      if (clientX < rect.left + rect.width / 2) return i;
+    for (const g of groups) {
+      g.weight = 1;
+      for (const it of g.items) it.weight = 1;
     }
-    return paneEls.length;
+    saveState();
+    rebuildGrid();
   }
 
-  function showDropFeedback(show) {
-    dropIndicatorEl.hidden = !show;
-    stageEl.classList.toggle('drag-over', show);
+  // ── 2D Directional Drop Detection & Visual Preview ─────────────────────────
+  function computeDropTarget(clientX, clientY) {
+    const stageRect = stageEl.getBoundingClientRect();
+    const paneEls = [...gridEl.querySelectorAll('.dashboard-pane')];
+    if (paneEls.length === 0) {
+      return {
+        mode: 'stage',
+        zone: 'right',
+        rect: {
+          left: 12,
+          top: 12,
+          width: Math.max(100, stageRect.width - 24),
+          height: Math.max(100, stageRect.height - 24),
+        },
+        label: '放開以加入並排視窗',
+      };
+    }
+
+    // Find hovered pane (or closest pane)
+    let hoveredPane = paneEls.find((el) => {
+      const r = el.getBoundingClientRect();
+      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+    });
+    if (!hoveredPane) {
+      hoveredPane = paneEls.reduce((best, el) => {
+        const r = el.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        const d = Math.hypot(clientX - cx, clientY - cy);
+        return !best || d < best.d ? { el, d } : best;
+      }, null)?.el;
+    }
+
+    const r = hoveredPane.getBoundingClientRect();
+    const relX = (clientX - r.left) / Math.max(1, r.width);
+    const relY = (clientY - r.top) / Math.max(1, r.height);
+
+    // Determine closest edge: top, bottom, left, or right
+    const distTop = relY;
+    const distBottom = 1 - relY;
+    const distLeft = relX;
+    const distRight = 1 - relX;
+    const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+
+    let zone = 'right';
+    if (minDist === distTop && distTop < 0.28) zone = 'top';
+    else if (minDist === distBottom && distBottom < 0.28) zone = 'bottom';
+    else if (minDist === distLeft) zone = 'left';
+    else zone = 'right';
+
+    const localLeft = r.left - stageRect.left;
+    const localTop = r.top - stageRect.top;
+    let previewRect;
+    let label;
+
+    if (zone === 'top') {
+      previewRect = { left: localLeft + 6, top: localTop + 6, width: r.width - 12, height: r.height / 2 - 8 };
+      label = '↑ 垂直並排（上方）';
+    } else if (zone === 'bottom') {
+      previewRect = {
+        left: localLeft + 6,
+        top: localTop + r.height / 2 + 2,
+        width: r.width - 12,
+        height: r.height / 2 - 8,
+      };
+      label = '↓ 垂直並排（下方）';
+    } else if (zone === 'left') {
+      previewRect = { left: localLeft + 6, top: localTop + 6, width: r.width / 2 - 8, height: r.height - 12 };
+      label = '← 水平並排（左側）';
+    } else {
+      previewRect = {
+        left: localLeft + r.width / 2 + 2,
+        top: localTop + 6,
+        width: r.width / 2 - 8,
+        height: r.height - 12,
+      };
+      label = '→ 水平並排（右側）';
+    }
+
+    return {
+      mode: 'pane',
+      jid: hoveredPane.dataset.jid,
+      zone,
+      rect: previewRect,
+      label,
+    };
+  }
+
+  function showDropPreview(target) {
+    currentDropTarget = target;
+    if (!target) {
+      hideDropPreview();
+      return;
+    }
+    dropPreviewEl.hidden = false;
+    dropPreviewEl.style.left = `${Math.round(target.rect.left)}px`;
+    dropPreviewEl.style.top = `${Math.round(target.rect.top)}px`;
+    dropPreviewEl.style.width = `${Math.round(target.rect.width)}px`;
+    dropPreviewEl.style.height = `${Math.round(target.rect.height)}px`;
+    dropLabelEl.textContent = target.label;
+    stageEl.classList.add('drag-over');
+  }
+
+  function hideDropPreview() {
+    currentDropTarget = null;
+    dropPreviewEl.hidden = true;
+    stageEl.classList.remove('drag-over');
   }
 
   // HTML5 Drag & Drop on main / stage
@@ -855,14 +1249,15 @@ export function createSessionDashboard({
       dragSourceJid || e.dataTransfer?.types?.includes('text/piweb-session-jid');
     if (!hasSession) return;
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'CopyMove';
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copyMove';
     if (!active) setActive(true);
-    showDropFeedback(true);
+    const target = computeDropTarget(e.clientX, e.clientY);
+    showDropPreview(target);
   });
 
   main.addEventListener('dragleave', (e) => {
     if (!main.contains(e.relatedTarget)) {
-      showDropFeedback(false);
+      hideDropPreview();
     }
   });
 
@@ -870,18 +1265,19 @@ export function createSessionDashboard({
     if (!wideQuery.matches) return;
     const jid =
       e.dataTransfer?.getData('text/piweb-session-jid') || dragSourceJid;
-    showDropFeedback(false);
+    const target = currentDropTarget || computeDropTarget(e.clientX, e.clientY);
+    hideDropPreview();
     dragSourceJid = null;
     if (!jid) return;
     e.preventDefault();
     if (!active) setActive(true);
-    const insertIdx = computeDropIndex(e.clientX);
-    addPane(jid, insertIdx);
+    addPane(jid, target);
   });
 
   // Decorate each `.session-item` in the left sidebar with drag support + pin button
   function onRenderSessionListDecorations() {
     const sessions = getSessions();
+    const jids = allJids();
     const items = sessionList.querySelectorAll('.session-item');
     items.forEach((item, index) => {
       const nameNode = item.querySelector('.name');
@@ -890,10 +1286,9 @@ export function createSessionDashboard({
       const jid = session.jid;
       item.dataset.jid = jid;
       item.draggable = true;
-      const inDash = orderedJids.includes(jid);
+      const inDash = jids.includes(jid);
       item.classList.toggle('in-dashboard', inDash);
 
-      // HTML5 drag from sidebar
       if (!item.dataset.dashDragBound) {
         item.dataset.dashDragBound = '1';
         item.addEventListener('dragstart', (e) => {
@@ -912,13 +1307,13 @@ export function createSessionDashboard({
         item.addEventListener('dragend', () => {
           dragSourceJid = null;
           item.classList.remove('dragging');
-          showDropFeedback(false);
+          hideDropPreview();
         });
 
-        // Touch / Pen / Mouse Pointer Drag fallback for iPad & Tablet
+        // Touch / Pen Pointer Drag fallback for iPad & Tablet
         item.addEventListener('pointerdown', (e) => {
           if (!wideQuery.matches || e.button !== 0 || e.target.closest('button, input')) return;
-          if (e.pointerType === 'mouse') return; // mouse uses native HTML5 dragstart
+          if (e.pointerType === 'mouse') return;
           pointerDrag = {
             jid,
             name: session.name || jid,
@@ -931,16 +1326,15 @@ export function createSessionDashboard({
         });
       }
 
-      // Pin/Tile button on each session row (visible on tablet/desktop)
       let tileBtn = item.querySelector('.session-tile-btn');
       if (!tileBtn) {
         tileBtn = el('button', 'icon-btn session-tile-btn');
         tileBtn.type = 'button';
         tileBtn.innerHTML =
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/></svg>';
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>';
         tileBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (orderedJids.includes(jid) && active) {
+          if (allJids().includes(jid) && active) {
             removePane(jid);
           } else {
             addPane(jid);
@@ -972,13 +1366,13 @@ export function createSessionDashboard({
         pointerDrag.started = true;
         dragSourceJid = pointerDrag.jid;
         if (!active) setActive(true);
-        showDropFeedback(true);
         const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
         document.body.append(ghost);
         pointerDrag.ghost = ghost;
       }
       if (pointerDrag.ghost) {
         pointerDrag.ghost.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 18}px, 0)`;
+        showDropPreview(computeDropTarget(e.clientX, e.clientY));
       }
     },
     { passive: true },
@@ -987,14 +1381,15 @@ export function createSessionDashboard({
   const finishPointerDrag = (e, commit) => {
     if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
     const drag = pointerDrag;
+    const target = currentDropTarget;
     pointerDrag = null;
     drag.ghost?.remove();
-    showDropFeedback(false);
+    hideDropPreview();
     dragSourceJid = null;
     if (!drag.started || !commit) return;
     const mainRect = main.getBoundingClientRect();
     if (e.clientX >= mainRect.left) {
-      addPane(drag.jid, computeDropIndex(e.clientX));
+      addPane(drag.jid, target || computeDropTarget(e.clientX, e.clientY));
     }
   };
   window.addEventListener('pointerup', (e) => finishPointerDrag(e, true));
@@ -1008,12 +1403,18 @@ export function createSessionDashboard({
   topbarBtn.addEventListener('click', () => {
     const activeSessionItem = sessionList.querySelector('.session-item.active');
     const currentJid = activeSessionItem?.dataset?.jid;
-    if (currentJid && !orderedJids.includes(currentJid)) {
+    if (currentJid && !allJids().includes(currentJid)) {
       addPane(currentJid);
     } else {
       setActive(true);
     }
   });
+
+  for (const btn of presetsEl.querySelectorAll('.dashboard-preset-btn')) {
+    btn.addEventListener('click', () => {
+      applyPreset(btn.dataset.preset);
+    });
+  }
 
   btnEqualize.addEventListener('click', () => {
     equalizeWeights();
@@ -1021,9 +1422,8 @@ export function createSessionDashboard({
   });
 
   btnClear.addEventListener('click', () => {
-    for (const jid of [...orderedJids]) disposePane(jid);
-    orderedJids = [];
-    weights.clear();
+    for (const jid of allJids()) disposePane(jid);
+    groups = [];
     saveState();
     rebuildGrid();
     onRenderSessionListDecorations();
@@ -1052,18 +1452,21 @@ export function createSessionDashboard({
     setActive,
     addPane,
     removePane,
+    applyPreset,
     equalizeWeights,
     syncSessions() {
-      // Remove deleted sessions from dashboard
       const validJids = new Set(getSessions().map((s) => s.jid));
       if (validJids.size > 0) {
-        const beforeLen = orderedJids.length;
-        orderedJids = orderedJids.filter((jid) => {
-          const keep = validJids.has(jid);
-          if (!keep) disposePane(jid);
-          return keep;
-        });
-        if (orderedJids.length !== beforeLen) saveState();
+        const beforeCount = allJids().length;
+        for (const g of groups) {
+          g.items = g.items.filter((it) => {
+            const keep = validJids.has(it.jid);
+            if (!keep) disposePane(it.jid);
+            return keep;
+          });
+        }
+        normalizeGroups();
+        if (allJids().length !== beforeCount) saveState();
       }
       for (const pane of panes.values()) syncPaneHeader(pane);
       if (active) rebuildGrid();

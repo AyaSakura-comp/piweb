@@ -241,14 +241,52 @@ test.describe('desktop & tablet multi-session dashboard', () => {
     expect(Math.abs(equalized[0] - equalized[1])).toBeLessThan(4);
     expect(Math.abs(equalized[1] - equalized[2])).toBeLessThan(4);
 
-    // 7. Send a message directly inside the 3rd pane ("台股 Shioaji 回測") while monitoring the others
+    // 7. Switch to Vertical stacking ("垂直並排") and verify top-to-bottom panes + horizontal splitters
+    await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
+    await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(2);
+    const verticalBoxes = await page.locator('.dashboard-pane').evaluateAll((els) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top, height: r.height, width: r.width };
+      }),
+    );
+    // All 3 panes should have equal width and be stacked vertically (top increasing)
+    expect(Math.abs(verticalBoxes[0].width - verticalBoxes[1].width)).toBeLessThan(4);
+    expect(verticalBoxes[1].top).toBeGreaterThan(verticalBoxes[0].top + 100);
+    expect(verticalBoxes[2].top).toBeGreaterThan(verticalBoxes[1].top + 100);
+    expect(Math.abs(verticalBoxes[0].height - verticalBoxes[1].height)).toBeLessThan(6);
+    await page.screenshot({ path: info.outputPath('05-vertical-stacked-panes.png') });
+
+    // 8. Drag the first horizontal splitter vertically to make top pane taller and middle pane shorter
+    const hSplitter = page.locator('.dashboard-splitter.splitter-horizontal').first();
+    const hBox = (await hSplitter.boundingBox())!;
+    const hcx = hBox.x + hBox.width / 2;
+    const hcy = hBox.y + hBox.height / 2;
+    await page.mouse.move(hcx, hcy);
+    await page.mouse.down();
+    await page.mouse.move(hcx, hcy + 70, { steps: 8 });
+    await page.mouse.up();
+
+    const afterVerticalResize = await page.locator('.dashboard-pane').evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect().height),
+    );
+    expect(afterVerticalResize[0]).toBeGreaterThan(afterVerticalResize[1] + 90);
+    await page.screenshot({ path: info.outputPath('06-vertical-resized-panes.png') });
+
+    // 9. Switch to 2D Grid ("網格並排"): combines horizontal columns + vertical rows simultaneously
+    await page.locator('.dashboard-preset-btn[data-preset="grid"]').click();
+    await expect(page.locator('.dashboard-splitter.splitter-vertical')).toHaveCount(1);
+    await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(1);
+    await page.screenshot({ path: info.outputPath('07-2d-grid-panes.png') });
+
+    // 10. Send a message directly inside the 3rd pane ("台股 Shioaji 回測") while monitoring the others
     const thirdPane = page.locator('.dashboard-pane[data-jid="web:gamma"]');
     await thirdPane.locator('.dashboard-pane-input').fill('下單測試 2330 零股 100 股');
     await thirdPane.locator('.dashboard-pane-send').click();
     await expect.poll(() => sentMessages.length).toBe(1);
     expect(sentMessages[0]).toEqual({ jid: 'web:gamma', text: '下單測試 2330 零股 100 股' });
     await expect(thirdPane).toContainText('下單測試 2330 零股 100 股');
-    await page.screenshot({ path: info.outputPath('05-multi-session-interaction.png') });
+    await page.screenshot({ path: info.outputPath('08-multi-session-interaction.png') });
 
     expect(errors).toEqual([]);
   });
