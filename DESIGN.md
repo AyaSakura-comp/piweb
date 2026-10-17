@@ -238,13 +238,45 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   same flick rule as Subagents (≥60px, ≥0.5px/ms, 180ms projection, velocity
   expires after 100ms). Reduced motion skips automatic animation.
 
+## Multi-session tiling dashboard (tablet & desktop)
+
+On viewports `>= 768px`, the **Dashboard** workspace (`public/session-dashboard.js`,
+`public/session-dashboard.css`) tiles 1 to 12 concurrent sessions in a 2D split-tree
+grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, `3×3`,
+`4×3`) with independent live SSE streams and composers per pane.
+
+- **Header (52px, directly in `.main`)**: same `--bg` surface and `1px solid var(--border)`
+  bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: `‹` back icon
+  (`#btn-dashboard-exit`, 返回單一對話). Centre-left: “Session Dashboard” at 15px/650
+  and a 12px `--text-2` counter (`N 個並排視窗`). Centre-right: dark capsule layout
+  switcher (`border-radius: 999px`) with selection ring (`border-color: var(--text)`)
+  for **水平 / 垂直 / 網格**. Right: borderless 44×44px outline-icon buttons for
+  **均分視窗大小** (`#btn-dashboard-equalize`) and **清空並排** (`#btn-dashboard-clear`);
+  no boxed text buttons or accent-filled primary actions.
+- **Pane headers & actions**: `--bg` surface with `1px solid var(--border)` bottom
+  border. All pane header actions (split toggle, focus single session, remove pane)
+  use borderless 44×44px outline-icon buttons (`36×36px` in compact 6–12 pane density).
+- **Drag-and-swap & directional drop zones**: dragging a session from the sidebar or
+  dragging any pane header over another pane highlights a 5-way drop target:
+  dropping in the center (`22%..78%`) swaps the two panes in-place (`⇄ 交換視窗順序`),
+  while dropping near the left/right/top/bottom edge splits along that axis.
+- **120Hz+ zero-lag splitters**: dragging `.dashboard-splitter` processes high-rate
+  `getCoalescedEvents()` samples synchronously with `.resizing-active` (`transition: none !important`,
+  `will-change: flex-grow`, and `pointer-events: none` on pane subtrees) so 120Hz
+  ProMotion/desktop displays resize without frame drops.
+- **iPadOS virtual keyboard & scroll stability**: background `/api/sessions` polls
+  skip DOM reconstruction when the session signature is unchanged, toolbar/pane buttons
+  prevent focus theft on `pointerdown`, and touch inputs keep `font-size: 16px` with
+  `visualViewport` height tracking (`--dashboard-vv-h`) and user-intent scroll guards.
+
 ## Verification
 
 ```sh
 PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/subagents.spec.ts \
   test/e2e/subagents-reconnect.spec.ts \
-  test/e2e/subagents-ux.spec.ts
+  test/e2e/subagents-ux.spec.ts \
+  test/e2e/session-dashboard.spec.ts
 ```
 
 The main regression uses CDP touch input, verifies live translation while held

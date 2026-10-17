@@ -93,42 +93,37 @@ export function createSessionDashboard({
   root.innerHTML = `
     <header class="dashboard-toolbar">
       <div class="dashboard-toolbar-title">
-        <button type="button" class="icon-btn dashboard-Menu-btn" id="btn-dashboard-drawer" aria-label="Toggle sessions sidebar" title="切換側邊欄">
+        <button type="button" class="icon-btn dashboard-back-btn" id="btn-dashboard-exit" aria-label="回單一對話" title="回單一對話">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+        </button>
+        <button type="button" class="icon-btn dashboard-Menu-btn" id="btn-dashboard-drawer" aria-label="切換側邊欄" title="切換側邊欄">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
         </button>
-        <svg class="dashboard-toolbar-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="8" height="8" rx="1.8" />
-          <rect x="13" y="3" width="8" height="8" rx="1.8" />
-          <rect x="3" y="13" width="8" height="8" rx="1.8" />
-          <rect x="13" y="13" width="8" height="8" rx="1.8" />
-        </svg>
-        <h2>Session Dashboard</h2>
-        <span class="dashboard-toolbar-badge" id="dashboard-pane-counter">0 個並排視窗</span>
+        <div class="dashboard-heading-stack">
+          <h2>Session Dashboard</h2>
+          <span class="dashboard-toolbar-sub" id="dashboard-pane-counter">0 個並排視窗</span>
+        </div>
       </div>
       <div class="dashboard-layout-presets" id="dashboard-layout-presets" role="group" aria-label="並排佈局切換" hidden>
-        <button type="button" class="dashboard-preset-btn" data-preset="horizontal" title="全部水平左右並排">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg>
-          <span>水平並排</span>
+        <button type="button" class="dashboard-preset-btn" data-preset="horizontal" aria-label="水平並排" title="水平並排（左右分欄）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg>
+          <span>水平</span>
         </button>
-        <button type="button" class="dashboard-preset-btn" data-preset="vertical" title="全部垂直上下並排">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="8" rx="1.5"/><rect x="4" y="13" width="16" height="8" rx="1.5"/></svg>
-          <span>垂直並排</span>
+        <button type="button" class="dashboard-preset-btn" data-preset="vertical" aria-label="垂直並排" title="垂直並排（上下分列）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="3" width="16" height="8" rx="1.5"/><rect x="4" y="13" width="16" height="8" rx="1.5"/></svg>
+          <span>垂直</span>
         </button>
-        <button type="button" class="dashboard-preset-btn" data-preset="grid" title="2D 網格並排（自動水平＋垂直對齊）">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
-          <span>網格並排</span>
+        <button type="button" class="dashboard-preset-btn" data-preset="grid" aria-label="網格並排" title="2D 網格並排（自動水平＋垂直對齊）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+          <span>網格</span>
         </button>
       </div>
       <div class="dashboard-toolbar-actions">
-        <button type="button" class="dashboard-action-btn" id="btn-dashboard-equalize" title="平均對齊所有水平與垂直視窗大小" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-          <span>平均對齊</span>
+        <button type="button" class="icon-btn dashboard-icon-action" id="btn-dashboard-equalize" aria-label="平均對齊所有並排視窗" title="平均對齊所有視窗大小" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
-        <button type="button" class="dashboard-action-btn" id="btn-dashboard-clear" title="清空所有並排視窗" hidden>
-          <span>清空</span>
-        </button>
-        <button type="button" class="dashboard-action-btn primary" id="btn-dashboard-exit" title="返回單一對話模式">
-          <span>單一檢視</span>
+        <button type="button" class="icon-btn dashboard-icon-action" id="btn-dashboard-clear" aria-label="清空並排視窗" title="清空所有並排視窗" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
         </button>
       </div>
     </header>
@@ -485,6 +480,21 @@ export function createSessionDashboard({
       dragSourceJid = null;
       paneEl.classList.remove('dragging-pane');
       hideDropPreview();
+    });
+
+    // Touch / Pen Pointer Drag on pane header so iPad/tablet users can drag panes to swap order
+    header.addEventListener('pointerdown', (e) => {
+      if (!wideQuery.matches || e.button !== 0 || e.target.closest('button, input, textarea')) return;
+      if (e.pointerType === 'mouse') return;
+      pointerDrag = {
+        jid,
+        name: nameEl.textContent || jid,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        started: false,
+        ghost: null,
+      };
     });
 
     stopBtn.addEventListener('click', async () => {
@@ -852,18 +862,30 @@ export function createSessionDashboard({
       const totalWeight = startW1 + startW2;
 
       splitter.classList.add('dragging');
+      gridEl.classList.add('resizing-active');
       splitter.setPointerCapture(e.pointerId);
 
-      const onMove = (moveEvent) => {
-        const currentPos = isHorizontalDrag ? moveEvent.clientX : moveEvent.clientY;
-        const delta = currentPos - startPos;
+      // 120Hz+ zero-lag direct style mutation on every pointermove / coalesced event
+      const applyPosition = (clientPos) => {
+        const delta = clientPos - startPos;
         const clampedFirstPx = Math.max(minPx, Math.min(totalPx - minPx, firstSize + delta));
         const firstRatio = clampedFirstPx / totalPx;
         setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
       };
 
+      const onMove = (moveEvent) => {
+        const coalesced =
+          typeof moveEvent.getCoalescedEvents === 'function'
+            ? moveEvent.getCoalescedEvents()
+            : null;
+        const latest = coalesced && coalesced.length > 0 ? coalesced[coalesced.length - 1] : moveEvent;
+        const currentPos = isHorizontalDrag ? latest.clientX : latest.clientY;
+        applyPosition(currentPos);
+      };
+
       const onEnd = () => {
         splitter.classList.remove('dragging');
+        gridEl.classList.remove('resizing-active');
         splitter.removeEventListener('pointermove', onMove);
         splitter.removeEventListener('pointerup', onEnd);
         splitter.removeEventListener('pointercancel', onEnd);
@@ -1036,7 +1058,7 @@ export function createSessionDashboard({
     }
   }
 
-  // ── Layout Mutations (Horizontal, Vertical, 2D Grid, Directional Drop) ─────
+  // ── Layout Mutations (Swap, Horizontal, Vertical, 2D Grid, Directional Drop) ──
   function detachJidFromGroups(jid) {
     for (const g of groups) {
       const idx = g.items.findIndex((it) => it.jid === jid);
@@ -1053,9 +1075,31 @@ export function createSessionDashboard({
     return null;
   }
 
+  function swapPanesInPlace(jidA, jidB) {
+    if (!jidA || !jidB || jidA === jidB) return false;
+    const locA = findJidLocation(jidA);
+    const locB = findJidLocation(jidB);
+    if (!locA || !locB) return false;
+    groups[locA.gIdx].items[locA.iIdx].jid = jidB;
+    groups[locB.gIdx].items[locB.iIdx].jid = jidA;
+    return true;
+  }
+
   function placeSessionAt(jid, target = null) {
     if (!jid || jid === 'web:life') return;
-    if (target?.mode === 'pane' && target.jid === jid && allJids().length === 1) return;
+    if (target?.mode === 'pane' && target.jid === jid) return;
+
+    // Direct swap when dragging an existing pane onto another pane's center, or replacing with a sidebar session
+    if (target?.mode === 'pane' && target.zone === 'swap' && target.jid) {
+      if (swapPanesInPlace(jid, target.jid)) return;
+      // If `jid` was dragged from the sidebar (not yet in dashboard), insert right after target.jid
+      const loc = findJidLocation(target.jid);
+      if (loc) {
+        detachJidFromGroups(jid);
+        groups[loc.gIdx].items.splice(loc.iIdx + 1, 0, { jid, weight: 1 });
+        return;
+      }
+    }
 
     detachJidFromGroups(jid);
 
@@ -1085,16 +1129,9 @@ export function createSessionDashboard({
           const insertItemAt = zone === 'top' ? loc.iIdx : loc.iIdx + 1;
           grp.items.splice(insertItemAt, 0, { jid, weight: 1 });
         } else {
-          // Stage-level top/bottom drop: switch to column direction if single row
-          if (groups.every((g) => g.items.length === 1) && groups.length === 1) {
-            const grp = groups[0];
-            if (zone === 'top') grp.items.unshift({ jid, weight: 1 });
-            else grp.items.push({ jid, weight: 1 });
-          } else {
-            const firstGrp = groups[0];
-            if (zone === 'top') firstGrp.items.unshift({ jid, weight: 1 });
-            else firstGrp.items.push({ jid, weight: 1 });
-          }
+          const firstGrp = groups[0];
+          if (zone === 'top') firstGrp.items.unshift({ jid, weight: 1 });
+          else firstGrp.items.push({ jid, weight: 1 });
         }
       }
     } else {
@@ -1246,7 +1283,7 @@ export function createSessionDashboard({
     rebuildGrid();
   }
 
-  // ── 2D Directional Drop Detection & Visual Preview ─────────────────────────
+  // ── 2D Directional Drop & Swap Detection & Visual Preview ──────────────────
   function computeDropTarget(clientX, clientY) {
     const stageRect = stageEl.getBoundingClientRect();
     const paneEls = [...gridEl.querySelectorAll('.dashboard-pane')];
@@ -1283,7 +1320,12 @@ export function createSessionDashboard({
     const relX = (clientX - r.left) / Math.max(1, r.width);
     const relY = (clientY - r.top) / Math.max(1, r.height);
 
-    // Determine closest edge: top, bottom, left, or right
+    // 5-Way zone detection:
+    // - Center region (22%..78% on both axes) when dragging an existing dashboard pane => 'swap' (交換視窗位置)
+    // - Top / Bottom / Left / Right edges => directional split
+    const isExistingPaneDrag = Boolean(dragSourceJid && allJids().includes(dragSourceJid));
+    const inCenter = relX > 0.22 && relX < 0.78 && relY > 0.22 && relY < 0.78;
+
     const distTop = relY;
     const distBottom = 1 - relY;
     const distLeft = relX;
@@ -1291,17 +1333,32 @@ export function createSessionDashboard({
     const minDist = Math.min(distTop, distBottom, distLeft, distRight);
 
     let zone = 'right';
-    if (minDist === distTop && distTop < 0.28) zone = 'top';
-    else if (minDist === distBottom && distBottom < 0.28) zone = 'bottom';
-    else if (minDist === distLeft) zone = 'left';
-    else zone = 'right';
+    if (isExistingPaneDrag && inCenter && hoveredPane.dataset.jid !== dragSourceJid) {
+      zone = 'swap';
+    } else if (minDist === distTop && distTop < 0.25) {
+      zone = 'top';
+    } else if (minDist === distBottom && distBottom < 0.25) {
+      zone = 'bottom';
+    } else if (minDist === distLeft) {
+      zone = 'left';
+    } else {
+      zone = 'right';
+    }
 
     const localLeft = r.left - stageRect.left;
     const localTop = r.top - stageRect.top;
     let previewRect;
     let label;
 
-    if (zone === 'top') {
+    if (zone === 'swap') {
+      previewRect = {
+        left: localLeft + 6,
+        top: localTop + 6,
+        width: r.width - 12,
+        height: r.height - 12,
+      };
+      label = '⇄ 交換視窗順序';
+    } else if (zone === 'top') {
       previewRect = { left: localLeft + 6, top: localTop + 6, width: r.width - 12, height: r.height / 2 - 8 };
       label = '↑ 垂直並排（上方）';
     } else if (zone === 'bottom') {
@@ -1483,7 +1540,8 @@ export function createSessionDashboard({
       const dx = e.clientX - pointerDrag.startX;
       const dy = e.clientY - pointerDrag.startY;
       if (!pointerDrag.started) {
-        if (Math.hypot(dx, dy) < 18 || Math.abs(dx) < Math.abs(dy)) return;
+        const isFromSidebar = !allJids().includes(pointerDrag.jid);
+        if (Math.hypot(dx, dy) < 14 || (isFromSidebar && Math.abs(dx) < Math.abs(dy))) return;
         pointerDrag.started = true;
         dragSourceJid = pointerDrag.jid;
         if (!active) setActive(true);

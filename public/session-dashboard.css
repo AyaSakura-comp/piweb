@@ -163,24 +163,60 @@
     background: var(--bg-dark);
   }
 
-  /* Dashboard top toolbar */
+  /* Dashboard top toolbar — follows DESIGN.md 52px header & 44x44px borderless icon buttons */
   .dashboard-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    height: var(--topbar-h);
-    padding: 0 14px;
+    height: 52px;
+    padding: 0 12px 0 8px;
     background: var(--bg);
-    border-bottom: 1px solid var(--bg-dark);
+    border-bottom: 1px solid var(--border);
     flex: none;
   }
 
   .dashboard-toolbar-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
+  }
+
+  .dashboard-back-btn,
+  .dashboard-Menu-btn,
+  .dashboard-icon-action {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-2);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 160ms ease, color 160ms ease;
+  }
+
+  .dashboard-back-btn:hover,
+  .dashboard-Menu-btn:hover,
+  .dashboard-icon-action:hover {
+    background: var(--bg-hover);
+    color: var(--text-bright);
+  }
+
+  .dashboard-back-btn:focus-visible,
+  .dashboard-Menu-btn:focus-visible,
+  .dashboard-icon-action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -3px;
+  }
+
+  .dashboard-icon-action[hidden] {
+    display: none;
   }
 
   .dashboard-Menu-btn {
@@ -191,57 +227,48 @@
     display: grid;
   }
 
-  .dashboard-toolbar-glyph {
-    width: 19px;
-    height: 19px;
-    color: var(--accent);
-    flex: none;
+  .dashboard-heading-stack {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
   }
 
-  .dashboard-toolbar-title h2 {
+  .dashboard-heading-stack h2 {
     margin: 0;
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 650;
     color: var(--text-bright);
     white-space: nowrap;
+    line-height: 1.2;
   }
 
-  .dashboard-toolbar-badge {
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--bg-input);
+  .dashboard-toolbar-sub {
     color: var(--text-2);
     font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .dashboard-toolbar-hint {
-    flex: 1;
-    min-width: 0;
-    color: var(--text-dim);
-    font-size: 12.5px;
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 
   .dashboard-toolbar-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex: none;
   }
 
+  /* Dark capsule selector with circular/pill selection ring per DESIGN.md */
   .dashboard-layout-presets {
     display: inline-flex;
     align-items: center;
-    padding: 2px;
+    padding: 3px;
     border: 1px solid var(--border);
-    border-radius: 7px;
-    background: var(--bg-dark);
-    gap: 2px;
+    border-radius: 999px;
+    background: var(--bg-alt);
+    gap: 3px;
   }
 
   .dashboard-layout-presets[hidden] {
@@ -251,70 +278,41 @@
   .dashboard-preset-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
-    height: 28px;
-    padding: 0 9px;
-    border: 0;
-    border-radius: 5px;
+    min-width: 44px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1.5px solid transparent;
+    border-radius: 999px;
     background: transparent;
-    color: var(--text-dim);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-
-  .dashboard-preset-btn:hover {
-    color: var(--text-bright);
-    background: rgb(255 255 255 / 0.04);
-  }
-
-  .dashboard-preset-btn.active {
-    background: var(--accent);
-    color: #fff;
-  }
-
-  .dashboard-preset-btn svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  .dashboard-action-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 32px;
-    padding: 0 11px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-alt);
-    color: var(--text);
+    color: var(--text-2);
     font: inherit;
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
   }
 
-  .dashboard-action-btn[hidden] {
-    display: none;
+  .dashboard-preset-btn:hover {
+    color: var(--text-bright);
+    background: var(--bg-hover);
   }
 
-  .dashboard-action-btn:hover {
+  .dashboard-preset-btn.active {
     background: var(--bg-input);
     color: var(--text-bright);
+    border-color: var(--text);
   }
 
-  .dashboard-action-btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
+  .dashboard-preset-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
-  .dashboard-action-btn svg {
-    width: 14px;
-    height: 14px;
+  .dashboard-preset-btn svg {
+    width: 15px;
+    height: 15px;
   }
 
   /* Dashboard main stage */
@@ -508,13 +506,15 @@
   }
 
   .dashboard-grid.density-compact .dashboard-pane-actions .icon-btn {
-    width: 26px;
-    height: 26px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
   }
 
   .dashboard-grid.density-compact .dashboard-pane-actions .icon-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
   }
 
   .dashboard-grid.density-compact .dashboard-pane-messages {
@@ -562,17 +562,31 @@
     }
   }
 
+  /* 120Hz+ zero-lag splitter resizing: disable transitions and sub-tree hit-testing while dragging */
+  .dashboard-grid.resizing-active,
+  .dashboard-grid.resizing-active .dashboard-group,
+  .dashboard-grid.resizing-active .dashboard-pane {
+    transition: none !important;
+    will-change: flex-grow;
+  }
+
+  .dashboard-grid.resizing-active .dashboard-pane-messages,
+  .dashboard-grid.resizing-active .dashboard-pane-composer-wrap {
+    pointer-events: none;
+  }
+
   .dashboard-pane-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     height: 44px;
-    padding: 0 8px 0 12px;
-    background: var(--bg-alt);
-    border-bottom: 1px solid var(--bg-dark);
+    padding: 0 4px 0 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
     cursor: grab;
     user-select: none;
+    touch-action: none;
     flex: none;
   }
 
@@ -605,18 +619,35 @@
   .dashboard-pane-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 0;
     flex: none;
   }
 
+  /* 44x44px borderless outline-icon buttons per DESIGN.md */
   .dashboard-pane-actions .icon-btn {
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .dashboard-pane-actions .icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-bright);
+  }
+
+  .dashboard-pane-actions .icon-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -3px;
   }
 
   .dashboard-pane-actions .icon-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 17px;
+    height: 17px;
   }
 
   .dashboard-pane-messages {

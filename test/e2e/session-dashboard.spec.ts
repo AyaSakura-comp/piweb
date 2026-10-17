@@ -163,6 +163,49 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         expect(r.height).toBeGreaterThanOrEqual(90);
       }
 
+      // When 2 panes are open, verify DESIGN.md button compliance (44x44px borderless icon buttons)
+      // and test drag-and-swap pane order (dragging pane 1 header onto pane 2 center swaps order)
+      if (count === 2) {
+        const exitBox = (await page.locator('#btn-dashboard-exit').boundingBox())!;
+        const eqBox = (await page.locator('#btn-dashboard-equalize').boundingBox())!;
+        const clearBox = (await page.locator('#btn-dashboard-clear').boundingBox())!;
+        const paneBtnBox = (await page.locator('.dashboard-pane-actions .icon-btn').first().boundingBox())!;
+        expect(exitBox.width).toBeGreaterThanOrEqual(44);
+        expect(exitBox.height).toBeGreaterThanOrEqual(44);
+        expect(eqBox.width).toBeGreaterThanOrEqual(44);
+        expect(eqBox.height).toBeGreaterThanOrEqual(44);
+        expect(clearBox.width).toBeGreaterThanOrEqual(44);
+        expect(clearBox.height).toBeGreaterThanOrEqual(44);
+        expect(paneBtnBox.width).toBeGreaterThanOrEqual(44);
+        expect(paneBtnBox.height).toBeGreaterThanOrEqual(44);
+
+        // Verify 2 distinct panes before swap
+        const orderBefore = (await page
+          .locator('.dashboard-pane')
+          .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid))) as string[];
+        expect(orderBefore.length).toBe(2);
+        const [firstJid, secondJid] = orderBefore;
+
+        // Drag first pane's header onto center of second pane to swap their order
+        await page
+          .locator(`.dashboard-pane[data-jid="${firstJid}"] .dashboard-pane-header`)
+          .dragTo(page.locator(`.dashboard-pane[data-jid="${secondJid}"]`));
+
+        const orderAfterSwap = await page
+          .locator('.dashboard-pane')
+          .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
+        expect(orderAfterSwap).toEqual([secondJid, firstJid]);
+
+        // Swap back to restore original order
+        await page
+          .locator(`.dashboard-pane[data-jid="${secondJid}"] .dashboard-pane-header`)
+          .dragTo(page.locator(`.dashboard-pane[data-jid="${firstJid}"]`));
+        const orderRestored = await page
+          .locator('.dashboard-pane')
+          .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
+        expect(orderRestored).toEqual([firstJid, secondJid]);
+      }
+
       // Capture milestone screenshots across 1..12
       if ([1, 2, 3, 4, 6, 8, 9, 12].includes(count)) {
         const tag = String(count).padStart(2, '0');
@@ -175,20 +218,24 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(page.locator('.dashboard-splitter.splitter-vertical')).toHaveCount(3);
     await expect(page.locator('.dashboard-splitter.splitter-horizontal')).toHaveCount(8);
 
-    // Resize column 1 wider and row 1 of column 1 taller simultaneously in the 12-pane grid
+    // Resize column 1 wider and row 1 of column 1 taller simultaneously at 120Hz+ (24 steps) in the 12-pane grid
     const vSplit = page.locator('.dashboard-splitter.splitter-vertical').first();
     const vBox = (await vSplit.boundingBox())!;
     await page.mouse.move(vBox.x + vBox.width / 2, vBox.y + vBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(vBox.x + vBox.width / 2 + 90, vBox.y + vBox.height / 2, { steps: 6 });
+    await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
+    await page.mouse.move(vBox.x + vBox.width / 2 + 90, vBox.y + vBox.height / 2, { steps: 24 });
     await page.mouse.up();
+    await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
 
     const hSplit = page.locator('.dashboard-splitter.splitter-horizontal').first();
     const hBox = (await hSplit.boundingBox())!;
     await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 65, { steps: 6 });
+    await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
+    await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 65, { steps: 24 });
     await page.mouse.up();
+    await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
 
     await page.screenshot({ path: info.outputPath('panes-12-custom-resized.png') });
 
