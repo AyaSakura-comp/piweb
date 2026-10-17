@@ -768,6 +768,18 @@ export function createSessionDashboard({
     });
   }
 
+  function scrollPaneToLatest(pane) {
+    if (!pane || pane.disposed) return;
+    pane.userScrolledUp = false;
+    pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+    pane.jumpBtn.classList.remove('visible');
+    requestAnimationFrame(() => {
+      if (pane.disposed || pane.userScrolledUp) return;
+      pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+      pane.jumpBtn.classList.remove('visible');
+    });
+  }
+
   async function hydratePane(pane) {
     try {
       const { events, busy, partial, session } = await api(
@@ -790,7 +802,7 @@ export function createSessionDashboard({
       if (events?.length) {
         onMarkSeen(pane.jid, events[events.length - 1].id);
       }
-      pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+      scrollPaneToLatest(pane);
       connectPaneStream(pane);
     } catch {
       if (!pane.disposed) {
@@ -1272,8 +1284,8 @@ export function createSessionDashboard({
     if (active) {
       rebuildGrid();
       for (const pane of panes.values()) {
-        if (pane.cursor === 0) void hydratePane(pane);
-        else connectPaneStream(pane);
+        scrollPaneToLatest(pane);
+        void hydratePane(pane);
       }
     } else {
       for (const pane of panes.values()) {
