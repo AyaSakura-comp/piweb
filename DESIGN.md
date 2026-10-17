@@ -260,14 +260,21 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
   dragging any pane header over another pane highlights a 5-way drop target:
   dropping in the center (`22%..78%`) swaps the two panes in-place (`⇄ 交換視窗順序`),
   while dropping near the left/right/top/bottom edge splits along that axis.
-- **120Hz+ zero-lag splitters**: dragging `.dashboard-splitter` processes high-rate
-  `getCoalescedEvents()` samples synchronously with `.resizing-active` (`transition: none !important`,
-  `will-change: flex-grow`, and `pointer-events: none` on pane subtrees) so 120Hz
-  ProMotion/desktop displays resize without frame drops.
+- **120Hz+ zero-lag splitters & 28–36px touch hit-zones**: visual splitters stay slim
+  (`10px` desktop, `12px` coarse pointer) with a visible iPadOS Split-View style pill
+  handle (`40–44px`), while an invisible `::before` hit-target expands the draggable
+  touch zone to `28px` (`36px` on `@media (pointer: coarse)`) so fingers can grab any
+  horizontal or vertical divider effortlessly without hitting adjacent scrollbars.
+  Dragging `.dashboard-splitter` processes high-rate `getCoalescedEvents()` samples
+  synchronously with `.resizing-active` (`transition: none !important`, `will-change: flex-grow`,
+  and `pointer-events: none` on pane subtrees), and double-click / touch double-tap
+  equalizes the adjacent pair.
 - **iPadOS virtual keyboard & scroll stability**: background `/api/sessions` polls
-  skip DOM reconstruction when the session signature is unchanged, toolbar/pane buttons
-  prevent focus theft on `pointerdown`, and touch inputs keep `font-size: 16px` with
-  `visualViewport` height tracking (`--dashboard-vv-h`) and user-intent scroll guards.
+  skip DOM reconstruction when the session signature is unchanged, dynamic index/JID
+  lookup in splitter callbacks prevents resized weights from snapping back on poll,
+  toolbar/pane buttons prevent focus theft on `pointerdown`, and touch inputs keep
+  `font-size: 16px` with `visualViewport` height tracking (`--dashboard-vv-h`) and
+  user-intent scroll guards.
 
 ## Verification
 

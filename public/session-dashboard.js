@@ -839,17 +839,41 @@ export function createSessionDashboard({
       : '上下拖拉調整視窗高度（雙擊平均對齊）';
     splitter.innerHTML = '<span class="dashboard-splitter-grip" aria-hidden="true"></span>';
 
-    splitter.addEventListener('dblclick', () => {
+    const equalizePair = () => {
       const [w1, w2] = getWeights();
       const avg = (w1 + w2) / 2;
       setWeights(avg, avg);
       saveState();
-    });
+    };
 
+    splitter.addEventListener('dblclick', equalizePair);
+
+    // Prevent iOS/iPadOS Safari from claiming touch gestures as page/rubber-band scroll
+    splitter.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length === 1) e.preventDefault();
+      },
+      { passive: false },
+    );
+
+    let lastTapTime = 0;
     splitter.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
+      e.stopPropagation();
       if (!firstEl || !secondEl) return;
+
+      // Support double-tap on touch screens to equalize adjacent panes
+      if (e.pointerType !== 'mouse') {
+        const now = performance.now();
+        if (now - lastTapTime < 320) {
+          lastTapTime = 0;
+          equalizePair();
+          return;
+        }
+        lastTapTime = now;
+      }
 
       const startPos = isHorizontalDrag ? e.clientX : e.clientY;
       const firstRect = firstEl.getBoundingClientRect();

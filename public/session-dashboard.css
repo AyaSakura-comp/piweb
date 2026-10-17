@@ -679,7 +679,9 @@
     outline: none;
   }
 
-  /* Draggable Splitters between groups & panes (Horizontal + Vertical) */
+  /* Draggable Splitters between groups & panes (Horizontal + Vertical)
+     Keep visual bar slim (10px) while expanding the invisible finger hit-zone
+     to 28px via ::before and providing a 44px pill handle in the center. */
   .dashboard-splitter {
     position: relative;
     flex: none;
@@ -688,19 +690,41 @@
     place-items: center;
     touch-action: none;
     user-select: none;
-    z-index: 20;
+    -webkit-user-select: none;
+    z-index: 30;
     transition: background 0.15s ease;
   }
 
+  /* Invisible 28px touch hit-target expansion along the entire splitter length */
+  .dashboard-splitter::before {
+    content: '';
+    position: absolute;
+    z-index: 1;
+  }
+
   .dashboard-splitter.splitter-vertical {
-    width: 8px;
+    width: 10px;
     cursor: col-resize;
   }
 
+  .dashboard-splitter.splitter-vertical::before {
+    top: 0;
+    bottom: 0;
+    left: -9px;
+    right: -9px;
+  }
+
   .dashboard-splitter.splitter-horizontal {
-    height: 8px;
+    height: 10px;
     width: 100%;
     cursor: row-resize;
+  }
+
+  .dashboard-splitter.splitter-horizontal::before {
+    left: 0;
+    right: 0;
+    top: -9px;
+    bottom: -9px;
   }
 
   .dashboard-splitter:hover,
@@ -710,39 +734,76 @@
     outline: none;
   }
 
+  /* Grab-friendly pill handle (like iPadOS Split View divider pill) */
   .dashboard-splitter-grip {
+    position: relative;
+    z-index: 2;
     border-radius: 999px;
-    background: var(--text-dim);
-    opacity: 0.45;
+    background: var(--text-2);
+    opacity: 0.65;
+    box-shadow: 0 0 0 3px rgb(0 0 0 / 0.22);
     transition:
       opacity 0.15s ease,
       background 0.15s ease,
+      transform 0.15s ease,
       width 0.15s ease,
       height 0.15s ease;
   }
 
   .dashboard-splitter.splitter-vertical .dashboard-splitter-grip {
-    width: 2px;
-    height: 32px;
+    width: 4px;
+    height: 40px;
   }
 
   .dashboard-splitter.splitter-horizontal .dashboard-splitter-grip {
-    width: 32px;
-    height: 2px;
+    width: 40px;
+    height: 4px;
+  }
+
+  @media (pointer: coarse) {
+    .dashboard-splitter.splitter-vertical {
+      width: 12px;
+    }
+
+    .dashboard-splitter.splitter-vertical::before {
+      left: -12px;
+      right: -12px;
+    }
+
+    .dashboard-splitter.splitter-horizontal {
+      height: 12px;
+    }
+
+    .dashboard-splitter.splitter-horizontal::before {
+      top: -12px;
+      bottom: -12px;
+    }
+
+    .dashboard-splitter.splitter-vertical .dashboard-splitter-grip {
+      width: 5px;
+      height: 44px;
+    }
+
+    .dashboard-splitter.splitter-horizontal .dashboard-splitter-grip {
+      width: 44px;
+      height: 5px;
+    }
   }
 
   .dashboard-splitter.splitter-vertical:hover .dashboard-splitter-grip,
   .dashboard-splitter.splitter-vertical.dragging .dashboard-splitter-grip {
     opacity: 1;
-    height: 48px;
+    height: 56px;
     background: var(--accent);
+    transform: scaleX(1.25);
   }
 
   .dashboard-splitter.splitter-horizontal:hover .dashboard-splitter-grip,
   .dashboard-splitter.splitter-horizontal.dragging .dashboard-splitter-grip {
     opacity: 1;
-    width: 48px;
+    width: 56px;
     background: var(--accent);
+    transform: scaleY(1.25);
   }
 
   /* Tablet touch-drag ghost */
