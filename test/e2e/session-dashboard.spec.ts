@@ -163,21 +163,40 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         expect(r.height).toBeGreaterThanOrEqual(90);
       }
 
-      // When 2 panes are open, verify DESIGN.md button compliance (44x44px borderless icon buttons)
+      // When 2 panes are open, verify DESIGN.md button compliance, per-pane controls (Model, Thinking, ⋯ menu, Hot Keywords, Quote, Attachments, BTW),
       // and test drag-and-swap pane order (dragging pane 1 header onto pane 2 center swaps order)
       if (count === 2) {
         const exitBox = (await page.locator('#btn-dashboard-exit').boundingBox())!;
         const eqBox = (await page.locator('#btn-dashboard-equalize').boundingBox())!;
         const clearBox = (await page.locator('#btn-dashboard-clear').boundingBox())!;
-        const paneBtnBox = (await page.locator('.dashboard-pane-actions .icon-btn').first().boundingBox())!;
         expect(exitBox.width).toBeGreaterThanOrEqual(44);
         expect(exitBox.height).toBeGreaterThanOrEqual(44);
         expect(eqBox.width).toBeGreaterThanOrEqual(44);
         expect(eqBox.height).toBeGreaterThanOrEqual(44);
         expect(clearBox.width).toBeGreaterThanOrEqual(44);
         expect(clearBox.height).toBeGreaterThanOrEqual(44);
-        expect(paneBtnBox.width).toBeGreaterThanOrEqual(44);
-        expect(paneBtnBox.height).toBeGreaterThanOrEqual(44);
+
+        const pane1 = page.locator('.dashboard-pane[data-jid="web:s01"]');
+        await expect(pane1.locator('.pane-model-btn')).toBeVisible();
+        await expect(pane1.locator('.pane-thinking-btn')).toBeVisible();
+        await expect(pane1.locator('.pane-more-btn')).toBeVisible();
+        await expect(pane1.locator('.pane-attach-btn')).toBeVisible();
+        await expect(pane1.locator('.pane-paste-btn')).toBeVisible();
+
+        // Test opening Thinking level sheet from Pane 1's top header
+        await pane1.locator('.pane-thinking-btn').click();
+        await expect(page.locator('#thinking-sheet')).toBeVisible();
+        await page.locator('#btn-thinking-close').click();
+        await expect(page.locator('#thinking-sheet')).toBeHidden();
+
+        // Test opening Pane 1's ⋯ overflow menu
+        await pane1.locator('.pane-more-btn').click();
+        await expect(pane1.locator('.pane-more-menu')).toBeVisible();
+        await expect(pane1.locator('.pane-more-menu [data-action="search"]')).toBeVisible();
+        await expect(pane1.locator('.pane-more-menu [data-action="subagents"]')).toBeVisible();
+        await expect(pane1.locator('.pane-more-menu [data-action="media"]')).toBeVisible();
+        await pane1.locator('.pane-more-btn').click();
+        await expect(pane1.locator('.pane-more-menu')).toBeHidden();
 
         // Verify 2 distinct panes before swap
         const orderBefore = (await page

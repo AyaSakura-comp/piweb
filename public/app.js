@@ -30,7 +30,7 @@ import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=dashboard-scroll-latest-1';
+import { createSessionDashboard } from './session-dashboard.js?v=dashboard-full-parity-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -381,9 +381,16 @@ document.addEventListener(
   true,
 );
 
-function showSelectionActions(text, rect) {
+let selectionTargetPaneJid = null;
+
+function showSelectionActions(text, rect, paneJid = null) {
   selectedText = text;
-  if (!state.previewingDeleted && text) {
+  selectionTargetPaneJid = paneJid;
+  if (paneJid && typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+    if (text) {
+      sessionDashboard.setPaneQuote?.(paneJid, text);
+    }
+  } else if (!state.previewingDeleted && text) {
     state.pendingQuote = text;
     // The first selection opens the quote bar, which scrolls the transcript up
     // by its height (renderQuotePreview); the selection moved with it.
@@ -392,13 +399,16 @@ function showSelectionActions(text, rect) {
       rect = { left: rect.left, width: rect.width, top: rect.top - shift, bottom: rect.bottom - shift };
     }
   }
-  $('selection-quote').disabled = state.previewingDeleted;
+  $('selection-quote').disabled = !paneJid && state.previewingDeleted;
   const actions = $('selection-actions');
   actions.hidden = false;
 
   const toolbarWidth = actions.offsetWidth || 150;
   const toolbarHeight = actions.offsetHeight || 42;
-  const composer = $('composer-wrap');
+  const paneComposer = paneJid
+    ? document.querySelector(`.dashboard-pane[data-jid="${CSS.escape(paneJid)}"] .dashboard-pane-composer-wrap`)
+    : null;
+  const composer = paneComposer || $('composer-wrap');
   const composerTop = composer ? composer.getBoundingClientRect().top : window.innerHeight - 70;
 
   // Center horizontally over selection, clamped within margins
@@ -423,13 +433,27 @@ function showSelectionActions(text, rect) {
 function syncSelectionActions() {
   selectionFrame = 0;
   const selection = window.getSelection();
+  if (typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+    for (const scroller of document.querySelectorAll('#dashboard-grid .dashboard-pane-messages')) {
+      const paneText = selectedTranscriptText(selection, scroller);
+      if (paneText) {
+        const paneEl = scroller.closest('.dashboard-pane');
+        showSelectionActions(
+          paneText,
+          selection.getRangeAt(0).getBoundingClientRect(),
+          paneEl?.dataset?.jid || null,
+        );
+        return;
+      }
+    }
+  }
   const text = selectedTranscriptText(selection, $('messages'));
   if (customSelectionActive && !text) return;
   if (!text) {
     hideSelectionActions();
     return;
   }
-  showSelectionActions(text, selection.getRangeAt(0).getBoundingClientRect());
+  showSelectionActions(text, selection.getRangeAt(0).getBoundingClientRect(), null);
 }
 
 document.addEventListener('selectionchange', () => {
@@ -489,6 +513,11 @@ $('selection-copy').addEventListener('click', async () => {
 
 $('selection-quote').addEventListener('click', () => {
   if (!selectedText) return;
+  if (selectionTargetPaneJid && typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+    sessionDashboard.setPaneQuote?.(selectionTargetPaneJid, selectedText, true);
+    hideSelectionActions(true);
+    return;
+  }
   state.pendingQuote = selectedText;
   renderQuotePreview();
   hideSelectionActions(true);
@@ -1669,17 +1698,18 @@ async function jumpTo(id) {
 // ── header shortcuts: model / new / stop ─────────────────────────────────
 
 /** Enqueue one of the piscord commands and let its result land in the transcript. */
-async function runQuickCommand(command, args = {}) {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return false;
-  const lifeGeneration = state.activeJid === LIFE_JID ? state.lifeSession?.generation : undefined;
+async function runQuickCommand(command, args = {}, explicitJid = null) {
+  const jid = typeof explicitJid === 'string' && explicitJid ? explicitJid : state.activeJid;
+  if (!jid || (!explicitJid && (state.selectionPending || state.previewingDeleted))) return false;
+  const lifeGeneration = jid === LIFE_JID ? state.lifeSession?.generation : undefined;
   try {
-    await api(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands`, {
+    await api(`/api/sessions/${encodeURIComponent(jid)}/commands`, {
       method: 'POST',
       body: JSON.stringify({ command, args, ...(command.endsWith('-usage') ? { source: 'toolbar' } : {}), ...(lifeGeneration ? { lifeGeneration } : {}) }),
     });
     return true;
   } catch (err) {
-    if (state.mode === 'life' && state.activeJid === LIFE_JID) await enterLifeMode();
+    if (state.mode === 'life' && jid === LIFE_JID) await enterLifeMode();
     alert(err.message);
     return false;
   }
@@ -1785,8 +1815,8 @@ $('btn-status').addEventListener('click', () => runQuickCommand('pi status'));
 // The usage button reports the agent the session actually runs on: an agy model
 // draws on Antigravity's Gemini quota, not the ChatGPT/Codex rate limit, so
 // showing GPT usage there would answer a question the user did not ask.
-function usageCommandForSession() {
-  const session = state.sessions.find((item) => item.jid === state.activeJid);
+function usageCommandForSession(targetJid = state.activeJid) {
+  const session = state.sessions.find((item) => item.jid === targetJid);
   const model = String(session?.model || '').trim().toLowerCase();
   // Route by execution provider, not the word "Claude": AGY-hosted Claude
   // consumes Antigravity quota rather than the host Claude Code subscription.
@@ -1881,21 +1911,36 @@ const btwWorkspace = createBtwWorkspace({
     }),
   canReuseRich: canReuseStreamingRich,
 });
+let subagentsTargetJid = null;
 const subagentsView = createSubagentsView({
   api,
   buildEventNode,
-  getParent: () => state.activeJid && !state.selectionPending ? {
-    key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
-    url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/subagents`, state.activeJid),
-  } : null,
+  getParent: () => {
+    const jid = subagentsTargetJid || (state.activeJid && !state.selectionPending ? state.activeJid : null);
+    return jid
+      ? {
+          key: `${jid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
+          url: withLifeGeneration(`/api/sessions/${encodeURIComponent(jid)}/subagents`, jid),
+        }
+      : null;
+  },
 });
-onMenuItem('mi-subagents', () => subagentsView.open());
+onMenuItem('mi-subagents', () => {
+  subagentsTargetJid = null;
+  subagentsView.open();
+});
+let commandsRunningTargetJid = null;
 const commandsRunningView = createCommandsRunningView({
   api,
-  getParent: () => state.activeJid && !state.selectionPending ? {
-    key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
-    url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands-running`, state.activeJid),
-  } : null,
+  getParent: () => {
+    const jid = commandsRunningTargetJid || (state.activeJid && !state.selectionPending ? state.activeJid : null);
+    return jid
+      ? {
+          key: `${jid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
+          url: withLifeGeneration(`/api/sessions/${encodeURIComponent(jid)}/commands-running`, jid),
+        }
+      : null;
+  },
 });
 const sessionDashboard = createSessionDashboard({
   app: $('app'),
@@ -1904,11 +1949,43 @@ const sessionDashboard = createSessionDashboard({
   main: document.querySelector('.main'),
   api,
   getSessions: () => sessionsForDisplay(),
+  getCommands: () => state.commands,
+  getModels: () => state.models,
   getSessionBadge: (session) => sessionBadge(session),
+  usageCommandForSession: (jid) => usageCommandForSession(jid),
+  isAgyCommandSession: (jid) => isAgyCommandSession(jid),
+  isPiBtwSession: (jid) => isPiBtwSession(jid),
+  isCommandEchoText,
   buildEventNode,
   streamRich: updateStreamingRich,
   canReuseRich: canReuseStreamingRich,
   trySendCommand,
+  runQuickCommand: (command, args, jid) => runQuickCommand(command, args, jid),
+  onOpenModelSheet: (jid) => void openModelSheet(jid),
+  onOpenThinkingSheet: (jid) => openThinkingSheet(jid),
+  onOpenMediaSheet: (jid) => void openMediaSheet(jid),
+  onOpenSubagents: (jid) => {
+    subagentsTargetJid = jid;
+    subagentsView.open();
+  },
+  onOpenCommandsRunning: (jid) => {
+    if (isAgyCommandSession(jid)) {
+      commandsRunningTargetJid = jid;
+      commandsRunningView.open();
+    }
+  },
+  onDeleteSession: (session) => void deleteSession(session),
+  onReloadSessions: () => loadSessions(),
+  createHotKeywords,
+  createPromptPin,
+  prepareImageUpload,
+  readCompressionPreference,
+  IMAGE_COMPRESSION_KEY,
+  sendJsonWithUploadProgress,
+  showUploadProgress,
+  hideUploadProgress,
+  quotePreview,
+  copyText,
   openLightbox: (url, urls) => openLightbox(url, urls),
   onSelectSingleSession: (jid) => {
     void openStandardSession(jid);
@@ -1918,9 +1995,10 @@ const sessionDashboard = createSessionDashboard({
   showToast: (msg) => showToast(msg),
   isAutoScrollEnabled: () => autoScrollEnabled,
 });
-function isAgyCommandSession() {
-  if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
-  const session = state.sessions.find((item) => item.jid === state.activeJid);
+function isAgyCommandSession(targetJid = state.activeJid) {
+  if (!targetJid) return false;
+  if (targetJid === state.activeJid && (state.mode === 'life' || state.selectionPending || state.previewingDeleted)) return false;
+  const session = state.sessions.find((item) => item.jid === targetJid);
   if (!session) return false;
   const model = String(session.model || '').trim().toLowerCase();
   if (model) return model.startsWith('agy/') || model.startsWith('claude-code/');
@@ -1930,12 +2008,12 @@ function isAgyCommandSession() {
 // models. AGY and Claude Code sessions are different harnesses: hide the entry
 // instead of offering a control the worker would refuse. No override = Pi's
 // own default model.
-function isPiBtwSession() {
-  if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
-  if (!state.activeJid) return false;
+function isPiBtwSession(targetJid = state.activeJid) {
+  if (!targetJid) return false;
+  if (targetJid === state.activeJid && (state.mode === 'life' || state.selectionPending || state.previewingDeleted)) return false;
   // Hide only a KNOWN non-Pi harness. Right after load the session list can
   // lag the selection; the web and worker still refuse non-Pi BTW requests.
-  const session = state.sessions.find((item) => item.jid === state.activeJid);
+  const session = state.sessions.find((item) => item.jid === targetJid);
   const model = String(session?.model || '').trim().toLowerCase();
   return !model.startsWith('agy/') && !model.startsWith('claude-code/');
 }
@@ -1949,7 +2027,10 @@ function syncBtwAvailability() {
   }
 }
 onMenuItem('mi-commands-running', () => {
-  if (isAgyCommandSession()) commandsRunningView.open();
+  if (isAgyCommandSession()) {
+    commandsRunningTargetJid = null;
+    commandsRunningView.open();
+  }
 });
 
 function openMoreMenu() {
@@ -2009,9 +2090,9 @@ function closeMediaSheet() {
   $('media-sheet').hidden = true;
 }
 
-async function openMediaSheet() {
-  if (state.selectionPending || !state.activeJid) return;
-  const jid = state.activeJid;
+async function openMediaSheet(explicitJid = null) {
+  const jid = typeof explicitJid === 'string' && explicitJid ? explicitJid : state.activeJid;
+  if (!jid || (!explicitJid && state.selectionPending)) return;
   const ownership = ++mediaOwnershipGeneration;
 
   const grid = $('media-grid');
@@ -2028,7 +2109,7 @@ async function openMediaSheet() {
   } catch {
     if (
       ownership === mediaOwnershipGeneration &&
-      state.activeJid === jid &&
+      (explicitJid || state.activeJid === jid) &&
       !$('media-sheet').hidden
     ) {
       note.textContent = 'Could not load media for this session.';
@@ -2038,7 +2119,7 @@ async function openMediaSheet() {
 
   if (
     ownership !== mediaOwnershipGeneration ||
-    state.activeJid !== jid ||
+    (!explicitJid && state.activeJid !== jid) ||
     $('media-sheet').hidden
   ) {
     return;
@@ -2129,13 +2210,17 @@ onMenuItem('mi-delete', deleteActiveSession);
 
 // ── model sheet ──
 
-function currentModelRef() {
-  const session = state.sessions.find((s) => s.jid === state.activeJid);
+let modelSheetTargetJid = null;
+
+function currentModelRef(targetJid = modelSheetTargetJid || state.activeJid) {
+  const session = state.sessions.find((s) => s.jid === targetJid);
   return session ? session.model : '';
 }
 
-async function openModelSheet() {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
+async function openModelSheet(explicitJid = null) {
+  const targetJid = typeof explicitJid === 'string' && explicitJid ? explicitJid : state.activeJid;
+  if (!targetJid || (!explicitJid && (state.selectionPending || state.previewingDeleted))) return;
+  modelSheetTargetJid = targetJid;
   closeThinkingSheet();
   $('model-sheet').hidden = false;
   syncSheetHeight();
@@ -2171,7 +2256,8 @@ function renderModelList(query) {
   const list = $('model-list');
   list.textContent = '';
 
-  const current = currentModelRef();
+  const targetJid = modelSheetTargetJid || state.activeJid;
+  const current = currentModelRef(targetJid);
   const q = query.trim().toLowerCase();
   const matches = state.models.filter((m) => modelMatches(m, q));
 
@@ -2190,7 +2276,7 @@ function renderModelList(query) {
     reset.append(el('span', 'm-tag', 'reset'));
     reset.addEventListener('click', async () => {
       closeModelSheet();
-      await runQuickCommand('pi reset-model');
+      await runQuickCommand('pi reset-model', {}, targetJid);
       setTimeout(loadSessions, 900);
     });
     list.append(reset);
@@ -2220,11 +2306,11 @@ function renderModelList(query) {
 
     item.addEventListener('click', async () => {
       closeModelSheet();
-      await runQuickCommand('pi model', { model: model.ref });
+      await runQuickCommand('pi model', { model: model.ref }, targetJid);
       // `pi model` round-trips through the worker's control queue, so the new
       // override lands some unpredictable moment later. Poll briefly until the
       // badge actually reflects the pick rather than guessing a single delay.
-      awaitOverride(state.activeJid, model.ref);
+      awaitOverride(targetJid, model.ref);
     });
     list.append(item);
   }
@@ -2317,6 +2403,7 @@ function providerBadgeFor(provider, modelRef = '') {
 }
 
 function closeModelSheet() {
+  modelSheetTargetJid = null;
   $('model-sheet').hidden = true;
 }
 
@@ -2341,7 +2428,7 @@ $('model-search').addEventListener('keydown', (e) => {
   }
 });
 
-$('btn-model').addEventListener('click', openModelSheet);
+$('btn-model').addEventListener('click', () => openModelSheet());
 $('btn-model-close').addEventListener('click', closeModelSheet);
 $('model-sheet').addEventListener('click', (e) => {
   if (e.target === $('model-sheet')) closeModelSheet();
@@ -2386,32 +2473,36 @@ function renderLifeTags() {
   }
 }
 
-function currentThinkingLevel() {
+let thinkingSheetTargetJid = null;
+
+function currentThinkingLevel(targetJid = thinkingSheetTargetJid || state.activeJid) {
   // Life runs with minimal thinking unless the user picked a level.
-  if (state.activeJid === LIFE_JID) return state.lifeSession?.thinking || 'minimal';
-  const session = state.sessions.find((s) => s.jid === state.activeJid);
+  if (targetJid === LIFE_JID) return state.lifeSession?.thinking || 'minimal';
+  const session = state.sessions.find((s) => s.jid === targetJid);
   return session?.thinking || '';
 }
 
 function renderThinkingButton() {
   const button = $('btn-thinking');
-  const current = currentThinkingLevel();
+  const current = currentThinkingLevel(state.activeJid);
   button.dataset.level = current || 'default';
   const label = current || 'runtime default';
   button.title = `Thinking: ${label}`;
   button.setAttribute('aria-label', `Choose thinking level. Current: ${label}`);
 }
 
-function openThinkingSheet() {
-  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
+function openThinkingSheet(explicitJid = null) {
+  const targetJid = typeof explicitJid === 'string' && explicitJid ? explicitJid : state.activeJid;
+  if (!targetJid || (!explicitJid && (state.selectionPending || state.previewingDeleted))) return;
+  thinkingSheetTargetJid = targetJid;
   closeModelSheet();
   $('thinking-sheet').hidden = false;
   syncSheetHeight();
-  renderThinkingList();
+  renderThinkingList(targetJid);
 }
 
-function currentSessionModelInfo() {
-  const session = state.sessions.find((s) => s.jid === state.activeJid);
+function currentSessionModelInfo(targetJid = thinkingSheetTargetJid || state.activeJid) {
+  const session = state.sessions.find((s) => s.jid === targetJid);
   if (!session) return undefined;
   const ref = (session.model || session.runningModel || '').trim().toLowerCase();
   if (!ref) return undefined;
@@ -2423,8 +2514,8 @@ function currentSessionModelInfo() {
   );
 }
 
-function supportedThinkingLevelsForCurrentSession() {
-  const model = currentSessionModelInfo();
+function supportedThinkingLevelsForCurrentSession(targetJid = thinkingSheetTargetJid || state.activeJid) {
+  const model = currentSessionModelInfo(targetJid);
   if (!model) return undefined;
   if (Array.isArray(model.supportedThinkingLevels) && model.supportedThinkingLevels.length > 0) {
     return model.supportedThinkingLevels;
@@ -2437,11 +2528,11 @@ function supportedThinkingLevelsForCurrentSession() {
   return levels;
 }
 
-function renderThinkingList() {
+function renderThinkingList(targetJid = thinkingSheetTargetJid || state.activeJid) {
   const list = $('thinking-list');
-  const current = currentThinkingLevel();
-  const supported = supportedThinkingLevelsForCurrentSession();
-  const currentModel = currentSessionModelInfo();
+  const current = currentThinkingLevel(targetJid);
+  const supported = supportedThinkingLevelsForCurrentSession(targetJid);
+  const currentModel = currentSessionModelInfo(targetJid);
   const modelName = currentModel?.name || currentModel?.id;
   list.textContent = '';
   const unsupportedCurrent = current && supported && !supported.includes(current);
@@ -2484,9 +2575,9 @@ function renderThinkingList() {
 
     if (isSupported) {
       item.addEventListener('click', async () => {
-        const jid = state.activeJid;
+        const jid = targetJid;
         closeThinkingSheet();
-        const sent = await runQuickCommand('pi thinking', { level });
+        const sent = await runQuickCommand('pi thinking', { level }, jid);
         if (!sent) return;
         if (jid === LIFE_JID && state.activeJid === jid && state.lifeSession) {
           state.lifeSession.thinking = level;
@@ -2510,10 +2601,11 @@ async function awaitThinkingOverride(jid, level, attempts = 6) {
 }
 
 function closeThinkingSheet() {
+  thinkingSheetTargetJid = null;
   $('thinking-sheet').hidden = true;
 }
 
-$('btn-thinking').addEventListener('click', openThinkingSheet);
+$('btn-thinking').addEventListener('click', () => openThinkingSheet());
 $('btn-thinking-close').addEventListener('click', closeThinkingSheet);
 $('thinking-sheet').addEventListener('click', (e) => {
   if (e.target === $('thinking-sheet')) closeThinkingSheet();

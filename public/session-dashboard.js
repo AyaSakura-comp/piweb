@@ -10,6 +10,77 @@ const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
 
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const MIME_EXT_MAP = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/svg+xml': 'svg',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/webm': 'webm',
+  'audio/flac': 'flac',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
+  'video/ogg': 'ogv',
+  'application/pdf': 'pdf',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/csv': 'csv',
+};
+
+function formatPasteToast(files) {
+  const hasImg = files.some((f) => f.type?.startsWith('image/'));
+  const hasAud = files.some((f) => f.type?.startsWith('audio/'));
+  const hasVid = files.some((f) => f.type?.startsWith('video/'));
+  if (files.length === 1) {
+    if (hasImg) return '已貼上圖片附件';
+    if (hasAud) return '已貼上音訊附件';
+    if (hasVid) return '已貼上影片附件';
+    return `已貼上附件 (${files[0].name})`;
+  }
+  return `已貼上 ${files.length} 個附件檔案`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function highlightMatch(container, text, q) {
+  const lower = String(text || '').toLowerCase();
+  const needle = String(q || '').toLowerCase();
+  if (!needle) {
+    container.append(document.createTextNode(text || ''));
+    return;
+  }
+  let i = 0;
+  while (true) {
+    const at = lower.indexOf(needle, i);
+    if (at === -1) break;
+    if (at > i) container.append(document.createTextNode(text.slice(i, at)));
+    const mark = document.createElement('mark');
+    mark.textContent = text.slice(at, at + needle.length);
+    container.append(mark);
+    i = at + needle.length;
+  }
+  container.append(document.createTextNode(text.slice(i)));
+}
+
 export function createSessionDashboard({
   app,
   drawer,
@@ -17,11 +88,35 @@ export function createSessionDashboard({
   main,
   api,
   getSessions,
+  getCommands = () => [],
+  getModels = () => [],
   getSessionBadge,
+  usageCommandForSession = () => 'gpt-usage',
+  isAgyCommandSession = () => false,
+  isPiBtwSession = () => true,
+  isCommandEchoText = () => false,
   buildEventNode,
   streamRich,
   canReuseRich,
   trySendCommand,
+  runQuickCommand = async () => false,
+  onOpenModelSheet = () => {},
+  onOpenThinkingSheet = () => {},
+  onOpenMediaSheet = () => {},
+  onOpenSubagents = () => {},
+  onOpenCommandsRunning = () => {},
+  onDeleteSession = () => {},
+  onReloadSessions = async () => {},
+  createHotKeywords = null,
+  createPromptPin = null,
+  prepareImageUpload = async (file) => ({ file, resized: false, warning: null }),
+  readCompressionPreference = () => true,
+  IMAGE_COMPRESSION_KEY = 'piweb.compressImages',
+  sendJsonWithUploadProgress = null,
+  showUploadProgress = () => {},
+  hideUploadProgress = () => {},
+  quotePreview = (t) => String(t || '').slice(0, 72),
+  copyText = async () => false,
   openLightbox,
   onSelectSingleSession,
   onMarkSeen,
@@ -313,35 +408,83 @@ export function createSessionDashboard({
     }
   }
 
-  // ── Pane Lifecycle & Live Stream ───────────────────────────────────────────
+  // ── Pane Lifecycle, Full Topbar, BTW Workspace, Search, & Full Composer ───
   function createPaneDOM(jid) {
     const session = getSessions().find((s) => s.jid === jid);
     const paneEl = el('article', 'dashboard-pane');
     paneEl.dataset.jid = jid;
     paneEl.setAttribute('aria-label', `Session pane ${session?.name || jid}`);
 
-    // Header
+    // 1. Header (matches single-session .topbar in exact relative position & order)
     const header = el('header', 'dashboard-pane-header');
     header.draggable = true;
-    header.title = '拖曳標題列至其他視窗的上下左右邊緣可水平或垂直分割';
+    header.title = '拖曳標題列至其他視窗的上下左右邊緣可水平或垂直分割，拖至中央可交換視窗位置';
 
     const titleWrap = el('div', 'dashboard-pane-title');
     const hash = el('span', 'hash', '#');
     const nameEl = el('span', 'pane-session-name', session?.name || jid);
+    nameEl.role = 'button';
+    nameEl.tabIndex = 0;
+    nameEl.title = '點擊重新命名';
+    const nameInput = el('input', 'name-edit pane-name-edit');
+    nameInput.maxLength = 80;
+    nameInput.hidden = true;
+    nameInput.setAttribute('aria-label', `Rename ${session?.name || jid}`);
     const badgeEl = el('span', 'provider-badge');
     badgeEl.hidden = true;
     const spinnerEl = el('span', 'work-spinner');
     spinnerEl.hidden = true;
-    titleWrap.append(hash, nameEl, badgeEl, spinnerEl);
+    titleWrap.append(hash, nameEl, nameInput, badgeEl, spinnerEl);
 
+    // Topbar right actions (Stop, Status, Usage, Model, Thinking, More ⋯, Close ×)
     const actions = el('div', 'dashboard-pane-actions');
+
     const stopBtn = el('button', 'icon-btn danger pane-stop-btn');
     stopBtn.type = 'button';
-    stopBtn.title = 'Stop task';
+    stopBtn.title = 'Stop';
     stopBtn.setAttribute('aria-label', `Stop ${session?.name || jid}`);
     stopBtn.hidden = true;
     stopBtn.innerHTML =
-      '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
+    const statusBtn = el('button', 'icon-btn pane-status-btn');
+    statusBtn.type = 'button';
+    statusBtn.title = '/pi status';
+    statusBtn.setAttribute('aria-label', `Show pi status for ${session?.name || jid}`);
+    statusBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.9"/></svg>';
+
+    const usageBtn = el('button', 'icon-btn pane-usage-btn');
+    usageBtn.type = 'button';
+    usageBtn.title = '/gpt-usage';
+    usageBtn.setAttribute('aria-label', `Show usage for ${session?.name || jid}`);
+    usageBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1116 0"/><path d="M12 18l4-5.5"/><circle cx="12" cy="18" r="1.1"/></svg>';
+
+    const modelBtn = el('button', 'icon-btn pane-model-btn');
+    modelBtn.type = 'button';
+    modelBtn.title = 'Model';
+    modelBtn.setAttribute('aria-label', `Choose model for ${session?.name || jid}`);
+    modelBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>';
+
+    const thinkingBtn = el('button', 'icon-btn pane-thinking-btn');
+    thinkingBtn.type = 'button';
+    thinkingBtn.title = 'Thinking level';
+    thinkingBtn.setAttribute('aria-label', `Choose thinking level for ${session?.name || jid}`);
+    thinkingBtn.setAttribute('aria-haspopup', 'dialog');
+    thinkingBtn.dataset.level = session?.thinking || 'default';
+    thinkingBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 15.5a6 6 0 117 0c-1 .7-1.5 1.5-1.5 2.5h-4c0-1-.5-1.8-1.5-2.5z"/><path d="M10 21h4M12 1V0M4.2 4.2l-1.4-1.4M19.8 4.2l1.4-1.4M2 11H0M24 11h-2"/></svg>';
+
+    const moreBtn = el('button', 'icon-btn pane-more-btn');
+    moreBtn.type = 'button';
+    moreBtn.title = 'More';
+    moreBtn.setAttribute('aria-label', `More actions for ${session?.name || jid}`);
+    moreBtn.setAttribute('aria-haspopup', 'menu');
+    moreBtn.setAttribute('aria-expanded', 'false');
+    moreBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
 
     const splitDownBtn = el('button', 'icon-btn pane-split-dir-btn');
     splitDownBtn.type = 'button';
@@ -364,52 +507,302 @@ export function createSessionDashboard({
     closeBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
-    actions.append(stopBtn, splitDownBtn, focusBtn, closeBtn);
+    actions.append(
+      stopBtn,
+      statusBtn,
+      usageBtn,
+      modelBtn,
+      thinkingBtn,
+      moreBtn,
+      splitDownBtn,
+      focusBtn,
+      closeBtn,
+    );
     header.append(titleWrap, actions);
 
-    // Messages scroller
+    // 2. Per-pane Overflow Menu (⋯) anchored right under the pane header
+    const menuScrim = el('div', 'pane-menu-scrim');
+    menuScrim.hidden = true;
+    const moreMenu = el('div', 'menu-pop pane-more-menu');
+    moreMenu.setAttribute('role', 'menu');
+    moreMenu.hidden = true;
+    moreMenu.innerHTML = `
+      <button type="button" class="menu-item" data-action="search" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+        <span class="mi-label">Search</span>
+      </button>
+      <button type="button" class="menu-item" data-action="new-chat" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M4 20l1-4 9.5-9.5a2.1 2.1 0 013 3L8 19z" /></svg>
+        <span class="mi-label">New pi session</span>
+        <span class="mi-cmd">/pi new</span>
+      </button>
+      <button type="button" class="menu-item" data-action="commands-running" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5M6 7l3 3-3 3m6-6h5" /><circle cx="17" cy="17" r="5" /><path d="M17 14v3l2 1" /></svg>
+        <span class="mi-label">背景命令</span>
+      </button>
+      <button type="button" class="menu-item" data-action="btw" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z" /></svg>
+        <span class="mi-label">BTW 側聊</span>
+      </button>
+      <button type="button" class="menu-item" data-action="subagents" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v7M5 14v-4h14v4" /><circle cx="12" cy="3" r="2" /><circle cx="5" cy="18" r="3" /><circle cx="19" cy="18" r="3" /></svg>
+        <span class="mi-label">Subagents</span>
+      </button>
+      <button type="button" class="menu-item" data-action="media" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 14l4.5-4.5 3.5 3.5 3-3L21 15" /><circle cx="8.5" cy="8.5" r="1.4" /></svg>
+        <span class="mi-label">Media</span>
+      </button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" class="menu-item" data-action="split-dir" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="8" rx="1.5"/><rect x="4" y="13" width="16" height="8" rx="1.5"/></svg>
+        <span class="mi-label">切換水平／垂直分割</span>
+      </button>
+      <button type="button" class="menu-item" data-action="expand" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        <span class="mi-label">單獨放大檢視</span>
+      </button>
+      <button type="button" class="menu-item danger" data-action="delete" role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
+        <span class="mi-label">Delete session</span>
+      </button>
+    `;
+
+    // 3. Per-pane Search Panel (directly under header, same position as #search-panel)
+    const searchPanel = el('div', 'search-panel pane-search-panel');
+    searchPanel.hidden = true;
+    searchPanel.innerHTML = `
+      <div class="search-bar">
+        <input type="search" inputmode="search" class="pane-search-input" placeholder="Search this session…" aria-label="Search this session" />
+        <button type="button" class="icon-btn pane-search-close" aria-label="Close search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+      <div class="search-results pane-search-results"></div>
+    `;
+    const searchInput = searchPanel.querySelector('.pane-search-input');
+    const searchCloseBtn = searchPanel.querySelector('.pane-search-close');
+    const searchResultsEl = searchPanel.querySelector('.pane-search-results');
+
+    // 4. Per-pane BTW Ownership Card (directly under header when in BTW mode, matching #btw-card)
+    const btwCard = el('div', 'btw-card pane-btw-card');
+    btwCard.hidden = true;
+    const btwBackBtn = el('button', 'icon-btn pane-btw-back');
+    btwBackBtn.type = 'button';
+    btwBackBtn.title = '回主對話';
+    btwBackBtn.setAttribute('aria-label', '回主對話');
+    btwBackBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>';
+    const btwStatusWrap = el('div');
+    const btwTitleStrong = el('strong', null, 'BTW 側聊');
+    const btwStatusSpan = el('span', null, '不會加入主對話');
+    btwStatusWrap.append(btwTitleStrong, btwStatusSpan);
+    const btwClearBtn = el('button', 'icon-btn pane-btw-clear');
+    btwClearBtn.type = 'button';
+    btwClearBtn.title = '清除 BTW';
+    btwClearBtn.setAttribute('aria-label', '清除 BTW 訊息');
+    btwClearBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>';
+    btwCard.append(btwBackBtn, btwStatusWrap, btwClearBtn);
+
+    // 5. Messages scroller & BTW side messages scroller
     const messagesEl = el('div', 'messages dashboard-pane-messages');
+    const btwMessagesEl = el('div', 'messages btw-messages dashboard-pane-btw-messages');
+    btwMessagesEl.setAttribute('aria-label', 'BTW 側聊紀錄');
+    btwMessagesEl.hidden = true;
+
     const jumpBtn = el('button', 'jump-live pane-jump-live', 'Jump to present ↓');
     jumpBtn.type = 'button';
 
-    // Typing row
+    // 6. Typing row + BTW quick switch link right on the typing line above composer
     const typingEl = el('div', 'typing dashboard-pane-typing');
     typingEl.hidden = true;
     typingEl.innerHTML =
       '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="typing-label">pi is working…</span>';
 
-    // Composer
+    const btwPendingRow = el('div', 'btw-pending-row pane-btw-pending-row');
+    btwPendingRow.hidden = !isPiBtwSession(jid);
+    const btwPendingLink = el('button', 'pane-btw-switch-btn', 'BTW ›');
+    btwPendingLink.type = 'button';
+    btwPendingLink.setAttribute('aria-label', '開啟 BTW');
+    btwPendingRow.append(btwPendingLink);
+
+    // 7. Full Composer Wrap (matching #composer-wrap exact stack order)
     const composerWrap = el('div', 'composer-wrap dashboard-pane-composer-wrap');
+
+    const acBox = el('div', 'autocomplete pane-autocomplete');
+    acBox.hidden = true;
+
+    const uploadProgressEl = el('div', 'upload-progress pane-upload-progress');
+    uploadProgressEl.setAttribute('role', 'progressbar');
+    uploadProgressEl.setAttribute('aria-label', 'Uploading attachments');
+    uploadProgressEl.hidden = true;
+    const uploadHead = el('div', 'upload-progress-head');
+    uploadHead.append(el('span', null, 'Uploading attachments…'));
+    const uploadPercentEl = el('span', null, '0%');
+    uploadHead.append(uploadPercentEl);
+    const uploadTrack = el('div', 'upload-progress-track');
+    const uploadBarEl = el('div', 'upload-progress-bar');
+    uploadTrack.append(uploadBarEl);
+    uploadProgressEl.append(uploadHead, uploadTrack);
+    const paneUploadProgress = {
+      container: uploadProgressEl,
+      bar: uploadBarEl,
+      percent: uploadPercentEl,
+    };
+
+    const quotePreviewEl = el('div', 'quote-preview pane-quote-preview');
+    quotePreviewEl.hidden = true;
+    const quoteLabel = el('span', 'quote-preview-label', '引用');
+    const quoteTextEl = el('span', 'quote-preview-text');
+    const quoteRemoveBtn = el('button', 'pane-quote-remove', '×');
+    quoteRemoveBtn.type = 'button';
+    quoteRemoveBtn.setAttribute('aria-label', 'Remove quote');
+    quotePreviewEl.append(quoteLabel, quoteTextEl, quoteRemoveBtn);
+
+    const attachmentsEl = el('div', 'attachments pane-attachments');
+    attachmentsEl.hidden = true;
+
+    const compressionOptionsEl = el('div', 'image-compression-options pane-compression-options');
+    compressionOptionsEl.hidden = true;
+    const compressionLabel = document.createElement('label');
+    const compressionCheckbox = document.createElement('input');
+    compressionCheckbox.type = 'checkbox';
+    compressionCheckbox.checked = readCompressionPreference();
+    compressionCheckbox.setAttribute('aria-label', '壓縮圖片');
+    compressionLabel.append(compressionCheckbox, el('span', null, '壓縮圖片'));
+    const compressionHint = el(
+      'span',
+      'pane-compression-hint',
+      'JPEG／PNG ≤541,200 像素（528×1025），保持比例；取消傳原檔',
+    );
+    compressionOptionsEl.append(compressionLabel, compressionHint);
+
+    const hotKeywordsEl = el('div', 'life-tags hot-keywords pane-hot-keywords');
+    hotKeywordsEl.setAttribute('role', 'group');
+    hotKeywordsEl.setAttribute('aria-label', '熱門關鍵字');
+    hotKeywordsEl.hidden = true;
+
     const form = el('form', 'composer dashboard-pane-composer');
+    const attachBtn = el('button', 'icon-btn pane-attach-btn');
+    attachBtn.type = 'button';
+    attachBtn.title = 'Add attachment';
+    attachBtn.setAttribute('aria-label', 'Add attachment');
+    attachBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>';
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.multiple = true;
+    fileInput.hidden = true;
+
+    const pasteBtn = el('button', 'icon-btn pane-paste-btn');
+    pasteBtn.type = 'button';
+    pasteBtn.title = '貼上';
+    pasteBtn.setAttribute('aria-label', '貼上剪貼簿內容');
+    pasteBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+        <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+      </svg>
+    `;
+
     const textarea = el('textarea', 'dashboard-pane-input');
     textarea.rows = 1;
     textarea.placeholder = `Message ${session?.name || 'pi'}…`;
     textarea.setAttribute('aria-label', `Message ${session?.name || jid}`);
+
     const sendBtn = el('button', 'icon-btn send dashboard-pane-send');
     sendBtn.type = 'submit';
     sendBtn.title = 'Send';
     sendBtn.setAttribute('aria-label', `Send to ${session?.name || jid}`);
     sendBtn.innerHTML =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" /></svg>';
-    form.append(textarea, sendBtn);
-    composerWrap.append(form);
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 8 6 8z" /></svg>';
 
-    paneEl.append(header, messagesEl, jumpBtn, typingEl, composerWrap);
+    form.append(attachBtn, fileInput, pasteBtn, textarea, sendBtn);
+    composerWrap.append(
+      acBox,
+      uploadProgressEl,
+      quotePreviewEl,
+      attachmentsEl,
+      compressionOptionsEl,
+      hotKeywordsEl,
+      form,
+    );
+
+    paneEl.append(
+      header,
+      menuScrim,
+      moreMenu,
+      searchPanel,
+      btwCard,
+      messagesEl,
+      btwMessagesEl,
+      jumpBtn,
+      typingEl,
+      btwPendingRow,
+      composerWrap,
+    );
+
+    // Mount pinned prompt bar inside the pane right above messagesEl
+    if (typeof createPromptPin === 'function') {
+      createPromptPin({
+        scroller: messagesEl,
+        isCommand: isCommandEchoText,
+      });
+    }
+
+    // Mount hot keywords shortcut chips inside the pane's composer
+    let hotKeywordsCtrl = null;
+    if (typeof createHotKeywords === 'function') {
+      hotKeywordsCtrl = createHotKeywords({
+        container: hotKeywordsEl,
+        input: textarea,
+        select: document.getElementById('hot-keywords-days'),
+      });
+    }
 
     const pane = {
       jid,
       el: paneEl,
       header,
       nameEl,
+      nameInput,
       badgeEl,
       spinnerEl,
       stopBtn,
+      statusBtn,
+      usageBtn,
+      modelBtn,
+      thinkingBtn,
+      moreBtn,
+      moreMenu,
+      menuScrim,
       splitDownBtn,
       focusBtn,
       closeBtn,
+      searchPanel,
+      searchInput,
+      searchResultsEl,
+      btwCard,
+      btwStatusSpan,
+      btwClearBtn,
       messagesEl,
+      btwMessagesEl,
       jumpBtn,
       typingEl,
+      btwPendingRow,
+      btwPendingLink,
+      composerWrap,
+      acBox,
+      uploadProgressEl,
+      paneUploadProgress,
+      quotePreviewEl,
+      quoteTextEl,
+      attachmentsEl,
+      compressionOptionsEl,
+      compressionCheckbox,
+      hotKeywordsEl,
+      hotKeywordsCtrl,
+      attachBtn,
+      fileInput,
+      pasteBtn,
       textarea,
       sendBtn,
       form,
@@ -421,8 +814,73 @@ export function createSessionDashboard({
       partialThinkingEl: null,
       partialMsgEl: null,
       userScrolledUp: false,
+      pendingQuote: '',
+      attachments: [],
+      uploading: false,
+      ac: { open: false, items: [], index: 0, mode: null, command: null },
+      // Per-pane BTW state
+      btwTarget: 'main', // 'main' | 'btw'
+      btwGeneration: null,
+      btwSending: false,
+      btwRemotePending: false,
+      btwPollTimer: null,
+      btwMainDraft: '',
+      btwSideDraft: '',
+      btwLive: [],
+      btwSettledKey: '',
     };
 
+    // ── Inline Rename on Pane Title ──────────────────────────────────────────
+    const startPaneRename = () => {
+      nameInput.value = nameEl.textContent || '';
+      nameEl.hidden = true;
+      nameInput.hidden = false;
+      nameInput.focus();
+      nameInput.select();
+    };
+    const commitPaneRename = async (save) => {
+      if (nameInput.hidden) return;
+      const nextName = nameInput.value.trim();
+      nameInput.hidden = true;
+      nameEl.hidden = false;
+      if (!save || !nextName || nextName === nameEl.textContent) return;
+      const prevName = nameEl.textContent;
+      nameEl.textContent = nextName;
+      onApplySessionTitle(jid, nextName);
+      try {
+        await api(`/api/sessions/${encodeURIComponent(jid)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: nextName }),
+        });
+        await onReloadSessions();
+      } catch (err) {
+        nameEl.textContent = prevName;
+        alert(err.message);
+      }
+    };
+    nameEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startPaneRename();
+    });
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        startPaneRename();
+      }
+    });
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void commitPaneRename(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        void commitPaneRename(false);
+      }
+    });
+    nameInput.addEventListener('blur', () => void commitPaneRename(true));
+
+    // ── Scroll & Jump to Present ─────────────────────────────────────────────
     const isNearBottom = () =>
       messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 28;
     const scrollToBottom = (instant = false) => {
@@ -438,11 +896,10 @@ export function createSessionDashboard({
       () => {
         const near = isNearBottom();
         if (near) pane.userScrolledUp = false;
-        jumpBtn.classList.toggle('visible', !near);
+        jumpBtn.classList.toggle('visible', !near && pane.btwTarget === 'main');
       },
       { passive: true },
     );
-    // Any explicit user touch/wheel/pointer interaction on the message list locks out auto-scroll
     for (const evtName of ['wheel', 'touchmove', 'pointerdown']) {
       messagesEl.addEventListener(
         evtName,
@@ -454,18 +911,20 @@ export function createSessionDashboard({
     }
     jumpBtn.addEventListener('click', () => scrollToBottom(false));
 
+    // Disclosure summary toggle inside pane messages
     messagesEl.addEventListener('click', (e) => {
-      const img = e.target.closest?.('.msg-files img, .msg-text img');
-      if (img && img.src) {
-        const urls = [...messagesEl.querySelectorAll('.msg-files img, .msg-text img')]
+      const img = e.target.closest?.('.msg-files img, .msg-text img, .msg-inline-media img');
+      if (img && img.src && !img.closest('a')) {
+        const urls = [...messagesEl.querySelectorAll('.msg-files img, .msg-text img, .msg-inline-media img')]
           .map((node) => node.getAttribute('src'))
           .filter(Boolean);
         openLightbox(img.getAttribute('src'), urls.length ? urls : [img.getAttribute('src')]);
       }
     });
 
+    // ── Header Dragging (Swap / Split) ───────────────────────────────────────
     header.addEventListener('dragstart', (e) => {
-      if (e.target.closest('button')) {
+      if (e.target.closest('button, input') || !nameInput.hidden) {
         e.preventDefault();
         return;
       }
@@ -482,9 +941,13 @@ export function createSessionDashboard({
       hideDropPreview();
     });
 
-    // Touch / Pen Pointer Drag on pane header so iPad/tablet users can drag panes to swap order
     header.addEventListener('pointerdown', (e) => {
-      if (!wideQuery.matches || e.button !== 0 || e.target.closest('button, input, textarea')) return;
+      if (
+        !wideQuery.matches ||
+        e.button !== 0 ||
+        e.target.closest('button, input, textarea, [role="button"]')
+      )
+        return;
       if (e.pointerType === 'mouse') return;
       pointerDrag = {
         jid,
@@ -497,29 +960,575 @@ export function createSessionDashboard({
       };
     });
 
-    stopBtn.addEventListener('click', async () => {
-      await api(`/api/sessions/${encodeURIComponent(jid)}/commands`, {
-        method: 'POST',
-        body: JSON.stringify({ command: 'pi stop', args: {} }),
-      }).catch((err) => alert(err.message));
-    });
+    // ── Topbar Buttons & Overflow Menu (⋯) ───────────────────────────────────
+    const closePaneMenu = () => {
+      moreMenu.hidden = true;
+      menuScrim.hidden = true;
+      moreBtn.setAttribute('aria-expanded', 'false');
+    };
+    const openPaneMenu = () => {
+      const commandsItem = moreMenu.querySelector('[data-action="commands-running"]');
+      const btwItem = moreMenu.querySelector('[data-action="btw"]');
+      const splitItem = moreMenu.querySelector('[data-action="split-dir"]');
+      if (commandsItem) commandsItem.hidden = !isAgyCommandSession(jid);
+      if (btwItem) btwItem.hidden = !isPiBtwSession(jid);
+      if (splitItem) splitItem.hidden = allJids().length < 2;
+      moreMenu.hidden = false;
+      menuScrim.hidden = false;
+      moreBtn.setAttribute('aria-expanded', 'true');
+    };
 
-    // Quick toggle: move this pane under its neighbor (vertical stack) or out to its own column
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!moreMenu.hidden) closePaneMenu();
+      else openPaneMenu();
+    });
+    menuScrim.addEventListener('click', closePaneMenu);
+
+    stopBtn.addEventListener('click', () => {
+      void runQuickCommand('pi stop', {}, jid);
+    });
+    statusBtn.addEventListener('click', () => {
+      void runQuickCommand('pi status', {}, jid);
+    });
+    usageBtn.addEventListener('click', () => {
+      void runQuickCommand(usageCommandForSession(jid), {}, jid);
+    });
+    modelBtn.addEventListener('click', () => {
+      onOpenModelSheet(jid);
+    });
+    thinkingBtn.addEventListener('click', () => {
+      onOpenThinkingSheet(jid);
+    });
     splitDownBtn.addEventListener('click', () => {
       togglePaneAxis(jid);
     });
-
     focusBtn.addEventListener('click', () => {
       setActive(false);
       onSelectSingleSession(jid);
     });
-
     closeBtn.addEventListener('click', () => {
       removePane(jid);
     });
 
-    // iPadOS / iOS optimization: prevent tapping the Send button from blurring
-    // the textarea and dismissing the virtual keyboard during multi-session work.
+    // Overflow menu actions
+    moreMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.menu-item');
+      if (!item) return;
+      const action = item.dataset.action;
+      closePaneMenu();
+      if (action === 'search') {
+        searchPanel.hidden = false;
+        searchInput.focus();
+      } else if (action === 'new-chat') {
+        void runQuickCommand('pi new', {}, jid);
+      } else if (action === 'commands-running') {
+        onOpenCommandsRunning(jid);
+      } else if (action === 'btw') {
+        void openPaneBtw();
+      } else if (action === 'subagents') {
+        onOpenSubagents(jid);
+      } else if (action === 'media') {
+        onOpenMediaSheet(jid);
+      } else if (action === 'split-dir') {
+        togglePaneAxis(jid);
+      } else if (action === 'expand') {
+        setActive(false);
+        onSelectSingleSession(jid);
+      } else if (action === 'delete') {
+        const s = getSessions().find((cand) => cand.jid === jid) || {
+          jid,
+          name: nameEl.textContent || jid,
+          kind: 'standard',
+        };
+        onDeleteSession(s);
+      }
+    });
+
+    // ── Per-pane Search Bar ──────────────────────────────────────────────────
+    let paneSearchTimer = null;
+    const closePaneSearch = () => {
+      clearTimeout(paneSearchTimer);
+      searchPanel.hidden = true;
+      searchInput.value = '';
+      searchResultsEl.replaceChildren();
+    };
+    searchCloseBtn.addEventListener('click', closePaneSearch);
+    searchInput.addEventListener('input', () => {
+      clearTimeout(paneSearchTimer);
+      paneSearchTimer = setTimeout(async () => {
+        const q = searchInput.value.trim();
+        if (q.length < 2) {
+          searchResultsEl.replaceChildren();
+          return;
+        }
+        try {
+          const { hits } = await api(
+            `/api/sessions/${encodeURIComponent(jid)}/search?q=${encodeURIComponent(q)}`,
+          );
+          if (pane.disposed || searchPanel.hidden) return;
+          searchResultsEl.replaceChildren();
+          if (!hits || hits.length === 0) {
+            searchResultsEl.append(el('div', 'search-empty', `No matches for "${q}"`));
+            return;
+          }
+          for (const hit of hits) {
+            const row = el('div', 'search-hit');
+            const meta = el('div', 'hit-meta');
+            meta.append(
+              el('span', 'hit-who', hit.kind === 'message' ? (hit.role === 'user' ? 'You' : 'pi') : hit.role || hit.kind),
+            );
+            row.append(meta);
+            const text = el('div', 'hit-text');
+            highlightMatch(text, hit.snippet, q);
+            row.append(text);
+            row.addEventListener('click', async () => {
+              const existing = messagesEl.querySelector(`[data-event-id="${hit.id}"]`);
+              if (existing) {
+                existing.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                existing.classList.add('jump-target');
+                setTimeout(() => existing.classList.remove('jump-target'), 2200);
+                closePaneSearch();
+                return;
+              }
+              try {
+                const { events } = await api(
+                  `/api/sessions/${encodeURIComponent(jid)}/events?around=${hit.id}&limit=50`,
+                );
+                if (pane.disposed) return;
+                messagesEl.replaceChildren();
+                for (const ev of events || []) {
+                  appendPaneEvent(pane, ev, false);
+                }
+                const target = messagesEl.querySelector(`[data-event-id="${hit.id}"]`);
+                if (target) {
+                  target.scrollIntoView({ block: 'center' });
+                  target.classList.add('jump-target');
+                  setTimeout(() => target.classList.remove('jump-target'), 2200);
+                }
+                closePaneSearch();
+              } catch {
+                // Ignore jump errors
+              }
+            });
+            searchResultsEl.append(row);
+          }
+        } catch {
+          // Ignore search errors
+        }
+      }, 240);
+    });
+
+    // ── Per-pane Quote Preview ───────────────────────────────────────────────
+    const renderPaneQuote = () => {
+      quotePreviewEl.hidden = !pane.pendingQuote;
+      quoteTextEl.textContent = pane.pendingQuote ? `「${quotePreview(pane.pendingQuote)}」` : '';
+    };
+    pane.renderQuote = renderPaneQuote;
+
+    quoteRemoveBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    quoteRemoveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pane.pendingQuote = '';
+      renderPaneQuote();
+    });
+
+    // ── Per-pane Multimedia / Image Attachment Previews & Compression ────────
+    compressionCheckbox.addEventListener('change', () => {
+      try {
+        localStorage.setItem(IMAGE_COMPRESSION_KEY, String(compressionCheckbox.checked));
+      } catch {
+        // Ignore storage errors
+      }
+    });
+
+    const renderPaneAttachments = () => {
+      attachmentsEl.replaceChildren();
+      attachmentsEl.hidden = pane.attachments.length === 0;
+      compressionOptionsEl.hidden = !pane.attachments.some((a) => a.isImage);
+
+      pane.attachments.forEach((attachment, idx) => {
+        const isImg = attachment.isImage;
+        const isAud = attachment.isAudio;
+        const isVid = attachment.isVideo;
+        const chip = el(
+          'div',
+          `chip${isImg ? ' chip-image' : isAud ? ' chip-audio' : isVid ? ' chip-video' : ''}`,
+        );
+        if (isImg) {
+          const thumb = el('img', 'chip-thumb');
+          thumb.src = attachment.url;
+          thumb.alt = attachment.name;
+          const previewBtn = el('button', 'chip-preview');
+          previewBtn.type = 'button';
+          previewBtn.disabled = pane.uploading;
+          previewBtn.setAttribute('aria-label', `Preview ${attachment.name}`);
+          previewBtn.addEventListener('click', () =>
+            openLightbox(attachment.url, [attachment.url]),
+          );
+          previewBtn.append(thumb);
+          chip.append(previewBtn);
+        } else {
+          const icon = isAud ? '🎵 ' : isVid ? '🎬 ' : '📎 ';
+          chip.append(el('span', 'chip-name', `${icon}${attachment.name}`));
+        }
+        const remove = el('button', 'chip-remove', '×');
+        remove.type = 'button';
+        remove.disabled = pane.uploading;
+        remove.setAttribute('aria-label', `Remove ${attachment.name}`);
+        remove.addEventListener('click', () => {
+          if (pane.uploading) return;
+          const [gone] = pane.attachments.splice(idx, 1);
+          if (gone?.url) URL.revokeObjectURL(gone.url);
+          renderPaneAttachments();
+        });
+        chip.append(remove);
+        attachmentsEl.append(chip);
+      });
+    };
+
+    const addPaneFiles = (fileList) => {
+      let added = 0;
+      for (const file of fileList) {
+        if (!file) continue;
+        const type = file.type || '';
+        const isImage = type.startsWith('image/');
+        const isAudio = type.startsWith('audio/');
+        const isVideo = type.startsWith('video/');
+        const ext = MIME_EXT_MAP[type] || type.split('/')[1]?.split('+')[0] || 'bin';
+        const name = file.name || `pasted-${Date.now()}-${added}.${ext}`;
+        pane.attachments.push({
+          name,
+          file,
+          isImage,
+          isAudio,
+          isVideo,
+          url: isImage ? URL.createObjectURL(file) : null,
+        });
+        added += 1;
+      }
+      if (added > 0) renderPaneAttachments();
+    };
+
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      addPaneFiles(e.target.files);
+      e.target.value = '';
+    });
+
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        if (navigator.clipboard?.read) {
+          try {
+            const items = await navigator.clipboard.read();
+            const mediaFiles = [];
+            for (let i = 0; i < items.length; i++) {
+              const item = items[i];
+              const fileType = item.types.find(
+                (t) =>
+                  t.startsWith('image/') ||
+                  t.startsWith('audio/') ||
+                  t.startsWith('video/') ||
+                  (t.startsWith('application/') && !t.includes('json') && !t.includes('xml')),
+              );
+              if (fileType) {
+                const blob = await item.getType(fileType);
+                const ext = MIME_EXT_MAP[fileType] || fileType.split('/')[1]?.split('+')[0] || 'bin';
+                mediaFiles.push(
+                  new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type: fileType }),
+                );
+              }
+            }
+            if (mediaFiles.length > 0) {
+              addPaneFiles(mediaFiles);
+              showToast?.(formatPasteToast(mediaFiles));
+              return;
+            }
+          } catch {
+            // Fall through to readText
+          }
+        }
+        if (navigator.clipboard?.readText) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            const start = textarea.selectionStart ?? textarea.value.length;
+            const end = textarea.selectionEnd ?? textarea.value.length;
+            textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+            textarea.selectionStart = textarea.selectionEnd = start + text.length;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus({ preventScroll: true });
+            showToast?.('已貼上文字');
+          } else {
+            showToast?.('剪貼簿中沒有文字或多媒體內容');
+          }
+        }
+      } catch {
+        showToast?.('無法存取剪貼簿（請確認瀏覽器授權）');
+      }
+    });
+
+    textarea.addEventListener('paste', (e) => {
+      const items = [...(e.clipboardData?.items ?? [])];
+      const files = items
+        .filter((it) => it.kind === 'file')
+        .map((it) => it.getAsFile())
+        .filter(Boolean);
+      if (files.length === 0) return;
+      e.preventDefault();
+      addPaneFiles(files);
+      showToast?.(formatPasteToast(files));
+    });
+
+    // ── Per-pane BTW Side Workspace ──────────────────────────────────────────
+    const sideBusy = () => pane.btwSending || pane.btwRemotePending;
+    const syncPaneBtwControls = () => {
+      const available = isPiBtwSession(jid);
+      const isBtw = pane.btwTarget === 'btw';
+      btwPendingRow.hidden = isBtw ? false : !available;
+      const linkText = isBtw ? '‹ 主對話' : sideBusy() ? 'BTW 回答中 ›' : 'BTW ›';
+      const linkLabel = isBtw ? '返回主對話' : sideBusy() ? '查看 BTW（回答中）' : '開啟 BTW';
+      if (btwPendingLink.textContent !== linkText) btwPendingLink.textContent = linkText;
+      if (btwPendingLink.getAttribute('aria-label') !== linkLabel) {
+        btwPendingLink.setAttribute('aria-label', linkLabel);
+      }
+      if (sideBusy()) btwStatusSpan.textContent = 'BTW 回答中…';
+      else if (pane.busy) btwStatusSpan.textContent = '主對話執行中 · 不會加入主對話';
+      else btwStatusSpan.textContent = '不會加入主對話';
+      btwStatusSpan.classList.toggle('btw-live', sideBusy() || pane.busy);
+      btwClearBtn.disabled = sideBusy();
+      paneEl.classList.toggle('pane-btw-active', isBtw);
+      attachBtn.disabled = isBtw || pane.uploading;
+      pasteBtn.disabled = isBtw || pane.uploading;
+    };
+    pane.syncBtwControls = syncPaneBtwControls;
+
+    const setPaneBtwTarget = (next) => {
+      if (next === pane.btwTarget) return;
+      if (pane.btwTarget === 'main') {
+        pane.btwMainDraft = textarea.value;
+      } else {
+        pane.btwSideDraft = textarea.value;
+      }
+      pane.btwTarget = next;
+      const isBtw = next === 'btw';
+      textarea.value = isBtw ? pane.btwSideDraft : pane.btwMainDraft;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      messagesEl.hidden = isBtw;
+      btwMessagesEl.hidden = !isBtw;
+      btwCard.hidden = !isBtw;
+      if (isBtw) jumpBtn.classList.remove('visible');
+      const s = getSessions().find((cand) => cand.jid === jid);
+      textarea.placeholder = isBtw ? '問 BTW…' : `Message ${s?.name || 'pi'}…`;
+      textarea.setAttribute('aria-label', isBtw ? `傳送至 BTW (${s?.name || jid})` : `Message ${s?.name || jid}`);
+      sendBtn.setAttribute('aria-label', isBtw ? '傳送至 BTW' : `Send to ${s?.name || jid}`);
+      if (isBtw) btwMessagesEl.scrollTop = btwMessagesEl.scrollHeight;
+      syncPaneBtwControls();
+    };
+
+    const renderPaneBtwThread = (thread) => {
+      const messages = (thread?.messages || []).filter(
+        (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string',
+      );
+      const pending = (thread?.pending || []).filter((t) => typeof t === 'string' && t);
+      const streaming = Array.isArray(thread?.streaming) ? thread.streaming : [];
+
+      btwMessagesEl.replaceChildren(
+        ...messages.map((m) =>
+          buildEventNode({
+            kind: 'message',
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt || new Date().toISOString(),
+            files: [],
+          }),
+        ),
+      );
+
+      for (const qText of pending) {
+        const qNode = buildEventNode({
+          kind: 'message',
+          role: 'user',
+          content: qText,
+          createdAt: new Date().toISOString(),
+          files: [],
+        });
+        qNode.classList.add('btw-pending');
+        btwMessagesEl.append(qNode);
+        const streamItem = streaming.find((it) => it?.question === qText);
+        if (streamItem?.answer) {
+          const ansNode = buildEventNode({
+            kind: 'message',
+            role: 'assistant',
+            content: streamItem.answer,
+            createdAt: new Date().toISOString(),
+            files: [],
+          });
+          ansNode.classList.add('partial', 'btw-streaming');
+          btwMessagesEl.append(ansNode);
+        } else {
+          const wait = el('div', 'btw-waiting');
+          wait.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span>BTW 回答中…</span>';
+          btwMessagesEl.append(wait);
+        }
+      }
+      pane.btwRemotePending = pending.length > 0;
+      btwMessagesEl.scrollTop = btwMessagesEl.scrollHeight;
+      syncPaneBtwControls();
+    };
+
+    const pollPaneBtw = async () => {
+      clearTimeout(pane.btwPollTimer);
+      pane.btwPollTimer = null;
+      if (pane.disposed || !sideBusy()) return;
+      try {
+        const data = await api(`/api/sessions/${encodeURIComponent(jid)}/btw`);
+        if (pane.disposed || !data?.available) return;
+        pane.btwGeneration = data.generation || pane.btwGeneration;
+        renderPaneBtwThread(data.thread);
+        if (sideBusy()) {
+          pane.btwPollTimer = setTimeout(pollPaneBtw, 700);
+        }
+      } catch {
+        if (!pane.disposed && sideBusy()) {
+          pane.btwPollTimer = setTimeout(pollPaneBtw, 2500);
+        }
+      }
+    };
+
+    const openPaneBtw = async () => {
+      if (!isPiBtwSession(jid)) {
+        showToast?.('BTW 僅支援 Pi 模型');
+        return;
+      }
+      if (pane.attachments.length > 0 || pane.pendingQuote) {
+        showToast?.('請先移除主對話附件或引用，再切到 BTW');
+        return;
+      }
+      try {
+        const data = await api(`/api/sessions/${encodeURIComponent(jid)}/btw`);
+        if (pane.disposed) return;
+        if (!data?.available) {
+          showToast?.(data?.reason || '此執行模式尚未支援 BTW');
+          return;
+        }
+        pane.btwGeneration = data.generation;
+        renderPaneBtwThread(data.thread);
+        setPaneBtwTarget('btw');
+        if (sideBusy()) pane.btwPollTimer = setTimeout(pollPaneBtw, 700);
+      } catch (err) {
+        showToast?.(err.message || '無法開啟 BTW');
+      }
+    };
+
+    btwBackBtn.addEventListener('click', () => setPaneBtwTarget('main'));
+    btwPendingLink.addEventListener('click', () => {
+      if (pane.btwTarget === 'btw') setPaneBtwTarget('main');
+      else void openPaneBtw();
+    });
+    btwClearBtn.addEventListener('click', async () => {
+      if (sideBusy() || !pane.btwGeneration) return;
+      if (!confirm('清除這個 BTW 側聊的訊息與脈絡？主對話不受影響。')) return;
+      try {
+        const res = await api(`/api/sessions/${encodeURIComponent(jid)}/btw`, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'clear', generation: pane.btwGeneration }),
+        });
+        if (res?.available) {
+          btwMessagesEl.replaceChildren();
+          showToast?.('BTW 已清除，主對話保持不變');
+        }
+      } catch (err) {
+        showToast?.(err.message || 'BTW 清除失敗');
+      }
+    });
+
+    // ── Per-pane Slash Command Autocomplete ──────────────────────────────────
+    const hidePaneAutocomplete = () => {
+      pane.ac = { open: false, items: [], index: 0, mode: null, command: null };
+      acBox.hidden = true;
+    };
+
+    const applyPaneAutocomplete = (item) => {
+      if (!item) return;
+      if (pane.ac.mode === 'arg') {
+        textarea.value = `/${pane.ac.command.name} ${item.name}`;
+        hidePaneAutocomplete();
+      } else {
+        textarea.value = `/${item.name}${item.arg ? ' ' : ''}`;
+        if (item.arg) updatePaneAutocomplete();
+        else hidePaneAutocomplete();
+      }
+      textarea.focus({ preventScroll: true });
+      autoGrow();
+    };
+
+    const renderPaneAutocomplete = () => {
+      acBox.replaceChildren();
+      acBox.hidden = false;
+      acBox.append(el('div', 'ac-head', pane.ac.mode === 'arg' ? 'Values' : 'Commands'));
+      pane.ac.items.forEach((item, i) => {
+        const row = el('div', `ac-item${i === pane.ac.index ? ' sel' : ''}`);
+        row.dataset.index = String(i);
+        const name = el('div', 'ac-name');
+        name.append(
+          document.createTextNode(pane.ac.mode === 'arg' ? item.name : `/${item.name}`),
+        );
+        if (pane.ac.mode === 'command' && item.arg) {
+          name.append(el('span', 'arg', ` [${item.arg.name}]`));
+        }
+        row.append(name);
+        if (item.description) row.append(el('div', 'ac-desc', item.description));
+        row.addEventListener('pointerdown', (e) => e.preventDefault());
+        row.addEventListener('click', () => applyPaneAutocomplete(item));
+        acBox.append(row);
+      });
+      const selected = acBox.querySelector('.ac-item.sel');
+      if (selected) selected.scrollIntoView({ block: 'nearest' });
+    };
+
+    const updatePaneAutocomplete = () => {
+      if (pane.btwTarget === 'btw') return hidePaneAutocomplete();
+      const value = textarea.value;
+      if (!value.startsWith('/')) return hidePaneAutocomplete();
+      const commands = getCommands() || [];
+      const models = getModels() || [];
+      const raw = value.slice(1);
+      const command = commands
+        .filter((c) => raw.startsWith(`${c.name} `))
+        .sort((a, b) => b.name.length - a.name.length)[0];
+
+      if (command && command.arg) {
+        const partial = raw.slice(command.name.length).trim().toLowerCase();
+        let options = [];
+        if (command.arg.kind === 'model') {
+          options = models
+            .map((m) => m.ref)
+            .filter((ref) => ref.toLowerCase().includes(partial))
+            .slice(0, 40);
+        } else if (command.arg.kind === 'thinking') {
+          options = THINKING_LEVELS.filter((level) => level.startsWith(partial));
+        }
+        if (options.length > 0) {
+          pane.ac = {
+            open: true,
+            mode: 'arg',
+            command,
+            items: options.map((val) => ({ name: val, description: '' })),
+            index: 0,
+          };
+          return renderPaneAutocomplete();
+        }
+        return hidePaneAutocomplete();
+      }
+
+      const query = raw.toLowerCase();
+      const items = commands.filter((c) => c.name.toLowerCase().includes(query));
+      if (items.length === 0) return hidePaneAutocomplete();
+      pane.ac = { open: true, mode: 'command', items, index: 0, command: null };
+      renderPaneAutocomplete();
+    };
+
+    // ── Composer Input & Submit ──────────────────────────────────────────────
     let hadFocusBeforeSend = false;
     sendBtn.addEventListener('pointerdown', (e) => {
       hadFocusBeforeSend = document.activeElement === textarea;
@@ -532,15 +1541,48 @@ export function createSessionDashboard({
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(140, textarea.scrollHeight)}px`;
     };
-    textarea.addEventListener('input', autoGrow);
+    textarea.addEventListener('input', () => {
+      autoGrow();
+      updatePaneAutocomplete();
+    });
     textarea.addEventListener('focus', () => {
       paneEl.classList.add('pane-focused');
     });
     textarea.addEventListener('blur', () => {
       paneEl.classList.remove('pane-focused');
     });
+
+    let compositionEndedAt = 0;
+    textarea.addEventListener('compositionstart', () => {
+      compositionEndedAt = 0;
+    });
+    textarea.addEventListener('compositionend', () => {
+      compositionEndedAt = Date.now();
+    });
     textarea.addEventListener('keydown', (e) => {
       if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter' && Date.now() - compositionEndedAt < 100) return;
+
+      if (pane.ac.open) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const delta = e.key === 'ArrowDown' ? 1 : -1;
+          pane.ac.index =
+            (pane.ac.index + delta + pane.ac.items.length) % pane.ac.items.length;
+          renderPaneAutocomplete();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          applyPaneAutocomplete(pane.ac.items[pane.ac.index]);
+          return;
+        }
+        if (e.key === 'Escape') {
+          hidePaneAutocomplete();
+          return;
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         form.requestSubmit();
@@ -549,29 +1591,118 @@ export function createSessionDashboard({
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (pane.uploading) return;
       const keepKeyboardOpen = hadFocusBeforeSend || document.activeElement === textarea;
       hadFocusBeforeSend = false;
-      const text = textarea.value.trim();
-      if (!text) {
+
+      // BTW Side Conversation Submit
+      if (pane.btwTarget === 'btw') {
+        const text = textarea.value.trim();
+        if (!text || sideBusy() || !pane.btwGeneration) return;
+        pane.btwSending = true;
+        pane.btwSideDraft = '';
+        textarea.value = '';
+        autoGrow();
+        syncPaneBtwControls();
+
+        const qNode = buildEventNode({
+          kind: 'message',
+          role: 'user',
+          content: text,
+          createdAt: new Date().toISOString(),
+          files: [],
+        });
+        qNode.classList.add('btw-pending');
+        const wait = el('div', 'btw-waiting');
+        wait.innerHTML =
+          '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span>BTW 回答中…</span>';
+        btwMessagesEl.append(qNode, wait);
+        btwMessagesEl.scrollTop = btwMessagesEl.scrollHeight;
+        pane.btwPollTimer = setTimeout(pollPaneBtw, 450);
+
+        try {
+          const response = await api(`/api/sessions/${encodeURIComponent(jid)}/btw`, {
+            method: 'POST',
+            body: JSON.stringify({ text, generation: pane.btwGeneration }),
+          });
+          if (!pane.disposed && response?.thread) {
+            renderPaneBtwThread(response.thread);
+          }
+        } catch (err) {
+          if (!pane.disposed) {
+            if (!textarea.value.trim()) {
+              textarea.value = text;
+              autoGrow();
+            }
+            showToast?.(err.message || 'BTW 送出失敗，草稿已保留');
+          }
+        } finally {
+          pane.btwSending = false;
+          syncPaneBtwControls();
+        }
+        return;
+      }
+
+      // Main Conversation Submit (supports text, quote, attachments, slash commands)
+      const rawDraft = textarea.value;
+      const text = rawDraft.trim();
+      const quote = pane.pendingQuote;
+      const submittedAttachments = [...pane.attachments];
+
+      if (!text && !quote && submittedAttachments.length === 0) {
         if (keepKeyboardOpen) textarea.focus({ preventScroll: true });
         return;
       }
+
       textarea.value = '';
+      pane.pendingQuote = '';
+      pane.attachments = [];
+      renderPaneQuote();
+      renderPaneAttachments();
+      hidePaneAutocomplete();
       autoGrow();
       if (keepKeyboardOpen && document.activeElement !== textarea) {
         textarea.focus({ preventScroll: true });
       }
 
-      if (text.startsWith('/')) {
+      if (!quote && text.startsWith('/') && submittedAttachments.length === 0) {
         const handled = await trySendCommand(text, jid);
         if (handled) return;
       }
 
+      const hasAttachments = submittedAttachments.length > 0;
+      const compressImages = compressionCheckbox.checked;
+      if (hasAttachments) {
+        pane.uploading = true;
+        sendBtn.disabled = true;
+        attachBtn.disabled = true;
+        pasteBtn.disabled = true;
+        showUploadProgress(paneUploadProgress, 0);
+      }
+
       try {
-        const result = await api(`/api/sessions/${encodeURIComponent(jid)}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({ text, quote: '', attachments: [] }),
-        });
+        const attachmentsPayload = [];
+        for (const attachment of submittedAttachments) {
+          const prepared = await prepareImageUpload(attachment.file, compressImages);
+          if (prepared.warning) showToast?.(`${prepared.warning}：${attachment.name}`);
+          attachmentsPayload.push({
+            name: prepared.resized ? prepared.file.name : attachment.name,
+            dataBase64: await fileToBase64(prepared.file),
+          });
+        }
+
+        const path = `/api/sessions/${encodeURIComponent(jid)}/messages`;
+        const payload = { text, quote, attachments: attachmentsPayload };
+        const result =
+          hasAttachments && typeof sendJsonWithUploadProgress === 'function'
+            ? await sendJsonWithUploadProgress(path, payload, {
+                onProgress: (pct) => showUploadProgress(paneUploadProgress, pct),
+              })
+            : await api(path, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+              });
+
         const eventId = result?.eventId || pane.cursor + 1;
         if (eventId > pane.cursor) {
           appendPaneEvent(
@@ -580,7 +1711,7 @@ export function createSessionDashboard({
               id: eventId,
               kind: 'message',
               role: 'user',
-              content: text,
+              content: quote ? `> ${quote.replace(/\n/g, '\n> ')}\n\n${text}` : text,
               files: [],
               createdAt: new Date().toISOString(),
             },
@@ -592,9 +1723,26 @@ export function createSessionDashboard({
         }
         scrollToBottom(true);
       } catch (err) {
-        textarea.value = text;
-        autoGrow();
+        if (!textarea.value) {
+          textarea.value = rawDraft;
+          autoGrow();
+        }
+        if (!pane.pendingQuote && quote) {
+          pane.pendingQuote = quote;
+          renderPaneQuote();
+        }
         alert(err.message);
+      } finally {
+        for (const attachment of submittedAttachments) {
+          if (attachment.url) URL.revokeObjectURL(attachment.url);
+        }
+        if (hasAttachments) {
+          pane.uploading = false;
+          sendBtn.disabled = false;
+          attachBtn.disabled = pane.btwTarget === 'btw';
+          pasteBtn.disabled = pane.btwTarget === 'btw';
+          hideUploadProgress(paneUploadProgress);
+        }
       }
     });
 
@@ -604,8 +1752,12 @@ export function createSessionDashboard({
   function syncPaneHeader(pane) {
     const session = getSessions().find((s) => s.jid === pane.jid);
     if (session) {
-      pane.nameEl.textContent = session.name || pane.jid;
-      pane.textarea.placeholder = `Message ${session.name || 'pi'}…`;
+      if (pane.nameInput.hidden) {
+        pane.nameEl.textContent = session.name || pane.jid;
+      }
+      if (pane.btwTarget !== 'btw') {
+        pane.textarea.placeholder = `Message ${session.name || 'pi'}…`;
+      }
       const badge = getSessionBadge(session);
       if (badge) {
         pane.badgeEl.hidden = false;
@@ -614,12 +1766,24 @@ export function createSessionDashboard({
       } else {
         pane.badgeEl.hidden = true;
       }
+      const thinkingLevel = session.thinking || '';
+      pane.thinkingBtn.dataset.level = thinkingLevel || 'default';
+      const tLabel = thinkingLevel || 'runtime default';
+      pane.thinkingBtn.title = `Thinking: ${tLabel}`;
+      pane.thinkingBtn.setAttribute('aria-label', `Choose thinking level. Current: ${tLabel}`);
     }
+    const usageCmd = usageCommandForSession(pane.jid);
+    pane.usageBtn.title = `/${usageCmd}`;
+    const uLabel =
+      usageCmd === 'claude-usage' ? 'Claude' : usageCmd === 'agy-usage' ? 'agy' : 'GPT';
+    pane.usageBtn.setAttribute('aria-label', `Show ${uLabel} usage`);
+
     const busy = Boolean(pane.busy || session?.busy);
     pane.spinnerEl.hidden = !busy;
     pane.stopBtn.hidden = !busy;
-    pane.typingEl.hidden = !busy;
+    pane.typingEl.hidden = !busy || pane.btwTarget === 'btw';
     pane.splitDownBtn.hidden = allJids().length < 2;
+    pane.syncBtwControls?.();
   }
 
   function shouldFollowPane(pane) {
@@ -658,7 +1822,7 @@ export function createSessionDashboard({
       const near =
         pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
         28;
-      pane.jumpBtn.classList.toggle('visible', !near);
+      pane.jumpBtn.classList.toggle('visible', !near && pane.btwTarget === 'main');
     }
   }
 
@@ -713,7 +1877,7 @@ export function createSessionDashboard({
       const near =
         pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
         28;
-      pane.jumpBtn.classList.toggle('visible', !near);
+      pane.jumpBtn.classList.toggle('visible', !near && pane.btwTarget === 'main');
     }
   }
 
@@ -794,7 +1958,7 @@ export function createSessionDashboard({
         appendPaneEvent(pane, ev, false);
       }
       pane.busy = Boolean(busy);
-      if (session?.name) pane.nameEl.textContent = session.name;
+      if (session?.name && pane.nameInput.hidden) pane.nameEl.textContent = session.name;
       syncPaneHeader(pane);
       if (partial?.content || partial?.thinking) {
         renderPanePartial(pane, partial.content ?? '', partial.thinking ?? '');
@@ -822,6 +1986,10 @@ export function createSessionDashboard({
       pane.source = null;
     }
     clearTimeout(pane.reconnectTimer);
+    clearTimeout(pane.btwPollTimer);
+    for (const att of pane.attachments || []) {
+      if (att.url) URL.revokeObjectURL(att.url);
+    }
     pane.el.remove();
     panes.delete(jid);
   }
@@ -1737,6 +2905,15 @@ export function createSessionDashboard({
     removePane,
     applyPreset,
     equalizeWeights,
+    setPaneQuote(jid, text, focusInput = false) {
+      const pane = panes.get(jid);
+      if (!pane) return;
+      pane.pendingQuote = (text || '').trim();
+      pane.renderQuote?.();
+      if (focusInput && pane.textarea) {
+        pane.textarea.focus({ preventScroll: true });
+      }
+    },
     syncSessions() {
       const validJids = new Set(getSessions().map((s) => s.jid));
       if (validJids.size > 0) {

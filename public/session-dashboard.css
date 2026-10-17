@@ -579,15 +579,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
     height: 44px;
-    padding: 0 4px 0 12px;
+    padding: 0 4px 0 10px;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
     cursor: grab;
     user-select: none;
     touch-action: none;
     flex: none;
+    container-type: inline-size;
   }
 
   .dashboard-pane-header:active {
@@ -599,7 +600,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     font-weight: 650;
     color: var(--text-bright);
   }
@@ -614,6 +615,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 14px;
+    padding: 2px 5px;
+    margin-left: -4px;
+    border-radius: 6px;
+    cursor: text;
+  }
+
+  .pane-session-name:hover,
+  .pane-session-name:focus-visible {
+    background: var(--bg-input);
+    outline: none;
   }
 
   .dashboard-pane-actions {
@@ -623,14 +634,15 @@
     flex: none;
   }
 
-  /* 44x44px borderless outline-icon buttons per DESIGN.md */
+  /* 38x38px borderless outline-icon buttons inside pane headers so all session
+     controls (Status, Usage, Model, Thinking, ⋯, Split, Expand, Close) fit cleanly */
   .dashboard-pane-actions .icon-btn {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
     border: 0;
-    border-radius: 10px;
+    border-radius: 9px;
     background: transparent;
     color: var(--text-2);
   }
@@ -646,8 +658,114 @@
   }
 
   .dashboard-pane-actions .icon-btn svg {
-    width: 17px;
-    height: 17px;
+    width: 16px;
+    height: 16px;
+  }
+
+  /* On narrower panes (< 460px), hide secondary direct buttons that are already
+     accessible inside the pane's ⋯ overflow menu so Model / Thinking / ⋯ / × stay clear */
+  @container (max-width: 460px) {
+    .dashboard-pane-actions .pane-status-btn,
+    .dashboard-pane-actions .pane-usage-btn,
+    .dashboard-pane-actions .pane-split-dir-btn,
+    .dashboard-pane-actions .pane-focus-btn {
+      display: none;
+    }
+  }
+
+  /* Per-pane Thinking button level colors & indicator dot (matching #btn-thinking) */
+  .pane-thinking-btn {
+    position: relative;
+  }
+
+  .pane-thinking-btn[data-level='minimal'],
+  .pane-thinking-btn[data-level='low'] {
+    color: #a5b4fc;
+  }
+
+  .pane-thinking-btn[data-level='medium'],
+  .pane-thinking-btn[data-level='high'],
+  .pane-thinking-btn[data-level='xhigh'],
+  .pane-thinking-btn[data-level='max'] {
+    color: var(--thinking);
+  }
+
+  .pane-thinking-btn[data-level='high']::after,
+  .pane-thinking-btn[data-level='xhigh']::after,
+  .pane-thinking-btn[data-level='max']::after {
+    content: '';
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--thinking);
+    box-shadow: 0 0 6px var(--thinking);
+  }
+
+  /* Per-pane ⋯ overflow menu anchored inside the pane right under the header */
+  .pane-menu-scrim {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 44;
+    background: transparent;
+  }
+
+  .pane-more-menu {
+    position: absolute;
+    top: 46px;
+    right: 6px;
+    z-index: 45;
+    max-height: calc(100% - 54px);
+    overflow-y: auto;
+  }
+
+  /* Per-pane BTW mode rules (matching .app.btw-active) */
+  .dashboard-pane.pane-btw-active .dashboard-pane-typing,
+  .dashboard-pane.pane-btw-active .pane-jump-live,
+  .dashboard-pane.pane-btw-active .prompt-pin-clip,
+  .dashboard-pane.pane-btw-active .pane-hot-keywords {
+    display: none !important;
+  }
+
+  /* Per-pane Quote preview remove button (matching #quote-preview-remove) */
+  .pane-quote-remove {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease,
+      transform 0.1s ease;
+  }
+
+  .pane-quote-remove:hover,
+  .pane-quote-remove:active {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--text-bright);
+    transform: scale(1.08);
+  }
+
+  :root[data-theme='light'] .pane-quote-remove:hover,
+  :root[data-theme='light'] .pane-quote-remove:active {
+    background: rgb(45 43 38 / 0.045);
   }
 
   .dashboard-pane-messages {
