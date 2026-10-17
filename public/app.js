@@ -30,6 +30,7 @@ import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
+import { createSessionDashboard } from './session-dashboard.js';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -816,6 +817,9 @@ function setPresentationMode(mode, { persist = true } = {}) {
   $('btn-thinking').hidden = true;
   $('life-title-mark').hidden = !life;
   if (life) {
+    if (typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+      sessionDashboard.setActive(false);
+    }
     closeDrawer();
     closeTrash();
     closeModelSheet();
@@ -1178,11 +1182,15 @@ function renderSessions(force = false) {
 
     item.addEventListener('click', (e) => {
       if (state.selectionPending || e.defaultPrevented || state.renamingJid === session.jid) return;
+      if (typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+        sessionDashboard.setActive(false);
+      }
       openStandardSession(session.jid);
       closeDrawer();
     });
     list.append(item);
   }
+  if (typeof sessionDashboard !== 'undefined') sessionDashboard.syncSessions();
 }
 
 async function createSession() {
@@ -1888,6 +1896,26 @@ const commandsRunningView = createCommandsRunningView({
     key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
     url: withLifeGeneration(`/api/sessions/${encodeURIComponent(state.activeJid)}/commands-running`, state.activeJid),
   } : null,
+});
+const sessionDashboard = createSessionDashboard({
+  app: $('app'),
+  drawer: $('drawer'),
+  sessionList: $('session-list'),
+  main: document.querySelector('.main'),
+  api,
+  getSessions: () => sessionsForDisplay(),
+  getSessionBadge: (session) => sessionBadge(session),
+  buildEventNode,
+  streamRich: updateStreamingRich,
+  canReuseRich: canReuseStreamingRich,
+  trySendCommand,
+  openLightbox: (url, urls) => openLightbox(url, urls),
+  onSelectSingleSession: (jid) => {
+    void openStandardSession(jid);
+  },
+  onMarkSeen: (jid, replyId) => markSeen(jid, replyId),
+  onApplySessionTitle: (jid, name) => applyImmediateSessionTitle(jid, name),
+  showToast: (msg) => showToast(msg),
 });
 function isAgyCommandSession() {
   if (state.mode === 'life' || state.selectionPending || state.previewingDeleted) return false;
