@@ -126,22 +126,113 @@ export function createSystemMetricsMonitor({ fetchMetrics, render, storage, isVi
 }
 
 export function mountSystemMetrics({ panel, input, document, storage, fetch = globalThis.fetch }) {
+  let isExpanded = false;
+
+  const createMetricRow = (label, value, title) => {
+    const row = document.createElement('span');
+    row.className = 'host-metric';
+    row.title = title;
+    const name = document.createElement('span');
+    name.textContent = label;
+    const number = document.createElement('strong');
+    number.textContent = value;
+    row.append(name, number);
+    return row;
+  };
+
   const render = (data) => {
     const rows = metricsRows(data);
-    panel.replaceChildren(
-      ...rows.map(([label, value, title]) => {
-        const row = document.createElement('span');
-        row.className = 'host-metric';
-        row.title = title;
-        const name = document.createElement('span');
-        name.textContent = label;
-        const number = document.createElement('strong');
-        number.textContent = value;
-        row.append(name, number);
-        return row;
-      }),
-    );
-    panel.hidden = rows.length === 0;
+    if (rows.length === 0) {
+      panel.hidden = true;
+      panel.replaceChildren();
+      return;
+    }
+    panel.hidden = false;
+
+    // By default, only show GPU, CPU, and watts (Power).
+    // The others slide down when the user clicks the summary.
+    const PRIMARY_ORDER = ['GPU', 'CPU', 'Power'];
+    const primaryRows = [];
+    const secondaryRows = [];
+
+    for (const key of PRIMARY_ORDER) {
+      const match = rows.find(([label]) => label === key);
+      if (match) primaryRows.push(match);
+    }
+    for (const row of rows) {
+      if (!PRIMARY_ORDER.includes(row[0])) {
+        secondaryRows.push(row);
+      }
+    }
+    // Fallback: if none of GPU, CPU, Power are available, show the first available metric in primary
+    if (primaryRows.length === 0 && secondaryRows.length > 0) {
+      primaryRows.push(secondaryRows.shift());
+    }
+
+    let summaryBtn = panel.querySelector('.host-metrics-summary');
+    let primaryEl = panel.querySelector('.host-metrics-primary');
+    let arrowEl = panel.querySelector('.host-metrics-arrow');
+    let detailsEl = panel.querySelector('.host-metrics-details');
+    let detailsInner = panel.querySelector('.host-metrics-details-inner');
+
+    if (!summaryBtn) {
+      panel.replaceChildren();
+
+      summaryBtn = document.createElement('button');
+      summaryBtn.type = 'button';
+      summaryBtn.className = 'host-metrics-summary';
+      summaryBtn.setAttribute('aria-expanded', String(isExpanded));
+      summaryBtn.setAttribute('aria-label', 'Host system metrics. Click to toggle extra metrics');
+
+      primaryEl = document.createElement('div');
+      primaryEl.className = 'host-metrics-primary';
+
+      arrowEl = document.createElement('span');
+      arrowEl.className = 'host-metrics-arrow';
+      arrowEl.setAttribute('aria-hidden', 'true');
+      arrowEl.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+
+      summaryBtn.append(primaryEl, arrowEl);
+
+      detailsEl = document.createElement('div');
+      detailsEl.className = 'host-metrics-details';
+
+      detailsInner = document.createElement('div');
+      detailsInner.className = 'host-metrics-details-inner';
+      detailsEl.append(detailsInner);
+
+      panel.append(summaryBtn, detailsEl);
+
+      summaryBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (secondaryRows.length > 0 || detailsInner.childElementCount > 0) {
+          isExpanded = !isExpanded;
+          panel.classList.toggle('expanded', isExpanded);
+          panel.dataset.expanded = String(isExpanded);
+          summaryBtn.setAttribute('aria-expanded', String(isExpanded));
+          summaryBtn.title = isExpanded
+            ? 'Click to collapse metrics'
+            : 'Click to expand more metrics';
+        }
+      });
+    }
+
+    panel.classList.toggle('expanded', isExpanded);
+    panel.dataset.expanded = String(isExpanded);
+    summaryBtn.setAttribute('aria-expanded', String(isExpanded));
+
+    const hasSecondary = secondaryRows.length > 0;
+    arrowEl.hidden = !hasSecondary;
+    summaryBtn.style.cursor = hasSecondary ? 'pointer' : 'default';
+    summaryBtn.title = hasSecondary
+      ? isExpanded
+        ? 'Click to collapse metrics'
+        : 'Click to expand more metrics'
+      : '';
+
+    primaryEl.replaceChildren(...primaryRows.map(([l, v, t]) => createMetricRow(l, v, t)));
+    detailsInner.replaceChildren(...secondaryRows.map(([l, v, t]) => createMetricRow(l, v, t)));
   };
   const monitor = createSystemMetricsMonitor({
     storage,

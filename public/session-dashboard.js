@@ -987,6 +987,7 @@ export function createSessionDashboard({
       if (e.pointerType === 'mouse') return;
       window.getSelection()?.removeAllRanges();
       pointerDrag = {
+        source: 'pane',
         targetElement: header,
         jid,
         name: nameEl.textContent || jid,
@@ -3092,6 +3093,7 @@ export function createSessionDashboard({
           if (e.pointerType === 'mouse') return;
           window.getSelection()?.removeAllRanges();
           pointerDrag = {
+            source: 'sidebar',
             targetElement: item,
             jid,
             name: session.name || jid,
@@ -3152,13 +3154,18 @@ export function createSessionDashboard({
       if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
       const dx = e.clientX - pointerDrag.startX;
       const dy = e.clientY - pointerDrag.startY;
-      const isFromSidebar = !allJids().includes(pointerDrag.jid);
+      const isFromSidebar =
+        pointerDrag.source === 'sidebar' ||
+        Boolean(pointerDrag.targetElement?.closest('#session-list, .drawer'));
 
       if (!pointerDrag.mode) {
         if (Math.hypot(dx, dy) < 6) return;
         if (isFromSidebar) {
-          // If dragging horizontally towards the dashboard stage (dx > 0 and dx >= abs(dy)*0.6), lock into drag!
-          if (dx >= 6 || (dx > 0 && dx >= Math.abs(dy) * 0.6)) {
+          // If vertical movement dominates, prioritize scrolling the session list
+          if (Math.abs(dy) >= 6 && Math.abs(dy) >= Math.abs(dx)) {
+            pointerDrag.mode = 'scroll';
+          } else if (dx >= 16 && dx > Math.abs(dy) * 1.2) {
+            // Dragging horizontally towards the dashboard stage
             pointerDrag.mode = 'drag';
           } else if (Math.abs(dy) >= 6) {
             pointerDrag.mode = 'scroll';

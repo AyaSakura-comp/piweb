@@ -22,7 +22,7 @@ COPY tsconfig.json LICENSE ./
 COPY src ./src
 COPY client ./client
 COPY scripts/build-client.mjs ./scripts/build-client.mjs
-COPY public/media-files.js ./public/media-files.js
+COPY public ./public
 RUN npm run build
 
 # Drop dev dependencies from the tree we ship.

@@ -96,7 +96,13 @@ test('mobile host metrics, refresh preference persistence and unavailable sensor
   await page.screenshot({ path: info.outputPath('03-unavailable-hidden.png') });
   metrics = { gpuPercent: 0, npuPowerWatts: 0 };
   await expect(panel).toBeVisible();
-  await expect(panel).toHaveText('NPU power0.00 WGPU0%');
+  await expect(panel).toHaveText('GPU0%NPU power0.00 W');
+  const summaryBtn = panel.locator('.host-metrics-summary');
+  await expect(summaryBtn).toHaveAttribute('aria-expanded', 'false');
+  await summaryBtn.click();
+  await expect(summaryBtn).toHaveAttribute('aria-expanded', 'true');
+  await summaryBtn.click();
+  await expect(summaryBtn).toHaveAttribute('aria-expanded', 'false');
   await page.screenshot({ path: info.outputPath('04-recovered.png') });
   expect(errors).toEqual([]);
 });

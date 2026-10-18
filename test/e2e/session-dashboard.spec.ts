@@ -610,6 +610,51 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await page.waitForTimeout(500);
     await expect(input12).toBeFocused();
 
+    // Verify touch/pen scrolling in session list when session is already in dashboard:
+    // Sliding vertically must scroll the session list, NOT lock into drag mode or create drag ghost!
+    const inDashItem = page.locator('#session-list .session-item.in-dashboard').first();
+    await expect(inDashItem).toBeVisible();
+    const itemBox = (await inDashItem.boundingBox())!;
+    
+    await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      el?.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+        pointerId: 42,
+        button: 0,
+        clientX: x,
+        clientY: y,
+      }));
+    }, { x: itemBox.x + itemBox.width / 2, y: itemBox.y + itemBox.height / 2 });
+
+    await page.evaluate(({ x, y }) => {
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+        pointerId: 42,
+        clientX: x,
+        clientY: y - 35,
+      }));
+    }, { x: itemBox.x + itemBox.width / 2, y: itemBox.y + itemBox.height / 2 });
+
+    // Must NOT have entered pointer drag mode!
+    expect(await page.locator('.dashboard-drag-ghost').count()).toBe(0);
+    expect(await page.evaluate(() => document.body.classList.contains('dashboard-pointer-dragging'))).toBe(false);
+
+    await page.evaluate(({ x, y }) => {
+      window.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+        pointerId: 42,
+        clientX: x,
+        clientY: y - 35,
+      }));
+    }, { x: itemBox.x + itemBox.width / 2, y: itemBox.y + itemBox.height / 2 });
+
     expect(errors).toEqual([]);
   });
 });
