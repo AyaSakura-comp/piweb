@@ -535,6 +535,12 @@
     height: 15px;
   }
 
+  .dashboard-grid.density-compact .dashboard-group,
+  .dashboard-grid.density-compact .dashboard-pane {
+    min-width: 85px;
+    min-height: 65px;
+  }
+
   .dashboard-grid.density-compact .dashboard-pane-messages {
     padding: 6px 2px 4px;
     font-size: 13px;
@@ -547,6 +553,12 @@
   .dashboard-grid.density-compact .dashboard-pane-composer textarea {
     padding: 5px 3px;
     font-size: 12.5px;
+  }
+
+  .dashboard-grid.density-ultra .dashboard-group,
+  .dashboard-grid.density-ultra .dashboard-pane {
+    min-width: 55px;
+    min-height: 48px;
   }
 
   .dashboard-grid.density-ultra .dashboard-pane-header {
@@ -795,10 +807,16 @@
     min-width: 0;
     min-height: 0;
     padding: 10px 4px 6px;
+    will-change: scroll-position;
+    transform: translateZ(0);
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .pane-jump-live {
     bottom: 66px;
+    will-change: transform, opacity;
+    transform: translateZ(0);
   }
 
   .dashboard-pane-composer-wrap {

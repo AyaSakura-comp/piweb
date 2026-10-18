@@ -40,6 +40,7 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   let prompt = '';
   let expanded = false;
   let frame = 0;
+  let lastPush = -1;
   const earlier = new Map();
 
   function setExpanded(next) {
@@ -111,8 +112,9 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
       prompt = next;
       setExpanded(false);
     }
-    clip.style.top = `${scroller.offsetTop}px`;
-    clip.hidden = false;
+    const targetClipTop = `${scroller.offsetTop}px`;
+    if (clip.style.top !== targetClipTop) clip.style.top = targetClipTop;
+    if (clip.hidden) clip.hidden = false;
     // The next prompt's row pushes the bar up as it comes within its height,
     // and the pinned prompt's own bar slides down into place as that prompt's
     // text scrolls past the edge, rather than popping in over it.
@@ -120,10 +122,14 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     const out = rows.below && rows.below.offset < height ? height - rows.below.offset : 0;
     const enter = rows.above && rows.above.past < height ? height - rows.above.past : 0;
     const push = Math.min(height, Math.max(out, enter));
-    bar.style.transform = push ? `translateY(${-push}px)` : '';
-    bar.inert = height > 0 && push >= height;
-    // Its shadow would linger at the top edge once the bar is pushed out.
-    bar.classList.toggle('pushed', push > 0);
+    if (push !== lastPush) {
+      lastPush = push;
+      bar.style.transform = push ? `translate3d(0, ${-push}px, 0)` : '';
+      const nextInert = height > 0 && push >= height;
+      if (bar.inert !== nextInert) bar.inert = nextInert;
+      // Its shadow would linger at the top edge once the bar is pushed out.
+      bar.classList.toggle('pushed', push > 0);
+    }
   }
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(update);

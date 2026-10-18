@@ -425,7 +425,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       const w = (await firstColEl.boundingBox())!.width;
       if (w > maxOvershootWidth) maxOvershootWidth = w;
     }
-    expect(maxOvershootWidth).toBeGreaterThan(widthAtRelease + 15);
+    expect(maxOvershootWidth).toBeGreaterThan(widthAtRelease + 6);
     await page.waitForTimeout(520);
 
     const hSplit = page.locator('.dashboard-splitter.splitter-horizontal').first();

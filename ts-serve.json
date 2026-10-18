@@ -18,7 +18,7 @@
     "piweb.crayfish-monitor.ts.net:8443": {
       "Handlers": {
         "/": {
-          "Proxy": "http://172.24.0.1:8792"
+          "Proxy": "http://172.24.0.1:8793"
         }
       }
     }

@@ -1500,23 +1500,33 @@ async function loadNewer() {
   }
 }
 
-// Scrolling near either end pages history in, Discord-style.
+// Scrolling near either end pages history in, Discord-style (120Hz ProMotion optimized).
+let appScrollRaf = 0;
 $('messages').addEventListener(
   'scroll',
   () => {
-    const m = $('messages');
-    if (shouldLoadOlderHistory(m)) loadOlder();
-    if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
-    // Layout shifts are guarded while the mobile keyboard opens; later unguarded
-    // scrolls still release the lock for keyboard/scrollbar navigation.
-    if (shouldReleaseComposerBottomLock()) releaseComposerBottomLock();
-    if (state.atLive) setJumpLive(!isNearBottom());
+    if (appScrollRaf) return;
+    appScrollRaf = requestAnimationFrame(() => {
+      appScrollRaf = 0;
+      const m = $('messages');
+      if (shouldLoadOlderHistory(m)) loadOlder();
+      if (!state.atLive && m.scrollHeight - m.scrollTop - m.clientHeight < 300) loadNewer();
+      // Layout shifts are guarded while the mobile keyboard opens; later unguarded
+      // scrolls still release the lock for keyboard/scrollbar navigation.
+      if (shouldReleaseComposerBottomLock()) releaseComposerBottomLock();
+      if (state.atLive) setJumpLive(!isNearBottom());
+    });
   },
   { passive: true },
 );
 
+let lastJumpLiveState = null;
 function setJumpLive(show) {
-  $('jump-live').classList.toggle('visible', !!show);
+  const visible = Boolean(show);
+  if (visible !== lastJumpLiveState) {
+    lastJumpLiveState = visible;
+    $('jump-live').classList.toggle('visible', visible);
+  }
 }
 
 async function reopenActiveTail() {
@@ -2575,9 +2585,12 @@ function renderThinkingList(targetJid = thinkingSheetTargetJid || state.activeJi
 
     if (isSupported) {
       item.addEventListener('click', async () => {
-        const jid = targetJid;
+        const jid = targetJid || state.activeJid;
         closeThinkingSheet();
-        const sent = await runQuickCommand('pi thinking', { level }, jid);
+        const sent =
+          jid && jid !== state.activeJid
+            ? await runQuickCommand('pi thinking', { level }, jid)
+            : await runQuickCommand('pi thinking', { level });
         if (!sent) return;
         if (jid === LIFE_JID && state.activeJid === jid && state.lifeSession) {
           state.lifeSession.thinking = level;

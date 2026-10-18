@@ -849,6 +849,9 @@ svg {
   -webkit-overflow-scrolling: touch;
   -webkit-touch-callout: none;
   padding: 12px 0 4px;
+  will-change: scroll-position;
+  transform: translateZ(0);
+  overscroll-behavior-y: contain;
 }
 
 /* Browser anchoring must not silently follow new content when the setting is OFF.
@@ -1591,6 +1594,7 @@ svg {
   pointer-events: none;
   /* Own compositing layer: iOS can otherwise paint the momentum-scrolling
      transcript over this overlay, so the text below shows through. */
+  will-change: transform;
   transform: translateZ(0);
 }
 .prompt-pin {
@@ -1601,6 +1605,8 @@ svg {
   min-height: 44px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  will-change: transform;
+  transform: translateZ(0);
   /* A grey surface, set apart from the transcript under it: --bg-hover's tint
      over the opaque --bg (the tint is translucent; alone, the transcript would
      show through). */

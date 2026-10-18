@@ -880,7 +880,7 @@ export function createSessionDashboard({
     });
     nameInput.addEventListener('blur', () => void commitPaneRename(true));
 
-    // ── Scroll & Jump to Present ─────────────────────────────────────────────
+    // ── Scroll & Jump to Present (120Hz ProMotion optimized) ─────────────────
     const isNearBottom = () =>
       messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 28;
     const scrollToBottom = (instant = false) => {
@@ -891,12 +891,22 @@ export function createSessionDashboard({
       });
       jumpBtn.classList.remove('visible');
     };
+    let scrollRafId = 0;
+    let lastJumpState = false;
     messagesEl.addEventListener(
       'scroll',
       () => {
-        const near = isNearBottom();
-        if (near) pane.userScrolledUp = false;
-        jumpBtn.classList.toggle('visible', !near && pane.btwTarget === 'main');
+        if (scrollRafId) return;
+        scrollRafId = requestAnimationFrame(() => {
+          scrollRafId = 0;
+          const near = isNearBottom();
+          if (near) pane.userScrolledUp = false;
+          const showJump = !near && pane.btwTarget === 'main';
+          if (showJump !== lastJumpState) {
+            lastJumpState = showJump;
+            jumpBtn.classList.toggle('visible', showJump);
+          }
+        });
       },
       { passive: true },
     );
