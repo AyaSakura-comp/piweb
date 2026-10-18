@@ -3098,6 +3098,11 @@ export function createSessionDashboard({
             pointerId: e.pointerId,
             startX: e.clientX,
             startY: e.clientY,
+            startScrollTop: sessionList.scrollTop,
+            lastY: e.clientY,
+            lastTime: performance.now(),
+            velocity: 0,
+            mode: null,
             started: false,
             ghost: null,
           };
@@ -3147,26 +3152,58 @@ export function createSessionDashboard({
       if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
       const dx = e.clientX - pointerDrag.startX;
       const dy = e.clientY - pointerDrag.startY;
-      if (!pointerDrag.started) {
-        const isFromSidebar = !allJids().includes(pointerDrag.jid);
-        if (Math.hypot(dx, dy) < 10) return;
-        if (isFromSidebar && Math.abs(dx) < 8 && Math.abs(dy) > Math.abs(dx) * 1.5) {
-          pointerDrag = null;
-          return;
+      const isFromSidebar = !allJids().includes(pointerDrag.jid);
+
+      if (!pointerDrag.mode) {
+        if (Math.hypot(dx, dy) < 6) return;
+        if (isFromSidebar) {
+          // If dragging horizontally towards the dashboard stage (dx > 0 and dx >= abs(dy)*0.6), lock into drag!
+          if (dx >= 6 || (dx > 0 && dx >= Math.abs(dy) * 0.6)) {
+            pointerDrag.mode = 'drag';
+          } else if (Math.abs(dy) >= 6) {
+            pointerDrag.mode = 'scroll';
+          } else {
+            return;
+          }
+        } else {
+          // Existing pane drag
+          pointerDrag.mode = 'drag';
         }
-        pointerDrag.started = true;
-        dragSourceJid = pointerDrag.jid;
-        try {
-          pointerDrag.targetElement?.setPointerCapture?.(e.pointerId);
-        } catch {}
-        document.body.classList.add('dashboard-pointer-dragging');
-        window.getSelection()?.removeAllRanges();
-        if (!active) setActive(true);
-        const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
-        document.body.append(ghost);
-        pointerDrag.ghost = ghost;
       }
-      if (pointerDrag.started) {
+
+      if (pointerDrag.mode === 'scroll') {
+        if (e.cancelable) e.preventDefault();
+        sessionList.scrollTop = pointerDrag.startScrollTop - dy;
+        const now = performance.now();
+        const dt = now - pointerDrag.lastTime;
+        if (dt > 10) {
+          pointerDrag.velocity = (e.clientY - pointerDrag.lastY) / dt;
+          pointerDrag.lastY = e.clientY;
+          pointerDrag.lastTime = now;
+        }
+        return;
+      }
+
+      if (pointerDrag.mode === 'drag') {
+        // Absolute scroll freeze: keep sessionList locked at startScrollTop so it NEVER scrolls while dragging!
+        if (pointerDrag.startScrollTop !== undefined) {
+          sessionList.scrollTop = pointerDrag.startScrollTop;
+        }
+
+        if (!pointerDrag.started) {
+          pointerDrag.started = true;
+          dragSourceJid = pointerDrag.jid;
+          try {
+            pointerDrag.targetElement?.setPointerCapture?.(e.pointerId);
+          } catch {}
+          document.body.classList.add('dashboard-pointer-dragging');
+          window.getSelection()?.removeAllRanges();
+          if (!active) setActive(true);
+          const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
+          document.body.append(ghost);
+          pointerDrag.ghost = ghost;
+        }
+
         if (e.cancelable) e.preventDefault();
         if (pointerDrag.ghost) {
           pointerDrag.ghost.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 18}px, 0)`;
@@ -3189,7 +3226,24 @@ export function createSessionDashboard({
     drag.ghost?.remove();
     hideDropPreview();
     dragSourceJid = null;
+
+    if (drag.mode === 'scroll' && Math.abs(drag.velocity) > 0.12) {
+      let v = drag.velocity * 16;
+      const momentumStep = () => {
+        v *= 0.92;
+        sessionList.scrollTop -= v;
+        if (Math.abs(v) > 0.5) requestAnimationFrame(momentumStep);
+      };
+      requestAnimationFrame(momentumStep);
+      return;
+    }
+
     if (!drag.started) return;
+
+    // Ensure session list remains at original scroll position after drag
+    if (drag.startScrollTop !== undefined) {
+      sessionList.scrollTop = drag.startScrollTop;
+    }
 
     const mainRect = main.getBoundingClientRect();
     const isOverMain =

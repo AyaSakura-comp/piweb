@@ -364,6 +364,8 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         const pane2Box = (await pane2.boundingBox())!;
         const pane1Box = (await pane1.boundingBox())!;
 
+        const initialListScrollTop = await page.locator('#session-list').evaluate((el) => el.scrollTop);
+
         // Trigger touch pointerdown on sidebar item
         await page.dispatchEvent('#session-list .session-item:nth-child(3)', 'pointerdown', {
           pointerId: 101,
@@ -397,10 +399,13 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         }
         await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
         await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+        // Assert session list scroll did NOT move during horizontal drag into Pane 1
+        const scrollDuringDrag1 = await page.locator('#session-list').evaluate((el) => el.scrollTop);
+        expect(scrollDuringDrag1).toBe(initialListScrollTop);
         await page.screenshot({ path: info.outputPath('panes-touch-drag-over-pane1.png') });
         await page.waitForTimeout(250);
 
-        // Move further into Pane 2 across multiple interpolated steps - ghost must NOT disappear!
+        // Move further into Pane 2 across multiple interpolated steps - ghost must NOT disappear and session list must NOT scroll!
         for (let i = 1; i <= 6; i++) {
           const startX = pane1Box.x + 120;
           const startY = pane1Box.y + 160;
@@ -427,6 +432,9 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         }
         await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
         await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+        // Assert session list scroll did NOT move during horizontal drag into Pane 2
+        const scrollDuringDrag2 = await page.locator('#session-list').evaluate((el) => el.scrollTop);
+        expect(scrollDuringDrag2).toBe(initialListScrollTop);
         await page.screenshot({ path: info.outputPath('panes-touch-drag-over-pane2.png') });
         await page.waitForTimeout(250);
 
@@ -449,6 +457,8 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         await page.waitForTimeout(500);
         // Pane count increased to 3 by dropping onto Pane 2!
         await expect(page.locator('.dashboard-pane')).toHaveCount(3);
+        const scrollAfterDrop = await page.locator('#session-list').evaluate((el) => el.scrollTop);
+        expect(scrollAfterDrop).toBe(initialListScrollTop);
         await page.screenshot({ path: info.outputPath('panes-touch-drag-dropped-pane3.png') });
         await page.waitForTimeout(350);
 

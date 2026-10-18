@@ -128,16 +128,30 @@ Users can drag any existing pane header or drag a session card from the sidebar 
   - `relY > 0.80`: Bottom edge split (`↓ 垂直並排（下方）`)
 - Smooth animated reflows execute via a coordinated FLIP (First, Last, Invert, Play) spring animation.
 
-### iOS Touch Drag Isolation & Ghost Disappearance Fix
-On mobile Safari and iOS WebKit, dragging a session card previously suffered from an intermittent cancellation bug where the drag ghost and drop indicator would vanish mid-drag. This was diagnosed and resolved through a four-part isolation architecture:
-1. **Suppression of Native Text Selection & Callouts**:
-   Applied `user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y;` to `.session-item` and `.dashboard-pane-header`. This prevents iOS from interpreting a touch-and-hold as a text selection on `<span class="name">` or firing native drag recognizers.
-2. **Intent Slop & Pointer Capture (`setPointerCapture`)**:
-   Touch movement tracks directional delta. Pure vertical scrolling in the session drawer (`dy > dx * 1.5`) is preserved. When horizontal drag intent is detected (`dx >= 8px` or $\sqrt{\Delta x^2 + \Delta y^2} \ge 10\text{px}$), the active pointer is explicitly captured via `targetElement.setPointerCapture(e.pointerId)`. Active `pointermove` listeners register with `{ passive: false }` and invoke `e.preventDefault()`, stopping iOS gesture usurpation.
-3. **Underlying Hit Isolation (`.dashboard-pointer-dragging`)**:
-   During active drags, `body.dashboard-pointer-dragging` applies `pointer-events: none !important` across all underlying `.dashboard-stage`, `.dashboard-pane`, `.dashboard-pane-messages`, `.dashboard-pane-composer`, and `.dashboard-splitter` elements. This prevents inner scroll containers from stealing the touch event stream and triggering synthetic `pointercancel`.
-4. **Resilient Pointercancel Commit**:
-   In `finishPointerDrag`, if `pointercancel` is dispatched while the pointer coordinates remain over `.main` or hovering a valid drop target, the drop transaction safely commits rather than discarding the action. Pointer capture is cleanly released on completion.
+### iOS Touch Drag Isolation & Session List Scroll Freeze
+On mobile Safari and iOS WebKit, dragging a session card previously suffered from an intermittent cancellation bug (where the ghost vanished) and accidental vertical scrolling of the session drawer while attempting to drag cards horizontally into the dashboard. This was diagnosed and resolved through a five-part isolation architecture:
+1. **Suppression of Native Text Selection & Browser Pan (`touch-action: none`)**:
+   Applied `user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none;` to `.session-item` on `>= 768px`. This completely prevents the browser's native gesture engine from triggering accidental vertical scrolling or text selection on `<span class="name">` when touching a session card.
+2. **Directional Intent Resolution (Drag vs. Scroll)**:
+   Pointer movement samples directional vector ($\Delta x, \Delta y$).
+   - When horizontal movement towards the dashboard stage is detected ($\Delta x \ge 6\text{px}$ or $\Delta x > 0 \land \Delta x \ge 0.6 |\Delta y|$), the interaction locks into `drag` mode.
+   - When vertical movement in the drawer is detected ($|\Delta y| \ge 6\text{px} \land |\Delta y| > |\Delta x|$), the interaction locks into `scroll` mode, updating `sessionList.scrollTop` smoothly and coasting with momentum on release.
+3. **Absolute Session List Scroll Freeze**:
+   During `drag` mode, `sessionList.scrollTop` is strictly pinned to its initial `startScrollTop`. Any vertical pointer jitter while dragging across the screen cannot scroll the session list even by a single pixel.
+4. **Underlying Hit & Scroll Isolation (`.dashboard-pointer-dragging`)**:
+   During active drags, `body.dashboard-pointer-dragging` applies:
+   ```css
+   body.dashboard-pointer-dragging .session-list,
+   body.dashboard-pointer-dragging #session-list,
+   body.dashboard-pointer-dragging .drawer {
+     overflow: hidden !important;
+     touch-action: none !important;
+     pointer-events: none !important;
+   }
+   ```
+   along with `pointer-events: none !important` across all underlying `.dashboard-stage`, `.dashboard-pane`, `.dashboard-pane-messages`, `.dashboard-pane-composer`, and `.dashboard-splitter` elements. This prevents inner scroll containers from stealing the touch event stream and triggering synthetic `pointercancel`.
+5. **Resilient Pointercancel Commit & Pointer Capture**:
+   In `finishPointerDrag`, if `pointercancel` is dispatched while the pointer coordinates remain over `.main` or hovering a valid drop target, the drop transaction safely commits rather than discarding the action. Pointer capture (`setPointerCapture`) is cleanly released on completion.
 
 ---
 

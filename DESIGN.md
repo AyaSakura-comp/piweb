@@ -273,7 +273,8 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
   dropping in the center (`20%..80%`) swaps the two panes in-place (`⇄ 交換視窗順序` for existing panes,
   or `➕ 加入此視窗旁` when dragged from sidebar), while dropping near the left/right/top/bottom edge splits along that axis
   (`← 水平並排（左側）`, `→ 水平並排（右側）`, `↑ 垂直並排（上方）`, `↓ 垂直並排（下方）`). Active dragging promotes pointer capture
-  (`setPointerCapture`), isolates underlying panes (`dashboard-pointer-dragging` with `pointer-events: none`), and prevents native iOS text selection and gesture cancellation.
+  (`setPointerCapture`), isolates underlying panes and session list (`dashboard-pointer-dragging` with `pointer-events: none; overflow: hidden !important; touch-action: none !important`),
+  enforces `touch-action: none` on `.session-item` to eliminate native scroll competition, and freezes `sessionList.scrollTop` throughout the gesture so the drawer never scrolls while dragging cards over to the dashboard.
 - **120Hz+ zero-lag splitters, 28–36px touch hit-zones & true 120Hz GPU compositor spring physics**:
   visual splitters stay slim (`10px` desktop, `12px` coarse pointer) with a visible
   iPadOS Split-View style pill handle (`40–44px`), while an invisible `::before`
