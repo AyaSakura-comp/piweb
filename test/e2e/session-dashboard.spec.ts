@@ -249,11 +249,8 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       // When 2 panes are open, verify DESIGN.md button compliance, per-pane controls (Model, Thinking, ⋯ menu, Hot Keywords, Quote, Attachments, BTW),
       // and test drag-and-swap pane order with inertial spring collision bounce
       if (count === 2) {
-        const exitBox = (await page.locator('#btn-dashboard-exit').boundingBox())!;
         const eqBox = (await page.locator('#btn-dashboard-equalize').boundingBox())!;
         const clearBox = (await page.locator('#btn-dashboard-clear').boundingBox())!;
-        expect(exitBox.width).toBeGreaterThanOrEqual(44);
-        expect(exitBox.height).toBeGreaterThanOrEqual(44);
         expect(eqBox.width).toBeGreaterThanOrEqual(44);
         expect(eqBox.height).toBeGreaterThanOrEqual(44);
         expect(clearBox.width).toBeGreaterThanOrEqual(44);

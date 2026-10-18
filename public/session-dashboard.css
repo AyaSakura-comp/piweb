@@ -183,7 +183,6 @@
     min-width: 0;
   }
 
-  .dashboard-back-btn,
   .dashboard-Menu-btn,
   .dashboard-icon-action {
     width: 44px;
@@ -201,14 +200,12 @@
     transition: background 160ms ease, color 160ms ease;
   }
 
-  .dashboard-back-btn:hover,
   .dashboard-Menu-btn:hover,
   .dashboard-icon-action:hover {
     background: var(--bg-hover);
     color: var(--text-bright);
   }
 
-  .dashboard-back-btn:focus-visible,
   .dashboard-Menu-btn:focus-visible,
   .dashboard-icon-action:focus-visible {
     outline: 2px solid var(--accent);
@@ -474,6 +471,9 @@
     align-items: stretch;
     overflow: hidden;
     background: var(--bg-dark);
+    will-change: transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
 
   .dashboard-grid.spring-bouncing .dashboard-group,
@@ -511,6 +511,9 @@
     flex-direction: column;
     background: var(--bg);
     overflow: hidden;
+    will-change: transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
 
   /* Compact density adaptations for 6–12 concurrent session panes */
@@ -592,17 +595,22 @@
     }
   }
 
-  /* 120Hz+ zero-lag splitter resizing: disable transitions and sub-tree hit-testing while dragging */
+  /* 120Hz+ zero-lag splitter resizing & inertial spring bounce: disable transitions and sub-tree hit-testing while dragging/bouncing */
   .dashboard-grid.resizing-active,
   .dashboard-grid.resizing-active .dashboard-group,
-  .dashboard-grid.resizing-active .dashboard-pane {
+  .dashboard-grid.resizing-active .dashboard-pane,
+  .dashboard-grid.spring-bouncing,
+  .dashboard-grid.spring-bouncing .dashboard-group,
+  .dashboard-grid.spring-bouncing .dashboard-pane {
     transition: none !important;
-    will-change: flex-grow;
   }
 
   .dashboard-grid.resizing-active .dashboard-pane-messages,
-  .dashboard-grid.resizing-active .dashboard-pane-composer-wrap {
+  .dashboard-grid.resizing-active .dashboard-pane-composer-wrap,
+  .dashboard-grid.spring-bouncing .dashboard-pane-messages,
+  .dashboard-grid.spring-bouncing .dashboard-pane-composer-wrap {
     pointer-events: none;
+    user-select: none;
   }
 
   .dashboard-pane-header {
@@ -859,6 +867,9 @@
     user-select: none;
     -webkit-user-select: none;
     z-index: 30;
+    will-change: transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
     transition: background 0.15s ease;
   }
 

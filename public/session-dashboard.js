@@ -188,9 +188,6 @@ export function createSessionDashboard({
   root.innerHTML = `
     <header class="dashboard-toolbar">
       <div class="dashboard-toolbar-title">
-        <button type="button" class="icon-btn dashboard-back-btn" id="btn-dashboard-exit" aria-label="回單一對話" title="回單一對話">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
-        </button>
         <button type="button" class="icon-btn dashboard-Menu-btn" id="btn-dashboard-drawer" aria-label="切換側邊欄" title="切換側邊欄">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
         </button>
@@ -257,7 +254,6 @@ export function createSessionDashboard({
   const navCountEl = navEntry.querySelector('#dashboard-nav-count');
   const btnEqualize = root.querySelector('#btn-dashboard-equalize');
   const btnClear = root.querySelector('#btn-dashboard-clear');
-  const btnExit = root.querySelector('#btn-dashboard-exit');
   const btnDrawerToggle = root.querySelector('#btn-dashboard-drawer');
 
   // ── State Helpers ──────────────────────────────────────────────────────────
@@ -2012,132 +2008,44 @@ export function createSessionDashboard({
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
+  // ── Analytical Damped Harmonic Oscillator (120Hz ProMotion Spring Physics) ─
+  function solveSpringProgress(t, zeta = 0.52, omega0 = 18.0) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    const omegaD = omega0 * Math.sqrt(1 - zeta * zeta);
+    const c = zeta / Math.sqrt(1 - zeta * zeta);
+    const tau = t * 0.52;
+    return 1 - Math.exp(-zeta * omega0 * tau) * (Math.cos(omegaD * tau) + c * Math.sin(omegaD * tau));
+  }
+
   function triggerWallImpactBounce(targetEl, axis, sign, intensity = 1) {
     if (!targetEl || prefersReducedMotion()) return;
     try {
       const k = Math.max(0.6, Math.min(1.8, intensity));
-      const shift1 = Math.round(12 * k) * sign;
-      const shift2 = Math.round(-6 * k) * sign;
-      const shift3 = Math.round(2.5 * k) * sign;
-      const tx1 = axis === 'x' ? `${shift1}px` : '0px';
-      const ty1 = axis === 'y' ? `${shift1}px` : '0px';
-      const tx2 = axis === 'x' ? `${shift2}px` : '0px';
-      const ty2 = axis === 'y' ? `${shift2}px` : '0px';
-      const tx3 = axis === 'x' ? `${shift3}px` : '0px';
-      const ty3 = axis === 'y' ? `${shift3}px` : '0px';
-
-      const squash = 1 - 0.036 * k;
-      const stretch = 1 + 0.02 * k;
-      const sx1 = axis === 'x' ? squash : stretch;
-      const sy1 = axis === 'y' ? squash : stretch;
-      const sx2 = axis === 'x' ? 1 + 0.022 * k : 1 - 0.012 * k;
-      const sy2 = axis === 'y' ? 1 + 0.022 * k : 1 - 0.012 * k;
-
+      const peakShift = Math.round(14 * k) * sign;
+      const keyframes = [];
+      const steps = 30;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const p = solveSpringProgress(t, 0.58, 20.0);
+        const shift = (peakShift * (1 - p)).toFixed(2);
+        const tx = axis === 'x' ? `${shift}px` : '0px';
+        const ty = axis === 'y' ? `${shift}px` : '0px';
+        const scaleVal = (1 - 0.03 * k * (1 - p)).toFixed(3);
+        const sx = axis === 'x' ? scaleVal : '1';
+        const sy = axis === 'y' ? scaleVal : '1';
+        keyframes.push({
+          transform: `translate3d(${tx}, ${ty}, 0) scale(${sx}, ${sy})`,
+          offset: t,
+        });
+      }
       targetEl.getAnimations?.().forEach((a) => a.cancel());
-      targetEl.animate(
-        [
-          { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
-          { transform: `translate3d(${tx1}, ${ty1}, 0) scale(${sx1}, ${sy1})`, offset: 0.24 },
-          { transform: `translate3d(${tx2}, ${ty2}, 0) scale(${sx2}, ${sy2})`, offset: 0.56 },
-          { transform: `translate3d(${tx3}, ${ty3}, 0) scale(0.994, 0.994)`, offset: 0.82 },
-          { transform: 'translate3d(0, 0, 0) scale(1, 1)' },
-        ],
-        {
-          duration: 480,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        },
-      );
+      targetEl.animate(keyframes, {
+        duration: 440,
+        easing: 'linear',
+      });
     } catch {
       // Ignore Web Animations API errors on detached nodes
-    }
-  }
-
-  function triggerSplitterReleaseCollision(firstEl, secondEl, splitterEl, axis, sign, intensity = 1) {
-    if (prefersReducedMotion()) return;
-    const k = Math.max(0.85, Math.min(1.85, intensity));
-    // Complementary squash-and-stretch along the perpendicular axis + glowing divider
-    // while `stepSpring` drives the primary axis flex-grow overshoot and multi-stage rebound!
-    const compressedEl = sign >= 0 ? secondEl : firstEl;
-    const expandedEl = sign >= 0 ? firstEl : secondEl;
-    try {
-      if (compressedEl) {
-        compressedEl.getAnimations?.().forEach((a) => a.cancel());
-        compressedEl.classList.add('spring-compressed-target');
-        const animC = compressedEl.animate(
-          [
-            { transform: 'scale(1, 1)' },
-            {
-              transform:
-                axis === 'x'
-                  ? `scale(1, ${1 + 0.024 * k})`
-                  : `scale(${1 + 0.024 * k}, 1)`,
-              offset: 0.2,
-            },
-            {
-              transform:
-                axis === 'x'
-                  ? `scale(1, ${1 - 0.012 * k})`
-                  : `scale(${1 - 0.012 * k}, 1)`,
-              offset: 0.54,
-            },
-            { transform: 'scale(1, 1)' },
-          ],
-          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-        );
-        animC.onfinish = () => {
-          compressedEl.classList.remove('spring-compressed-target');
-        };
-      }
-      if (expandedEl) {
-        expandedEl.getAnimations?.().forEach((a) => a.cancel());
-        expandedEl.classList.add('spring-expanded-target');
-        const animE = expandedEl.animate(
-          [
-            { transform: 'scale(1, 1)' },
-            {
-              transform:
-                axis === 'x'
-                  ? `scale(1, ${1 - 0.02 * k})`
-                  : `scale(${1 - 0.02 * k}, 1)`,
-              offset: 0.2,
-            },
-            {
-              transform:
-                axis === 'x'
-                  ? `scale(1, ${1 + 0.01 * k})`
-                  : `scale(${1 + 0.01 * k}, 1)`,
-              offset: 0.54,
-            },
-            { transform: 'scale(1, 1)' },
-          ],
-          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-        );
-        animE.onfinish = () => {
-          expandedEl.classList.remove('spring-expanded-target');
-        };
-      }
-      if (splitterEl) {
-        splitterEl.getAnimations?.().forEach((a) => a.cancel());
-        splitterEl.classList.add('impact-bounce');
-        splitterEl.animate(
-          [
-            { transform: 'scale(1, 1)' },
-            {
-              transform: axis === 'x' ? 'scaleX(1.5)' : 'scaleY(1.5)',
-              offset: 0.2,
-            },
-            {
-              transform: axis === 'x' ? 'scaleX(1.2)' : 'scaleY(1.2)',
-              offset: 0.54,
-            },
-            { transform: 'scale(1, 1)' },
-          ],
-          { duration: 540, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-        );
-        setTimeout(() => splitterEl.classList.remove('impact-bounce'), 540);
-      }
-    } catch {
-      // Ignore Web Animations API errors
     }
   }
 
@@ -2161,7 +2069,7 @@ export function createSessionDashboard({
     // 2. Execute layout mutation & DOM update
     mutateLayoutFn();
 
-    // 3. LAST + INVERT + PLAY with pronounced inertial impact overshoot bounce
+    // 3. LAST + INVERT + PLAY with pronounced analytical 120Hz inertial spring bounce
     for (const [jid, pane] of panes.entries()) {
       if (!gridEl.contains(pane.el)) continue;
       const lastRect = pane.el.getBoundingClientRect();
@@ -2179,7 +2087,6 @@ export function createSessionDashboard({
 
           const sx = Math.max(0.25, Math.min(3.5, firstRect.width / lastRect.width));
           const sy = Math.max(0.25, Math.min(3.5, firstRect.height / lastRect.height));
-          // Pronounced inertial impact overshoot & multi-stage rebound when arriving at target slot
           const signX = dx === 0 ? (dw > 0 ? -1 : 1) : -Math.sign(dx);
           const signY = dy === 0 ? (dh > 0 ? -1 : 1) : -Math.sign(dy);
           const overX =
@@ -2194,57 +2101,49 @@ export function createSessionDashboard({
               : Math.abs(dh) > 8
                 ? signY * Math.min(18, Math.abs(dh) * 0.12)
                 : 0;
-          const reboundX = -overX * 0.48;
-          const reboundY = -overY * 0.48;
-          const settleX = overX * 0.18;
-          const settleY = overY * 0.18;
-          const impactScaleX = Math.abs(dx) >= Math.abs(dy) ? 0.962 : 1.028;
-          const impactScaleY = Math.abs(dy) > Math.abs(dx) ? 0.962 : 1.028;
+
+          const keyframes = [];
+          const steps = 36;
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const p = solveSpringProgress(t, 0.52, 18.0);
+            const curX = (dx * (1 - p) + overX * Math.sin(t * Math.PI)).toFixed(2);
+            const curY = (dy * (1 - p) + overY * Math.sin(t * Math.PI)).toFixed(2);
+            const curSx = (1 + (sx - 1) * (1 - p)).toFixed(3);
+            const curSy = (1 + (sy - 1) * (1 - p)).toFixed(3);
+            keyframes.push({
+              transform: `translate3d(${curX}px, ${curY}px, 0) scale(${curSx}, ${curSy})`,
+              offset: t,
+            });
+          }
 
           pane.el.style.transformOrigin = '0 0';
-          const anim = pane.el.animate(
-            [
-              {
-                transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`,
-              },
-              {
-                transform: `translate3d(${overX}px, ${overY}px, 0) scale(${impactScaleX}, ${impactScaleY})`,
-                offset: 0.54,
-              },
-              {
-                transform: `translate3d(${reboundX}px, ${reboundY}px, 0) scale(${2 - impactScaleX * 0.99}, ${2 - impactScaleY * 0.99})`,
-                offset: 0.76,
-              },
-              {
-                transform: `translate3d(${settleX}px, ${settleY}px, 0) scale(0.996, 0.996)`,
-                offset: 0.9,
-              },
-              {
-                transform: 'translate3d(0, 0, 0) scale(1, 1)',
-              },
-            ],
-            {
-              duration: 520,
-              easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)',
-            },
-          );
+          const anim = pane.el.animate(keyframes, {
+            duration: 480,
+            easing: 'linear',
+          });
           anim.onfinish = () => {
             pane.el.style.transformOrigin = '';
           };
         } else {
           // Newly added pane: pop in with spring collision bounce
-          pane.el.animate(
-            [
-              { transform: 'scale(0.84)', opacity: 0.35 },
-              { transform: 'scale(1.048)', opacity: 1, offset: 0.56 },
-              { transform: 'scale(0.982)', opacity: 1, offset: 0.8 },
-              { transform: 'scale(1)', opacity: 1 },
-            ],
-            {
-              duration: 460,
-              easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-            },
-          );
+          const popKeyframes = [];
+          const popSteps = 30;
+          for (let i = 0; i <= popSteps; i++) {
+            const t = i / popSteps;
+            const p = solveSpringProgress(t, 0.52, 18.0);
+            const curS = (0.84 + 0.16 * p).toFixed(3);
+            const curOp = Math.min(1, 0.35 + 0.65 * (t * 2.5)).toFixed(2);
+            popKeyframes.push({
+              transform: `scale(${curS})`,
+              opacity: curOp,
+              offset: t,
+            });
+          }
+          pane.el.animate(popKeyframes, {
+            duration: 440,
+            easing: 'linear',
+          });
         }
       } catch {
         // Ignore animation errors in headless/unsupported environments
@@ -2275,12 +2174,17 @@ export function createSessionDashboard({
     splitter.innerHTML = '<span class="dashboard-splitter-grip" aria-hidden="true"></span>';
 
     let springRafId = 0;
+    let activeSpringCleanup = null;
     const cancelSpring = () => {
       if (springRafId) {
         cancelAnimationFrame(springRafId);
         springRafId = 0;
-        gridEl.classList.remove('spring-bouncing');
       }
+      if (activeSpringCleanup) {
+        activeSpringCleanup();
+        activeSpringCleanup = null;
+      }
+      gridEl.classList.remove('spring-bouncing');
     };
 
     const equalizePair = () => {
@@ -2430,20 +2334,40 @@ export function createSessionDashboard({
           let lastFrame = performance.now();
           let bouncedWall = false;
 
-          // Allow the spring overshoot to visibly compress the neighbor past the soft drag limit
-          // (down to a 28px rubber-band floor) before bouncing back off the elastic wall!
           const hardMinPx = 28;
-          const applySpringPx = (px) => {
-            const clamped = Math.max(hardMinPx, Math.min(totalPx - hardMinPx, px));
-            const firstRatio = clamped / totalPx;
-            setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
-            return clamped;
+          const isX = axis === 'x';
+          const origFirstSize = currentFirstPx;
+          const origSecondSize = totalPx - origFirstSize;
+
+          const applySpringTransforms = (dispPx) => {
+            if (isX) {
+              splitter.style.transform = `translate3d(${dispPx.toFixed(2)}px, 0, 0)`;
+              firstEl.style.transformOrigin = 'left center';
+              firstEl.style.transform = `scale3d(${((origFirstSize + dispPx) / origFirstSize).toFixed(4)}, 1, 1)`;
+              secondEl.style.transformOrigin = 'right center';
+              secondEl.style.transform = `scale3d(${((origSecondSize - dispPx) / origSecondSize).toFixed(4)}, 1, 1)`;
+            } else {
+              splitter.style.transform = `translate3d(0, ${dispPx.toFixed(2)}px, 0)`;
+              firstEl.style.transformOrigin = 'center top';
+              firstEl.style.transform = `scale3d(1, ${((origFirstSize + dispPx) / origFirstSize).toFixed(4)}, 1)`;
+              secondEl.style.transformOrigin = 'center bottom';
+              secondEl.style.transform = `scale3d(1, ${((origSecondSize - dispPx) / origSecondSize).toFixed(4)}, 1)`;
+            }
           };
 
-          // Trigger synchronized visual impact squash-and-rebound on both adjacent panes + splitter bar
-          const intensity = Math.min(1.9, Math.max(1.15, Math.abs(vel) / 600));
-          triggerSplitterReleaseCollision(firstEl, secondEl, splitter, axis, dragSign, intensity);
+          const clearSpringTransforms = () => {
+            splitter.style.transform = '';
+            firstEl.style.transform = '';
+            secondEl.style.transform = '';
+            firstEl.style.transformOrigin = '';
+            secondEl.style.transformOrigin = '';
+            splitter.classList.remove('impact-bounce');
+            gridEl.classList.remove('spring-bouncing');
+          };
+
+          activeSpringCleanup = clearSpringTransforms;
           gridEl.classList.add('spring-bouncing');
+          splitter.classList.add('impact-bounce');
 
           const stepSpring = (now) => {
             const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
@@ -2457,7 +2381,6 @@ export function createSessionDashboard({
 
             let candidatePx = restPx + disp;
             if (candidatePx < hardMinPx) {
-              candidatePx = hardMinPx;
               disp = hardMinPx - restPx;
               vel = -vel * 0.72; // Strong elastic wall collision rebound!
               if (!bouncedWall) {
@@ -2465,7 +2388,6 @@ export function createSessionDashboard({
                 triggerWallImpactBounce(firstEl, axis, -1, 1.5);
               }
             } else if (candidatePx > totalPx - hardMinPx) {
-              candidatePx = totalPx - hardMinPx;
               disp = totalPx - hardMinPx - restPx;
               vel = -vel * 0.72; // Strong elastic wall collision rebound!
               if (!bouncedWall) {
@@ -2475,14 +2397,15 @@ export function createSessionDashboard({
             }
 
             if (Math.abs(disp) < 0.4 && Math.abs(vel) < 10) {
-              gridEl.classList.remove('spring-bouncing');
+              clearSpringTransforms();
+              activeSpringCleanup = null;
               applyFirstPx(restPx);
               saveState();
               springRafId = 0;
               return;
             }
 
-            applySpringPx(candidatePx);
+            applySpringTransforms(disp);
             springRafId = requestAnimationFrame(stepSpring);
           };
           springRafId = requestAnimationFrame(stepSpring);
@@ -3244,10 +3167,6 @@ export function createSessionDashboard({
     saveState();
     rebuildGrid();
     onRenderSessionListDecorations();
-  });
-
-  btnExit.addEventListener('click', () => {
-    setActive(false);
   });
 
   preventTouchFocusSteal(btnDrawerToggle);
