@@ -480,6 +480,48 @@ function attachMermaidGesture(scrollEl, chartEl) {
   scrollEl.addEventListener('touchcancel', endGesture);
 }
 
+function parseSvgIntrinsicDimensions(svgEl) {
+  if (!svgEl) return { width: 0, height: 0 };
+  const vb = svgEl.getAttribute('viewBox');
+  if (vb) {
+    const parts = vb
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+    if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
+      return { width: parts[2], height: parts[3] };
+    }
+  }
+  const attrW = parseFloat(svgEl.getAttribute('width') || '0');
+  const attrH = parseFloat(svgEl.getAttribute('height') || '0');
+  return {
+    width: Number.isFinite(attrW) && attrW > 0 ? attrW : 0,
+    height: Number.isFinite(attrH) && attrH > 0 ? attrH : 0,
+  };
+}
+
+function fitMermaidSvgInline(svgEl, isGantt = false) {
+  if (!svgEl) return;
+  const { width: intrinsicW, height: intrinsicH } = parseSvgIntrinsicDimensions(svgEl);
+  svgEl.style.display = 'block';
+  if (isGantt) {
+    svgEl.style.maxWidth = 'none';
+    if (intrinsicW > 0) {
+      svgEl.style.width = `${Math.max(intrinsicW, 360)}px`;
+    }
+    svgEl.style.height = 'auto';
+    return;
+  }
+
+  // Fit-to-container by default so the user always sees the complete diagram
+  // (left-to-right and top-to-bottom) without covering the entire phone screen!
+  svgEl.removeAttribute('height');
+  svgEl.style.width = '100%';
+  svgEl.style.maxWidth = intrinsicW > 0 ? `${Math.max(intrinsicW, 240)}px` : '100%';
+  svgEl.style.height = 'auto';
+  svgEl.style.maxHeight = 'min(42dvh, 340px)';
+}
+
 function openMermaidModal(svgHtml) {
   let modal = document.getElementById('mermaid-modal');
   if (!modal) {
@@ -686,9 +728,14 @@ function openMermaidModal(svgHtml) {
   stage.innerHTML = svgHtml;
   const svgEl = stage.querySelector('svg');
   if (svgEl) {
-    svgEl.style.maxWidth = 'none';
+    const { width: intrinsicW } = parseSvgIntrinsicDimensions(svgEl);
     svgEl.removeAttribute('width');
     svgEl.removeAttribute('height');
+    svgEl.style.display = 'block';
+    svgEl.style.width = intrinsicW > 0 ? `min(86vw, ${intrinsicW}px)` : '86vw';
+    svgEl.style.maxWidth = '86vw';
+    svgEl.style.maxHeight = '76dvh';
+    svgEl.style.height = 'auto';
   }
   modal.hidden = false;
   document.body.style.overflow = 'hidden';
@@ -731,28 +778,45 @@ export function renderCode(item) {
   if (item.lang === 'mermaid') {
     const wrap = document.createElement('div');
     wrap.className = 'mermaid-wrap';
+    const diagramLabel = getMermaidDiagramLabel(item.code);
+    wrap.dataset.diagramType = diagramLabel.toLowerCase();
 
     const header = document.createElement('div');
     header.className = 'mermaid-header';
 
     const title = document.createElement('span');
     title.className = 'mermaid-title';
-    title.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3zM10 6.5h4M17.5 10v4M6.5 10v4M10 17.5h4"/></svg> ${getMermaidDiagramLabel(item.code)}`;
+    title.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3zM10 6.5h4M17.5 10v4M6.5 10v4M10 17.5h4"/></svg> ${diagramLabel}`;
     header.append(title);
 
     const actions = document.createElement('div');
     actions.className = 'mermaid-actions';
 
+    const btnToggle = document.createElement('button');
+    btnToggle.type = 'button';
+    btnToggle.className = 'mermaid-btn mermaid-toggle-btn';
+    btnToggle.setAttribute('aria-expanded', 'true');
+    btnToggle.setAttribute('aria-label', '收合圖表');
+    const setToggleLabel = (collapsed) => {
+      btnToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btnToggle.setAttribute('aria-label', collapsed ? '展開圖表' : '收合圖表');
+      btnToggle.innerHTML = collapsed
+        ? `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg> 展開`
+        : `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg> 收合`;
+    };
+    setToggleLabel(false);
+
     const btnZoom = document.createElement('button');
     btnZoom.type = 'button';
-    btnZoom.className = 'mermaid-btn';
+    btnZoom.className = 'mermaid-btn mermaid-zoom-btn';
     btnZoom.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M11 8v6M8 11h6"/></svg> 放大檢視`;
 
     const btnCopy = document.createElement('button');
     btnCopy.type = 'button';
-    btnCopy.className = 'mermaid-btn';
+    btnCopy.className = 'mermaid-btn mermaid-copy-btn';
     btnCopy.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 複製代碼`;
-    btnCopy.addEventListener('click', () => {
+    btnCopy.addEventListener('click', (e) => {
+      e.stopPropagation();
       navigator.clipboard.writeText(item.code);
       btnCopy.textContent = '已複製 ✓';
       setTimeout(() => {
@@ -760,13 +824,23 @@ export function renderCode(item) {
       }, 1500);
     });
 
-    actions.append(btnZoom);
-    actions.append(btnCopy);
+    actions.append(btnToggle, btnZoom, btnCopy);
     header.append(actions);
     wrap.append(header);
 
     const scrollWrap = document.createElement('div');
     scrollWrap.className = 'mermaid-scroll';
+
+    const toggleCollapse = (e) => {
+      if (e) e.stopPropagation();
+      const collapsed = wrap.classList.toggle('is-collapsed');
+      scrollWrap.hidden = collapsed;
+      setToggleLabel(collapsed);
+    };
+    btnToggle.addEventListener('click', toggleCollapse);
+    title.style.cursor = 'pointer';
+    title.title = '點擊收合／展開圖表';
+    title.addEventListener('click', toggleCollapse);
 
     const chart = document.createElement('div');
     chart.className = 'mermaid-chart';
@@ -780,7 +854,8 @@ export function renderCode(item) {
     wrap.append(scrollWrap);
 
     let renderedSvg = '';
-    btnZoom.addEventListener('click', () => {
+    btnZoom.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (renderedSvg) openMermaidModal(renderedSvg);
     });
 
@@ -798,16 +873,7 @@ export function renderCode(item) {
         chart.innerHTML = svg;
         const svgEl = chart.querySelector('svg');
         if (svgEl) {
-          svgEl.style.maxWidth = 'none';
-          svgEl.style.display = 'block';
-          const vb = svgEl.getAttribute('viewBox');
-          if (vb) {
-            const [, , w] = vb.split(' ').map(Number);
-            if (w) {
-              const targetWidth = Math.max(w, 360);
-              svgEl.style.width = `${targetWidth}px`;
-            }
-          }
+          fitMermaidSvgInline(svgEl, diagramLabel === 'Gantt');
         }
         if (bindFunctions) {
           try {
