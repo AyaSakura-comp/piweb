@@ -246,8 +246,7 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
 `4×3`) with independent live SSE streams and composers per pane.
 
 - **Header (52px, directly in `.main`)**: same `--bg` surface and `1px solid var(--border)`
-  bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: `‹` back icon
-  (`#btn-dashboard-exit`, 返回單一對話). Centre-left: “Session Dashboard” at 15px/650
+  bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: “Session Dashboard” at 15px/650
   and a 12px `--text-2` counter (`N 個並排視窗`). Centre-right: dark capsule layout
   switcher (`border-radius: 999px`) with selection ring (`border-color: var(--text)`)
   for **水平 / 垂直 / 網格**. Right: borderless 44×44px outline-icon buttons for
@@ -271,18 +270,20 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
     image compression toggle (`壓縮圖片`), and `createHotKeywords` quick-input chip bar.
 - **Drag-and-swap & directional drop zones**: dragging a session from the sidebar or
   dragging any pane header over another pane highlights a 5-way drop target:
-  dropping in the center (`22%..78%`) swaps the two panes in-place (`⇄ 交換視窗順序`),
-  while dropping near the left/right/top/bottom edge splits along that axis.
-- **120Hz+ zero-lag splitters, 28–36px touch hit-zones & inertial spring collision bounce**:
+  dropping in the center (`20%..80%`) swaps the two panes in-place (`⇄ 交換視窗順序` for existing panes,
+  or `➕ 加入此視窗旁` when dragged from sidebar), while dropping near the left/right/top/bottom edge splits along that axis
+  (`← 水平並排（左側）`, `→ 水平並排（右側）`, `↑ 垂直並排（上方）`, `↓ 垂直並排（下方）`). Active dragging promotes pointer capture
+  (`setPointerCapture`), isolates underlying panes (`dashboard-pointer-dragging` with `pointer-events: none`), and prevents native iOS text selection and gesture cancellation.
+- **120Hz+ zero-lag splitters, 28–36px touch hit-zones & true 120Hz GPU compositor spring physics**:
   visual splitters stay slim (`10px` desktop, `12px` coarse pointer) with a visible
   iPadOS Split-View style pill handle (`40–44px`), while an invisible `::before`
   hit-target expands the draggable touch zone to `28px` (`36px` on `@media (pointer: coarse)`).
   Dragging `.dashboard-splitter` processes high-rate `getCoalescedEvents()` samples
   synchronously with `.resizing-active`. Releasing a horizontal or vertical splitter
-  drives an underdamped spring oscillation (`stiffness = 420, damping = 10.5`, rubber-band
-  cushion down to `28px`) with a 35–68px inertial overshoot, 3-stage elastic rebound,
-  and synchronized perpendicular squash-and-stretch on both adjacent panes before
-  locking onto the target weights. Pane moves, swaps, layout switches, and equalization
+  executes an analytical damped harmonic oscillator solver (`solveSpringProgress`, `stiffness = 420, damping = 10.5`,
+  rubber-band cushion down to `28px`, 35–68px overshoot, 3-stage elastic rebound) compiling 36-point linear keyframes via Web Animations API (WAAPI),
+  driving `scale3d` and `translate3d` purely on GPU compositor layers (`will-change: transform`, `translateZ(0)`) with zero layout reflows during the 440ms bounce.
+  Message scrolling runs at 120Hz ProMotion with Apple quartic ease-out (`smoothScrollTo`). Pane moves, swaps, layout switches, and equalization
   animate via a multi-stage FLIP spring collision bounce (`animatePaneLayoutTransition`).
 - **Auto-scroll to latest & iPadOS virtual keyboard stability**: activating Dashboard
   or hydrating a pane automatically scrolls every tiled pane to the latest message and
@@ -309,5 +310,6 @@ session isolation coverage. Other specs cover reconnect paging, stable polling,
 light/dark themes and reduced motion. These UI tests use controlled API fixtures;
 they are not new real-inference lifecycle verification.
 
-See [Subagents documentation](docs/subagents.md) for data, ownership and backend
-constraints. Generated video and screenshots stay under ignored `artifacts/`.
+See [Multi-session tiling dashboard](docs/session-dashboard.md) for full architecture, GPU spring solver, touch drag isolation, per-pane parity, and verification matrix.
+See [Subagents documentation](docs/subagents.md) for data, ownership and backend constraints.
+Generated video and screenshots stay under ignored `artifacts/`.

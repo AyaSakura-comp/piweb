@@ -63,9 +63,11 @@ test.use({
 
 test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () => {
 
-  test('scales smoothly from 1 to 12 concurrent sessions across horizontal, vertical, and 2D grid layouts with splitters', async ({
-    page,
-  }, info) => {
+  test('scales smoothly from 1 to 12 concurrent sessions across horizontal, vertical, and 2D grid layouts with splitters', async (
+    { page },
+    info,
+  ) => {
+    test.setTimeout(60000);
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => {
@@ -354,6 +356,84 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           .locator('.dashboard-pane')
           .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
         expect(orderRestored).toEqual([firstJid, secondJid]);
+
+        // 6. Test dragging a session from sidebar across Pane 1 and onto Pane 2 using touch pointer events
+        const item3 = page.locator('#session-list .session-item').nth(2);
+        const item3Box = (await item3.boundingBox())!;
+        const pane2 = page.locator(`.dashboard-pane[data-jid="${secondJid}"]`);
+        const pane2Box = (await pane2.boundingBox())!;
+        const pane1Box = (await pane1.boundingBox())!;
+
+        // Trigger touch pointerdown on sidebar item
+        await page.dispatchEvent('#session-list .session-item:nth-child(3)', 'pointerdown', {
+          pointerId: 101,
+          pointerType: 'touch',
+          button: 0,
+          clientX: item3Box.x + 20,
+          clientY: item3Box.y + 15,
+        });
+
+        // Move horizontally into Pane 1
+        await page.evaluate(
+          ({ clientX, clientY }) => {
+            window.dispatchEvent(
+              new PointerEvent('pointermove', {
+                pointerId: 101,
+                pointerType: 'touch',
+                clientX,
+                clientY,
+                cancelable: true,
+                bubbles: true,
+              }),
+            );
+          },
+          { clientX: pane1Box.x + 50, clientY: pane1Box.y + 50 },
+        );
+        await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
+        await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+
+        // Move further into Pane 2 - must NOT disappear!
+        await page.evaluate(
+          ({ clientX, clientY }) => {
+            window.dispatchEvent(
+              new PointerEvent('pointermove', {
+                pointerId: 101,
+                pointerType: 'touch',
+                clientX,
+                clientY,
+                cancelable: true,
+                bubbles: true,
+              }),
+            );
+          },
+          { clientX: pane2Box.x + pane2Box.width / 2, clientY: pane2Box.y + pane2Box.height / 2 },
+        );
+        await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
+        await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+
+        // Release pointer to complete drop onto Pane 2
+        await page.evaluate(
+          ({ clientX, clientY }) => {
+            window.dispatchEvent(
+              new PointerEvent('pointerup', {
+                pointerId: 101,
+                pointerType: 'touch',
+                clientX,
+                clientY,
+                cancelable: true,
+                bubbles: true,
+              }),
+            );
+          },
+          { clientX: pane2Box.x + pane2Box.width / 2, clientY: pane2Box.y + pane2Box.height / 2 },
+        );
+        await page.waitForTimeout(480);
+        // Pane count increased to 3 by dropping onto Pane 2!
+        await expect(page.locator('.dashboard-pane')).toHaveCount(3);
+        // Remove the 3rd pane to restore 2 panes for subsequent steps
+        await page.locator('.dashboard-pane').nth(2).locator('.pane-close-btn').click();
+        await page.waitForTimeout(300);
+        await expect(page.locator('.dashboard-pane')).toHaveCount(2);
       }
 
       // When 4 panes are open (2x2 grid), test both horizontal and vertical splitter drag & inertial collision bounce

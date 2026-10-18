@@ -111,6 +111,10 @@
   /* Draggable session items & tile button in sidebar */
   .session-item {
     cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: pan-y;
   }
 
   .session-item:active {
@@ -626,6 +630,8 @@
     border-bottom: 1px solid var(--border);
     cursor: grab;
     user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
     touch-action: none;
     flex: none;
     container-type: inline-size;
@@ -1008,4 +1014,23 @@
     pointer-events: none;
     box-shadow: 0 8px 20px rgb(0 0 0 / 0.4);
   }
+
+  /* Active touch/pointer drag isolation: prevent underlying containers from stealing pointer events */
+  body.dashboard-pointer-dragging,
+  body.dashboard-pointer-dragging * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
+  }
+
+  body.dashboard-pointer-dragging .dashboard-stage,
+  body.dashboard-pointer-dragging .dashboard-pane,
+  body.dashboard-pointer-dragging .dashboard-pane-messages,
+  body.dashboard-pointer-dragging .dashboard-pane-composer,
+  body.dashboard-pointer-dragging .dashboard-pane-header,
+  body.dashboard-pointer-dragging .dashboard-splitter,
+  body.dashboard-pointer-dragging .dashboard-pane-jump {
+    pointer-events: none !important;
+  }
 }
+

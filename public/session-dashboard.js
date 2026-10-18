@@ -960,7 +960,7 @@ export function createSessionDashboard({
 
     // ── Header Dragging (Swap / Split) ───────────────────────────────────────
     header.addEventListener('dragstart', (e) => {
-      if (e.target.closest('button, input') || !nameInput.hidden) {
+      if (e.target.closest('button, input') || !nameInput.hidden || pointerDrag) {
         e.preventDefault();
         return;
       }
@@ -985,7 +985,9 @@ export function createSessionDashboard({
       )
         return;
       if (e.pointerType === 'mouse') return;
+      window.getSelection()?.removeAllRanges();
       pointerDrag = {
+        targetElement: header,
         jid,
         name: nameEl.textContent || jid,
         pointerId: e.pointerId,
@@ -2682,14 +2684,14 @@ export function createSessionDashboard({
     if (!jid || jid === 'web:life') return;
     if (target?.mode === 'pane' && target.jid === jid) return;
 
-    // Direct swap when dragging an existing pane onto another pane's center, or replacing with a sidebar session
+    // Direct swap when dragging an existing pane onto another pane's center, or adding alongside target pane
     if (target?.mode === 'pane' && target.zone === 'swap' && target.jid) {
       if (swapPanesInPlace(jid, target.jid)) return;
-      // If `jid` was dragged from the sidebar (not yet in dashboard), insert right after target.jid
+      // If `jid` was dragged from the sidebar (not yet in dashboard), insert as a new pane adjacent to target.jid
       const loc = findJidLocation(target.jid);
       if (loc) {
         detachJidFromGroups(jid);
-        groups[loc.gIdx].items.splice(loc.iIdx + 1, 0, { jid, weight: 1 });
+        groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [{ jid, weight: 1 }] });
         return;
       }
     }
@@ -2924,10 +2926,11 @@ export function createSessionDashboard({
     const relY = (clientY - r.top) / Math.max(1, r.height);
 
     // 5-Way zone detection:
-    // - Center region (22%..78% on both axes) when dragging an existing dashboard pane => 'swap' (交換視窗位置)
+    // - Center region (20%..80% on both axes) => 'swap' (替換或交換此視窗)
     // - Top / Bottom / Left / Right edges => directional split
     const isExistingPaneDrag = Boolean(dragSourceJid && allJids().includes(dragSourceJid));
-    const inCenter = relX > 0.22 && relX < 0.78 && relY > 0.22 && relY < 0.78;
+    const isSamePane = hoveredPane.dataset.jid === dragSourceJid;
+    const inCenter = relX > 0.20 && relX < 0.80 && relY > 0.20 && relY < 0.80;
 
     const distTop = relY;
     const distBottom = 1 - relY;
@@ -2936,7 +2939,7 @@ export function createSessionDashboard({
     const minDist = Math.min(distTop, distBottom, distLeft, distRight);
 
     let zone = 'right';
-    if (isExistingPaneDrag && inCenter && hoveredPane.dataset.jid !== dragSourceJid) {
+    if (inCenter && !isSamePane) {
       zone = 'swap';
     } else if (minDist === distTop && distTop < 0.25) {
       zone = 'top';
@@ -2960,7 +2963,7 @@ export function createSessionDashboard({
         width: r.width - 12,
         height: r.height - 12,
       };
-      label = '⇄ 交換視窗順序';
+      label = isExistingPaneDrag ? '⇄ 交換視窗順序' : '➕ 加入此視窗旁';
     } else if (zone === 'top') {
       previewRect = { left: localLeft + 6, top: localTop + 6, width: r.width - 12, height: r.height / 2 - 8 };
       label = '↑ 垂直並排（上方）';
@@ -3065,7 +3068,7 @@ export function createSessionDashboard({
       if (!item.dataset.dashDragBound) {
         item.dataset.dashDragBound = '1';
         item.addEventListener('dragstart', (e) => {
-          if (!wideQuery.matches || e.target.closest('input, .del')) {
+          if (!wideQuery.matches || e.target.closest('input, .del') || pointerDrag) {
             e.preventDefault();
             return;
           }
@@ -3087,7 +3090,9 @@ export function createSessionDashboard({
         item.addEventListener('pointerdown', (e) => {
           if (!wideQuery.matches || e.button !== 0 || e.target.closest('button, input')) return;
           if (e.pointerType === 'mouse') return;
+          window.getSelection()?.removeAllRanges();
           pointerDrag = {
+            targetElement: item,
             jid,
             name: session.name || jid,
             pointerId: e.pointerId,
@@ -3144,33 +3149,54 @@ export function createSessionDashboard({
       const dy = e.clientY - pointerDrag.startY;
       if (!pointerDrag.started) {
         const isFromSidebar = !allJids().includes(pointerDrag.jid);
-        if (Math.hypot(dx, dy) < 14 || (isFromSidebar && Math.abs(dx) < Math.abs(dy))) return;
+        if (Math.hypot(dx, dy) < 10) return;
+        if (isFromSidebar && Math.abs(dx) < 8 && Math.abs(dy) > Math.abs(dx) * 1.5) {
+          pointerDrag = null;
+          return;
+        }
         pointerDrag.started = true;
         dragSourceJid = pointerDrag.jid;
+        try {
+          pointerDrag.targetElement?.setPointerCapture?.(e.pointerId);
+        } catch {}
+        document.body.classList.add('dashboard-pointer-dragging');
+        window.getSelection()?.removeAllRanges();
         if (!active) setActive(true);
         const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
         document.body.append(ghost);
         pointerDrag.ghost = ghost;
       }
-      if (pointerDrag.ghost) {
-        pointerDrag.ghost.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 18}px, 0)`;
+      if (pointerDrag.started) {
+        if (e.cancelable) e.preventDefault();
+        if (pointerDrag.ghost) {
+          pointerDrag.ghost.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 18}px, 0)`;
+        }
         showDropPreview(computeDropTarget(e.clientX, e.clientY));
       }
     },
-    { passive: true },
+    { passive: false },
   );
 
   const finishPointerDrag = (e, commit) => {
     if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
     const drag = pointerDrag;
     const target = currentDropTarget;
+    try {
+      drag.targetElement?.releasePointerCapture?.(e.pointerId);
+    } catch {}
     pointerDrag = null;
+    document.body.classList.remove('dashboard-pointer-dragging');
     drag.ghost?.remove();
     hideDropPreview();
     dragSourceJid = null;
-    if (!drag.started || !commit) return;
+    if (!drag.started) return;
+
     const mainRect = main.getBoundingClientRect();
-    if (e.clientX >= mainRect.left) {
+    const isOverMain =
+      (typeof e.clientX === 'number' && e.clientX >= mainRect.left) ||
+      (target && target.mode === 'pane');
+
+    if ((commit || target?.mode === 'pane') && isOverMain) {
       addPane(drag.jid, target || computeDropTarget(e.clientX, e.clientY));
     }
   };
