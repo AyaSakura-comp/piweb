@@ -372,44 +372,63 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           clientX: item3Box.x + 20,
           clientY: item3Box.y + 15,
         });
+        await page.waitForTimeout(120);
 
-        // Move horizontally into Pane 1
-        await page.evaluate(
-          ({ clientX, clientY }) => {
-            window.dispatchEvent(
-              new PointerEvent('pointermove', {
-                pointerId: 101,
-                pointerType: 'touch',
-                clientX,
-                clientY,
-                cancelable: true,
-                bubbles: true,
-              }),
-            );
-          },
-          { clientX: pane1Box.x + 50, clientY: pane1Box.y + 50 },
-        );
+        // Move horizontally into Pane 1 across multiple interpolated steps so video captures the trajectory
+        for (let i = 1; i <= 6; i++) {
+          const cx = item3Box.x + 20 + ((pane1Box.x + 120) - (item3Box.x + 20)) * (i / 6);
+          const cy = item3Box.y + 15 + ((pane1Box.y + 160) - (item3Box.y + 15)) * (i / 6);
+          await page.evaluate(
+            ({ clientX, clientY }) => {
+              window.dispatchEvent(
+                new PointerEvent('pointermove', {
+                  pointerId: 101,
+                  pointerType: 'touch',
+                  clientX,
+                  clientY,
+                  cancelable: true,
+                  bubbles: true,
+                }),
+              );
+            },
+            { clientX: cx, clientY: cy },
+          );
+          await page.waitForTimeout(60);
+        }
         await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
         await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+        await page.screenshot({ path: info.outputPath('panes-touch-drag-over-pane1.png') });
+        await page.waitForTimeout(250);
 
-        // Move further into Pane 2 - must NOT disappear!
-        await page.evaluate(
-          ({ clientX, clientY }) => {
-            window.dispatchEvent(
-              new PointerEvent('pointermove', {
-                pointerId: 101,
-                pointerType: 'touch',
-                clientX,
-                clientY,
-                cancelable: true,
-                bubbles: true,
-              }),
-            );
-          },
-          { clientX: pane2Box.x + pane2Box.width / 2, clientY: pane2Box.y + pane2Box.height / 2 },
-        );
+        // Move further into Pane 2 across multiple interpolated steps - ghost must NOT disappear!
+        for (let i = 1; i <= 6; i++) {
+          const startX = pane1Box.x + 120;
+          const startY = pane1Box.y + 160;
+          const targetX = pane2Box.x + pane2Box.width / 2;
+          const targetY = pane2Box.y + pane2Box.height / 2;
+          const cx = startX + (targetX - startX) * (i / 6);
+          const cy = startY + (targetY - startY) * (i / 6);
+          await page.evaluate(
+            ({ clientX, clientY }) => {
+              window.dispatchEvent(
+                new PointerEvent('pointermove', {
+                  pointerId: 101,
+                  pointerType: 'touch',
+                  clientX,
+                  clientY,
+                  cancelable: true,
+                  bubbles: true,
+                }),
+              );
+            },
+            { clientX: cx, clientY: cy },
+          );
+          await page.waitForTimeout(60);
+        }
         await expect(page.locator('.dashboard-drag-ghost')).toBeVisible();
         await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+        await page.screenshot({ path: info.outputPath('panes-touch-drag-over-pane2.png') });
+        await page.waitForTimeout(250);
 
         // Release pointer to complete drop onto Pane 2
         await page.evaluate(
@@ -427,9 +446,12 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           },
           { clientX: pane2Box.x + pane2Box.width / 2, clientY: pane2Box.y + pane2Box.height / 2 },
         );
-        await page.waitForTimeout(480);
+        await page.waitForTimeout(500);
         // Pane count increased to 3 by dropping onto Pane 2!
         await expect(page.locator('.dashboard-pane')).toHaveCount(3);
+        await page.screenshot({ path: info.outputPath('panes-touch-drag-dropped-pane3.png') });
+        await page.waitForTimeout(350);
+
         // Remove the 3rd pane to restore 2 panes for subsequent steps
         await page.locator('.dashboard-pane').nth(2).locator('.pane-close-btn').click();
         await page.waitForTimeout(300);
