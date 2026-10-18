@@ -40,6 +40,7 @@ import {
   getControl,
   getFirstUserMessageContent,
   getMeta,
+  setMeta,
   getLatestSubscriptionJob,
   getOrCreateLifeChannel,
   getRecentWebEvents,
@@ -640,6 +641,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const raw = getMeta('models');
     sendJson(res, 200, { models: raw ? JSON.parse(raw) : [] });
     return;
+  }
+
+  // ── Multi-session dashboard cross-device cloud layout persistence ──
+  if (path === '/api/dashboard-layout') {
+    if (method === 'GET') {
+      const raw = getMeta('dashboard.layout');
+      let layout: unknown = null;
+      if (raw) {
+        try {
+          layout = JSON.parse(raw);
+        } catch {
+          layout = null;
+        }
+      }
+      sendJson(res, 200, { layout });
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readJson<{ layout?: unknown }>(req);
+      if (body && typeof body === 'object' && 'layout' in body && body.layout) {
+        setMeta('dashboard.layout', JSON.stringify(body.layout));
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      sendJson(res, 400, { error: 'Invalid dashboard layout payload' });
+      return;
+    }
   }
 
   // ── Pi provider subscriptions ──

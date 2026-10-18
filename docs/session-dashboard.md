@@ -52,11 +52,16 @@ The workspace topbar sits directly within `.main` at `52px` height, using `--bg`
 - **Left**: "Session Dashboard" label (15px/weight 650) with an inline `--text-2` counter indicating the active tiled count (e.g., `4 個並排視窗`).
   - *Design Note*: The chevron-left back button (`#btn-dashboard-exit`) was removed from the toolbar per user design review. Session exit is handled via individual pane actions, breadcrumb navigation, or the primary navigation drawer.
 - **Center-Right**: Dark capsule segmented layout switch (`border-radius: 999px`) with a high-contrast selection ring (`border-color: var(--text)`) toggling between **水平**, **垂直**, and **網格**.
-- **Right**: Borderless 44×44px outline-icon action buttons:
-  - **均分視窗大小 (`#btn-dashboard-equalize`)**: Smoothly animates all row/column weights back to uniform distribution using an underdamped FLIP spring bounce.
-  - **清空並排 (`#btn-dashboard-clear`)**: Closes all tiled panes and returns to the single-session chat shell.
+- **Right**: Clean toolbar margin without redundant buttons.
+  - *Design Note*: Per user design review, the top-right equalize and clear buttons (`#btn-dashboard-equalize`, `#btn-dashboard-clear`) were removed to keep the header minimal and prevent accidental destruction of workspace arrangements.
 
 ---
+
+### Cross-Device Cloud Persistence (`/api/dashboard-layout`)
+- **Multi-Device State Inheritance**: When switching between desktop, iPad, or mobile devices, the dashboard layout is automatically synchronized via the SQLite `meta` store (`meta.dashboard.layout`).
+- **Instant Local Boot**: State is initialized immediately from local storage cache, while `GET /api/dashboard-layout` asynchronously fetches and applies the latest server topology if newer or if loading onto a fresh device.
+- **Debounced Cloud Sync**: Changes to the layout (adding/closing panes, dragging splitters, toggling presets) are immediately committed locally and debounced (350ms) to `POST /api/dashboard-layout`.
+- **Zero-Blank-Space Topology Normalization**: When a pane is closed in a column/row group, the group's weights are immediately re-normalized so the remaining pane always fills 100% of the allocated space with zero blank space.
 
 ## 4. Full Per-Pane Single-Session Parity
 
@@ -199,7 +204,7 @@ The current architecture resolves this completely:
 1. **Virtual Keyboard Stability (`--dashboard-vv-h`)**:
    Tracks `window.visualViewport.height` dynamically via `--dashboard-vv-h`. When the iPadOS virtual keyboard appears, the dashboard shrinks predictably without triggering body scroll jumps or dismissing the keyboard prematurely.
 2. **Focus Theft Prevention**:
-   Toolbar and pane action buttons invoke `e.preventDefault()` on `pointerdown`, preventing textarea blur when toggling layouts, clicking equalize, or activating menus.
+   Toolbar and pane action buttons invoke `e.preventDefault()` on `pointerdown`, preventing textarea blur when toggling layouts, clicking presets, or activating menus.
 3. **Touch Input Zoom Immunity**:
    All composer textareas and input fields maintain `font-size: 16px` to prevent Safari from triggering automatic page zoom.
 4. **Background Poll State Preservation**:
@@ -223,9 +228,10 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
    - 12-pane high-density overshoot: $> 6\text{px}$ beyond release point.
 3. **Drag-and-Swap Validation**: Simulates drag-and-drop of pane headers into the center drop zone; verifies in-place session swapping.
 4. **Multimedia Attachment Send & Render**: Uploads Base64 PNG image attachments in Pane #12, asserts immediate thumbnail presence, sends message, and verifies immediate display in the message transcript (`.msg-files img`).
-5. **Input Focus Retention**: Focuses textarea, triggers `equalizeWeights()`, and verifies `document.activeElement` remains unchanged.
+5. **Input Focus Retention & Zero-Blank-Space Pane Closure**: Focuses textarea, triggers layout preset changes (with FLIP bounce animation), and verifies `document.activeElement` remains unchanged. Verifies closing a vertically split pane in a column expands the remaining pane to 100% height with zero blank space.
 6. **CDP 120Hz FPS Counter**: Connects Chrome DevTools Protocol session (`Overlay.setShowFPSCounter`) to verify 120Hz compositor smoothness without frame drops.
 7. **Cross-Pane Touch Drag & Drop Verification**: Simulates touch drag (`PointerEvent` pointerdown, pointermove, pointerup) of a session card from `#session-list` across Pane 1 and onto Pane 2. Asserts that the drag ghost (`.dashboard-drag-ghost`) and drop indicator (`.dashboard-drop-preview`) remain active throughout the gesture without premature cancellation, and verifies that the stage successfully integrates the new session adjacent to the target pane (pane count increases from 2 to 3).
+8. **Multi-Device Cloud Sync Verification**: Asserts that layout modifications are automatically persisted to `/api/dashboard-layout` in SQLite, and a new device opening the dashboard inherits the exact layout configuration.
 
 ### Visual & Video Artifacts
 - **E2E Video Verification**: `artifacts/playwright/test-results/session-dashboard-120fps.mp4` (120 FPS high-refresh recording).

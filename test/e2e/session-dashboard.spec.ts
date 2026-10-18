@@ -75,6 +75,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     });
 
     const sentMessages: Array<{ jid: string; text: string }> = [];
+    let serverDashboardLayout: any = null;
 
     await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
     await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
@@ -94,6 +95,16 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       if (path === '/api/me') return route.fulfill({ json: { authed: true } });
       if (path === '/api/sessions') return route.fulfill({ json: { sessions } });
       if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
+      if (path === '/api/dashboard-layout') {
+        if (route.request().method() === 'GET') {
+          return route.fulfill({ json: { layout: serverDashboardLayout } });
+        }
+        if (route.request().method() === 'POST') {
+          const body = route.request().postDataJSON();
+          serverDashboardLayout = body.layout;
+          return route.fulfill({ json: { ok: true } });
+        }
+      }
       if (path === '/api/commands')
         return route.fulfill({
           json: {
@@ -261,12 +272,11 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       // When 2 panes are open, verify DESIGN.md button compliance, per-pane controls (Model, Thinking, ⋯ menu, Hot Keywords, Quote, Attachments, BTW),
       // and test drag-and-swap pane order with inertial spring collision bounce
       if (count === 2) {
-        const eqBox = (await page.locator('#btn-dashboard-equalize').boundingBox())!;
-        const clearBox = (await page.locator('#btn-dashboard-clear').boundingBox())!;
-        expect(eqBox.width).toBeGreaterThanOrEqual(44);
-        expect(eqBox.height).toBeGreaterThanOrEqual(44);
-        expect(clearBox.width).toBeGreaterThanOrEqual(44);
-        expect(clearBox.height).toBeGreaterThanOrEqual(44);
+        await expect(page.locator('#btn-dashboard-equalize')).toHaveCount(0);
+        await expect(page.locator('#btn-dashboard-clear')).toHaveCount(0);
+        const presetBtn = page.locator('.dashboard-preset-btn').first();
+        const presetBox = (await presetBtn.boundingBox())!;
+        expect(presetBox.height).toBeGreaterThanOrEqual(28);
 
         const pane1 = page.locator('.dashboard-pane[data-jid="web:s01"]');
         await expect(pane1.locator('.pane-model-btn')).toBeVisible();
@@ -466,6 +476,12 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         await page.locator('.dashboard-pane').nth(2).locator('.pane-close-btn').click();
         await page.waitForTimeout(300);
         await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+
+        // Verify that closing the pane leaves NO blank space:
+        // Remaining Pane 2 must fill 100% of its column group height!
+        const col2Height = (await page.locator('.dashboard-group').nth(1).boundingBox())!.height;
+        const pane2Height = (await page.locator('.dashboard-pane').nth(1).boundingBox())!.height;
+        expect(pane2Height).toBeCloseTo(col2Height, 0);
       }
 
       // When 4 panes are open (2x2 grid), test both horizontal and vertical splitter drag & inertial collision bounce
@@ -603,10 +619,10 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(pane12.locator('.msg-files img')).toBeVisible();
 
     // Verify iPad focus & scroll stability: focusing a pane input and triggering
-    // equalizeWeights (with FLIP bounce animation) must NOT blur the input or scroll jump
+    // a layout preset (with FLIP bounce animation) must NOT blur the input or scroll jump
     await input12.focus();
     await expect(input12).toBeFocused();
-    await page.locator('#btn-dashboard-equalize').click();
+    await page.locator('.dashboard-preset-btn[data-preset="grid"]').click();
     await page.waitForTimeout(500);
     await expect(input12).toBeFocused();
 
@@ -654,6 +670,37 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         clientY: y - 35,
       }));
     }, { x: itemBox.x + itemBox.width / 2, y: itemBox.y + itemBox.height / 2 });
+
+    // Wait for debounced cloud sync to persist layout to backend /api/dashboard-layout
+    await page.waitForTimeout(600);
+    expect(serverDashboardLayout).not.toBeNull();
+    expect(Array.isArray(serverDashboardLayout.groups)).toBe(true);
+
+    // Multi-device layout inheritance verification:
+    // When opening on a second device (new page context with NO local storage layout),
+    // it automatically fetches /api/dashboard-layout and inherits the exact dashboard configuration!
+    const page2 = await page.context().newPage();
+    await page2.route('**/media/piweb-shared/hot-keywords.json', (route) => route.fulfill({ json: { items: [] } }));
+    await page2.route('**/api/**', async (route) => {
+      const url = new URL(route.request().url());
+      const path = decodeURIComponent(url.pathname);
+      if (path === '/api/me') return route.fulfill({ json: { authed: true } });
+      if (path === '/api/sessions') return route.fulfill({ json: { sessions } });
+      if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
+      if (path === '/api/dashboard-layout') {
+        return route.fulfill({ json: { layout: serverDashboardLayout } });
+      }
+      return route.fulfill({ json: { ok: true } });
+    });
+
+    await page2.goto('/');
+    await page2.locator('#btn-dashboard-home').click();
+    await page2.waitForTimeout(400);
+
+    // Assert the second device inherited the tiled sessions from the cloud layout!
+    const page2PanesCount = await page2.locator('.dashboard-pane').count();
+    expect(page2PanesCount).toBe(12);
+    await page2.close();
 
     expect(errors).toEqual([]);
   });

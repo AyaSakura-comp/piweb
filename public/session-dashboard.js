@@ -210,14 +210,7 @@ export function createSessionDashboard({
           <span>網格</span>
         </button>
       </div>
-      <div class="dashboard-toolbar-actions">
-        <button type="button" class="icon-btn dashboard-icon-action" id="btn-dashboard-equalize" aria-label="平均對齊所有並排視窗" title="平均對齊所有視窗大小" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-        </button>
-        <button type="button" class="icon-btn dashboard-icon-action" id="btn-dashboard-clear" aria-label="清空並排視窗" title="清空所有並排視窗" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
-        </button>
-      </div>
+      <div class="dashboard-toolbar-actions"></div>
     </header>
     <div class="dashboard-stage" id="dashboard-stage">
       <div class="dashboard-empty" id="dashboard-empty">
@@ -252,8 +245,6 @@ export function createSessionDashboard({
   const counterEl = root.querySelector('#dashboard-pane-counter');
   const presetsEl = root.querySelector('#dashboard-layout-presets');
   const navCountEl = navEntry.querySelector('#dashboard-nav-count');
-  const btnEqualize = root.querySelector('#btn-dashboard-equalize');
-  const btnClear = root.querySelector('#btn-dashboard-clear');
   const btnDrawerToggle = root.querySelector('#btn-dashboard-drawer');
 
   // ── State Helpers ──────────────────────────────────────────────────────────
@@ -278,23 +269,78 @@ export function createSessionDashboard({
         seen.add(it.jid);
         items.push({
           jid: it.jid,
-          weight: Number.isFinite(it.weight) && it.weight > 0.1 ? Number(it.weight) : 1,
+          weight: Number.isFinite(it.weight) && it.weight > 0.05 ? Number(it.weight) : 1,
         });
       }
       if (items.length > 0) {
+        if (items.length === 1) {
+          // If only one pane remains in this column/row group, it MUST take 100% of the group!
+          items[0].weight = 1;
+        } else {
+          // In CSS flexbox, if sum of flex-grow < 1, empty space is left unallocated.
+          // Scale item weights up so sum is >= 1.
+          const totalItemWeight = items.reduce((sum, it) => sum + it.weight, 0);
+          if (totalItemWeight > 0 && totalItemWeight < 1) {
+            for (const it of items) {
+              it.weight = Number((it.weight / totalItemWeight).toFixed(4));
+            }
+          }
+        }
         cleaned.push({
-          weight: Number.isFinite(g.weight) && g.weight > 0.1 ? Number(g.weight) : 1,
+          weight: Number.isFinite(g.weight) && g.weight > 0.05 ? Number(g.weight) : 1,
           items,
         });
+      }
+    }
+    if (cleaned.length === 1) {
+      cleaned[0].weight = 1;
+    } else if (cleaned.length > 1) {
+      const totalGroupWeight = cleaned.reduce((sum, g) => sum + g.weight, 0);
+      if (totalGroupWeight > 0 && totalGroupWeight < 1) {
+        for (const g of cleaned) {
+          g.weight = Number((g.weight / totalGroupWeight).toFixed(4));
+        }
       }
     }
     groups = cleaned;
   }
 
+  let cloudSyncTimer = null;
+  function scheduleCloudSave() {
+    if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = setTimeout(async () => {
+      try {
+        if (typeof api !== 'function') return;
+        const payload = {
+          direction,
+          groups: groups.map((g) => ({
+            weight: Number(g.weight.toFixed(4)),
+            items: g.items.map((it) => ({
+              jid: it.jid,
+              weight: Number(it.weight.toFixed(4)),
+            })),
+          })),
+          updatedAt: localUpdatedAt,
+        };
+        await api('/api/dashboard-layout', {
+          method: 'POST',
+          body: JSON.stringify({ layout: payload }),
+        });
+      } catch {
+        // Ignore background offline/network errors
+      }
+    }, 350);
+  }
+
+  let localUpdatedAt = 0;
+
   function loadSavedState() {
     try {
       const raw = JSON.parse(localStorage.getItem(DASHBOARD_STORAGE_KEY) || 'null');
       if (!raw || typeof raw !== 'object') return;
+      if (Number.isFinite(raw.updatedAt)) {
+        localUpdatedAt = Number(raw.updatedAt);
+      }
       if (raw.direction === 'column' || raw.direction === 'row') {
         direction = raw.direction;
       }
@@ -319,9 +365,60 @@ export function createSessionDashboard({
     }
   }
 
+  async function syncCloudLayout() {
+    try {
+      if (typeof api !== 'function') return;
+      const res = await api('/api/dashboard-layout');
+      const raw = res?.layout;
+      if (!raw || typeof raw !== 'object') return;
+      if (!Array.isArray(raw.groups)) return;
+
+      const serverUpdatedAt = Number(raw.updatedAt) || 0;
+      const hadNoLocal = groups.length === 0;
+
+      // Inherit settings from other devices: if local had no layout or cloud layout is newer or equal
+      if (hadNoLocal || serverUpdatedAt >= localUpdatedAt) {
+        if (raw.direction === 'column' || raw.direction === 'row') {
+          direction = raw.direction;
+        }
+        groups = raw.groups;
+        localUpdatedAt = serverUpdatedAt || Date.now();
+        normalizeGroups();
+        try {
+          localStorage.setItem(
+            DASHBOARD_STORAGE_KEY,
+            JSON.stringify({
+              direction,
+              groups: groups.map((g) => ({
+                weight: Number(g.weight.toFixed(4)),
+                items: g.items.map((it) => ({
+                  jid: it.jid,
+                  weight: Number(it.weight.toFixed(4)),
+                })),
+              })),
+              updatedAt: localUpdatedAt,
+            }),
+          );
+        } catch {
+          // Ignore storage quota
+        }
+
+        if (active) {
+          rebuildGrid(true);
+          onRenderSessionListDecorations();
+        } else {
+          syncNavCounts();
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+  }
+
   function saveState() {
     try {
       normalizeGroups();
+      localUpdatedAt = Date.now();
       localStorage.setItem(
         DASHBOARD_STORAGE_KEY,
         JSON.stringify({
@@ -333,14 +430,17 @@ export function createSessionDashboard({
               weight: Number(it.weight.toFixed(4)),
             })),
           })),
+          updatedAt: localUpdatedAt,
         }),
       );
     } catch {
       // Ignore storage quota errors
     }
+    scheduleCloudSave();
   }
 
   loadSavedState();
+  void syncCloudLayout();
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -367,8 +467,6 @@ export function createSessionDashboard({
     navCountEl.hidden = count === 0;
     counterEl.textContent = `${count} 個並排視窗`;
     presetsEl.hidden = count < 2;
-    btnEqualize.hidden = count < 2;
-    btnClear.hidden = count === 0;
     navEntry.setAttribute('aria-pressed', String(active));
     navEntry.classList.toggle('active', active);
     app.classList.toggle('dashboard-active', active);
@@ -2536,10 +2634,12 @@ export function createSessionDashboard({
       const groupEls = [...gridEl.querySelectorAll(':scope > .dashboard-group')];
       groups.forEach((group, gIdx) => {
         const groupEl = groupEls[gIdx];
-        if (groupEl) groupEl.style.flex = `${group.weight} 1 0px`;
+        const groupWeight = groups.length === 1 ? 1 : group.weight;
+        if (groupEl) groupEl.style.flex = `${groupWeight} 1 0px`;
         group.items.forEach((item) => {
           const pane = panes.get(item.jid);
-          if (pane) pane.el.style.flex = `${item.weight} 1 0px`;
+          const itemWeight = group.items.length === 1 ? 1 : item.weight;
+          if (pane) pane.el.style.flex = `${itemWeight} 1 0px`;
         });
       });
       return;
@@ -2562,13 +2662,15 @@ export function createSessionDashboard({
     const groupEls = groups.map((group) => {
       const groupEl = el('div', `dashboard-group dashboard-group-${innerDirection}`);
       groupEl.style.flexDirection = innerDirection;
-      groupEl.style.flex = `${group.weight} 1 0px`;
+      const groupWeight = groups.length === 1 ? 1 : group.weight;
+      groupEl.style.flex = `${groupWeight} 1 0px`;
 
       const itemChildren = [];
       group.items.forEach((item, itemIdx) => {
         const pane = panes.get(item.jid);
         if (!pane) return;
-        pane.el.style.flex = `${item.weight} 1 0px`;
+        const itemWeight = group.items.length === 1 ? 1 : item.weight;
+        pane.el.style.flex = `${itemWeight} 1 0px`;
         itemChildren.push(pane.el);
 
         if (itemIdx < group.items.length - 1) {
@@ -2873,7 +2975,7 @@ export function createSessionDashboard({
       detachJidFromGroups(jid);
       disposePane(jid);
       saveState();
-      rebuildGrid();
+      rebuildGrid(true);
       onRenderSessionListDecorations();
     });
   }
@@ -3298,20 +3400,6 @@ export function createSessionDashboard({
       applyPreset(btn.dataset.preset);
     });
   }
-
-  preventTouchFocusSteal(btnEqualize);
-  btnEqualize.addEventListener('click', () => {
-    equalizeWeights();
-    showToast?.('已平均對齊所有並排視窗');
-  });
-
-  btnClear.addEventListener('click', () => {
-    for (const jid of allJids()) disposePane(jid);
-    groups = [];
-    saveState();
-    rebuildGrid();
-    onRenderSessionListDecorations();
-  });
 
   preventTouchFocusSteal(btnDrawerToggle);
   btnDrawerToggle.addEventListener('click', () => {
