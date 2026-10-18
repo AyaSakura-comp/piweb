@@ -404,6 +404,35 @@ export function createSessionDashboard({
     }
   }
 
+  const prefersReducedMotion = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+  function smoothScrollTo(element, targetTop, duration = 240) {
+    if (!element || prefersReducedMotion() || duration <= 0) {
+      if (element) element.scrollTop = targetTop;
+      return;
+    }
+    const startTop = element.scrollTop;
+    const distance = targetTop - startTop;
+    if (Math.abs(distance) < 2) return;
+    const startTime = performance.now();
+
+    const step = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      // Apple quartic ease-out: 1 - (1 - t)^4 -> snappy 120Hz fluid snap
+      const ease = 1 - Math.pow(1 - progress, 4);
+      element.scrollTop = startTop + distance * ease;
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        element.scrollTop = targetTop;
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
   // ── Pane Lifecycle, Full Topbar, BTW Workspace, Search, & Full Composer ───
   function createPaneDOM(jid) {
     const session = getSessions().find((s) => s.jid === jid);
@@ -881,10 +910,11 @@ export function createSessionDashboard({
       messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 28;
     const scrollToBottom = (instant = false) => {
       pane.userScrolledUp = false;
-      messagesEl.scrollTo({
-        top: messagesEl.scrollHeight,
-        behavior: instant ? 'auto' : 'smooth',
-      });
+      if (instant || prefersReducedMotion()) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      } else {
+        smoothScrollTo(messagesEl, messagesEl.scrollHeight, 240);
+      }
       jumpBtn.classList.remove('visible');
     };
     let scrollRafId = 0;
@@ -1209,7 +1239,7 @@ export function createSessionDashboard({
           isImage,
           isAudio,
           isVideo,
-          url: isImage ? URL.createObjectURL(file) : null,
+          url: isImage || isAudio || isVideo ? URL.createObjectURL(file) : null,
         });
         added += 1;
       }
@@ -1686,6 +1716,7 @@ export function createSessionDashboard({
         showUploadProgress(paneUploadProgress, 0);
       }
 
+      let result = null;
       try {
         const attachmentsPayload = [];
         for (const attachment of submittedAttachments) {
@@ -1699,7 +1730,7 @@ export function createSessionDashboard({
 
         const path = `/api/sessions/${encodeURIComponent(jid)}/messages`;
         const payload = { text, quote, attachments: attachmentsPayload };
-        const result =
+        result =
           hasAttachments && typeof sendJsonWithUploadProgress === 'function'
             ? await sendJsonWithUploadProgress(path, payload, {
                 onProgress: (pct) => showUploadProgress(paneUploadProgress, pct),
@@ -1710,6 +1741,11 @@ export function createSessionDashboard({
               });
 
         const eventId = result?.eventId || pane.cursor + 1;
+        const uploadedFiles =
+          Array.isArray(result?.files) && result.files.length > 0
+            ? result.files
+            : submittedAttachments.map((a) => a.url).filter(Boolean);
+
         if (eventId > pane.cursor) {
           appendPaneEvent(
             pane,
@@ -1718,7 +1754,7 @@ export function createSessionDashboard({
               kind: 'message',
               role: 'user',
               content: quote ? `> ${quote.replace(/\n/g, '\n> ')}\n\n${text}` : text,
-              files: [],
+              files: uploadedFiles,
               createdAt: new Date().toISOString(),
             },
             true,
@@ -1740,7 +1776,11 @@ export function createSessionDashboard({
         alert(err.message);
       } finally {
         for (const attachment of submittedAttachments) {
-          if (attachment.url) URL.revokeObjectURL(attachment.url);
+          if (attachment.url && (!result?.files || result.files.length === 0)) {
+            setTimeout(() => URL.revokeObjectURL(attachment.url), 10000);
+          } else if (attachment.url) {
+            URL.revokeObjectURL(attachment.url);
+          }
         }
         if (hasAttachments) {
           pane.uploading = false;
@@ -1813,6 +1853,18 @@ export function createSessionDashboard({
       pane.partialThinkingEl = null;
     }
 
+    const existing = event.id ? pane.messagesEl.querySelector(`[data-event-id="${event.id}"]`) : null;
+    if (existing) {
+      const node = buildEventNode(event, { liveRich: false });
+      node.dataset.eventId = String(event.id);
+      existing.replaceWith(node);
+      if (follow) {
+        pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+        pane.jumpBtn.classList.remove('visible');
+      }
+      return;
+    }
+
     const node = buildEventNode(event, { liveRich: false });
     node.dataset.eventId = String(event.id);
     if (pane.partialMsgEl) {
@@ -1822,8 +1874,15 @@ export function createSessionDashboard({
     }
 
     if (follow) {
-      pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
-      pane.jumpBtn.classList.remove('visible');
+      if (!pane.scrollRafPending) {
+        pane.scrollRafPending = true;
+        requestAnimationFrame(() => {
+          pane.scrollRafPending = false;
+          if (pane.disposed || pane.userScrolledUp) return;
+          pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+          pane.jumpBtn.classList.remove('visible');
+        });
+      }
     } else if (live) {
       const near =
         pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
@@ -1878,7 +1937,14 @@ export function createSessionDashboard({
     }
 
     if (follow) {
-      pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+      if (!pane.scrollRafPending) {
+        pane.scrollRafPending = true;
+        requestAnimationFrame(() => {
+          pane.scrollRafPending = false;
+          if (pane.disposed || pane.userScrolledUp) return;
+          pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+        });
+      }
     } else {
       const near =
         pane.messagesEl.scrollHeight - pane.messagesEl.scrollTop - pane.messagesEl.clientHeight <=
@@ -1903,7 +1969,8 @@ export function createSessionDashboard({
     source.addEventListener('event', (e) => {
       if (pane.disposed || pane.source !== source) return;
       const event = JSON.parse(e.data);
-      if (event.id <= pane.cursor) return;
+      const existing = event.id ? pane.messagesEl.querySelector(`[data-event-id="${event.id}"]`) : null;
+      if (event.id <= pane.cursor && !existing) return;
       appendPaneEvent(pane, event, true);
       if (
         event.kind !== 'thinking' &&
@@ -2004,9 +2071,6 @@ export function createSessionDashboard({
 
   // ── 2D Layout & Both Horizontal and Vertical Splitters ─────────────────────
   // ── Inertial Spring Physics & Collision Bounce Engine ─────────────────────
-  const prefersReducedMotion = () =>
-    typeof window !== 'undefined' &&
-    window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
   // ── Analytical Damped Harmonic Oscillator (120Hz ProMotion Spring Physics) ─
   function solveSpringProgress(t, zeta = 0.52, omega0 = 18.0) {
@@ -2173,13 +2237,11 @@ export function createSessionDashboard({
       : '上下拖拉調整視窗高度（雙擊平均對齊）';
     splitter.innerHTML = '<span class="dashboard-splitter-grip" aria-hidden="true"></span>';
 
-    let springRafId = 0;
     let activeSpringCleanup = null;
     const cancelSpring = () => {
-      if (springRafId) {
-        cancelAnimationFrame(springRafId);
-        springRafId = 0;
-      }
+      splitter.getAnimations?.().forEach((a) => a.cancel());
+      firstEl?.getAnimations?.().forEach((a) => a.cancel());
+      secondEl?.getAnimations?.().forEach((a) => a.cancel());
       if (activeSpringCleanup) {
         activeSpringCleanup();
         activeSpringCleanup = null;
@@ -2327,88 +2389,83 @@ export function createSessionDashboard({
 
         if (!prefersReducedMotion() && dragSign !== 0 && Math.abs(totalDelta) > 3) {
           const restPx = currentFirstPx;
-          const speedBoost = timeSinceMove < 120 ? Math.min(950, Math.abs(velocityPxPerSec) * 0.8) : 0;
-          const distBoost = Math.min(1150, Math.max(760, Math.abs(totalDelta) * 10.5));
-          let vel = dragSign * Math.min(1950, Math.max(850, distBoost + speedBoost));
-          let disp = 0;
-          let lastFrame = performance.now();
-          let bouncedWall = false;
-
-          const hardMinPx = 28;
           const isX = axis === 'x';
           const origFirstSize = currentFirstPx;
           const origSecondSize = totalPx - origFirstSize;
 
-          const applySpringTransforms = (dispPx) => {
-            if (isX) {
-              splitter.style.transform = `translate3d(${dispPx.toFixed(2)}px, 0, 0)`;
-              firstEl.style.transformOrigin = 'left center';
-              firstEl.style.transform = `scale3d(${((origFirstSize + dispPx) / origFirstSize).toFixed(4)}, 1, 1)`;
-              secondEl.style.transformOrigin = 'right center';
-              secondEl.style.transform = `scale3d(${((origSecondSize - dispPx) / origSecondSize).toFixed(4)}, 1, 1)`;
-            } else {
-              splitter.style.transform = `translate3d(0, ${dispPx.toFixed(2)}px, 0)`;
-              firstEl.style.transformOrigin = 'center top';
-              firstEl.style.transform = `scale3d(1, ${((origFirstSize + dispPx) / origFirstSize).toFixed(4)}, 1)`;
-              secondEl.style.transformOrigin = 'center bottom';
-              secondEl.style.transform = `scale3d(1, ${((origSecondSize - dispPx) / origSecondSize).toFixed(4)}, 1)`;
-            }
-          };
+          const speedBoost = timeSinceMove < 120 ? Math.min(28, Math.abs(velocityPxPerSec) * 0.03) : 0;
+          const distBoost = Math.min(54, Math.max(28, Math.abs(totalDelta) * 0.42));
+          const peakShift = dragSign * (distBoost + speedBoost);
 
-          const clearSpringTransforms = () => {
-            splitter.style.transform = '';
-            firstEl.style.transform = '';
-            secondEl.style.transform = '';
-            firstEl.style.transformOrigin = '';
-            secondEl.style.transformOrigin = '';
-            splitter.classList.remove('impact-bounce');
-            gridEl.classList.remove('spring-bouncing');
-          };
+          // 120Hz Analytical Damped Harmonic Oscillator (GPU Compositor Keyframes)
+          const splitterKeyframes = [];
+          const firstKeyframes = [];
+          const secondKeyframes = [];
+          const steps = 60;
 
-          activeSpringCleanup = clearSpringTransforms;
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const decay = Math.exp(-3.8 * t);
+            const osc = Math.sin(t * Math.PI * 2.8);
+            const dispPx = peakShift * decay * osc;
+            const dispStr = dispPx.toFixed(2);
+
+            const tx = isX ? `${dispStr}px` : '0px';
+            const ty = isX ? '0px' : `${dispStr}px`;
+            splitterKeyframes.push({
+              transform: `translate3d(${tx}, ${ty}, 0)`,
+              offset: t,
+            });
+
+            const sx1 = isX ? ((origFirstSize + dispPx) / origFirstSize).toFixed(4) : '1';
+            const sy1 = isX ? '1' : ((origFirstSize + dispPx) / origFirstSize).toFixed(4);
+            firstKeyframes.push({
+              transform: `scale3d(${sx1}, ${sy1}, 1)`,
+              offset: t,
+            });
+
+            const sx2 = isX ? ((origSecondSize - dispPx) / origSecondSize).toFixed(4) : '1';
+            const sy2 = isX ? '1' : ((origSecondSize - dispPx) / origSecondSize).toFixed(4);
+            secondKeyframes.push({
+              transform: `scale3d(${sx2}, ${sy2}, 1)`,
+              offset: t,
+            });
+          }
+
+          if (isX) {
+            firstEl.style.transformOrigin = 'left center';
+            secondEl.style.transformOrigin = 'right center';
+          } else {
+            firstEl.style.transformOrigin = 'center top';
+            secondEl.style.transformOrigin = 'center bottom';
+          }
+
           gridEl.classList.add('spring-bouncing');
           splitter.classList.add('impact-bounce');
 
-          const stepSpring = (now) => {
-            const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
-            lastFrame = now;
-            // Underdamped spring (omega ≈ 20.5 rad/s, zeta ≈ 0.25) -> pronounced 35–68px overshoot & 3 elastic rebounds
-            const stiffness = 420;
-            const damping = 10.5;
-            const accel = -stiffness * disp - damping * vel;
-            vel += accel * dt;
-            disp += vel * dt;
+          firstEl.getAnimations?.().forEach((a) => a.cancel());
+          secondEl.getAnimations?.().forEach((a) => a.cancel());
+          splitter.getAnimations?.().forEach((a) => a.cancel());
 
-            let candidatePx = restPx + disp;
-            if (candidatePx < hardMinPx) {
-              disp = hardMinPx - restPx;
-              vel = -vel * 0.72; // Strong elastic wall collision rebound!
-              if (!bouncedWall) {
-                bouncedWall = true;
-                triggerWallImpactBounce(firstEl, axis, -1, 1.5);
-              }
-            } else if (candidatePx > totalPx - hardMinPx) {
-              disp = totalPx - hardMinPx - restPx;
-              vel = -vel * 0.72; // Strong elastic wall collision rebound!
-              if (!bouncedWall) {
-                bouncedWall = true;
-                triggerWallImpactBounce(secondEl, axis, 1, 1.5);
-              }
-            }
+          const duration = 440;
+          const animSplitter = splitter.animate(splitterKeyframes, { duration, easing: 'linear' });
+          const animFirst = firstEl.animate(firstKeyframes, { duration, easing: 'linear' });
+          const animSecond = secondEl.animate(secondKeyframes, { duration, easing: 'linear' });
 
-            if (Math.abs(disp) < 0.4 && Math.abs(vel) < 10) {
-              clearSpringTransforms();
-              activeSpringCleanup = null;
-              applyFirstPx(restPx);
-              saveState();
-              springRafId = 0;
-              return;
-            }
-
-            applySpringTransforms(disp);
-            springRafId = requestAnimationFrame(stepSpring);
+          const cleanup = () => {
+            gridEl.classList.remove('spring-bouncing');
+            splitter.classList.remove('impact-bounce');
+            firstEl.style.transform = '';
+            secondEl.style.transform = '';
+            splitter.style.transform = '';
+            firstEl.style.transformOrigin = '';
+            secondEl.style.transformOrigin = '';
+            applyFirstPx(restPx);
+            saveState();
+            activeSpringCleanup = null;
           };
-          springRafId = requestAnimationFrame(stepSpring);
+          activeSpringCleanup = cleanup;
+          animSplitter.onfinish = cleanup;
         }
       };
 

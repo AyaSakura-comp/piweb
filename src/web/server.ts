@@ -1448,6 +1448,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         sendJson(res, 200, {
           ok: true,
           eventId,
+          files: savedPaths.urls,
           ...(appliedSessionTitle ? { sessionTitle: appliedSessionTitle } : {}),
         });
         return;

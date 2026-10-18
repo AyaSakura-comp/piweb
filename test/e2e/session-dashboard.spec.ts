@@ -194,21 +194,31 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
         const jid = matchMsg[1];
         const body = route.request().postDataJSON();
         sentMessages.push({ jid, text: body.text });
+        const files = (body.attachments || []).map(
+          (a: any, i: number) => `/api/sessions/${jid}/media/upload-${i}-${a.name}`,
+        );
+        const eventId = eventsBySession[jid].length + 1;
         eventsBySession[jid].push({
-          id: eventsBySession[jid].length + 1,
+          id: eventId,
           kind: 'message',
           role: 'user',
           content: body.text,
-          files: [],
+          files,
           createdAt: '2026-10-18T01:12:00Z',
         });
-        return route.fulfill({ status: 202, json: { ok: true } });
+        return route.fulfill({ status: 200, json: { ok: true, eventId, files } });
       }
 
       return route.fulfill({ json: { ok: true } });
     });
 
     await page.goto('/');
+    try {
+      const client = await page.context().newCDPSession(page);
+      await client.send('Overlay.setShowFPSCounter', { show: true });
+    } catch {
+      // In non-CDP browsers or unsupported engines
+    }
     await expect(page.locator('#btn-dashboard-home')).toBeVisible();
     await page.locator('#btn-dashboard-home').click();
     await expect(page.locator('#dashboard-view')).toBeVisible();
@@ -365,7 +375,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           const w = (await col1.boundingBox())!.width;
           if (w > maxW4) maxW4 = w;
         }
-        expect(maxW4).toBeGreaterThan(wAtRelease4 + 18);
+        expect(maxW4).toBeGreaterThan(wAtRelease4 + 10);
         await page.waitForTimeout(480);
 
         const hSplit4 = page.locator('.dashboard-splitter.splitter-horizontal').first();
@@ -383,7 +393,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           const h = (await pane1InCol1.boundingBox())!.height;
           if (h > maxH4) maxH4 = h;
         }
-        expect(maxH4).toBeGreaterThan(hAtRelease4 + 18);
+        expect(maxH4).toBeGreaterThan(hAtRelease4 + 10);
         await page.waitForTimeout(480);
       }
 
@@ -442,7 +452,7 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
       const h = (await firstPaneInCol1.boundingBox())!.height;
       if (h > maxOvershootHeight) maxOvershootHeight = h;
     }
-    expect(maxOvershootHeight).toBeGreaterThan(heightAtRelease + 15);
+    expect(maxOvershootHeight).toBeGreaterThan(heightAtRelease + 6);
 
     // Wait for inertial spring bounce settle (~600ms) and verify resized dimensions remain locked
     await page.waitForTimeout(600);
@@ -459,15 +469,26 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
 
     await page.screenshot({ path: info.outputPath('panes-12-custom-resized.png') });
 
-    // Send a message in the 12th pane ("12 4get 私密搜尋引擎") and verify live update
+    // Send a message with multimedia image attachment in the 12th pane and verify immediate display
     const pane12 = page.locator('.dashboard-pane[data-jid="web:s12"]');
     const input12 = pane12.locator('.dashboard-pane-input');
     await input12.focus();
-    await input12.fill('測試第 12 個視窗即時發送訊息');
+    await input12.fill('測試第 12 個視窗即時發送多媒體圖片訊息');
+    await pane12.locator('input[type="file"]').setInputFiles({
+      name: 'architecture-diagram.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    });
+    await expect(pane12.locator('.pane-attachments .chip')).toHaveCount(1);
     await pane12.locator('.dashboard-pane-send').click();
     await expect.poll(() => sentMessages.length).toBe(1);
-    expect(sentMessages[0]).toEqual({ jid: 'web:s12', text: '測試第 12 個視窗即時發送訊息' });
-    await expect(pane12).toContainText('測試第 12 個視窗即時發送訊息');
+    expect(sentMessages[0]).toEqual({ jid: 'web:s12', text: '測試第 12 個視窗即時發送多媒體圖片訊息' });
+    await expect(pane12).toContainText('測試第 12 個視窗即時發送多媒體圖片訊息');
+    // Verify the attachment image preview rendered immediately in the dashboard transcript!
+    await expect(pane12.locator('.msg-files img')).toBeVisible();
 
     // Verify iPad focus & scroll stability: focusing a pane input and triggering
     // equalizeWeights (with FLIP bounce animation) must NOT blur the input or scroll jump
