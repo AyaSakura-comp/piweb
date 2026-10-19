@@ -1077,7 +1077,6 @@ export function createSessionDashboard({
 
     header.addEventListener('pointerdown', (e) => {
       if (
-        !wideQuery.matches ||
         e.button !== 0 ||
         e.target.closest('button, input, textarea, [role="button"]')
       )
@@ -3124,7 +3123,6 @@ export function createSessionDashboard({
 
   // HTML5 Drag & Drop on main / stage
   main.addEventListener('dragover', (e) => {
-    if (!wideQuery.matches) return;
     const hasSession =
       dragSourceJid || e.dataTransfer?.types?.includes('text/piweb-session-jid');
     if (!hasSession) return;
@@ -3142,7 +3140,6 @@ export function createSessionDashboard({
   });
 
   main.addEventListener('drop', (e) => {
-    if (!wideQuery.matches) return;
     const jid =
       e.dataTransfer?.getData('text/piweb-session-jid') || dragSourceJid;
     const target = currentDropTarget || computeDropTarget(e.clientX, e.clientY);
@@ -3172,7 +3169,7 @@ export function createSessionDashboard({
       if (!item.dataset.dashDragBound) {
         item.dataset.dashDragBound = '1';
         item.addEventListener('dragstart', (e) => {
-          if (!wideQuery.matches || e.target.closest('input, .del') || pointerDrag) {
+          if (e.target.closest('input, .del') || pointerDrag) {
             e.preventDefault();
             return;
           }
@@ -3192,7 +3189,7 @@ export function createSessionDashboard({
 
         // Touch / Pen Pointer Drag fallback for iPad & Tablet
         item.addEventListener('pointerdown', (e) => {
-          if (!wideQuery.matches || e.button !== 0 || e.target.closest('button, input')) return;
+          if (e.button !== 0 || e.target.closest('button, input')) return;
           if (e.pointerType === 'mouse') return;
           window.getSelection()?.removeAllRanges();
           pointerDrag = {
@@ -3309,6 +3306,7 @@ export function createSessionDashboard({
           document.body.classList.add('dashboard-pointer-dragging');
           window.getSelection()?.removeAllRanges();
           if (!active) setActive(true);
+          if (!wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
           const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
           document.body.append(ghost);
           pointerDrag.ghost = ghost;

@@ -274,21 +274,20 @@ curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 
 ## Phone dashboard
 
-Dashboard is available from the phone top bar and session drawer. Use a session's
-44px tile button to add/remove a pane; adding closes the overlay drawer. Phone
-session rows retain native vertical scrolling rather than initiating tile drags.
+Dashboard uses the same layout engine and functionality at every viewport width:
+horizontal/vertical/grid presets, group and pane weights, directional drop zones,
+touch/pointer dragging, splitters, per-pane controls and cloud layout persistence.
+There is no phone-only stacked-card or pager implementation. Only toolbar wrapping,
+safe-area clearance and overlay drawer presentation adapt to the smaller screen.
+Dragging from the overlay drawer closes it once drag begins to expose drop targets.
 
-Below 768px (or short coarse-pointer viewports), panes are presented as a vertically
-scrollable stack, with a single pane filling the available grid. Desktop splitters
-are hidden in this presentation. The underlying groups, direction and weights
-remain unchanged: resizing/rotating the viewport alone never overwrites the shared
-layout. The existing layout API continues to persist deliberate membership/preset
-changes. Keyboard viewport sizing uses the existing visualViewport integration.
+Shared narrow-pane header rules also apply to small desktop panes: titles get a
+separate row and actions can scroll horizontally rather than overlap the title.
 
-Regression coverage: `test/e2e/session-dashboard-mobile.spec.ts` checks entry,
-drawer/add interaction, two panes, horizontal overflow, rotation, preservation of
-saved desktop geometry and single-pane fill after closing a pane. These checks
-use Chromium touch emulation, not physical iOS Safari.
+Regression coverage: `test/e2e/session-dashboard-mobile.spec.ts` checks two panes
+remain side by side, four panes stay within the grid with three visible splitters,
+rotation and saved layout preservation, close-to-single fill and overflow.
+Chromium touch emulation is not physical iOS Safari validation.
 
 
 ### Mobile overlap and landscape regression

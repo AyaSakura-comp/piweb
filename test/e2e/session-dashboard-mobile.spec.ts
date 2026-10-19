@@ -227,11 +227,38 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await page.locator('#session-list .session-item').nth(1).locator('.session-tile-btn').click();
   await expect(page.locator('.drawer')).not.toHaveClass(/open/);
   await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+  await expect.poll(async () => {
+    const paneBox = await page.locator('.dashboard-pane').first().boundingBox();
+    const gridBox = await page.locator('#dashboard-grid').boundingBox();
+    return paneBox!.height >= gridBox!.height - 2;
+  }).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect.poll(async () => {
+  const boxes = await page.locator('.dashboard-pane').evaluateAll(els => els.map(el => {
+    const r = el.getBoundingClientRect(); return { x:r.x, y:r.y, right:r.right, bottom:r.bottom };
+  }));
+  return Math.abs(boxes[0].y - boxes[1].y) < 2 && boxes[1].x > boxes[0].x;
+  }).toBe(true);
+  await expect(page.locator('.dashboard-splitter').first()).toBeVisible();
   const pane = page.locator('.dashboard-pane').last();
   await pane.scrollIntoViewIfNeeded();
   await expect(pane.locator('textarea')).toBeVisible();
   await page.screenshot({ path: info.outputPath('01-phone-dashboard.png') });
+  for (const index of [2, 3]) {
+    await page.locator('#btn-dashboard-drawer').click();
+    await page.locator('#session-list .session-item').nth(index).locator('.session-tile-btn').click();
+  }
+  await expect(page.locator('.dashboard-pane')).toHaveCount(4);
+  await expect(page.locator('.dashboard-splitter')).toHaveCount(3);
+  await expect.poll(async () => {
+    const grid = await page.locator('#dashboard-grid').boundingBox();
+    return page.locator('.dashboard-pane').evaluateAll((els, bounds) => els.every(el => {
+      const r = el.getBoundingClientRect();
+      return r.y >= bounds.y - 2 && r.bottom <= bounds.y + bounds.height + 2;
+    }), grid!);
+  }).toBe(true);
+  expect((await page.locator('.pane-session-name').first().boundingBox())!.width).toBeGreaterThan(20);
+  await page.screenshot({ path: info.outputPath('02-phone-four-grid.png') });
   await page.setViewportSize({ width: 844, height: 390 });
   await page.locator('#btn-dashboard-drawer').click();
   await expect(page.locator('.drawer')).toHaveClass(/open/);
@@ -242,12 +269,14 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await page.screenshot({ path: info.outputPath('02-landscape.png') });
   await expect(page.locator('#dashboard-view')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+  await expect(page.locator('.dashboard-pane')).toHaveCount(4);
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!));
   await page.setViewportSize({ width: 1280, height: 900 });
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!))).toEqual(saved);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('.dashboard-pane').last().locator('.pane-close-btn').click();
+  while (await page.locator('.dashboard-pane').count() > 1) {
+    await page.locator('.dashboard-pane').last().locator('.pane-close-btn').click();
+  }
   await expect(page.locator('.dashboard-pane')).toHaveCount(1);
   await expect(page.locator('#dashboard-view')).toBeVisible();
   await expect.poll(async () => {
