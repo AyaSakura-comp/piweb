@@ -1,5 +1,5 @@
 /**
- * Desktop & Tablet Multi-Session 2D Tiling Dashboard (>= 768px)
+ * Responsive Multi-Session 2D Tiling Dashboard
  *
  * Supports both horizontal (left/right columns) and vertical (top/bottom rows)
  * automatic alignment and directional drop zones (left, right, top, bottom),
@@ -2911,7 +2911,6 @@ export function createSessionDashboard({
 
   // ── Public Operations ──────────────────────────────────────────────────────
   function setActive(nextActive) {
-    if (nextActive && !wideQuery.matches) return;
     if (active === nextActive) return;
     active = nextActive;
     syncNavCounts();
@@ -2932,6 +2931,7 @@ export function createSessionDashboard({
         clearTimeout(pane.reconnectTimer);
       }
     }
+    if (active && !wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
     onRenderSessionListDecorations();
   }
 
@@ -2946,6 +2946,7 @@ export function createSessionDashboard({
 
   function addPane(jid, dropTarget = null) {
     if (!jid || jid === 'web:life') return;
+    if (!wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
     const wasAlreadyIn = allJids().includes(jid);
     animatePaneLayoutTransition(() => {
       if (dropTarget && dropTarget.mode === 'pane') {
@@ -2960,7 +2961,7 @@ export function createSessionDashboard({
         }
       }
       saveState();
-      if (!active && wideQuery.matches) {
+      if (!active) {
         setActive(true);
       } else {
         rebuildGrid();
@@ -3403,7 +3404,8 @@ export function createSessionDashboard({
 
   preventTouchFocusSteal(btnDrawerToggle);
   btnDrawerToggle.addEventListener('click', () => {
-    app.classList.toggle('drawer-collapsed');
+    if (wideQuery.matches) app.classList.toggle('drawer-collapsed');
+    else document.getElementById('btn-menu')?.click();
   });
 
   // iPadOS visualViewport keyboard inset sync: shrink #dashboard-view height
@@ -3428,11 +3430,7 @@ export function createSessionDashboard({
   }
   window.addEventListener('resize', syncDashboardVisualViewport);
 
-  wideQuery.addEventListener('change', (e) => {
-    if (!e.matches && active) {
-      setActive(false);
-    }
-  });
+  wideQuery.addEventListener('change', syncDashboardVisualViewport);
 
   syncNavCounts();
 

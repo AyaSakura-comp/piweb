@@ -270,3 +270,22 @@ If backend server routes (`src/web/server.ts`) or dependencies are modified:
 docker compose build app && docker compose up -d
 curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 ```
+
+
+## Phone dashboard
+
+Dashboard is available from the phone top bar and session drawer. Use a session's
+44px tile button to add/remove a pane; adding closes the overlay drawer. Phone
+session rows retain native vertical scrolling rather than initiating tile drags.
+
+Below 768px (or short coarse-pointer viewports), panes are presented as a vertically
+scrollable stack, with a single pane filling the available grid. Desktop splitters
+are hidden in this presentation. The underlying groups, direction and weights
+remain unchanged: resizing/rotating the viewport alone never overwrites the shared
+layout. The existing layout API continues to persist deliberate membership/preset
+changes. Keyboard viewport sizing uses the existing visualViewport integration.
+
+Regression coverage: `test/e2e/session-dashboard-mobile.spec.ts` checks entry,
+drawer/add interaction, two panes, horizontal overflow, rotation, preservation of
+saved desktop geometry and single-pane fill after closing a pane. These checks
+use Chromium touch emulation, not physical iOS Safari.

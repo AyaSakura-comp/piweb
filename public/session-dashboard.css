@@ -1,4 +1,4 @@
-/* ── Desktop & Tablet Multi-Session Tiling Dashboard (>= 768px) ──────────── */
+/* ── Responsive Multi-Session Tiling Dashboard ────────────────────────── */
 
 .dashboard-nav-entry,
 .dashboard-topbar-btn,
@@ -7,7 +7,7 @@
   display: none;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 0px) {
   /* Sidebar "Dashboard" Home entry */
   .dashboard-nav-entry {
     display: flex;
@@ -1042,3 +1042,22 @@
   }
 }
 
+
+/* Phone presentation is local only: never rewrite the shared desktop layout. */
+@media (max-width: 767px), (max-height: 499px) and (pointer: coarse) {
+  .dashboard-toolbar { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px; padding: 4px 8px; }
+  .dashboard-toolbar-title { flex: 1 0 100%; }
+  .dashboard-Menu-btn { display: grid; }
+  .dashboard-layout-presets { max-width: 100%; overflow-x: auto; }
+  .dashboard-heading-stack h2 { font-size: 15px; }
+  .dashboard-grid { flex-direction: column !important; gap: 8px; }
+  .dashboard-group { display: contents; }
+  .dashboard-grid .dashboard-pane { flex: 0 0 max(400px, 65dvh) !important; min-width: 0; width: 100%; }
+  .dashboard-grid > .dashboard-group:only-child > .dashboard-pane:only-child { flex: 1 0 0px !important; }
+  .dashboard-splitter { display: none; }
+  .dashboard-grid .dashboard-pane-header { min-height: 44px; flex-wrap: wrap; }
+  .dashboard-grid .dashboard-pane-actions .icon-btn,
+  .session-tile-btn { min-width: 44px; min-height: 44px; }
+  .dashboard-grid .dashboard-pane-composer textarea { font-size: 16px; }
+  .session-item { touch-action: pan-y; }
+}
