@@ -296,6 +296,6 @@ Jump-to-present floats inside a flex-sized transcript wrapper, 8px above its low
 edge. It consumes no layout row and does not resize the messages when shown/hidden.
 The wrapper ends above BTW/keywords/composer, avoiding guessed composer offsets. Phone landscape (coarse pointer below 500px tall) uses the overlay drawer,
 not the >=768px desktop rail. `app.js`, the dashboard and drawer CSS share that
-breakpoint policy. Dashboard phone styling also respects top/bottom safe areas.
+breakpoint policy. Dashboard phone styling respects the top safe area. It does not add a second bottom safe-area strip below the grid; the mobile regression uses Chromium safe-area emulation (34px) and asserts the stage reaches the dashboard bottom.
 The mobile regression spec checks jump/keyword geometry, landscape drawer open/
 close and full workspace width, plus 320px and 708px document overflow.

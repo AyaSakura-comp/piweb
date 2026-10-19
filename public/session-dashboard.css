@@ -1064,7 +1064,7 @@
 @media (max-width: 767px), (max-height: 499px) and (pointer: coarse) {
   .dashboard-toolbar { height: 52px; min-height: 52px; flex-wrap: nowrap; gap: 4px; padding: 0 8px; }
   .dashboard-toolbar-title { flex: 1 1 0; }
-  .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
+  .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: 0; box-sizing: border-box; }
   .dashboard-Menu-btn { display: grid; }
   .dashboard-layout-presets { flex: 0 0 auto; max-width: calc(100% - 52px); margin-left: auto; overflow-x: auto; }
   .dashboard-heading-stack h2 { font-size: 15px; }
