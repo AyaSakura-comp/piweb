@@ -849,15 +849,16 @@ export function createSessionDashboard({
       form,
     );
 
+    const transcript = el('div', 'dashboard-pane-transcript');
+    transcript.append(messagesEl, btwMessagesEl, jumpBtn);
+
     paneEl.append(
       header,
       menuScrim,
       moreMenu,
       searchPanel,
       btwCard,
-      messagesEl,
-      btwMessagesEl,
-      jumpBtn,
+      transcript,
       typingEl,
       btwPendingRow,
       composerWrap,
@@ -906,6 +907,7 @@ export function createSessionDashboard({
       btwCard,
       btwStatusSpan,
       btwClearBtn,
+      transcript,
       messagesEl,
       btwMessagesEl,
       jumpBtn,

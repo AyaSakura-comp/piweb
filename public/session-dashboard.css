@@ -828,19 +828,27 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Keep jump-to-present in flow, above BTW/keywords/composer, never over them. */
-  .pane-jump-live,
-  .pane-jump-live.visible {
-    position: static;
-    transform: none;
-    flex: none;
-    align-self: center;
-    margin: 4px auto;
-    min-height: 44px;
+  /* Anchor the floating button to the transcript, not a guessed composer height. */
+  .dashboard-pane-transcript {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .pane-jump-live { display: none; }
-  .pane-jump-live.visible { display: block; }
+  .pane-jump-live,
+  .pane-jump-live.visible {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    transform: translateX(-50%);
+    min-height: 44px;
+    max-width: calc(100% - 16px);
+    margin: 0;
+  }
 
   .dashboard-pane-composer-wrap {
     min-width: 0;

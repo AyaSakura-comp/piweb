@@ -292,9 +292,9 @@ Chromium touch emulation is not physical iOS Safari validation.
 
 ### Mobile overlap and landscape regression
 
-Jump-to-present occupies its own flow row above BTW/keywords/composer rather than
-using a fixed bottom offset. This avoids covering variable-height keyword or quote
-rows. Phone landscape (coarse pointer below 500px tall) uses the overlay drawer,
+Jump-to-present floats inside a flex-sized transcript wrapper, 8px above its lower
+edge. It consumes no layout row and does not resize the messages when shown/hidden.
+The wrapper ends above BTW/keywords/composer, avoiding guessed composer offsets. Phone landscape (coarse pointer below 500px tall) uses the overlay drawer,
 not the >=768px desktop rail. `app.js`, the dashboard and drawer CSS share that
 breakpoint policy. Dashboard phone styling also respects top/bottom safe areas.
 The mobile regression spec checks jump/keyword geometry, landscape drawer open/
