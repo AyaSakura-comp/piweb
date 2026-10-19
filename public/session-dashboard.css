@@ -1054,11 +1054,11 @@
 /* Small-screen chrome only. Grid, groups, weights, splitters and panes use
    the exact desktop layout rules above; never replace them with stacked cards. */
 @media (max-width: 767px), (max-height: 499px) and (pointer: coarse) {
-  .dashboard-toolbar { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px; padding: 4px 8px; }
-  .dashboard-toolbar-title { flex: 1 0 100%; }
+  .dashboard-toolbar { height: 52px; min-height: 52px; flex-wrap: nowrap; gap: 4px; padding: 0 8px; }
+  .dashboard-toolbar-title { flex: 1 1 0; }
   .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
   .dashboard-Menu-btn { display: grid; }
-  .dashboard-layout-presets { max-width: 100%; overflow-x: auto; }
+  .dashboard-layout-presets { flex: 0 0 auto; max-width: calc(100% - 52px); margin-left: auto; overflow-x: auto; }
   .dashboard-heading-stack h2 { font-size: 15px; }
   .session-tile-btn { min-width: 44px; min-height: 44px; }
 }

@@ -266,6 +266,16 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await expect(page.locator('.drawer')).not.toHaveClass(/open/);
   const mainBox = await page.locator('.main').boundingBox();
   expect(mainBox!.width).toBeGreaterThanOrEqual(842);
+  await expect.poll(async () => {
+    const r = await page.locator('.drawer').boundingBox();
+    return r!.x + r!.width <= 1;
+  }).toBe(true);
+  const toolbarBox = await page.locator('.dashboard-toolbar').boundingBox();
+  const titleBox = await page.locator('.dashboard-toolbar-title').boundingBox();
+  const presetsBox = await page.locator('.dashboard-layout-presets').boundingBox();
+  expect(toolbarBox!.height).toBeLessThanOrEqual(60);
+  expect(Math.abs(titleBox!.y + titleBox!.height / 2 - presetsBox!.y - presetsBox!.height / 2)).toBeLessThan(2);
+  expect(presetsBox!.x).toBeGreaterThanOrEqual(titleBox!.x + titleBox!.width - 1);
   await page.screenshot({ path: info.outputPath('02-landscape.png') });
   await expect(page.locator('#dashboard-view')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

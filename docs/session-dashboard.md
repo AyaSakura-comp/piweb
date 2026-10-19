@@ -277,7 +277,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 Dashboard uses the same layout engine and functionality at every viewport width:
 horizontal/vertical/grid presets, group and pane weights, directional drop zones,
 touch/pointer dragging, splitters, per-pane controls and cloud layout persistence.
-There is no phone-only stacked-card or pager implementation. Only toolbar wrapping,
+There is no phone-only stacked-card or pager implementation. Only single-row toolbar sizing (title left, presets right),
 safe-area clearance and overlay drawer presentation adapt to the smaller screen.
 Dragging from the overlay drawer closes it once drag begins to expose drop targets.
 
