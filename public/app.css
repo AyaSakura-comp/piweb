@@ -2431,7 +2431,7 @@ svg {
 
 /* ── wider screens ───────────────────────────────────────────────────── */
 
-@media (min-width: 768px) {
+@media (min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine) {
   .drawer {
     position: relative;
     transform: none;

@@ -124,7 +124,7 @@ export function createSessionDashboard({
   showToast,
   isAutoScrollEnabled = () => false,
 }) {
-  const wideQuery = window.matchMedia('(min-width: 768px)');
+  const wideQuery = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
   let active = false;
   let panes = new Map(); // jid -> pane state
   /**

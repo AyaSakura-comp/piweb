@@ -828,11 +828,19 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  .pane-jump-live {
-    bottom: 66px;
-    will-change: transform, opacity;
-    transform: translateZ(0);
+  /* Keep jump-to-present in flow, above BTW/keywords/composer, never over them. */
+  .pane-jump-live,
+  .pane-jump-live.visible {
+    position: static;
+    transform: none;
+    flex: none;
+    align-self: center;
+    margin: 4px auto;
+    min-height: 44px;
   }
+
+  .pane-jump-live { display: none; }
+  .pane-jump-live.visible { display: block; }
 
   .dashboard-pane-composer-wrap {
     min-width: 0;
@@ -1047,6 +1055,7 @@
 @media (max-width: 767px), (max-height: 499px) and (pointer: coarse) {
   .dashboard-toolbar { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px; padding: 4px 8px; }
   .dashboard-toolbar-title { flex: 1 0 100%; }
+  .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
   .dashboard-Menu-btn { display: grid; }
   .dashboard-layout-presets { max-width: 100%; overflow-x: auto; }
   .dashboard-heading-stack h2 { font-size: 15px; }

@@ -5459,7 +5459,7 @@ syncViewportSizes();
 
 // ── drawer ───────────────────────────────────────────────────────────────
 
-const wideDrawer = window.matchMedia('(min-width: 768px)');
+const wideDrawer = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
 
 function openDrawer() {
   renderSessions();

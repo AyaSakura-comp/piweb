@@ -289,3 +289,14 @@ Regression coverage: `test/e2e/session-dashboard-mobile.spec.ts` checks entry,
 drawer/add interaction, two panes, horizontal overflow, rotation, preservation of
 saved desktop geometry and single-pane fill after closing a pane. These checks
 use Chromium touch emulation, not physical iOS Safari.
+
+
+### Mobile overlap and landscape regression
+
+Jump-to-present occupies its own flow row above BTW/keywords/composer rather than
+using a fixed bottom offset. This avoids covering variable-height keyword or quote
+rows. Phone landscape (coarse pointer below 500px tall) uses the overlay drawer,
+not the >=768px desktop rail. `app.js`, the dashboard and drawer CSS share that
+breakpoint policy. Dashboard phone styling also respects top/bottom safe areas.
+The mobile regression spec checks jump/keyword geometry, landscape drawer open/
+close and full workspace width, plus 320px and 708px document overflow.
