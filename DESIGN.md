@@ -4,8 +4,9 @@
 
 Phone-first chat UI. `public/app.css` is the source of truth for shared tokens;
 feature styles reuse these tokens rather than introducing separate palettes.
-This document currently specifies the shared viewer foundation and Subagents
-navigation. It does not change Life, Settings or browser-native navigation.
+This document currently specifies the shared viewer foundation, Subagents
+navigation and Settings motion. It does not change Life or browser-native
+navigation.
 
 | Token      | Dark      | Light     |
 | ---------- | --------- | --------- |
@@ -237,6 +238,60 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   with `cubic-bezier(.2,.8,.2,1)`. Drag commits at 28% of the width or by the
   same flick rule as Subagents (≥60px, ≥0.5px/ms, 180ms projection, velocity
   expires after 100ms). Reduced motion skips automatic animation.
+
+## Settings motion
+
+Settings (`#settings-dialog`) is a pushed page on a phone and a centred card
+from 700px up. All of its motion lives in `public/settings-motion.js` (Web
+Animations API), not CSS keyframes, because a native `<dialog>` disappears the
+moment `close()` runs; the exit has to finish before the dialog closes.
+It follows the same motion language as Subagents and BTW.
+
+| Action                                | Phone (< 700px)                                                                    | Card (≥ 700px)                                                           |
+| ------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Open (drawer → Settings)              | Page enters from the right, `translateX(100%)→0`, 220ms `cubic-bezier(.2,.8,.2,1)` | Fades and lifts in from `translateY(10px) scale(.985)`, 220ms same curve |
+| Close button, Escape, backdrop click  | Page exits to the right, 140ms `ease-in`, then `dialog.close()`                    | Fades and drops back out, 140ms `ease-in`                                |
+| Right drag on the page                | Page follows the finger; release commits or settles back                           | No drag                                                                  |
+| Logout, Preview from Recently deleted | Closes immediately (programmatic, not animated)                                    | Same                                                                     |
+| Back from Recently deleted            | Settings is already underneath; no second entrance                                 | Same                                                                     |
+
+- **Backdrop.** The 58% black dimming fades with the page (WAAPI on
+  `::backdrop`, 220ms ease-out in / 140ms ease-in out). During a drag
+  `--settings-reveal` (0→1 by distance / width) lightens it so the chat shows
+  through; browsers that cannot animate `::backdrop` just show/hide it.
+- **One surface moves at a time.** Opening from the drawer leaves the drawer
+  still under the entering page and closes it only once Settings fully covers
+  it (`settingsMotion.open()` resolves), so the drawer never slides left while
+  Settings slides in from the right.
+- **Interrupts.** Reopening during an exit picks the page up from its current
+  offset (duration scaled to the distance left). A close during the entrance
+  starts from where the page is. Every animation carries an epoch so a stale
+  `finished` never closes or resets a newer state. The dialog is `inert` while
+  it is leaving or settling.
+- **Drag.** The Subagents rules: 12px of rightward movement that is 1.5× the
+  vertical distance locks the drag (a clear rightward first move is claimed
+  even below 12px so iOS cannot latch scrolling); vertical-first movement over
+  12px is left to scrolling. The page tracks the finger 1:1, clamped to its
+  width. Release commits at 28% of the width, or a ≥60px flick at ≥0.5px/ms
+  whose 180ms projection reaches 28% (velocity expires after 100ms; reversing
+  faster than −0.2px/ms never commits). Release settles from the finger over
+  120–280ms with `cubic-bezier(.2,.8,.2,1)`. Settings rows are buttons and form
+  most of the page, so they stay part of the drag surface (a drag never fires
+  their tap); links, inputs, selects, the device code and horizontally
+  scrollable content keep their own gestures. Multi-touch or `touchcancel`
+  settles back.
+- **Reduced motion.** `prefers-reduced-motion: reduce` opens and closes with no
+  animation and settles a release instantly; the finger-following drag stays.
+- **State hook.** `data-motion` on the dialog is `opening`, `dragging`,
+  `settling` or `closing` while something moves, and absent at rest; tests and
+  styles (`will-change`) key off it.
+- **Not yet covered.** The Recently deleted sub-page still uses its older CSS
+  entrance (`trash-page-enter`, 240ms) and closes without an exit.
+
+Verified by `test/e2e/settings-motion.spec.ts`: a frozen mid-entrance frame,
+close/Escape exits, a held drag at 130px then release closing, a short drag
+settling back without toggling the row under the finger, vertical movement not
+moving the page, reduced motion and the desktop card fade.
 
 ## Multi-session tiling dashboard (tablet & desktop)
 

@@ -18,6 +18,7 @@ import { createCameraComposer } from './camera-composer.js';
 import { createImageAnnotator } from './image-annotator.js';
 import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
+import { createSettingsMotion } from './settings-motion.js';
 import { createCommandsRunningView } from './commands-running.js';
 import { createVideoAttachment, downloadNameFromMediaUrl } from './media-files.js';
 import { createStreamPlayer } from './stream-player.js';
@@ -31,7 +32,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=session-list-del-1';
+import { createSessionDashboard } from './session-dashboard.js?v=settings-motion-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -715,7 +716,10 @@ function renderSubscriptionStatus(status) {
         : 'Not connected';
 
   const hasCode = Boolean(active && job.userCode && job.verificationUri);
+  const appearing = hasCode && device.hidden;
   device.hidden = !hasCode;
+  // The code appears below Connect, under the fold on a phone; bring it up.
+  if (appearing) device.scrollIntoView({ block: 'nearest' });
   if (hasCode) {
     $('subscription-device-code').textContent = job.userCode;
     $('subscription-verification-link').href = job.verificationUri;
@@ -738,21 +742,30 @@ async function refreshSubscriptionStatus({ keepPolling = true } = {}) {
   }
 }
 
-async function openSettings() {
-  closeDrawer();
-  const dialog = $('settings-dialog');
-  if (!dialog.open) dialog.showModal();
-  await Promise.all([refreshNotifyState(), refreshSubscriptionStatus()]);
+// Settings slides in from the right and back out; Escape, the close button
+// and a right drag all leave through settingsMotion.close().
+const settingsMotion = createSettingsMotion({
+  dialog: $('settings-dialog'),
+  onClosed: stopSubscriptionPolling,
+});
+
+async function openSettings({ animate = true } = {}) {
+  // The drawer stays put while Settings slides over it and closes once it is
+  // hidden, so only one surface is ever moving.
+  const covered = settingsMotion.open({ animate }).then(() => {
+    if ($('settings-dialog').open) closeDrawer();
+  });
+  await Promise.all([covered, refreshNotifyState(), refreshSubscriptionStatus()]);
 }
 
-function closeSettings() {
+// Programmatic closes (logout, leaving from Recently deleted) are immediate.
+function closeSettings({ animate = false } = {}) {
   stopSubscriptionPolling();
-  if ($('settings-dialog').open) $('settings-dialog').close();
+  settingsMotion.close({ animate });
 }
 
 $('btn-settings').addEventListener('click', () => void openSettings());
-$('btn-settings-close').addEventListener('click', closeSettings);
-$('settings-dialog').addEventListener('cancel', () => stopSubscriptionPolling());
+$('btn-settings-close').addEventListener('click', () => closeSettings({ animate: true }));
 $('settings-dialog').addEventListener('close', stopSubscriptionPolling);
 
 $('subscription-action').addEventListener('click', async () => {
@@ -5429,7 +5442,11 @@ function closeTrash({ explicitDismissal = false } = {}) {
     if ($('settings-dialog').open) {
       $('btn-trash').focus({ preventScroll: true });
     } else {
-      void openSettings().then(() => $('btn-trash').focus({ preventScroll: true }));
+      // Back from Recently deleted: Settings is already "underneath", so it
+      // must not slide in again from the wrong side.
+      void openSettings({ animate: false }).then(() =>
+        $('btn-trash').focus({ preventScroll: true }),
+      );
     }
   } else if (returnFocus?.isConnected && !returnFocus.disabled && !returnFocus.closest('[inert]')) {
     queueMicrotask(() => returnFocus.focus({ preventScroll: true }));

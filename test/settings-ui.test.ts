@@ -44,7 +44,10 @@ describe('settings page', () => {
     expect(app).toContain("api('/api/subscriptions/openai-codex'");
     expect(app).toContain("$('btn-settings').addEventListener('click'");
     expect(app).toContain("setAttribute('aria-checked'");
-    expect(css).toContain('@keyframes settings-enter');
-    expect(css).toContain('animation: settings-enter');
+    // Motion is driven by settings-motion.js so the exit can animate too.
+    const motion = readFileSync(resolve(root, 'public/settings-motion.js'), 'utf8');
+    expect(app).toContain("import { createSettingsMotion } from './settings-motion.js'");
+    expect(motion).toContain("pseudoElement: '::backdrop'");
+    expect(css).toContain('var(--settings-reveal, 0)');
   });
 });

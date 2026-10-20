@@ -50,6 +50,9 @@ async function installApi(
     localStorage.setItem('piweb.mode', 'sessions');
     localStorage.setItem('piweb.theme', 'dark');
   });
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -58,6 +61,8 @@ async function installApi(
       return route.fulfill({ json: { authed: true, via: 'token' } });
     }
     if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
+    if (path === '/api/dashboard-layout') return route.fulfill({ json: { layout: null } });
+    if (path === '/api/system-metrics') return route.fulfill({ json: {} });
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/sessions' && request.method() === 'GET') {
       return route.fulfill({ json: { sessions: [SESSION] } });
@@ -164,7 +169,8 @@ test('mobile Settings and OpenAI device-code workflow remains visually usable', 
   await settingsEntry.click();
   const dialog = page.locator('#settings-dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog).toHaveCSS('animation-name', 'settings-enter');
+  // The slide-in is settings-motion.js (covered by settings-motion.spec.ts).
+  await expect(dialog).not.toHaveAttribute('data-motion', /.+/);
   await expect(page.locator('#btn-notify')).toHaveAttribute('role', 'switch');
   await expect(page.locator('#btn-notify')).toHaveAttribute('aria-checked', 'false');
   await expect(page.locator('.notification-toggle')).toBeVisible();
