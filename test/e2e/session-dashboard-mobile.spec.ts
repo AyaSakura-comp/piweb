@@ -257,8 +257,8 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   const pane = page.locator('.dashboard-pane').last();
   await pane.scrollIntoViewIfNeeded();
   // One floating input for the whole Dashboard (2026-10-20 redesign): only the
-  // pane last touched shows it, as a card over the bottom of its transcript,
-  // and touching another pane makes it hop there.
+  // pane last touched shows it, as a card under its transcript, and touching
+  // another pane makes it hop there.
   await expect(page.locator('.dashboard-pane-composer-wrap:visible')).toHaveCount(1);
   await expect(page.locator('.dashboard-pane').first().locator('textarea')).toBeVisible();
   await expect(pane.locator('textarea')).toBeHidden();
@@ -274,10 +274,65 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     const scroller = paneEl.querySelector('.dashboard-pane-messages') as HTMLElement;
     scroller.scrollTop = scroller.scrollHeight;
     const last = [...scroller.querySelectorAll('.msg')].pop()!.getBoundingClientRect();
-    return { dockBottom: dock.bottom, dockTop: dock.top, paneBottom: box.bottom, lastBottom: last.bottom };
+    // The card has its own row: at any scroll position (iPhone screenshot
+    // 2026-10-21, mid-history) no message slides behind it.
+    const transcript = paneEl.querySelector('.dashboard-pane-transcript')!.getBoundingClientRect();
+    return {
+      dockBottom: dock.bottom,
+      dockTop: dock.top,
+      paneBottom: box.bottom,
+      lastBottom: last.bottom,
+      transcriptBottom: transcript.bottom,
+    };
   });
   expect(Math.abs(dockLayout.paneBottom - 8 - dockLayout.dockBottom)).toBeLessThanOrEqual(1);
   expect(dockLayout.lastBottom).toBeLessThanOrEqual(dockLayout.dockTop);
+  expect(dockLayout.transcriptBottom).toBeLessThanOrEqual(dockLayout.dockTop);
+  // Jump to present on a pane without the card (iPhone 2026-10-21): the card
+  // arrives on click, not pointerdown, so the button is still under the finger
+  // when the tap lands, and the tap both scrolls and brings the card.
+  const other = page.locator('.dashboard-pane').first();
+  const otherScroller = other.locator('.dashboard-pane-messages');
+  await otherScroller.evaluate((sc) => {
+    sc.style.paddingTop = '1600px'; // enough history to scroll in a phone pane
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('wheel'));
+    sc.dispatchEvent(new Event('scroll'));
+  });
+  const otherJump = other.locator('.pane-jump-live.visible');
+  await expect(otherJump).toBeVisible();
+  await otherJump.tap();
+  await expect(other.locator('textarea')).toBeVisible();
+  await expect
+    .poll(() => otherScroller.evaluate((sc) => sc.scrollHeight - sc.scrollTop - sc.clientHeight))
+    .toBeLessThan(4);
+  await otherScroller.evaluate((sc) => {
+    sc.style.paddingTop = '';
+  });
+  await pane.locator('.dashboard-pane-transcript').click();
+  await expect(pane.locator('textarea')).toBeVisible();
+  // iPhone / iPad (2026-10-21): a finger scroll through another pane moves
+  // nothing; a finger tap on it brings the card and opens the keyboard at once.
+  const tapPane = page.locator('.dashboard-pane').first();
+  const scrollBox = (await tapPane.locator('.dashboard-pane-messages').boundingBox())!;
+  const sx = scrollBox.x + scrollBox.width / 2;
+  const sy = scrollBox.y + scrollBox.height * 0.7;
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: sx, y: sy }] });
+  for (let i = 1; i <= 6; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: sx, y: sy - i * 25 }] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.dashboard-dock-ghost')).toHaveCount(0);
+  await expect(pane.locator('textarea')).toBeVisible();
+  await expect(tapPane.locator('textarea')).toBeHidden();
+  await expect(page.locator('textarea:focus')).toHaveCount(0);
+  await tapPane.locator('.msg-text').first().tap();
+  await expect(tapPane.locator('textarea')).toBeFocused();
+  await expect(tapPane.locator('textarea')).toBeVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await pane.locator('.dashboard-pane-transcript').click();
+  await expect(pane.locator('textarea')).toBeVisible();
   await page.screenshot({ path: info.outputPath('01-phone-dashboard.png') });
   // A pane drag may start on the session name or an icon button (iPhone
   // recording 2026-10-20: a finger on the name refused to drag). Movement

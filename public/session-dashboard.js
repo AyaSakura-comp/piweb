@@ -10,6 +10,9 @@ const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
+/** Taps on these keep their own job instead of opening the pane's keyboard. */
+const PANE_TAP_KEEPS_FOCUS =
+  'a, button, input, textarea, select, summary, label, img, video, audio, [role="button"], [contenteditable], .stream-player';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MIME_EXT_MAP = {
@@ -136,13 +139,16 @@ export function createSessionDashboard({
   }
   let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
 
-  /** The floating card's height becomes its pane's transcript bottom padding. */
-  const dockObserver =
+  /** A transcript that shrinks (the card arrives, the card grows, a splitter
+   *  moves) keeps a reader who was following the newest message at the bottom. */
+  const transcriptObserver =
     typeof ResizeObserver === 'function'
       ? new ResizeObserver((entries) => {
           for (const entry of entries) {
-            const paneEl = entry.target.closest('.dashboard-pane');
-            paneEl?.style.setProperty('--dock-h', `${Math.ceil(entry.target.offsetHeight)}px`);
+            const pane = panes.get(entry.target.closest('.dashboard-pane')?.dataset.jid);
+            if (pane && !pane.disposed && !pane.userScrolledUp) {
+              entry.target.scrollTop = entry.target.scrollHeight;
+            }
           }
         })
       : null;
@@ -893,21 +899,43 @@ export function createSessionDashboard({
 
     // One floating input for the whole Dashboard: every pane keeps its own
     // composer (draft, attachments, BTW), but only the pane last touched shows
-    // it, as a card over the bottom of its transcript (selectComposerPane).
+    // it, as a card under its transcript (selectComposerPane).
     const dock = el('div', 'dashboard-pane-dock');
     dock.append(typingEl, btwPendingRow, composerWrap);
 
     paneEl.append(header, menuScrim, moreMenu, searchPanel, btwCard, transcript, dock);
+    // On click, not pointerdown: the card's arrival shrinks this transcript,
+    // and a pointerdown hop would lift Jump to present (or any button near the
+    // bottom) out from under the finger before the tap lands.
+    // A finger scroll never ends in a click, so browsing moves nothing.
+    let pressPointer = '';
+    paneEl.addEventListener('pointerdown', (e) => (pressPointer = e.pointerType), true);
     paneEl.addEventListener(
-      'pointerdown',
+      'click',
       (e) => {
         // Closing a pane is no reason to send the input there first.
-        if (!e.target.closest('.pane-close-btn')) selectComposerPane(jid);
+        if (e.target.closest('.pane-close-btn')) return;
+        selectComposerPane(jid);
+        // iPhone / iPad: a finger tap on the transcript itself (not a control,
+        // image or video, not ending a text selection) opens the keyboard at
+        // once. focus() must run inside the tap for iOS to raise the keyboard.
+        if (
+          pressPointer === 'touch' &&
+          e.target.closest('.dashboard-pane-transcript') &&
+          !e.target.closest(PANE_TAP_KEEPS_FOCUS) &&
+          !document.getSelection()?.toString()
+        ) {
+          dock.querySelector('.dashboard-pane-composer textarea')?.focus({ preventScroll: true });
+        }
       },
       true,
     );
-    paneEl.addEventListener('focusin', () => selectComposerPane(jid));
-    dockObserver?.observe(dock);
+    // A button takes focus on press, before its click: only typing fields hop
+    // on focus, or the card would move under the finger mid-tap.
+    paneEl.addEventListener('focusin', (e) => {
+      if (e.target.matches('textarea, input')) selectComposerPane(jid);
+    });
+    transcriptObserver?.observe(messagesEl);
 
     // Mount pinned prompt bar inside the pane right above messagesEl
     if (typeof createPromptPin === 'function') {
@@ -1100,7 +1128,11 @@ export function createSessionDashboard({
         const urls = [...messagesEl.querySelectorAll('.msg-files img, .msg-text img, .msg-inline-media img')]
           .map((node) => node.getAttribute('src'))
           .filter(Boolean);
-        openLightbox(img.getAttribute('src'), urls.length ? urls : [img.getAttribute('src')]);
+        openLightbox(
+          img.getAttribute('src'),
+          urls.length ? urls : [img.getAttribute('src')],
+          annotationTarget,
+        );
       }
     });
 
@@ -1349,7 +1381,7 @@ export function createSessionDashboard({
           previewBtn.disabled = pane.uploading;
           previewBtn.setAttribute('aria-label', `Preview ${attachment.name}`);
           previewBtn.addEventListener('click', () =>
-            openLightbox(attachment.url, [attachment.url]),
+            openLightbox(attachment.url, [attachment.url], annotationTarget),
           );
           previewBtn.append(thumb);
           chip.append(previewBtn);
@@ -1370,6 +1402,30 @@ export function createSessionDashboard({
         chip.append(remove);
         attachmentsEl.append(chip);
       });
+    };
+
+    // The viewer's draw (annotate) button attaches its PNG to this pane's
+    // composer: a pending image is replaced in place, a transcript image is
+    // added as a new attachment, and the card comes to this pane.
+    const annotationTarget = {
+      canAttach: () => !pane.disposed && !pane.uploading && pane.btwTarget !== 'btw',
+      attach: (file, sourceUrl) => {
+        const index = pane.attachments.findIndex((a) => a.url && a.url === sourceUrl);
+        if (index >= 0) {
+          const old = pane.attachments[index];
+          pane.attachments[index] = {
+            ...old,
+            name: file.name || old.name,
+            file,
+            url: URL.createObjectURL(file),
+          };
+          if (old.url) URL.revokeObjectURL(old.url);
+          renderPaneAttachments();
+        } else {
+          addPaneFiles([file]);
+        }
+        selectComposerPane(jid);
+      },
     };
 
     const addPaneFiles = (fileList) => {
@@ -2201,9 +2257,9 @@ export function createSessionDashboard({
 
   // ── Floating composer ─────────────────────────────────────────────────────
   /**
-   * Move the floating input to `jid`'s pane. The pane's transcript is padded
-   * by the card's height, so it never covers the newest message; a reader
-   * already at the bottom stays there. With `animate`, a copy of the card hops
+   * Move the floating input to `jid`'s pane. The card takes its own row under
+   * the transcript (the transcript shrinks; nothing scrolls behind it), and a
+   * reader already at the bottom stays there. With `animate`, a copy of the card hops
    * from the old pane to the new one in an arc (it must fly above the grid:
    * panes clip their own overflow).
    */
@@ -2223,17 +2279,14 @@ export function createSessionDashboard({
       const typed = prev.dock.querySelector('textarea');
       const ghostInput = ghost.querySelector('textarea');
       if (typed && ghostInput) ghostInput.value = typed.value;
+      ghost.classList.remove('is-floating', 'dock-arriving');
       ghost.classList.add('dashboard-dock-ghost');
       ghost.setAttribute('aria-hidden', 'true');
-      Object.assign(ghost.style, {
-        left: `${from.left}px`,
-        top: `${from.top}px`,
-        width: `${from.width}px`,
-        height: `${from.height}px`,
-      });
     }
 
     const keepBottom = isNearBottom(pane.messagesEl);
+    const prevDockH = prev?.el.isConnected ? prev.dock.offsetHeight : 0;
+    const restDockH = pane.dock.offsetHeight; // its typing line, before the card
     for (const p of panes.values()) {
       const on = p.jid === jid;
       p.el.classList.toggle('composer-active', on);
@@ -2245,28 +2298,52 @@ export function createSessionDashboard({
     } catch {
       // Not persisted; the in-memory choice still holds.
     }
-    pane.el.style.setProperty('--dock-h', `${Math.ceil(pane.dock.offsetHeight)}px`);
     if (keepBottom) pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
 
     if (!ghost) return;
     const to = pane.dock.getBoundingClientRect();
     if (!to.width) return;
+    // The ghost sits on the landing rect and flies in by transform alone, so
+    // the compositor runs the hop at the display's refresh rate (120Hz on
+    // ProMotion) instead of re-laying out every frame on the main thread.
+    Object.assign(ghost.style, {
+      left: `${to.left}px`,
+      top: `${to.top}px`,
+      width: `${to.width}px`,
+      height: `${to.height}px`,
+    });
     document.body.append(ghost);
     dockGhost = { el: ghost, jid };
     pane.dock.classList.add('dock-arriving');
-    const lift = Math.min(56, 18 + Math.hypot(to.left - from.left, to.top - from.top) * 0.1);
-    const midTop = Math.min(from.top, to.top) - lift;
+    // Both transcripts change height with the hop instead of jumping: the card's
+    // row opens under the new pane's messages (a reader at the bottom is pushed
+    // up with it, see transcriptObserver) and closes in the pane it left.
+    const ease = 'cubic-bezier(0.25, 0.8, 0.3, 1)';
+    pane.dock.animate(
+      [{ height: `${restDockH}px`, marginTop: '0px', marginBottom: '0px' }, { height: `${to.height}px` }],
+      { duration: 380, easing: ease },
+    );
+    const prevRestH = prev.dock.offsetHeight;
+    if (prevDockH > prevRestH) {
+      prev.dock.animate([{ height: `${prevDockH + 10}px` }, { height: `${prevRestH}px` }], {
+        duration: 380,
+        easing: ease,
+      });
+    }
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    const sx = from.width / to.width;
+    const sy = from.height / (to.height || from.height);
+    const lift = Math.min(56, 18 + Math.hypot(dx, dy) * 0.1);
+    const midY = Math.min(from.top, to.top) - lift - to.top;
     const flight = ghost.animate(
       [
-        { left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px` },
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
         {
-          left: `${(from.left + to.left) / 2}px`,
-          top: `${midTop}px`,
-          width: `${(from.width + to.width) / 2}px`,
-          transform: 'scale(1.03)',
+          transform: `translate(${dx / 2}px, ${midY}px) scale(${((sx + 1) / 2) * 1.03}, ${((sy + 1) / 2) * 1.03})`,
           offset: 0.45,
         },
-        { left: `${to.left}px`, top: `${to.top}px`, width: `${to.width}px`, height: `${to.height}px` },
+        { transform: 'none' },
       ],
       { duration: 380, easing: 'cubic-bezier(0.3, 0.9, 0.35, 1.05)', fill: 'forwards' },
     );
@@ -2291,7 +2368,7 @@ export function createSessionDashboard({
     const pane = panes.get(jid);
     if (!pane) return;
     pane.disposed = true;
-    dockObserver?.unobserve(pane.dock);
+    transcriptObserver?.unobserve(pane.messagesEl);
     if (dockGhost?.jid === jid) dockGhost.el.getAnimations().forEach((a) => a.cancel());
     if (pane.source) {
       pane.source.close();

@@ -19,7 +19,7 @@ async function present(page: Page, ms = 1000) {
   if (recordWalkthrough) await page.waitForTimeout(ms);
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, { openFromChat = true } = {}) {
   const requests: any[] = [];
   const events: any[] = [
     {
@@ -86,6 +86,7 @@ async function setup(page: Page) {
   await present(page);
   await page.locator('#input').fill('Please check my marks.');
   await present(page);
+  if (!openFromChat) return requests;
   await page.locator('#messages .msg-files img').click();
   await expect(page.locator('#lightbox')).toBeVisible();
   return requests;
@@ -593,3 +594,35 @@ for (const desktop of [false, true]) {
     });
   });
 }
+
+test('annotating in a Dashboard pane attaches to that pane, not the hidden chat', async ({
+  page,
+}, info) => {
+  // iPhone report 2026-10-21: the draw-and-attach button did nothing useful in
+  // the Dashboard (its PNG went to the chat composer behind it).
+  await setup(page, { openFromChat: false });
+  await page.locator('#btn-topbar-dashboard').click();
+  const pane = page.locator('.dashboard-pane').first();
+  await pane.locator('.msg-files img').click();
+  await expect(page.locator('#lightbox')).toBeVisible();
+  await expect(page.locator('#lb-annotate')).toBeVisible();
+  await page.locator('#lb-annotate').click();
+  await expect(page.locator('#annotation-canvas')).toBeVisible();
+  await draw(page, true);
+  await page.getByRole('button', { name: '確定加入附件', exact: true }).click();
+  await expect(page.locator('#lightbox')).toBeHidden();
+  await expect(pane.locator('.chip-image')).toHaveCount(1);
+  await expect(page.locator('#attachments .chip')).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('01-pane-annotated.png') });
+
+  // Drawing on the pending copy again replaces it instead of adding another.
+  const firstUrl = await pane.locator('.chip-thumb').getAttribute('src');
+  await pane.locator('.chip-preview').click();
+  await page.locator('#lb-annotate').click();
+  await expect(page.locator('#annotation-canvas')).toBeVisible();
+  await draw(page, false);
+  await page.getByRole('button', { name: '確定加入附件', exact: true }).click();
+  await expect(page.locator('#lightbox')).toBeHidden();
+  await expect(pane.locator('.chip-image')).toHaveCount(1);
+  expect(await pane.locator('.chip-thumb').getAttribute('src')).not.toBe(firstUrl);
+});

@@ -60,12 +60,18 @@ const $ = (id) => document.getElementById(id);
 const streamDock = document.createElement('div');
 streamDock.className = 'stream-dock';
 $('composer-wrap').before(streamDock);
+// Transcripts that hold playable items: the chat and every Dashboard pane.
+const STREAM_ROOTS = '#messages, .dashboard-pane-messages';
 const streamPlayer = createStreamPlayer(document, globalThis, {
   dock: streamDock,
-  resolveAnchor: (url) =>
-    [...$('messages').querySelectorAll('[data-stream-url]')].find(
-      (node) => node.dataset.streamUrl === url && !node.closest('.stream-player'),
-    ) ?? null,
+  resolveAnchor: (url) => {
+    const nodes = [...document.querySelectorAll('[data-stream-url]')].filter(
+      (node) =>
+        node.dataset.streamUrl === url && !node.closest('.stream-player') && node.closest(STREAM_ROOTS),
+    );
+    // The same session can be open in the chat and a pane: stay where it shows.
+    return nodes.find((node) => node.offsetParent) ?? nodes[0] ?? null;
+  },
 });
 if (typeof ResizeObserver === 'function') {
   const composerWrap = $('composer-wrap');
@@ -2110,7 +2116,7 @@ const sessionDashboard = createSessionDashboard({
   hideUploadProgress,
   quotePreview,
   copyText,
-  openLightbox: (url, urls) => openLightbox(url, urls),
+  openLightbox: (url, urls, target) => openLightbox(url, urls, target),
   onSelectSingleSession: (jid) => {
     void openStandardSession(jid);
   },
@@ -2118,6 +2124,12 @@ const sessionDashboard = createSessionDashboard({
   onApplySessionTitle: (jid, name) => applyImmediateSessionTitle(jid, name),
   showToast: (msg) => showToast(msg),
   isAutoScrollEnabled: () => autoScrollEnabled,
+});
+// Dashboard panes re-render their transcripts too: re-home a player embedded
+// in one, as for the chat above.
+new MutationObserver(() => streamPlayer.relocate()).observe($('dashboard-view'), {
+  childList: true,
+  subtree: true,
 });
 function isAgyCommandSession(targetJid = state.activeJid) {
   if (!targetJid) return false;
@@ -3092,11 +3104,13 @@ function createAudioTrack(url) {
 }
 
 /**
- * Play a transcript video/audio with every streamable item currently in the
- * transcript (in reading order) as its playlist.
+ * Play a transcript video/audio with every streamable item currently in its
+ * transcript (the chat or the Dashboard pane it was tapped in, in reading
+ * order) as its playlist.
  */
 function playFromTranscript(url, type, anchor = null) {
-  const list = [...$('messages').querySelectorAll('[data-stream-url]')].map((node) => ({
+  const transcript = anchor?.closest(STREAM_ROOTS) ?? $('messages');
+  const list = [...transcript.querySelectorAll('[data-stream-url]')].map((node) => ({
     url: node.dataset.streamUrl,
     type: node.dataset.streamType,
   }));
@@ -3104,11 +3118,12 @@ function playFromTranscript(url, type, anchor = null) {
 }
 
 // Inline reply media (Markdown/LobeHub) renders poster buttons with stream data
-// attributes; they are rendered outside app.js, so play them by delegation.
-$('messages').addEventListener('click', (event) => {
+// attributes; they are rendered outside app.js, so play them by delegation —
+// from the document, since Dashboard panes render the same markup.
+document.addEventListener('click', (event) => {
   const open = event.target.closest?.('.stream-open');
   const card = open?.closest('[data-stream-url]');
-  if (!card) return;
+  if (!card?.closest(STREAM_ROOTS)) return;
   event.preventDefault();
   playFromTranscript(card.dataset.streamUrl, card.dataset.streamType, card);
 });
@@ -4285,6 +4300,9 @@ function hideAutocomplete() {
 const lb = {
   urls: [],
   index: 0,
+  // A Dashboard pane that opened the viewer: annotations attach to its
+  // composer ({ canAttach(), attach(file, sourceUrl) }) instead of the chat's.
+  target: null,
   drag: null,
   scale: 1,
   x: 0,
@@ -4487,6 +4505,7 @@ function collectTranscriptMedia() {
 let lightboxAlbumGeneration = 0;
 
 function canAnnotateImage() {
+  if (lb.target) return lb.target.canAttach();
   return Boolean(state.activeJid && !state.previewingDeleted && !state.selectionPending &&
     !state.uploading && !input.disabled && !btwWorkspace.isSide());
 }
@@ -4494,6 +4513,12 @@ function canAnnotateImage() {
 const imageAnnotator = createImageAnnotator({
   onError: showToast,
   onConfirm: (file, destination) => {
+    if (destination.target) {
+      if (!destination.target.canAttach()) return false;
+      destination.target.attach(file, destination.source);
+      closeLightbox();
+      return true;
+    }
     if (!canAnnotateImage() || state.activeJid !== destination.jid ||
       sessionSelectionGeneration !== destination.selection) return false;
     // Annotating an image still waiting in the composer replaces it in place;
@@ -4509,11 +4534,17 @@ $('lb-annotate').addEventListener('click', () => {
   const url = lb.urls[lb.index];
   if (!url || isLightboxVideo(url) || !canAnnotateImage()) return;
   resetLightboxTransform(false);
-  void imageAnnotator.open(url, { jid: state.activeJid, selection: sessionSelectionGeneration, source: url });
+  void imageAnnotator.open(url, {
+    jid: state.activeJid,
+    selection: sessionSelectionGeneration,
+    source: url,
+    target: lb.target,
+  });
 });
 
-function openLightbox(url, urls) {
+function openLightbox(url, urls, target = null) {
   const generation = ++lightboxAlbumGeneration;
+  lb.target = target;
   lb.urls = urls && urls.length ? urls : collectTranscriptMedia();
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
@@ -4634,6 +4665,7 @@ function syncFilmstrip() {
 
 function closeLightbox() {
   imageAnnotator.close();
+  lb.target = null;
   lightboxAlbumGeneration++;
   releaseLightboxVideo();
   $('lightbox').hidden = true;

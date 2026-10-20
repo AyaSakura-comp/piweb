@@ -598,8 +598,34 @@
     opacity: 0.55;
   }
 
-  .dashboard-pane.pane-focused {
-    box-shadow: inset 0 0 0 1.5px var(--accent);
+  /* The pane holding the input wears a colored frame that fades over from the
+     pane it left; typing in it adds a soft glow. Drawn above the content so
+     the header and card cannot cover it. */
+  .dashboard-pane::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+    border: 2px solid transparent;
+    box-shadow: inset 0 0 0 0 transparent;
+    transition:
+      border-color 300ms ease,
+      box-shadow 300ms ease;
+  }
+
+  .dashboard-grid:not([data-pane-count='1']) .dashboard-pane.composer-active::after {
+    border-color: var(--accent);
+  }
+
+  .dashboard-grid:not([data-pane-count='1']) .dashboard-pane.composer-active.pane-focused::after {
+    box-shadow: inset 0 0 14px 0 color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dashboard-pane::after {
+      transition: none;
+    }
   }
 
   /* iPadOS / iOS WebKit: keep input font-size >= 16px on touch devices so Safari
@@ -870,8 +896,9 @@
 
   /* Floating composer: one input card for the whole Dashboard. Each pane's
      dock holds its typing line, BTW switch and composer; only the pane last
-     touched (.composer-active) shows the composer, floating over the bottom of
-     its transcript. The others keep just the typing line. */
+     touched (.composer-active) shows the composer, as a card in its own row
+     under the transcript: the transcript shrinks instead of scrolling behind
+     it. The others keep just the typing line. */
   .dashboard-pane-dock {
     display: flex;
     flex-direction: column;
@@ -886,23 +913,18 @@
 
   .dashboard-pane-dock.is-floating,
   .dashboard-dock-ghost {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    z-index: 20;
+    margin: 2px 8px 8px;
     justify-content: flex-end;
     /* A pane squeezed to its minimum keeps the input row, not the chips. */
-    max-height: calc(100% - 52px);
+    flex: 0 1 auto;
+    min-height: 0;
     overflow: hidden;
     padding-top: 4px;
     border-radius: 14px;
-    background: color-mix(in srgb, var(--bg-alt) 90%, transparent);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
+    background: var(--bg-alt);
     box-shadow:
       0 0 0 1px var(--border),
-      0 8px 28px rgb(0 0 0 / 0.32);
+      0 6px 20px rgb(0 0 0 / 0.28);
   }
 
   .dashboard-pane-dock.is-floating .dashboard-pane-composer-wrap,
@@ -912,15 +934,17 @@
 
   .dashboard-dock-ghost {
     position: fixed;
-    right: auto;
-    bottom: auto;
+    margin: 0;
     z-index: 80;
     pointer-events: none;
-    transform-origin: center;
+    transform-origin: 0 0;
+    will-change: transform;
   }
 
+  /* Hidden while its copy flies in, but still focusable: a tap that opens the
+     keyboard focuses this card before the copy lands. */
   .dashboard-pane-dock.dock-arriving {
-    visibility: hidden;
+    opacity: 0;
   }
 
   /* Narrow card: the text box gets the room (paste stays on long-press) and
@@ -939,17 +963,6 @@
     .dashboard-pane-composer .pane-paste-btn {
       display: none;
     }
-  }
-
-  /* The newest message and Jump to present sit above the card, never under it. */
-  .dashboard-pane.composer-active .dashboard-pane-messages {
-    padding-bottom: calc(var(--dock-h, 0px) + 14px);
-    scroll-padding-bottom: calc(var(--dock-h, 0px) + 14px);
-  }
-
-  .dashboard-pane.composer-active .pane-jump-live,
-  .dashboard-pane.composer-active .pane-jump-live.visible {
-    bottom: calc(var(--dock-h, 0px) + 16px);
   }
 
   .dashboard-pane-composer {

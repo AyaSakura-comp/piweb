@@ -16,6 +16,7 @@ const event = (id: number, content: string, files: string[] = [], role = 'assist
   files,
   createdAt: '2026-10-09T06:00:00Z',
 });
+const INLINE_CLIP = '/media/web_stream/inline-clip.webm';
 const history = [
   event(1, '做一段影片跟音樂', [], 'user'),
   event(2, '影片好了。', [CLIP]),
@@ -29,7 +30,7 @@ const mediaItems = [SHORT, TONE, CLIP].map((url, i) => ({
   type: url.endsWith('.webm') ? 'video' : 'audio',
 }));
 
-async function setup(page: Page) {
+async function setup(page: Page, extraHistory: ReturnType<typeof event>[] = []) {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => {
@@ -47,6 +48,10 @@ async function setup(page: Page) {
       close() {}
     };
   });
+  // The composer's shortcut chips; the fixture server has no shared media.
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
   await page.route('**/api/**', (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
@@ -56,7 +61,7 @@ async function setup(page: Page) {
       const session = sessions.find((s) => path.includes(encodeURIComponent(s.jid)))!;
       return route.fulfill({
         json: {
-          events: session.jid === 'web:stream' ? history : [],
+          events: session.jid === 'web:stream' ? [...history, ...extraHistory] : [],
           session,
           busy: false,
           partial: null,
@@ -231,5 +236,40 @@ test('an embedded player zooms in from its poster and closes back into it', asyn
   const after = (await card.boundingBox())!;
   expect(Math.abs(after.y - before.y)).toBeLessThan(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('Dashboard panes play attached and inline videos in place', async ({ page }, info) => {
+  // iPhone report 2026-10-21: a video in a Dashboard pane would not play (the
+  // tap was only wired to the chat transcript, and the player re-homed to the
+  // chat's hidden dock).
+  await page.route(`**${INLINE_CLIP}`, (route) =>
+    route.fulfill({ path: 'test/e2e/fixtures/media/stream-clip.webm', contentType: 'video/webm' }),
+  );
+  const { errors } = await setup(page, [event(4, `再一段：\n\n[[video: ${INLINE_CLIP}]]`)]);
+  const dock = page.getByRole('region', { name: 'Media player' });
+  await page.locator('#btn-topbar-dashboard').click();
+  const pane = page.locator('.dashboard-pane').first();
+  await expect(pane).toBeVisible();
+
+  const attached = pane.getByRole('button', { name: 'Play video stream-clip.webm' });
+  await attached.scrollIntoViewIfNeeded();
+  await attached.tap();
+  await expect(pane.locator('.stream-player')).toHaveCount(1);
+  await expect(dock).toHaveAttribute('data-placement', 'inline');
+  await expect(dock).toHaveAttribute('data-type', 'video');
+  await expect(videoEl(page)).toBeVisible();
+  await expect.poll(() => time(page, 'video')).toBeGreaterThan(0.3);
+  await expect(dock).toHaveAttribute('data-state', 'playing');
+  await page.screenshot({ path: info.outputPath('01-pane-attached-video.png') });
+
+  const inline = pane.getByRole('button', { name: 'Play video inline-clip.webm' });
+  await inline.scrollIntoViewIfNeeded();
+  await inline.tap();
+  await expect(dock.locator('.sp-title')).toHaveText('inline-clip.webm');
+  await expect(pane.locator('.stream-player')).toHaveCount(1);
+  await expect(videoEl(page)).toBeVisible();
+  await expect.poll(() => time(page, 'video')).toBeGreaterThan(0.3);
+  await page.screenshot({ path: info.outputPath('02-pane-inline-video.png') });
   expect(errors).toEqual([]);
 });
