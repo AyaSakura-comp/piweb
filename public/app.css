@@ -839,13 +839,13 @@ html.keyboard-shell .life-edge-hint {
   -webkit-overflow-scrolling: touch;
 }
 
-/* One-line row: state | name … model tag | dashboard toggle.
+/* One-line row: state | name … model tag | dashboard toggle | delete.
    The tag sits at the trailing edge so tags line up as a column. */
 .session-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 46px;
   padding: 1px 2px 1px 8px;
   border-radius: 10px;
@@ -911,6 +911,36 @@ html.keyboard-shell .life-edge-hint {
   padding: 0 5px;
   font-size: 9.5px;
   line-height: 15px;
+}
+
+.session-item .del {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 44px;
+  margin-left: -8px; /* sits flush against the dashboard toggle */
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.session-item .del svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-item .del:hover:not(:disabled),
+.session-item .del:active:not(:disabled) {
+  opacity: 1;
+  color: var(--danger);
+  background: transparent;
 }
 
 .session-name-edit {

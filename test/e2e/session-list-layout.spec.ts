@@ -102,7 +102,7 @@ test('phone session list gives names a full line and keeps actions behind a hold
 
   const rows = page.locator('#session-list .session-item');
   await expect(rows).toHaveCount(10);
-  await expect(page.locator('#session-list .del')).toHaveCount(0);
+  await expect(page.locator('#session-list .del')).toHaveCount(10);
   await expect(rows.nth(0).locator('.work-spinner')).toBeVisible();
   await expect(rows.nth(7)).toHaveClass(/unread/);
   await expect(rows.nth(7).locator('.unread-dot')).toBeVisible();
@@ -113,6 +113,7 @@ test('phone session list gives names a full line and keeps actions behind a hold
     items.map((item) => {
       const name = item.querySelector('.name') as HTMLElement;
       const tile = item.querySelector('.session-tile-btn')!.getBoundingClientRect();
+      const del = item.querySelector('.del')!.getBoundingClientRect();
       const badge = item.querySelector('.provider-badge')!.getBoundingClientRect();
       const n = name.getBoundingClientRect();
       const r = item.getBoundingClientRect();
@@ -122,16 +123,18 @@ test('phone session list gives names a full line and keeps actions behind a hold
         badgeInline: Math.abs(badge.top + badge.height / 2 - (n.top + n.height / 2)) < 2 && badge.left >= n.right,
         badgeRight: Math.round(badge.right),
         truncated: name.scrollWidth > name.clientWidth,
-        tileInside: tile.right <= r.right + 0.5 && tile.width >= 40 && tile.height >= 44,
+        tileInside: tile.right <= r.right + 0.5 && tile.width >= 36 && tile.height >= 44,
+        delLast: del.left >= tile.right - 0.5 && del.right <= r.right + 0.5 && del.height >= 44,
       };
     }),
   );
   for (const row of geometry) {
     expect(row.height).toBeLessThanOrEqual(48);
-    expect(row.nameWidth).toBeGreaterThanOrEqual(140);
+    expect(row.nameWidth).toBeGreaterThanOrEqual(105);
     expect(row.badgeInline).toBe(true);
     expect(row.badgeRight).toBe(geometry[0].badgeRight);
     expect(row.tileInside).toBe(true);
+    expect(row.delLast).toBe(true);
   }
   // With the badge on the name line, short names fit whole; only the long
   // ones (12 CJK chars, "EmbeddedGemma benchmark") ellipsize.
@@ -173,5 +176,9 @@ test('phone session list gives names a full line and keeps actions behind a hold
   await expect(menu).toBeVisible();
   await page.getByRole('menuitem', { name: 'Delete HayDenug' }).click();
   await expect.poll(() => deleted).toEqual(['web:l5']);
+
+  // The trash at the end of a row deletes it directly (after the confirm).
+  await rows.nth(4).locator('.del').click();
+  await expect.poll(() => deleted).toEqual(['web:l5', 'web:l4']);
   expect(errors).toEqual([]);
 });

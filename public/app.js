@@ -31,7 +31,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=session-list-oneline-1';
+import { createSessionDashboard } from './session-dashboard.js?v=session-list-del-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1283,8 +1283,7 @@ function renderSessions(force = false) {
         badge.title = session.runningModel || session.provider;
         body.append(badge);
       }
-      // Rename and delete live behind a hold (or right-click), not a ✕ on
-      // every row: a stray tap on a phone-sized list should never trash a session.
+      // Rename (and delete again) also live behind a hold or right-click.
       const when = activityAgo(session.lastActivity);
       const active = when === 'now' ? 'just now' : when.includes('/') ? when : `${when} ago`;
       item.title = `${when ? `Active ${active} · ` : ''}Press and hold for Rename / Delete`;
@@ -1308,6 +1307,21 @@ function renderSessions(force = false) {
       });
     }
     item.append(body);
+
+    // Delete sits at the trailing edge, after the dashboard toggle. It still
+    // asks first and only moves the session to Recently deleted.
+    const del = el('button', 'icon-btn del');
+    del.type = 'button';
+    del.disabled = state.selectionPending;
+    del.title = 'Delete session';
+    del.setAttribute('aria-label', `Delete ${session.name}`);
+    del.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteSession(session);
+    });
+    item.append(del);
 
     item.addEventListener('click', (e) => {
       if (state.selectionPending || e.defaultPrevented || state.renamingJid === session.jid) return;

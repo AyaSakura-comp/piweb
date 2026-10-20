@@ -142,7 +142,7 @@
   .session-tile-btn {
     display: grid;
     flex: none;
-    width: 40px;
+    width: 36px;
     height: 44px;
     background: transparent;
     color: var(--text-dim);

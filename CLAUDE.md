@@ -855,15 +855,16 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   - History: this replaced a state ranking (unread → busy → rest), which itself
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
-- **Drawer rows are one line with one trailing control.** Leading slot =
+- **Drawer rows are one line: state, name, badge, tile, trash.** Leading slot =
   state (`#` idle, spinner working, green dot unread); then the name (flex,
   ellipsis), then the model badge right-aligned so badges form a column — the
   user rejected the badge on a second line under the name as ugly. Recency is
   only in the row tooltip (`activityAgo()`): the list is already newest-first.
-  The only trailing control is the borderless
-  dashboard toggle (accent when tiled, plus a short accent rail). Rename and
-  Delete are behind a touch hold or right-click (`#session-row-menu`,
-  `openSessionRowMenu()`), never a ✕ per row. Mouse holds do not open it
+  Trailing: the borderless dashboard toggle (accent when tiled, plus a short
+  accent rail), then a borderless trash `.del` flush against it — the user
+  asked for delete back on the row (confirm → Recently deleted). Rename (and
+  Delete) are also behind a touch hold or right-click (`#session-row-menu`,
+  `openSessionRowMenu()`). Mouse holds do not open it
   (`bindLongPress` `shouldStart`): a held mouse button there starts the HTML5
   drag into the dashboard. `test/e2e/session-list-layout.spec.ts`.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
