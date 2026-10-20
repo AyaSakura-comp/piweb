@@ -31,7 +31,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=dashboard-spring-bounce-3';
+import { createSessionDashboard } from './session-dashboard.js?v=session-list-redesign-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1134,6 +1134,83 @@ async function deleteSession(session) {
   }
 }
 
+// ── session row menu ──
+//
+// Holding a drawer row opens Rename / Delete anchored to it. The row keeps a
+// highlight while open; the 5s session poll re-renders rows, so the open jid
+// (not the DOM node) is the state.
+let rowMenuJid = null;
+
+function isRowMenuOpen() {
+  return rowMenuJid !== null;
+}
+
+function openSessionRowMenu(jid, anchor) {
+  const session = state.sessions.find((s) => s.jid === jid);
+  if (!session || state.renamingJid) return;
+  rowMenuJid = jid;
+  const menu = $('session-row-menu');
+  $('session-row-menu-title').textContent = session.name;
+  $('srm-rename').disabled = state.selectionPending;
+  $('srm-delete').disabled = state.selectionPending || Boolean(deletingSessionJid);
+  $('srm-delete').setAttribute('aria-label', `Delete ${session.name}`);
+  $('session-row-scrim').hidden = false;
+  menu.hidden = false;
+  for (const row of $('session-list').querySelectorAll('.session-item')) {
+    row.classList.toggle('menu-open', row.dataset.jid === jid);
+  }
+  // Under the row when it fits, otherwise above it; never off-screen.
+  const rect = anchor.getBoundingClientRect();
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const height = menu.offsetHeight;
+  const below = rect.bottom + 4;
+  const top = below + height <= viewportHeight - 8 ? below : Math.max(8, rect.top - height - 4);
+  menu.style.top = `${top}px`;
+  menu.style.left = `${Math.max(8, rect.left + 8)}px`;
+  menu.style.right = 'auto';
+}
+
+function closeSessionRowMenu() {
+  if (!isRowMenuOpen()) return;
+  rowMenuJid = null;
+  $('session-row-menu').hidden = true;
+  $('session-row-scrim').hidden = true;
+  for (const row of $('session-list').querySelectorAll('.session-item.menu-open')) {
+    row.classList.remove('menu-open');
+  }
+}
+
+$('session-row-scrim').addEventListener('click', closeSessionRowMenu);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSessionRowMenu();
+});
+$('srm-rename').addEventListener('click', () => {
+  const session = state.sessions.find((s) => s.jid === rowMenuJid);
+  closeSessionRowMenu();
+  // Synchronous from the tap, so iOS raises the keyboard for the field.
+  if (session) startListRename(session);
+});
+$('srm-delete').addEventListener('click', () => {
+  const session = state.sessions.find((s) => s.jid === rowMenuJid);
+  closeSessionRowMenu();
+  if (session) void deleteSession(session);
+});
+
+/** Compact "how long ago" for a SQLite UTC stamp: now, 5m, 3h, 2d, then M/D. */
+function activityAgo(stamp) {
+  if (!stamp) return '';
+  const then = new Date(`${stamp.replace(' ', 'T')}Z`);
+  if (Number.isNaN(then.getTime())) return '';
+  const minutes = Math.floor((Date.now() - then.getTime()) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${then.getMonth() + 1}/${then.getDate()}`;
+}
+
 function renderSessions(force = false) {
   const list = $('session-list');
   // The 5s session poll and busy-state updates must not replace an input while
@@ -1148,9 +1225,32 @@ function renderSessions(force = false) {
   }
 
   for (const session of sessionsForDisplay()) {
-    const item = el('div', `session-item${session.jid === state.activeJid ? ' active' : ''}`);
-    item.append(el('span', 'hash', '#'));
+    const busy = Boolean(session.busy || session.subagentsBusy);
+    const unread = !busy && isUnread(session);
+    const item = el('div', 'session-item');
+    item.classList.toggle('active', session.jid === state.activeJid);
+    item.classList.toggle('unread', unread);
+    item.classList.toggle('menu-open', session.jid === rowMenuJid);
+    item.dataset.jid = session.jid;
 
+    // The leading slot carries state, so the trailing edge stays quiet.
+    // Busy and unread are different states: a spinner means pi is working
+    // right now, the dot means it finished and you have not looked yet.
+    const lead = el('span', 'session-lead');
+    if (busy) {
+      const spinner = el('span', 'work-spinner');
+      spinner.title = session.subagentsBusy ? 'Subagent is working' : 'pi is working';
+      lead.append(spinner);
+    } else if (unread) {
+      const dot = el('span', 'unread-dot');
+      dot.title = 'New reply';
+      lead.append(dot);
+    } else {
+      lead.append(el('span', 'hash', '#'));
+    }
+    item.append(lead);
+
+    const body = el('div', 'session-body');
     if (state.renamingJid === session.jid) {
       const input = el('input', 'session-name-edit');
       input.value = state.renameDraft;
@@ -1171,42 +1271,45 @@ function renderSessions(force = false) {
         }
       });
       input.addEventListener('blur', () => commitListRename(session.jid, true));
-      item.append(input);
+      body.append(input);
     } else {
-      const name = el('span', 'name', session.name);
-      name.title = 'Press and hold to rename';
-      bindLongPress(name, () => startListRename(session));
-      item.append(name);
+      // The name owns the whole first line; model and recency sit below it.
+      body.append(el('span', 'name', session.name));
+      const meta = el('span', 'session-meta');
+      const sessionBadgeInfo = sessionBadge(session);
+      if (sessionBadgeInfo) {
+        const badge = el('span', `provider-badge ${sessionBadgeInfo.kind}`, sessionBadgeInfo.label);
+        // The full model id is long; keep it to the tooltip/long-press.
+        badge.title = session.runningModel || session.provider;
+        meta.append(badge);
+      }
+      if (busy) meta.append(el('span', 'session-state', 'working'));
+      const when = activityAgo(session.lastActivity);
+      if (when) meta.append(el('span', 'session-time', when));
+      if (meta.childElementCount) body.append(meta);
+      // Rename and delete live behind a hold (or right-click), not a ✕ on
+      // every row: a stray tap on a phone-sized list should never trash a session.
+      item.title = 'Press and hold for Rename / Delete';
+      bindLongPress(
+        item,
+        () => {
+          // A row being dragged into the dashboard is not asking for the menu.
+          if (document.body.classList.contains('dashboard-pointer-dragging')) return;
+          openSessionRowMenu(session.jid, item);
+        },
+        {
+          // Mouse users get the same menu from right-click; a held mouse
+          // button here is the start of a drag into the dashboard.
+          shouldStart: (e) => e.pointerType !== 'mouse' && !e.target.closest?.('button'),
+        },
+      );
+      item.addEventListener('contextmenu', (e) => {
+        if (e.target.closest('input')) return;
+        e.preventDefault();
+        openSessionRowMenu(session.jid, item);
+      });
     }
-
-    const sessionBadgeInfo = sessionBadge(session);
-    if (sessionBadgeInfo) {
-      const badge = el('span', `provider-badge ${sessionBadgeInfo.kind}`, sessionBadgeInfo.label);
-      // The full model id is long; keep it to the tooltip/long-press.
-      badge.title = session.runningModel || session.provider;
-      item.append(badge);
-    }
-    // Busy and unread are different states: a spinner means pi is working
-    // right now, the dot means it finished and you have not looked yet.
-    if (session.busy || session.subagentsBusy) {
-      const spinner = el('span', 'work-spinner');
-      spinner.title = session.subagentsBusy ? 'Subagent is working' : 'pi is working';
-      item.append(spinner);
-    } else if (isUnread(session)) {
-      const dot = el('span', 'unread-dot');
-      dot.title = 'New reply';
-      item.append(dot);
-    }
-
-    const del = el('button', 'icon-btn del');
-    del.disabled = state.selectionPending;
-    del.setAttribute('aria-label', `Delete ${session.name}`);
-    del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-    del.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await deleteSession(session);
-    });
-    item.append(del);
+    item.append(body);
 
     item.addEventListener('click', (e) => {
       if (state.selectionPending || e.defaultPrevented || state.renamingJid === session.jid) return;
@@ -5419,6 +5522,7 @@ function openDrawer() {
 }
 
 function closeDrawer() {
+  closeSessionRowMenu();
   $('drawer').classList.remove('open');
   $('scrim').hidden = true;
   if (!wideDrawer.matches) $('btn-menu').setAttribute('aria-expanded', 'false');
@@ -5497,7 +5601,9 @@ function isDrawerGestureAllowed() {
   if (window.matchMedia('(min-width: 768px)').matches || lifeTransitioning) {
     return false;
   }
-  if (!$('login').hidden || isMenuOpen() || isTranscriptSelectionActive()) return false;
+  if (!$('login').hidden || isMenuOpen() || isRowMenuOpen() || isTranscriptSelectionActive()) {
+    return false;
+  }
   return (
     $('lightbox').hidden &&
     !document.querySelector('.sheet:not([hidden])')

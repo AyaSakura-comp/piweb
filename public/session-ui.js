@@ -111,6 +111,7 @@ export function bindLongPress(target, callback, options = {}) {
   function onPointerDown(event) {
     if (event.isPrimary === false || (event.button !== undefined && event.button !== 0)) return;
     cancelPress();
+    if (options.shouldStart && !options.shouldStart(event)) return;
     const pending = {
       pointerId: event.pointerId,
       x: event.clientX,

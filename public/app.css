@@ -813,35 +813,104 @@ svg {
 .session-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
   -webkit-overflow-scrolling: touch;
 }
 
+/* Two-line row: state | name over model·recency | dashboard toggle.
+   The name gets the full first line; nothing else competes with it. */
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: 6px;
+  gap: 10px;
+  min-height: 56px;
+  padding: 6px 2px 6px 8px;
+  border-radius: 10px;
   color: var(--text-dim);
   font-weight: 500;
+  transition: background 0.12s ease;
 }
 
-.session-item.active {
+.session-item + .session-item {
+  margin-top: 1px;
+}
+
+.session-item.active,
+.session-item.menu-open {
   background: var(--bg-input);
-  color: var(--text-bright);
+}
+
+.session-lead {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.session-item .hash {
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.session-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .session-item .name {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: text;
+  font-size: 15px;
+  line-height: 1.25;
+  color: var(--text);
   -webkit-user-select: none; /* iOS Safari still requires the prefix */
   user-select: none;
   -webkit-touch-callout: none;
+}
+
+.session-item.active .name,
+.session-item.unread .name {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.session-meta .provider-badge {
+  padding: 0 5px;
+  font-size: 9.5px;
+  line-height: 15px;
+}
+
+.session-state {
+  color: var(--accent-light);
+}
+
+.session-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-state + .session-time::before {
+  content: '·';
+  margin-right: 6px;
+  opacity: 0.6;
 }
 
 .session-name-edit {
@@ -856,10 +925,6 @@ svg {
   font: inherit;
   font-size: 16px; /* keep iOS from zooming */
   outline: none;
-}
-
-.session-item .hash {
-  font-size: 18px;
 }
 
 .session-item .unread-dot {
@@ -895,9 +960,24 @@ svg {
   }
 }
 
-.session-item .del {
-  width: 28px;
-  height: 28px;
+.menu-scrim.session-row-scrim {
+  z-index: 56;
+}
+
+.menu-pop.session-row-menu {
+  z-index: 57;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 16px));
+  transform-origin: top left;
+}
+
+.session-row-menu-title {
+  padding: 6px 10px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-dim);
 }
 

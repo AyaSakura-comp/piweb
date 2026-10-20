@@ -855,6 +855,15 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   - History: this replaced a state ranking (unread → busy → rest), which itself
     replaced a settle-on-open order. Recency subsumes the "new message on top"
     goal without the ranking's downside of rows jumping between state buckets.
+- **Drawer rows are two lines with one trailing control.** Leading slot =
+  state (`#` idle, spinner working, green dot unread); the name owns the whole
+  first line; badge, `working` and a compact recency (`now`/`5m`/`3h`/`2d`/`M/D`,
+  `activityAgo()`) sit under it; the only trailing control is the borderless
+  dashboard toggle (accent when tiled, plus a short accent rail). Rename and
+  Delete are behind a touch hold or right-click (`#session-row-menu`,
+  `openSessionRowMenu()`), never a ✕ per row. Mouse holds do not open it
+  (`bindLongPress` `shouldStart`): a held mouse button there starts the HTML5
+  drag into the dashboard. `test/e2e/session-list-layout.spec.ts`.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
   holds `/pi status`, `/gpt-usage`, the model picker, and thinking level; search,
   `/pi new` and soft **Delete session** live in the ⋯ menu. At ≤420px a standard

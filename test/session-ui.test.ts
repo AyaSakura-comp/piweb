@@ -107,6 +107,27 @@ describe('bindLongPress', () => {
 
     vi.useRealTimers();
   });
+
+  it('ignores presses that shouldStart rejects without swallowing their click', () => {
+    vi.useFakeTimers();
+    const target = new FakeTarget();
+    const onLongPress = vi.fn();
+    bindLongPress(target, onLongPress, {
+      delay: 500,
+      shouldStart: (event: { pointerType?: string }) => event.pointerType !== 'mouse',
+    });
+
+    target.dispatch('pointerdown', { pointerType: 'mouse' });
+    vi.advanceTimersByTime(600);
+    expect(onLongPress).not.toHaveBeenCalled();
+    expect(target.dispatch('click').defaultPrevented).toBe(false);
+
+    target.dispatch('pointerdown', { pointerId: 3, pointerType: 'touch' });
+    vi.advanceTimersByTime(500);
+    expect(onLongPress).toHaveBeenCalledOnce();
+
+    vi.useRealTimers();
+  });
 });
 
 describe('new session creation', () => {

@@ -125,16 +125,28 @@
     opacity: 0.45;
   }
 
-  .session-item.in-dashboard {
-    box-shadow: inset 2px 0 0 var(--accent);
+  /* Tiled sessions: a short accent rail, not a full-height box shadow that
+     fights the row's rounded corners. */
+  .session-item.in-dashboard::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 14px;
+    bottom: 14px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent);
   }
 
+  /* Borderless, like every other button: state is the icon colour alone. */
   .session-tile-btn {
     display: grid;
-    width: 28px;
-    height: 28px;
+    flex: none;
+    width: 40px;
+    height: 44px;
+    background: transparent;
     color: var(--text-dim);
-    opacity: 0.65;
+    opacity: 0.5;
   }
 
   .session-item:hover .session-tile-btn,
@@ -144,12 +156,12 @@
 
   .session-tile-btn.active {
     color: var(--accent);
-    background: rgb(88 101 242 / 0.14);
+    background: transparent;
   }
 
   .session-tile-btn svg {
-    width: 15px;
-    height: 15px;
+    width: 17px;
+    height: 17px;
   }
 
   /* When Dashboard is active, hide single-session chrome inside .main */

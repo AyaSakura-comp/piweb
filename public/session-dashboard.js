@@ -3159,7 +3159,10 @@ export function createSessionDashboard({
     const items = sessionList.querySelectorAll('.session-item');
     items.forEach((item, index) => {
       const nameNode = item.querySelector('.name');
-      const session = sessions.find((s) => s.name === nameNode?.textContent) || sessions[index];
+      const session =
+        sessions.find((s) => s.jid === item.dataset.jid) ||
+        sessions.find((s) => s.name === nameNode?.textContent) ||
+        sessions[index];
       if (!session || session.kind === 'life') return;
       const jid = session.jid;
       item.dataset.jid = jid;

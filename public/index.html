@@ -46,7 +46,7 @@
     <link rel="stylesheet" href="/camera-composer.css" />
     <link rel="stylesheet" href="/image-annotator.css" />
     <link rel="stylesheet" href="/commands-running.css">
-    <link rel="stylesheet" href="/session-dashboard.css?v=dashboard-spring-bounce-2" />
+    <link rel="stylesheet" href="/session-dashboard.css?v=session-list-redesign-1" />
 </head>
   <body>
     <!-- Login gate -->
@@ -132,6 +132,26 @@
           </button>
         </footer>
       </aside>
+
+      <!-- Per-session actions, opened by holding (or right-clicking) a drawer row.
+           Outside .drawer and .main so neither one's transform moves it. -->
+      <div class="menu-scrim session-row-scrim" id="session-row-scrim" hidden></div>
+      <div class="menu-pop session-row-menu" id="session-row-menu" role="menu" hidden>
+        <div class="session-row-menu-title" id="session-row-menu-title"></div>
+        <button type="button" class="menu-item" id="srm-rename" role="menuitem">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9M4 20l1-4 9.5-9.5a2.1 2.1 0 013 3L8 19z" />
+          </svg>
+          <span class="mi-label">Rename</span>
+        </button>
+        <div class="menu-sep" role="separator"></div>
+        <button type="button" class="menu-item danger" id="srm-delete" role="menuitem">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+          </svg>
+          <span class="mi-label">Delete session</span>
+        </button>
+      </div>
 
       <main class="main">
         <!-- This sideways drop belongs to the current page, so the rounded body
@@ -686,6 +706,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=topbar-phone-overflow-1" type="module"></script>
+    <script src="/app.js?v=session-list-redesign-1" type="module"></script>
   </body>
 </html>

@@ -2663,7 +2663,10 @@ test('a session delete started after Life entry owns the eventual fallback selec
       request.method() === 'DELETE' &&
       request.url().includes(encodeURIComponent(STANDARD_SESSION.jid)),
   );
-  await page.getByRole('button', { name: `Delete ${STANDARD_SESSION.name}` }).click();
+  await page
+    .locator('#session-list .session-item', { hasText: STANDARD_SESSION.name })
+    .click({ button: 'right' });
+  await page.getByRole('menuitem', { name: `Delete ${STANDARD_SESSION.name}` }).click();
   await deleteRequest;
 
   const lifeResponse = page.waitForResponse((response) =>
@@ -2907,6 +2910,8 @@ test('pending selection cancels an existing drawer rename and disables deletion'
     clientY: 100,
   });
   await page.waitForTimeout(600);
+  // Holding a row opens its Rename / Delete menu.
+  await page.locator('#srm-rename').click();
   await expect(page.locator('#session-list .session-name-edit')).toBeVisible();
 
   const pendingEvents = page.waitForRequest((request) =>
@@ -2922,8 +2927,10 @@ test('pending selection cancels an existing drawer rename and disables deletion'
   await pendingEvents;
 
   await expect(page.locator('#session-list .session-name-edit')).toHaveCount(0);
+  await page.locator('#btn-menu').click();
+  await page.locator('#session-list .session-item').first().click({ button: 'right' });
   await expect(
-    page.getByRole('button', { name: `Delete ${STANDARD_SESSION.name}` }),
+    page.getByRole('menuitem', { name: `Delete ${STANDARD_SESSION.name}` }),
   ).toBeDisabled();
   api.releaseUnknownEvents();
 });
