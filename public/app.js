@@ -31,7 +31,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=session-list-redesign-1';
+import { createSessionDashboard } from './session-dashboard.js?v=session-list-oneline-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1273,23 +1273,21 @@ function renderSessions(force = false) {
       input.addEventListener('blur', () => commitListRename(session.jid, true));
       body.append(input);
     } else {
-      // The name owns the whole first line; model and recency sit below it.
+      // One line: the name, then the model tag at the trailing edge. The list
+      // is already newest-first, so recency lives in the tooltip, not the row.
       body.append(el('span', 'name', session.name));
-      const meta = el('span', 'session-meta');
       const sessionBadgeInfo = sessionBadge(session);
       if (sessionBadgeInfo) {
         const badge = el('span', `provider-badge ${sessionBadgeInfo.kind}`, sessionBadgeInfo.label);
         // The full model id is long; keep it to the tooltip/long-press.
         badge.title = session.runningModel || session.provider;
-        meta.append(badge);
+        body.append(badge);
       }
-      if (busy) meta.append(el('span', 'session-state', 'working'));
-      const when = activityAgo(session.lastActivity);
-      if (when) meta.append(el('span', 'session-time', when));
-      if (meta.childElementCount) body.append(meta);
       // Rename and delete live behind a hold (or right-click), not a ✕ on
       // every row: a stray tap on a phone-sized list should never trash a session.
-      item.title = 'Press and hold for Rename / Delete';
+      const when = activityAgo(session.lastActivity);
+      const active = when === 'now' ? 'just now' : when.includes('/') ? when : `${when} ago`;
+      item.title = `${when ? `Active ${active} · ` : ''}Press and hold for Rename / Delete`;
       bindLongPress(
         item,
         () => {

@@ -104,32 +104,39 @@ test('phone session list gives names a full line and keeps actions behind a hold
   await expect(rows).toHaveCount(10);
   await expect(page.locator('#session-list .del')).toHaveCount(0);
   await expect(rows.nth(0).locator('.work-spinner')).toBeVisible();
-  await expect(rows.nth(0).locator('.session-state')).toHaveText('working');
   await expect(rows.nth(7)).toHaveClass(/unread/);
   await expect(rows.nth(7).locator('.unread-dot')).toBeVisible();
-  await expect(rows.nth(1).locator('.session-time')).toHaveText('4m');
+  await expect(rows.nth(1)).toHaveAttribute('title', /^Active 4m ago/);
   await expect(rows.nth(3)).toHaveClass(/in-dashboard/);
 
   const geometry = await rows.evaluateAll((items) =>
     items.map((item) => {
       const name = item.querySelector('.name') as HTMLElement;
       const tile = item.querySelector('.session-tile-btn')!.getBoundingClientRect();
+      const badge = item.querySelector('.provider-badge')!.getBoundingClientRect();
+      const n = name.getBoundingClientRect();
       const r = item.getBoundingClientRect();
       return {
         height: r.height,
-        nameWidth: name.getBoundingClientRect().width,
+        nameWidth: n.width,
+        badgeInline: Math.abs(badge.top + badge.height / 2 - (n.top + n.height / 2)) < 2 && badge.left >= n.right,
+        badgeRight: Math.round(badge.right),
         truncated: name.scrollWidth > name.clientWidth,
         tileInside: tile.right <= r.right + 0.5 && tile.width >= 40 && tile.height >= 44,
       };
     }),
   );
   for (const row of geometry) {
-    expect(row.height).toBeLessThanOrEqual(62);
-    expect(row.nameWidth).toBeGreaterThanOrEqual(170);
+    expect(row.height).toBeLessThanOrEqual(48);
+    expect(row.nameWidth).toBeGreaterThanOrEqual(140);
+    expect(row.badgeInline).toBe(true);
+    expect(row.badgeRight).toBe(geometry[0].badgeRight);
     expect(row.tileInside).toBe(true);
   }
-  // "週末台南有什麼好玩的地方" (12 CJK chars) now fits where it used to be cut at 4.
-  expect(geometry[6].truncated).toBe(false);
+  // With the badge on the name line, short names fit whole; only the long
+  // ones (12 CJK chars, "EmbeddedGemma benchmark") ellipsize.
+  expect(geometry.filter((row) => row.truncated).length).toBeLessThanOrEqual(2);
+  expect(geometry[7].truncated).toBe(false);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('01-session-list.png') });
 
