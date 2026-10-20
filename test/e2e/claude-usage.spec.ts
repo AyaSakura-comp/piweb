@@ -43,14 +43,20 @@ test('usage button follows Claude Code model/account without mixing AGY or GPT q
     session.model = model;
     await page.goto('/');
     const button = page.locator('#btn-gpt-usage');
-    await expect(button).toBeVisible();
+    // On a 390px phone the usage shortcut lives in the ⋯ menu, not the topbar.
+    await expect(button).toBeHidden();
     await expect(button).toHaveAttribute('title', '/' + command);
     await expect(button).toHaveAttribute('aria-label', `Show ${label} usage`);
+    await page.locator('#btn-more').click();
+    await expect(page.locator('#mi-usage-cmd')).toHaveText('/' + command);
     const before = received.length;
-    await button.click();
+    await page.locator('#mi-usage').click();
     await expect.poll(() => received.length).toBe(before + 1);
     expect(received.at(-1)).toBe(command);
   }
+  await page.setViewportSize({ width: 800, height: 844 });
+  await expect(page.locator('#btn-gpt-usage')).toBeVisible();
+  await expect(page.locator('#btn-status')).toBeVisible();
   await page.screenshot({ path: info.outputPath('claude-usage-button.png') });
   expect(errors).toEqual([]);
 });

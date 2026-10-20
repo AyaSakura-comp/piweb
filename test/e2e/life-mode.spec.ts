@@ -196,12 +196,21 @@ async function installLifeApi(
   const trashPurgeBodies: unknown[] = [];
   const lifeReadUrls: string[] = [];
 
+  // Background fetches from the dashboard, host metrics and hot keywords; left
+  // unmocked they 404 and trip the tests that assert a clean console.
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request();
     const requestUrl = new URL(request.url());
     const path = requestUrl.pathname;
 
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
+    if (path === '/api/dashboard-layout') {
+      return route.fulfill({ json: request.method() === 'GET' ? { layout: null } : { ok: true } });
+    }
+    if (path === '/api/system-metrics') return route.fulfill({ json: {} });
     if (path === '/api/commands') {
       if (bootGate) await bootGate;
       return route.fulfill({ json: { commands: options.commandCatalog ?? [] } });
@@ -670,7 +679,8 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
 
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText(STANDARD_SESSION.name);
-  await expect(page.locator('#btn-status')).toBeVisible();
+  // A phone-width standard session keeps /pi status in the ⋯ menu.
+  await expect(page.locator('#btn-status')).toBeHidden();
   const edgeHint = page.locator('#life-edge-hint');
   await expect(edgeHint).toBeVisible();
   const edgeHintBox = (await edgeHint.boundingBox())!;

@@ -196,6 +196,9 @@ test.describe('agy end-to-end model interaction and streaming lifecycle', () => 
       if (path.endsWith('/hot-keywords')) {
         return route.fulfill({ json: { keywords: [] } });
       }
+      if (path === '/api/dashboard-layout') {
+        return route.fulfill({ json: request.method() === 'GET' ? { layout: null } : { ok: true } });
+      }
       if (path.endsWith('/system-metrics')) {
         return route.fulfill({ json: {} });
       }
@@ -277,12 +280,16 @@ test.describe('agy end-to-end model interaction and streaming lifecycle', () => 
     await page.waitForTimeout(600);
 
     // ── Milestone 3: Test agy usage button interaction ────────────────────────
-    await expectPointerReachable(agyUsageBtn);
-    const usageBtnBox = await agyUsageBtn.boundingBox();
-    expect(usageBtnBox?.width).toBeGreaterThanOrEqual(34);
-    expect(usageBtnBox?.height).toBeGreaterThanOrEqual(34);
+    // On a phone the usage shortcut sits in the ⋯ menu so the title has room.
+    await expect(agyUsageBtn).toBeHidden();
+    await page.locator('#btn-more').click();
+    const agyUsageItem = page.locator('#mi-usage');
+    await expect(page.locator('#mi-usage-cmd')).toHaveText('/agy-usage');
+    await expectPointerReachable(agyUsageItem);
+    const usageItemBox = await agyUsageItem.boundingBox();
+    expect(usageItemBox?.height).toBeGreaterThanOrEqual(44);
 
-    await agyUsageBtn.click();
+    await agyUsageItem.click();
     await expect
       .poll(() => commandsReceived.some((c) => c.command === 'agy-usage'))
       .toBe(true);

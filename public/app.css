@@ -554,6 +554,8 @@ svg {
 .topbar-title {
   flex: 1;
   min-width: 0;
+  /* Never let the badge spill under the stop button when space runs out. */
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -3762,7 +3764,12 @@ dialog.sheet::backdrop {
 
 /* Five controls plus the session name is tight on a 390px phone; shaving the
    hit target to 34px keeps the name readable while staying above the ~32px
-   comfortable-touch floor. */
+   comfortable-touch floor. Status and usage move into the ⋯ menu there, or a
+   busy session (stop button shown) squeezes the name to one letter. */
+.menu-item.phone-only {
+  display: none;
+}
+
 @media (max-width: 420px) {
   .topbar .icon-btn {
     width: 34px;
@@ -3771,6 +3778,15 @@ dialog.sheet::backdrop {
 
   .topbar {
     gap: 2px;
+  }
+
+  .app:not(.life-mode) .topbar #btn-status,
+  .app:not(.life-mode) .topbar #btn-gpt-usage {
+    display: none;
+  }
+
+  .app:not(.life-mode) .menu-item.phone-only:not([hidden]) {
+    display: flex;
   }
 }
 

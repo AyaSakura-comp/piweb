@@ -294,6 +294,25 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5M6 7l3 3-3 3m6-6h5" /><circle cx="17" cy="17" r="5" /><path d="M17 14v3l2 1" /></svg>
             <span class="mi-label">背景命令</span>
           </button>
+          <!-- Phone-only mirrors of the header's status/usage shortcuts: below
+               420px the topbar drops those two icons so the session name fits. -->
+          <button type="button" class="menu-item phone-only" id="mi-status" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v5M12 7.6v.9" />
+            </svg>
+            <span class="mi-label">Status</span>
+            <span class="mi-cmd">/pi status</span>
+          </button>
+          <button type="button" class="menu-item phone-only" id="mi-usage" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 18a8 8 0 1116 0" />
+              <path d="M12 18l4-5.5" />
+              <circle cx="12" cy="18" r="1.1" />
+            </svg>
+            <span class="mi-label">Usage</span>
+            <span class="mi-cmd" id="mi-usage-cmd">/gpt-usage</span>
+          </button>
           <button type="button" class="menu-item" id="mi-btw" role="menuitem">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z" /></svg>
             <span class="mi-label">BTW 側聊</span>
@@ -667,6 +686,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=dashboard-metrics-collapse-1" type="module"></script>
+    <script src="/app.js?v=topbar-phone-overflow-1" type="module"></script>
   </body>
 </html>

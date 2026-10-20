@@ -2045,6 +2045,10 @@ onMenuItem('mi-commands-running', () => {
 function openMoreMenu() {
   syncBtwAvailability();
   $('mi-commands-running').hidden = !isAgyCommandSession();
+  // Follow the header buttons' own visibility; CSS shows these only on phones.
+  $('mi-status').hidden = $('btn-status').hidden;
+  $('mi-usage').hidden = $('btn-gpt-usage').hidden;
+  $('mi-usage-cmd').textContent = `/${usageCommandForSession()}`;
   const life = state.mode === 'life';
   $('more-menu').hidden = false;
   $('menu-scrim').hidden = false;
@@ -2211,6 +2215,8 @@ $('media-sheet').addEventListener('click', (e) => {
 });
 
 onMenuItem('mi-btw', () => { if (isPiBtwSession()) { cameraComposer.close(); btwWorkspace.open(); } });
+onMenuItem('mi-status', () => runQuickCommand('pi status'));
+onMenuItem('mi-usage', () => runQuickCommand(usageCommandForSession()));
 onMenuItem('mi-sessions', openDrawer);
 onMenuItem('mi-media', () => openMediaSheet());
 onMenuItem('mi-search', () => openSearch());

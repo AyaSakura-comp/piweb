@@ -857,7 +857,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     goal without the ranking's downside of rows jumping between state buckets.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
   holds `/pi status`, `/gpt-usage`, the model picker, and thinking level; search,
-  `/pi new` and soft **Delete session** live in the ⋯ menu. Life uses the pencil
+  `/pi new` and soft **Delete session** live in the ⋯ menu. At ≤420px a standard
+  session moves `/pi status` and usage into the ⋯ menu (`.menu-item.phone-only`,
+  visibility mirrored from the header buttons in `openMoreMenu()`): with the stop
+  and dashboard buttons also present, the name shrank to one letter and the
+  badge slid under stop (`test/e2e/topbar-layout.spec.ts`). Life uses the pencil
   immediately before ⋯ for **New Life session**: atomically promote
   the current transcript/Pi folder
   into the standard list, then select a fresh empty Life singleton. The `/pi status`
