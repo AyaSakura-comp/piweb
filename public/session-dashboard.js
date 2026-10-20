@@ -137,6 +137,22 @@ export function createSessionDashboard({
   let dragSourceJid = null;
   let pointerDrag = null;
   let currentDropTarget = null; // { mode: 'stage' | 'pane', jid?: string, zone: 'left' | 'right' | 'top' | 'bottom' }
+  const PANE_CONTROL_DRAG_PX = 10;
+
+  /**
+   * Swallow the click a drag's release may still deliver to the control under
+   * it. Listens on the dragged element itself, not window: a swap re-parents
+   * the pane, and a click on a detached subtree never reaches window.
+   */
+  function suppressNextClick(host) {
+    const swallow = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      host.removeEventListener('click', swallow, true);
+    };
+    host.addEventListener('click', swallow, true);
+    setTimeout(() => host.removeEventListener('click', swallow, true), 400);
+  }
 
   // ── 1. Sidebar Dashboard Entry ("首頁 Dashboard") ──────────────────────────
   const navEntry = document.createElement('button');
@@ -1077,17 +1093,18 @@ export function createSessionDashboard({
       hideDropPreview();
     });
 
+    // A touch anywhere on the header, the session name and icon buttons
+    // included, may become a drag: movement past the threshold drags the pane,
+    // a still finger stays a tap (rename / button action). Only the open
+    // rename field is excluded, since moving in it selects text.
     header.addEventListener('pointerdown', (e) => {
-      if (
-        e.button !== 0 ||
-        e.target.closest('button, input, textarea, [role="button"]')
-      )
-        return;
+      if (e.button !== 0 || e.target.closest('input, textarea')) return;
       if (e.pointerType === 'mouse') return;
       window.getSelection()?.removeAllRanges();
       pointerDrag = {
         source: 'pane',
         targetElement: header,
+        fromControl: Boolean(e.target.closest('button, [role="button"]')),
         jid,
         name: nameEl.textContent || jid,
         pointerId: e.pointerId,
@@ -3277,7 +3294,9 @@ export function createSessionDashboard({
             return;
           }
         } else {
-          // Existing pane drag
+          // Existing pane drag. A finger on a control jitters a little during
+          // a plain tap, so it must travel further before the tap is given up.
+          if (pointerDrag.fromControl && Math.hypot(dx, dy) < PANE_CONTROL_DRAG_PX) return;
           pointerDrag.mode = 'drag';
         }
       }
@@ -3351,6 +3370,9 @@ export function createSessionDashboard({
     }
 
     if (!drag.started) return;
+
+    // The drag began on the name or a button: its trailing click is not a tap.
+    if (drag.fromControl) suppressNextClick(drag.targetElement);
 
     // Ensure session list remains at original scroll position after drag
     if (drag.startScrollTop !== undefined) {

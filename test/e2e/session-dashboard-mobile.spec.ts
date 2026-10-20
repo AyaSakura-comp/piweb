@@ -258,6 +258,52 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await pane.scrollIntoViewIfNeeded();
   await expect(pane.locator('textarea')).toBeVisible();
   await page.screenshot({ path: info.outputPath('01-phone-dashboard.png') });
+  // A pane drag may start on the session name or an icon button (iPhone
+  // recording 2026-10-20: a finger on the name refused to drag). Movement
+  // decides: past the threshold it drags and the trailing click is swallowed;
+  // a still finger stays a tap.
+  const paneOrder = () => page.locator('.dashboard-pane').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.jid));
+  const touchDrag = async (fromSelector: string, toJid: string, pointerId: number) => {
+    const from = (await page.locator(fromSelector).boundingBox())!;
+    const to = (await page.locator(`.dashboard-pane[data-jid="${toJid}"]`).boundingBox())!;
+    await page.evaluate(({ fromSelector, sx, sy, tx, ty, pointerId }) => {
+      const source = document.querySelector(fromSelector)!;
+      const init = { pointerId, pointerType: 'touch', button: 0, bubbles: true, cancelable: true };
+      source.dispatchEvent(new PointerEvent('pointerdown', { ...init, clientX: sx, clientY: sy }));
+      for (let i = 1; i <= 8; i++) {
+        window.dispatchEvent(new PointerEvent('pointermove', {
+          ...init, clientX: sx + (tx - sx) * i / 8, clientY: sy + (ty - sy) * i / 8,
+        }));
+      }
+      window.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: tx, clientY: ty }));
+      source.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }, {
+      fromSelector, pointerId,
+      sx: from.x + Math.min(20, from.width / 2), sy: from.y + from.height / 2,
+      tx: to.x + to.width / 2, ty: to.y + to.height / 2,
+    });
+  };
+  const [leftJid, rightJid] = await paneOrder();
+  await touchDrag(`.dashboard-pane[data-jid="${leftJid}"] .pane-session-name`, rightJid!, 201);
+  await expect.poll(paneOrder).toEqual([rightJid, leftJid]);
+  await expect(page.locator('.pane-name-edit:visible')).toHaveCount(0);
+  await touchDrag(`.dashboard-pane[data-jid="${leftJid}"] .pane-model-btn`, rightJid!, 202);
+  await expect.poll(paneOrder).toEqual([leftJid, rightJid]);
+  await expect(page.locator('#model-sheet')).toBeHidden();
+  // A still finger on the name is still a tap: it opens rename.
+  await page.evaluate((jid) => {
+    const name = document.querySelector(`.dashboard-pane[data-jid="${jid}"] .pane-session-name`)!;
+    const r = name.getBoundingClientRect();
+    const init = { pointerId: 203, pointerType: 'touch', button: 0, bubbles: true, cancelable: true, clientX: r.x + 10, clientY: r.y + 5 };
+    name.dispatchEvent(new PointerEvent('pointerdown', init));
+    window.dispatchEvent(new PointerEvent('pointermove', { ...init, clientX: r.x + 14 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: r.x + 14 }));
+    name.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }, leftJid);
+  const renameInput = page.locator(`.dashboard-pane[data-jid="${leftJid}"] .pane-name-edit`);
+  await expect(renameInput).toBeVisible();
+  await renameInput.press('Escape');
+  await expect(renameInput).toBeHidden();
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();
     await page.locator('#session-list .session-item').nth(index).locator('.session-tile-btn').click();

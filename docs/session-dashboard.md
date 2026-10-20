@@ -122,7 +122,7 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 - The root container adds `.resizing-active` during active drag to lock cursor appearance, disable text selection, and eliminate pointer event overhead on underlying iframes and message text.
 
 ### Drag-and-Swap & Cross-Pane Dropping
-Users can drag any existing pane header or drag a session card from the sidebar drawer directly onto any pane across the workspace. Hovering over any pane activates a **5-way directional drop target** with clear contextual visual feedback:
+Users can drag any existing pane header or drag a session card from the sidebar drawer directly onto any pane across the workspace. On touch the drag may start anywhere on the header, the session name and icon buttons included: movement decides intent (6px on bare header, 10px on a control so tap jitter stays a tap), and once a drag started on a control its trailing click is swallowed on the header itself (a swap re-parents the pane, so a window listener never sees it). Only the open rename field never starts a drag. Hovering over any pane activates a **5-way directional drop target** with clear contextual visual feedback:
 - **Center Zone (`20%..80%` relative X and Y)**:
   - **Existing Pane Drag**: Displays `⇄ 交換視窗順序`. Dropping swaps the positions of the two panes in-place.
   - **Sidebar Session Drag**: Displays `➕ 加入此視窗旁`. Dropping cleanly inserts the new session adjacent to the target pane in the layout tree.
