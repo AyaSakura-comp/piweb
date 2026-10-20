@@ -119,6 +119,7 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 
 ### High-Frequency Pointer Tracking
 - Splitter dragging samples pointer events via `getCoalescedEvents()` where supported, ensuring smooth tracking with 120Hz/240Hz digitizers (such as Apple Pencil).
+- **Push-through**: a splitter sees its whole row/column (`getChain`), not just its two neighbours. The pane it moves toward gives way first; once that pane is at its minimum (`95px` tall / `140px` wide) the next one in line is pushed, so a drag never stalls against another splitter. It stops only when every pane on that side is at its minimum (wall bounce on the outermost pane). Start sizes are layout sizes (`offsetWidth/Height`), since a neighbour may still be mid-bounce.
 - The root container adds `.resizing-active` during active drag to lock cursor appearance, disable text selection, and eliminate pointer event overhead on underlying iframes and message text.
 
 ### Drag-and-Swap & Cross-Pane Dropping

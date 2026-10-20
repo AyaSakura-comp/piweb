@@ -304,9 +304,53 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await expect(renameInput).toBeVisible();
   await renameInput.press('Escape');
   await expect(renameInput).toBeHidden();
+  // Three stacked panes: dragging a splitter past a pane at its minimum height
+  // must push the next splitter along instead of stopping (iPhone recording
+  // 2026-10-20). Sizes are read mid-drag, before the release bounce animates.
+  const expectSplitterPushesThroughMinimum = async () => {
+    await expect(page.locator('.dashboard-pane')).toHaveCount(3);
+    const presetBefore = await page.locator('.dashboard-preset-btn.active').getAttribute('data-preset');
+    await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
+    await expect(page.locator('.dashboard-splitter')).toHaveCount(2);
+    const heights = () => page.locator('.dashboard-pane').evaluateAll(els => els.map(el => (el as HTMLElement).offsetHeight));
+    await expect.poll(async () => { const h = await heights(); return Math.max(...h) - Math.min(...h); }).toBeLessThan(3);
+    await page.waitForTimeout(600); // let the preset's layout transition finish
+    const touchSplitter = (index: number, dy: number, pointerId: number, release: boolean) =>
+      page.evaluate(({ index, dy, pointerId, release }) => {
+        const splitter = document.querySelectorAll('.dashboard-splitter')[index] as HTMLElement;
+        const r = splitter.getBoundingClientRect();
+        const init = { pointerId, pointerType: 'touch', button: 0, bubbles: true, cancelable: true, clientX: r.x + r.width / 2 };
+        const y = r.y + r.height / 2;
+        splitter.dispatchEvent(new PointerEvent('pointerdown', { ...init, clientY: y }));
+        for (let i = 1; i <= 10; i++) window.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: y + dy * i / 10 }));
+        if (release) window.dispatchEvent(new PointerEvent('pointerup', { ...init, clientY: y + dy }));
+      }, { index, dy, pointerId, release });
+    const [h0, h1, h2] = await heights();
+    // Lower splitter up: the middle pane bottoms out at 95px, then the top one gives way.
+    await touchSplitter(1, -(h1 - 95) - 100, 301, false);
+    const pushedUp = await heights();
+    expect(pushedUp[1]).toBeLessThanOrEqual(96);
+    expect(Math.abs(pushedUp[0] - (h0 - 100))).toBeLessThanOrEqual(2);
+    expect(Math.abs(pushedUp[2] - (h2 + (h1 - 95) + 100))).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: info.outputPath('01b-splitter-pushes-up.png') });
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 301, pointerType: 'touch', bubbles: true })));
+    await page.waitForTimeout(600);
+    // Upper splitter down past the squeezed middle pane: it pushes the lower splitter.
+    const [a0, a1, a2] = await heights();
+    await touchSplitter(0, a2, 302, false);
+    const pushedDown = await heights();
+    expect(pushedDown[1]).toBeLessThanOrEqual(96);
+    expect(pushedDown[2]).toBeLessThanOrEqual(96);
+    expect(pushedDown[0]).toBeGreaterThanOrEqual(a0 + a1 + a2 - 2 * 96 - 2);
+    await page.screenshot({ path: info.outputPath('01c-splitter-pushes-down.png') });
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 302, pointerType: 'touch', bubbles: true })));
+    await page.waitForTimeout(600);
+    await page.locator(`.dashboard-preset-btn[data-preset="${presetBefore}"]`).click();
+  };
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();
     await page.locator('#session-list .session-item').nth(index).locator('.session-tile-btn').click();
+    if (index === 2) await expectSplitterPushesThroughMinimum();
   }
   await expect(page.locator('.dashboard-pane')).toHaveCount(4);
   await expect(page.locator('.dashboard-splitter')).toHaveCount(3);

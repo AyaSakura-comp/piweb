@@ -2341,6 +2341,9 @@ export function createSessionDashboard({
     secondEl,
     getWeights,
     setWeights,
+    // Optional: the whole row/column this splitter sits in, so a drag can push
+    // past a pane at its minimum into the next one ({ index, els, weights, set }).
+    getChain,
   }) {
     const isHorizontalDrag = axis === 'x';
     const splitter = el(
@@ -2409,16 +2412,30 @@ export function createSessionDashboard({
       }
 
       const startPos = isHorizontalDrag ? e.clientX : e.clientY;
-      const firstRect = firstEl.getBoundingClientRect();
-      const secondRect = secondEl.getBoundingClientRect();
-      const firstSize = isHorizontalDrag ? firstRect.width : firstRect.height;
-      const secondSize = isHorizontalDrag ? secondRect.width : secondRect.height;
-      const totalPx = firstSize + secondSize;
+      const chain = getChain?.();
+      const useChain = Boolean(chain && chain.els.length > 1 && chain.els.every(Boolean));
+      const chainEls = useChain ? chain.els : [firstEl, secondEl];
+      const k = useChain ? chain.index : 0;
+      // Layout sizes, not getBoundingClientRect: a neighbour may still be
+      // mid-bounce from the last drag, and its transform is not its size.
+      const startSizes = chainEls.map((node) =>
+        isHorizontalDrag ? node.offsetWidth : node.offsetHeight,
+      );
+      const totalPx = startSizes.reduce((sum, px) => sum + px, 0);
       const minPx = isHorizontalDrag ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
-      if (totalPx <= minPx * 2) return;
+      // How far the splitter may travel: every pane on that side down to its minimum.
+      const slack = (from, to) => {
+        let room = 0;
+        for (let i = from; i <= to; i++) room += Math.max(0, startSizes[i] - minPx);
+        return room;
+      };
+      const roomBefore = slack(0, k);
+      const roomAfter = slack(k + 1, startSizes.length - 1);
+      if (roomBefore + roomAfter <= 0) return;
 
-      const [startW1, startW2] = getWeights();
-      const totalWeight = startW1 + startW2;
+      const startWeights = useChain ? chain.weights : getWeights();
+      const totalWeight = startWeights.reduce((sum, w) => sum + w, 0);
+      const writeWeights = useChain ? chain.set : ([w1, w2]) => setWeights(w1, w2);
 
       activeResizerCount++;
       splitter.classList.add('dragging');
@@ -2429,18 +2446,34 @@ export function createSessionDashboard({
         // Ignore synthetic pointer events without active pointerId
       }
 
-      let currentFirstPx = firstSize;
+      let currentSizes = startSizes;
+      let currentDelta = 0;
       let lastMovePos = startPos;
       let lastMoveTime = performance.now();
       let velocityPxPerSec = 0;
       let hitBoundDuringDrag = 0; // -1 (hit min), 1 (hit max), 0 (none)
 
-      const applyFirstPx = (px) => {
-        const clamped = Math.max(minPx, Math.min(totalPx - minPx, px));
-        currentFirstPx = clamped;
-        const firstRatio = clamped / totalPx;
-        setWeights(totalWeight * firstRatio, totalWeight * (1 - firstRatio));
-        return clamped;
+      const applySizes = (sizes) => {
+        currentSizes = sizes;
+        writeWeights(sizes.map((px) => (totalWeight * px) / totalPx));
+      };
+
+      // The pane the splitter moves toward gives way first; once it is at its
+      // minimum the next one in line is pushed, like a row of springs.
+      const applyDelta = (delta) => {
+        const d = Math.max(-roomBefore, Math.min(roomAfter, delta));
+        const sizes = startSizes.slice();
+        const grow = d > 0 ? k : k + 1;
+        const step = d > 0 ? 1 : -1;
+        let left = Math.abs(d);
+        sizes[grow] += left;
+        for (let i = d > 0 ? k + 1 : k; left > 0 && i >= 0 && i < sizes.length; i += step) {
+          const take = Math.min(left, Math.max(0, sizes[i] - minPx));
+          sizes[i] -= take;
+          left -= take;
+        }
+        currentDelta = d;
+        applySizes(sizes);
       };
 
       // 120Hz+ zero-lag direct style mutation on every pointermove / coalesced event
@@ -2451,21 +2484,21 @@ export function createSessionDashboard({
         lastMovePos = clientPos;
         lastMoveTime = nowTime;
 
-        const rawFirstPx = firstSize + (clientPos - startPos);
-        if (rawFirstPx <= minPx) {
+        const rawDelta = clientPos - startPos;
+        if (rawDelta <= -roomBefore) {
           if (hitBoundDuringDrag !== -1) {
             hitBoundDuringDrag = -1;
-            triggerWallImpactBounce(firstEl, axis, -1, 1.35);
+            triggerWallImpactBounce(chainEls[0], axis, -1, 1.35);
           }
-        } else if (rawFirstPx >= totalPx - minPx) {
+        } else if (rawDelta >= roomAfter) {
           if (hitBoundDuringDrag !== 1) {
             hitBoundDuringDrag = 1;
-            triggerWallImpactBounce(secondEl, axis, 1, 1.35);
+            triggerWallImpactBounce(chainEls[chainEls.length - 1], axis, 1, 1.35);
           }
         } else {
           hitBoundDuringDrag = 0;
         }
-        applyFirstPx(rawFirstPx);
+        applyDelta(rawDelta);
       };
 
       const onMove = (moveEvent) => {
@@ -2497,7 +2530,7 @@ export function createSessionDashboard({
         // Whether the user flicks fast or drags and releases, give the divider and both
         // adjacent panes a clearly visible inertial overshoot & elastic rebound (24px..52px peak)
         // before locking cleanly onto `restPx`.
-        const totalDelta = currentFirstPx - firstSize;
+        const totalDelta = currentDelta;
         const timeSinceMove = performance.now() - lastMoveTime;
         const dragSign =
           Math.abs(totalDelta) > 2
@@ -2507,10 +2540,10 @@ export function createSessionDashboard({
               : 0;
 
         if (!prefersReducedMotion() && dragSign !== 0 && Math.abs(totalDelta) > 3) {
-          const restPx = currentFirstPx;
+          const restSizes = currentSizes;
           const isX = axis === 'x';
-          const origFirstSize = currentFirstPx;
-          const origSecondSize = totalPx - origFirstSize;
+          const origFirstSize = restSizes[k];
+          const origSecondSize = restSizes[k + 1];
 
           const speedBoost = timeSinceMove < 120 ? Math.min(28, Math.abs(velocityPxPerSec) * 0.03) : 0;
           const distBoost = Math.min(54, Math.max(28, Math.abs(totalDelta) * 0.42));
@@ -2579,7 +2612,7 @@ export function createSessionDashboard({
             splitter.style.transform = '';
             firstEl.style.transformOrigin = '';
             secondEl.style.transformOrigin = '';
-            applyFirstPx(restPx);
+            applySizes(restSizes);
             saveState();
             activeSpringCleanup = null;
           };
@@ -2721,6 +2754,23 @@ export function createSessionDashboard({
                   pane.el.style.flex = `${w1} 1 0px`;
                   nextPane.el.style.flex = `${w2} 1 0px`;
                 },
+                getChain: () => {
+                  const loc = findJidLocation(firstJid);
+                  if (!loc) return null;
+                  const items = groups[loc.gIdx].items;
+                  return {
+                    index: loc.iIdx,
+                    els: items.map((it) => panes.get(it.jid)?.el),
+                    weights: items.map((it) => it.weight),
+                    set: (weights) => {
+                      items.forEach((it, i) => {
+                        it.weight = weights[i];
+                        const p = panes.get(it.jid);
+                        if (p) p.el.style.flex = `${weights[i]} 1 0px`;
+                      });
+                    },
+                  };
+                },
               }),
             );
           }
@@ -2755,6 +2805,17 @@ export function createSessionDashboard({
               groupEl.style.flex = `${w1} 1 0px`;
               nextGroupEl.style.flex = `${w2} 1 0px`;
             },
+            getChain: () => ({
+              index: gIdx,
+              els: groupEls,
+              weights: groups.map((g) => g.weight),
+              set: (weights) => {
+                groups.forEach((g, i) => {
+                  g.weight = weights[i];
+                  if (groupEls[i]) groupEls[i].style.flex = `${weights[i]} 1 0px`;
+                });
+              },
+            }),
           }),
         );
       }
