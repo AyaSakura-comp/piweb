@@ -3443,9 +3443,9 @@ function scheduleComposerSendSettlement() {
     composerSendSettleTimer = 0;
     requestAnimationFrame(() => {
       if (!autoScrollEnabled || !composerSendLockActive || document.activeElement === input) return;
-      // Clamp once in the shared measured viewport and release. Further
-      // keyboard/rotation settling is owned by bindViewportShell, not a
-      // display:none remount or an innerHeight recovery loop.
+      // Clamp once and release. Further keyboard/rotation settling re-runs
+      // syncViewportSizes via bindViewportShell, not a display:none remount
+      // or an innerHeight recovery loop.
       scrollToBottom(true);
       releaseComposerBottomLock();
     });
@@ -5392,8 +5392,8 @@ function syncViewportSizes() {
   promptTurnScroll.viewportChanged();
 }
 
-// Height is measured before the existing transcript/composer policies run.
-// Keyboard dismissal may retain focus, so recovery must not depend on blur.
+// The shell stays 100dvh; this only re-runs the composer/sheet policies on
+// viewport changes, including late WebKit settling after the last event.
 bindViewportShell(window, document, syncViewportSizes);
 syncViewportSizes();
 

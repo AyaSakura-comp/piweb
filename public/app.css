@@ -76,6 +76,21 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * iOS 26 Home Screen app (viewport-fit=cover + black-translucent): WebKit sizes
+ * the viewport short by the status bar height while the page is shorter than
+ * the screen (WebKit 301108), leaving a strip under the composer until the
+ * phone is rotated. A page at least screen-tall gets the full viewport, and
+ * 100dvh follows. Making the shell itself taller does not work: WebKit stops
+ * drawing at the short edge. min() caps it at 100lvh so an opaque status bar
+ * (inset 0, WebKit 316008) never makes the page scroll.
+ */
+@media (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top)));
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -194,7 +209,7 @@ svg {
 /* ── shell ───────────────────────────────────────────────────────────── */
 
 .app {
-  height: var(--app-viewport-height, 100dvh);
+  height: 100dvh;
   display: flex;
   overflow: hidden;
 }
@@ -636,7 +651,7 @@ svg {
   left: 0;
   width: 78%;
   max-width: 300px;
-  height: var(--app-viewport-height, 100dvh);
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--bg-alt);

@@ -1,11 +1,20 @@
 /**
- * One visible-height authority for the chat, dashboard and drawer.
- * iOS may finish keyboard/rotation layout after its last viewport event; sample
- * again over a bounded settling window instead of hiding/remounting the shell.
+ * Viewport change notifications for the transcript/composer/sheet policies.
+ *
+ * This deliberately does NOT size the shell. `.app` stays `100dvh` (the layout
+ * viewport) and iOS pans the visual viewport over it to keep the focused input
+ * above the keyboard. Shrinking the shell to `visualViewport.height` fights that
+ * pan: WebKit keeps the pan offset it computed for the full-height page, so the
+ * shortened shell is scrolled up and the composer floats at the top with a
+ * blank band between it and the keyboard. The iOS 26 standalone "page is short
+ * by the status bar height" bug is fixed in CSS (`app.css`, display-mode:
+ * standalone), not here.
+ *
+ * iOS may finish keyboard/rotation layout after its last viewport event, so
+ * sample again over a bounded settling window.
  */
-export function bindViewportShell(win, doc, onHeightChange = () => {}) {
+export function bindViewportShell(win, doc, onViewportChange = () => {}) {
   const viewport = win.visualViewport;
-  let lastHeight = null;
   let frame = 0;
   let timers = [];
   let disposed = false;
@@ -17,28 +26,17 @@ export function bindViewportShell(win, doc, onHeightChange = () => {}) {
     timers = [];
   }
 
-  function measure() {
+  function notify() {
     if (disposed || doc.visibilityState === 'hidden') return;
-    // Pinch zoom changes visualViewport.height but must not relayout the UI.
-    if (viewport && Math.abs((viewport.scale ?? 1) - 1) > 0.01) return;
-    const height = viewport ? viewport.height : win.innerHeight;
-    if (!Number.isFinite(height) || height <= 0) return;
-    const rounded = Math.round(height);
-    if (rounded !== lastHeight) {
-      lastHeight = rounded;
-      doc.documentElement.style.setProperty('--app-viewport-height', `${rounded}px`);
-    }
-    // Preserve existing composer/tail policies on viewport scroll events too,
-    // even if only the visible offset changed and the height stayed constant.
-    onHeightChange();
+    onViewportChange();
   }
 
   function refresh() {
     cancelPending();
-    measure();
+    notify();
     if (disposed || doc.visibilityState === 'hidden') return;
-    frame = win.requestAnimationFrame(() => { frame = 0; measure(); });
-    timers = [120, 350, 700].map(delay => win.setTimeout(measure, delay));
+    frame = win.requestAnimationFrame(() => { frame = 0; notify(); });
+    timers = [120, 350, 700].map(delay => win.setTimeout(notify, delay));
   }
 
   const bindings = [
@@ -46,12 +44,9 @@ export function bindViewportShell(win, doc, onHeightChange = () => {}) {
     [win, 'orientationchange'],
     [win, 'pageshow'],
     [doc, 'visibilitychange'],
-    [doc, 'focusin'],
-    [doc, 'focusout'],
     ...(viewport ? [[viewport, 'resize'], [viewport, 'scroll']] : []),
   ];
   for (const [target, type] of bindings) target.addEventListener(type, refresh);
-  refresh();
 
   return () => {
     disposed = true;

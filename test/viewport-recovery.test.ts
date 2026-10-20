@@ -14,10 +14,19 @@ describe('iOS viewport integration', () => {
     expect(app).toContain('keepComposerBottomVisible()');
   });
 
-  it('sizes the main view and dashboard from the same shell rather than independent dvh caches', () => {
-    expect(read('app.css')).toContain('height: var(--app-viewport-height, 100dvh)');
+  it('keeps the shell on the layout viewport; the keyboard must not shrink it', () => {
+    const css = read('app.css');
+    expect(css).not.toContain('--app-viewport-height');
+    expect(css).toMatch(/\.app\s*\{[^}]*height: 100dvh;/);
+    expect(read('viewport-shell.js')).not.toContain('setProperty');
     expect(read('app.css')).toMatch(/\.main\s*\{[^}]*height: 100%;/);
     expect(read('session-dashboard.css')).not.toContain('--dashboard-vv-h');
     expect(read('session-dashboard.js')).not.toContain('syncDashboardVisualViewport');
+  });
+
+  it('gives an iOS 26 standalone page the full viewport (WebKit 301108)', () => {
+    expect(read('app.css')).toMatch(
+      /@media \(display-mode: standalone\)\s*\{\s*html\s*\{\s*min-height: min\(100lvh, calc\(100% \+ env\(safe-area-inset-top\)\)\);/,
+    );
   });
 });

@@ -3,7 +3,6 @@ import { bindViewportShell } from '../public/viewport-shell.js';
 
 function setup() {
   vi.useFakeTimers();
-  const properties = new Map<string, string>();
   const viewport = Object.assign(new EventTarget(), { height: 844, scale: 1 });
   const win = Object.assign(new EventTarget(), {
     innerHeight: 932,
@@ -14,86 +13,61 @@ function setup() {
   });
   const doc = Object.assign(new EventTarget(), {
     visibilityState: 'visible',
-    activeElement: { tagName: 'TEXTAREA' },
-    documentElement: { style: {
-      setProperty: vi.fn((key: string, value: string) => properties.set(key, value)),
-    } },
+    documentElement: { style: { setProperty: vi.fn() } },
   });
   const onChange = vi.fn();
   const dispose = bindViewportShell(win, doc, onChange);
-  return { win, doc, viewport, properties, dispose, onChange };
+  return { win, doc, viewport, dispose, onChange };
 }
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-describe('shared visual viewport shell sizing', () => {
-  it('uses the visible height rather than an independent CSS/layout viewport', () => {
-    const { properties } = setup();
-    expect(properties.get('--app-viewport-height')).toBe('844px');
-  });
-
-  it('restores full height on keyboard dismissal even while the textarea retains focus', () => {
-    const { viewport, properties } = setup();
+describe('viewport change notifications', () => {
+  it('never writes a shell height: iOS pans the visual viewport over the 100dvh shell', () => {
+    const { viewport, doc } = setup();
     viewport.height = 480;
     viewport.dispatchEvent(new Event('resize'));
-    expect(properties.get('--app-viewport-height')).toBe('480px');
-    viewport.height = 844;
-    viewport.dispatchEvent(new Event('resize'));
-    expect(properties.get('--app-viewport-height')).toBe('844px');
+    vi.advanceTimersByTime(1000);
+    expect(doc.documentElement.style.setProperty).not.toHaveBeenCalled();
   });
 
-  it('remeasures after delayed WebKit orientation layout without needing another rotation', () => {
-    const { win, viewport, properties } = setup();
-    viewport.height = 390;
+  it('notifies immediately and again over the WebKit settling window', () => {
+    const { win, onChange } = setup();
     win.dispatchEvent(new Event('orientationchange'));
-    expect(properties.get('--app-viewport-height')).toBe('390px');
-    vi.advanceTimersByTime(50);
-    viewport.height = 844; // WebKit settles after its last resize/orientation event.
-    vi.advanceTimersByTime(750);
-    expect(properties.get('--app-viewport-height')).toBe('844px');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+    expect(onChange).toHaveBeenCalledTimes(5); // now, rAF, 120, 350, 700ms
   });
 
-  it('resynchronizes after bfcache/page restoration and visibility changes', () => {
-    const { win, doc, viewport, properties } = setup();
-    viewport.height = 810;
+  it('restarts the settling window on a newer event instead of stacking samples', () => {
+    const { viewport, onChange } = setup();
+    viewport.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(100);
+    viewport.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(1000);
+    expect(onChange).toHaveBeenCalledTimes(2 + 5); // first burst cut after now+rAF
+  });
+
+  it('resynchronizes on page restoration and visibility, but not while hidden', () => {
+    const { win, doc, onChange } = setup();
     win.dispatchEvent(new Event('pageshow'));
-    expect(properties.get('--app-viewport-height')).toBe('810px');
-    viewport.height = 844;
+    expect(onChange).toHaveBeenCalledTimes(1);
+    doc.visibilityState = 'hidden';
     doc.dispatchEvent(new Event('visibilitychange'));
-    expect(properties.get('--app-viewport-height')).toBe('844px');
+    vi.advanceTimersByTime(1000);
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it('does not collapse the layout during pinch zoom and ignores invalid measurements', () => {
-    const { viewport, properties } = setup();
-    viewport.scale = 2;
-    viewport.height = 422;
-    viewport.dispatchEvent(new Event('resize'));
-    expect(properties.get('--app-viewport-height')).toBe('844px');
-    viewport.scale = 1;
-    viewport.height = 0;
-    viewport.dispatchEvent(new Event('resize'));
-    expect(properties.get('--app-viewport-height')).toBe('844px');
-  });
-
-  it('uses innerHeight when VisualViewport is unavailable', () => {
-    const { win, doc, properties, dispose } = setup();
+  it('works without VisualViewport and cleans up listeners and deferred samples', () => {
+    const { win, doc, dispose } = setup();
     dispose();
     win.visualViewport = null as any;
-    const cleanup = bindViewportShell(win, doc);
-    expect(properties.get('--app-viewport-height')).toBe('932px');
-    cleanup();
-  });
-
-  it('does not rewrite unchanged heights and cleans up listeners and deferred samples', () => {
-    const { win, doc, viewport, dispose, properties } = setup();
+    const onChange = vi.fn();
+    const cleanup = bindViewportShell(win, doc, onChange);
     win.dispatchEvent(new Event('resize'));
+    cleanup();
     vi.advanceTimersByTime(1000);
-    expect(doc.documentElement.style.setProperty).toHaveBeenCalledTimes(1);
-    win.dispatchEvent(new Event('orientationchange'));
-    dispose();
-    viewport.height = 700;
-    viewport.dispatchEvent(new Event('resize'));
-    vi.advanceTimersByTime(1000);
-    expect(properties.get('--app-viewport-height')).toBe('844px');
+    win.dispatchEvent(new Event('resize'));
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

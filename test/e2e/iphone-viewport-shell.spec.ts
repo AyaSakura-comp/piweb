@@ -56,7 +56,7 @@ const eventsBySession: Record<string, any[]> = Object.fromEntries(
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-test('single chat and dashboard recover visible height without an extra rotation or blur', async ({ page }, info) => {
+test('keyboard visual-viewport changes never shrink the chat or dashboard shell', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -226,32 +226,61 @@ test('single chat and dashboard recover visible height without an extra rotation
   await page.locator('#input').focus();
   await page.locator('#messages').evaluate(el => { el.scrollTop = 100; });
   const readerTop = await page.locator('#messages').evaluate(el => el.scrollTop);
+  const mainBottom = () => page.locator('.main').evaluate(el => Math.round(el.getBoundingClientRect().bottom));
+  // The keyboard only shrinks the VISUAL viewport. iOS pans it over the
+  // full-height layout; shrinking the shell to match left the composer at the
+  // top of the screen with a blank band above the keyboard (iPhone recording,
+  // 2026-10-20). The shell must stay at the layout viewport height.
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
-  await expect.poll(() => page.locator('.main').evaluate(el => Math.round(el.getBoundingClientRect().height))).toBe(480);
+  await page.waitForTimeout(800); // past the 700ms settling samples
+  expect(await mainBottom()).toBe(844);
+  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--app-viewport-height'))).toBe('');
+  await page.screenshot({ path: info.outputPath('01-chat-keyboard-visible-height-480.png') });
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect(page.locator('#input')).toBeFocused();
-  await expect.poll(() => page.locator('.main').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
+  expect(await mainBottom()).toBe(844);
   expect(await page.locator('#messages').evaluate(el => el.scrollTop)).toBe(readerTop);
-  await page.screenshot({ path: info.outputPath('01-chat-restored-without-blur.png') });
-  // WebKit can deliver its last event before viewport measurements finish settling.
   await page.evaluate(() => {
     (window as any).__setVisibleHeight(390, false);
     window.dispatchEvent(new Event('orientationchange'));
     setTimeout(() => (window as any).__setVisibleHeight(844, false), 50);
   });
-  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--app-viewport-height'))).toBe('844px');
-  await page.evaluate(() => {
-    (window as any).__setVisibleHeight(810, false);
-    window.dispatchEvent(new Event('pageshow'));
-  });
-  await expect.poll(() => page.locator('.main').evaluate(el => Math.round(el.getBoundingClientRect().height))).toBe(810);
-  await page.evaluate(() => (window as any).__setVisibleHeight(844));
+  await page.waitForTimeout(800);
+  expect(await mainBottom()).toBe(844);
   await page.locator('#btn-topbar-dashboard').click();
   await expect(page.locator('#dashboard-view')).toBeVisible();
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
-  await expect.poll(() => page.locator('#dashboard-view').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(480);
+  await page.waitForTimeout(800);
+  expect(await page.locator('#dashboard-view').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect.poll(() => page.locator('.dashboard-stage').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
-  await page.screenshot({ path: info.outputPath('02-dashboard-restored.png') });
+  await page.screenshot({ path: info.outputPath('02-dashboard-after-keyboard.png') });
+  // iOS 26 standalone short-viewport rule (WebKit 301108). Chromium cannot
+  // emulate standalone or the bug, so force the media rule on and check the
+  // guard holds: with no top inset the page is exactly screen-tall and never
+  // scrolls or overflows sideways.
+  const forced = await page.evaluate(() => {
+    let n = 0;
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        for (const rule of Array.from(sheet.cssRules)) {
+          const media = (rule as CSSMediaRule).media;
+          if (media && /display-mode:\s*standalone/.test(media.mediaText)) { media.mediaText = 'all'; n++; }
+        }
+      } catch {}
+    }
+    return n;
+  });
+  expect(forced).toBeGreaterThan(0);
+  const metrics = await page.evaluate(() => ({
+    htmlMin: getComputedStyle(document.documentElement).minHeight,
+    scrollH: document.documentElement.scrollHeight,
+    clientH: document.documentElement.clientHeight,
+    scrollW: document.documentElement.scrollWidth,
+    clientW: document.documentElement.clientWidth,
+  }));
+  expect(metrics.htmlMin).not.toBe('0px');
+  expect(metrics.scrollH).toBe(metrics.clientH);
+  expect(metrics.scrollW).toBe(metrics.clientW);
   expect(errors).toEqual([]);
 });

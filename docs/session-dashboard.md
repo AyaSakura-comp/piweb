@@ -201,8 +201,9 @@ The current architecture resolves this completely:
 
 ## 7. Tablet, iPadOS, & Mobile Stability
 
-1. **Shared Visual Viewport Shell (`--app-viewport-height`)**:
-   `public/viewport-shell.js` measures `visualViewport.height` for the shell. Single chat, dashboard and drawer inherit this same height; the dashboard does not keep a second viewport cache. Keyboard dismissal is handled even when focus remains on the textarea. Resize, orientation, focus, page restoration and visibility events trigger immediate plus bounded deferred measurements (animation frame, 120/350/700ms) for delayed WebKit layout. Pinch zoom does not resize the shell. No `display:none` remount or forced transcript scroll is used for recovery.
+1. **Layout-Viewport Shell (`100dvh`), never keyboard-shrunk**:
+   `.app` is `100dvh`; single chat, Dashboard (`height: 100%`) and drawer inherit it. The on-screen keyboard only shrinks the *visual* viewport and iOS pans it over the full-height layout to keep the focused composer visible. Do not size the shell from `visualViewport.height`: WebKit keeps the pan offset computed for the full-height page, so a shrunk shell is scrolled up and the composer floats at the top with a blank band above the keyboard (commit `715f9cc` did this; reverted). `public/viewport-shell.js` only re-runs the composer/autocomplete/sheet policies on viewport events, with settling samples (animation frame, 120/350/700ms) for late WebKit layout.
+   The iOS 26 Home Screen gap under the composer that cleared only after rotating is WebKit 301108 (viewport short by the status-bar height while the page is shorter than the screen). It is fixed by a page-level rule in `app.css`: `@media (display-mode: standalone) { html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))) } }`. A taller shell does not help; WebKit stops drawing at the short edge.
 2. **Focus Theft Prevention**:
    Toolbar and pane action buttons invoke `e.preventDefault()` on `pointerdown`, preventing textarea blur when toggling layouts, clicking presets, or activating menus.
 3. **Touch Input Zoom Immunity**:

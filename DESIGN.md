@@ -292,10 +292,12 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
   reconstruction when the session signature is unchanged, dynamic index/JID lookup in
   splitter callbacks prevents resized weights from snapping back on poll, toolbar/pane
   buttons prevent focus theft on `pointerdown`, and touch inputs keep `font-size: 16px`
-  with a shared `visualViewport` shell height (`--app-viewport-height`) for both
-  single chat and Dashboard. Keyboard close/restore must remeasure even while
-  the textarea retains focus; delayed WebKit orientation layout is sampled
-  without a second rotation, `display:none` remount, or forced reader scrolling.
+  and the shell stays on the layout viewport (`.app` `100dvh`) for both single
+  chat and Dashboard. Never shrink it to `visualViewport.height`: iOS pans the
+  visual viewport for the keyboard and a shrunk shell ends up scrolled off with
+  a blank band above the keyboard. The iOS 26 standalone short-viewport gap
+  (WebKit 301108) is fixed by the `display-mode: standalone` `html` min-height
+  rule in `app.css`, not by remeasuring, rotating, or a `display:none` remount.
 
 ## Verification
 
