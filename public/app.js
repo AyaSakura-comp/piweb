@@ -5501,8 +5501,9 @@ function syncViewportSizes() {
   promptTurnScroll.viewportChanged();
 }
 
-// The shell stays 100dvh; this only re-runs the composer/sheet policies on
-// viewport changes, including late WebKit settling after the last event.
+// The shell is 100dvh at rest and pinned to the visual viewport while the
+// keyboard is up; the composer/sheet policies re-run on every viewport change,
+// including late WebKit settling after the last event.
 bindViewportShell(window, document, syncViewportSizes);
 syncViewportSizes();
 

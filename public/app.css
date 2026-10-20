@@ -214,6 +214,28 @@ svg {
   overflow: hidden;
 }
 
+/*
+ * Keyboard up: pin the shell to the visual viewport (viewport-shell.js), so
+ * iOS panning the page cannot reveal a blank band under the composer. The
+ * keyboard covers the home indicator, so its safe-area padding goes too.
+ */
+html.keyboard-shell .app {
+  position: fixed;
+  top: var(--keyboard-shell-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--keyboard-shell-height, 100dvh);
+}
+
+html.keyboard-shell .composer-wrap {
+  padding-bottom: 10px;
+}
+
+/* Placed at 42% of the full screen, it would sit on the pinned topbar. */
+html.keyboard-shell .life-edge-hint {
+  display: none;
+}
+
 /* Life is a protected presentation of one persistent default-model channel. */
 .life-edge-hint {
   position: fixed;

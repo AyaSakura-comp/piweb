@@ -56,7 +56,7 @@ const eventsBySession: Record<string, any[]> = Object.fromEntries(
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-test('keyboard visual-viewport changes never shrink the chat or dashboard shell', async ({ page }, info) => {
+test('the keyboard pins the chat and dashboard shell to the panned visual viewport', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -215,9 +215,14 @@ test('keyboard visual-viewport changes never shrink the chat or dashboard shell'
 
   await page.addInitScript(() => {
     let height = 844;
+    let offsetTop = 0;
     Object.defineProperty(window.visualViewport!, 'height', { configurable: true, get: () => height });
-    (window as any).__setVisibleHeight = (value: number, emit = true) => {
+    Object.defineProperty(window.visualViewport!, 'offsetTop', { configurable: true, get: () => offsetTop });
+    // iOS pans the visual viewport down the page when the keyboard opens; the
+    // pan defaults to the bottom of the 844px layout viewport.
+    (window as any).__setVisibleHeight = (value: number, emit = true, top = 844 - value) => {
       height = value;
+      offsetTop = top;
       if (emit) window.visualViewport!.dispatchEvent(new Event('resize'));
     };
   });
@@ -227,15 +232,24 @@ test('keyboard visual-viewport changes never shrink the chat or dashboard shell'
   await page.locator('#messages').evaluate(el => { el.scrollTop = 100; });
   const readerTop = await page.locator('#messages').evaluate(el => el.scrollTop);
   const mainBottom = () => page.locator('.main').evaluate(el => Math.round(el.getBoundingClientRect().bottom));
-  // The keyboard only shrinks the VISUAL viewport. iOS pans it over the
-  // full-height layout; shrinking the shell to match left the composer at the
-  // top of the screen with a blank band above the keyboard (iPhone recording,
-  // 2026-10-20). The shell must stay at the layout viewport height.
+  const rect = (selector: string) => page.locator(selector).evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+  });
+  // The keyboard only shrinks the VISUAL viewport, and iOS pans it down the
+  // page. A full-height shell then showed the composer's safe-area padding and
+  // the page height below it as a blank band above the keyboard (iPhone
+  // screenshot, 2026-10-20); a shell shrunk without following the pan floated
+  // the composer at the top (715f9cc). The shell must cover exactly the
+  // visible area, wherever iOS panned it.
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800); // past the 700ms settling samples
-  expect(await mainBottom()).toBe(844);
-  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--app-viewport-height'))).toBe('');
+  expect(await rect('.app')).toEqual({ top: 364, bottom: 844 });
+  expect((await rect('#composer')).bottom).toBe(844 - 10);
   await page.screenshot({ path: info.outputPath('01-chat-keyboard-visible-height-480.png') });
+  await page.evaluate(() => (window as any).__setVisibleHeight(480, true, 300)); // iOS moved the pan
+  await expect.poll(() => rect('.app')).toEqual({ top: 300, bottom: 780 });
+  expect((await rect('#composer')).bottom).toBe(780 - 10);
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect(page.locator('#input')).toBeFocused();
   expect(await mainBottom()).toBe(844);
@@ -251,7 +265,7 @@ test('keyboard visual-viewport changes never shrink the chat or dashboard shell'
   await expect(page.locator('#dashboard-view')).toBeVisible();
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);
-  expect(await page.locator('#dashboard-view').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
+  expect(await rect('#dashboard-view')).toEqual({ top: 364, bottom: 844 });
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect.poll(() => page.locator('.dashboard-stage').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
   await page.screenshot({ path: info.outputPath('02-dashboard-after-keyboard.png') });

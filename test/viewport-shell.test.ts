@@ -3,9 +3,11 @@ import { bindViewportShell } from '../public/viewport-shell.js';
 
 function setup() {
   vi.useFakeTimers();
-  const viewport = Object.assign(new EventTarget(), { height: 844, scale: 1 });
+  const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
   const win = Object.assign(new EventTarget(), {
-    innerHeight: 932,
+    innerHeight: 844,
+    scrollY: 0,
+    scrollTo: vi.fn(),
     visualViewport: viewport,
     requestAnimationFrame: (fn: () => void) => setTimeout(fn, 16),
     cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
@@ -13,7 +15,11 @@ function setup() {
   });
   const doc = Object.assign(new EventTarget(), {
     visibilityState: 'visible',
-    documentElement: { style: { setProperty: vi.fn() } },
+    documentElement: {
+      clientHeight: 844,
+      style: { setProperty: vi.fn(), removeProperty: vi.fn() },
+      classList: { add: vi.fn(), remove: vi.fn() },
+    },
   });
   const onChange = vi.fn();
   const dispose = bindViewportShell(win, doc, onChange);
@@ -22,12 +28,50 @@ function setup() {
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-describe('viewport change notifications', () => {
-  it('never writes a shell height: iOS pans the visual viewport over the 100dvh shell', () => {
+describe('viewport shell', () => {
+  it('pins the shell to the panned visual viewport while the keyboard is up', () => {
     const { viewport, doc } = setup();
+    const root = doc.documentElement;
     viewport.height = 480;
+    viewport.offsetTop = 364;
+    viewport.dispatchEvent(new Event('resize'));
+    expect(root.classList.add).toHaveBeenCalledWith('keyboard-shell');
+    expect(root.style.setProperty).toHaveBeenCalledWith('--keyboard-shell-top', '364px');
+    expect(root.style.setProperty).toHaveBeenCalledWith('--keyboard-shell-height', '480px');
+    // iOS keeps panning after the resize; the shell follows the pan, not just the height.
+    viewport.offsetTop = 300;
+    viewport.dispatchEvent(new Event('scroll'));
+    expect(root.style.setProperty).toHaveBeenLastCalledWith('--keyboard-shell-height', '480px');
+    expect(root.style.setProperty).toHaveBeenCalledWith('--keyboard-shell-top', '300px');
+    const writes = root.style.setProperty.mock.calls.length;
+    vi.advanceTimersByTime(1000); // settling samples of an unchanged viewport write nothing
+    expect(root.style.setProperty).toHaveBeenCalledTimes(writes);
+  });
+
+  it('releases the pin and any leftover page pan when the keyboard closes', () => {
+    const { win, viewport, doc } = setup();
+    const root = doc.documentElement;
+    viewport.height = 480;
+    viewport.offsetTop = 364;
+    viewport.dispatchEvent(new Event('resize'));
+    win.scrollY = 59;
+    viewport.height = 844;
+    viewport.offsetTop = 0;
+    viewport.dispatchEvent(new Event('resize'));
+    expect(root.classList.remove).toHaveBeenCalledWith('keyboard-shell');
+    expect(root.style.removeProperty).toHaveBeenCalledWith('--keyboard-shell-top');
+    expect(win.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('ignores browser-toolbar size changes and pinch zoom', () => {
+    const { viewport, doc } = setup();
+    viewport.height = 760; // Safari toolbar, not a keyboard
+    viewport.dispatchEvent(new Event('resize'));
+    viewport.height = 400;
+    viewport.scale = 2; // pinch zoom
     viewport.dispatchEvent(new Event('resize'));
     vi.advanceTimersByTime(1000);
+    expect(doc.documentElement.classList.add).not.toHaveBeenCalled();
     expect(doc.documentElement.style.setProperty).not.toHaveBeenCalled();
   });
 

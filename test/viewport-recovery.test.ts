@@ -14,11 +14,13 @@ describe('iOS viewport integration', () => {
     expect(app).toContain('keepComposerBottomVisible()');
   });
 
-  it('keeps the shell on the layout viewport; the keyboard must not shrink it', () => {
+  it('keeps the shell on the layout viewport at rest and pins it to the panned visual viewport for the keyboard', () => {
     const css = read('app.css');
     expect(css).not.toContain('--app-viewport-height');
     expect(css).toMatch(/\.app\s*\{[^}]*height: 100dvh;/);
-    expect(read('viewport-shell.js')).not.toContain('setProperty');
+    expect(css).toMatch(/html\.keyboard-shell \.app\s*\{[^}]*position: fixed;[^}]*top: var\(--keyboard-shell-top[^}]*height: var\(--keyboard-shell-height/);
+    expect(css).toMatch(/html\.keyboard-shell \.composer-wrap\s*\{[^}]*padding-bottom: 10px;/);
+    expect(read('viewport-shell.js')).toContain('viewport.offsetTop');
     expect(read('app.css')).toMatch(/\.main\s*\{[^}]*height: 100%;/);
     expect(read('session-dashboard.css')).not.toContain('--dashboard-vv-h');
     expect(read('session-dashboard.js')).not.toContain('syncDashboardVisualViewport');
