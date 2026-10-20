@@ -2915,7 +2915,6 @@ export function createSessionDashboard({
     if (active === nextActive) return;
     active = nextActive;
     syncNavCounts();
-    syncDashboardVisualViewport();
 
     if (active) {
       rebuildGrid();
@@ -3408,29 +3407,8 @@ export function createSessionDashboard({
     else document.getElementById('btn-menu')?.click();
   });
 
-  // iPadOS visualViewport keyboard inset sync: shrink #dashboard-view height
-  // dynamically when the iPad software keyboard opens so bottom panes are never
-  // covered by the keyboard and never trigger document-level scroll/blur jumps.
-  function syncDashboardVisualViewport() {
-    if (!active) {
-      root.style.removeProperty('--dashboard-vv-h');
-      return;
-    }
-    const vv = window.visualViewport;
-    if (vv && vv.height > 200) {
-      root.style.setProperty('--dashboard-vv-h', `${Math.round(vv.height)}px`);
-    } else {
-      root.style.removeProperty('--dashboard-vv-h');
-    }
-  }
-
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncDashboardVisualViewport);
-    window.visualViewport.addEventListener('scroll', syncDashboardVisualViewport);
-  }
-  window.addEventListener('resize', syncDashboardVisualViewport);
-
-  wideQuery.addEventListener('change', syncDashboardVisualViewport);
+  // Height follows the shared .app/.main viewport shell on every device.
+  // Do not maintain a second cached visualViewport height for the dashboard.
 
   syncNavCounts();
 

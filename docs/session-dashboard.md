@@ -201,8 +201,8 @@ The current architecture resolves this completely:
 
 ## 7. Tablet, iPadOS, & Mobile Stability
 
-1. **Virtual Keyboard Stability (`--dashboard-vv-h`)**:
-   Tracks `window.visualViewport.height` dynamically via `--dashboard-vv-h`. When the iPadOS virtual keyboard appears, the dashboard shrinks predictably without triggering body scroll jumps or dismissing the keyboard prematurely.
+1. **Shared Visual Viewport Shell (`--app-viewport-height`)**:
+   `public/viewport-shell.js` measures `visualViewport.height` for the shell. Single chat, dashboard and drawer inherit this same height; the dashboard does not keep a second viewport cache. Keyboard dismissal is handled even when focus remains on the textarea. Resize, orientation, focus, page restoration and visibility events trigger immediate plus bounded deferred measurements (animation frame, 120/350/700ms) for delayed WebKit layout. Pinch zoom does not resize the shell. No `display:none` remount or forced transcript scroll is used for recovery.
 2. **Focus Theft Prevention**:
    Toolbar and pane action buttons invoke `e.preventDefault()` on `pointerdown`, preventing textarea blur when toggling layouts, clicking presets, or activating menus.
 3. **Touch Input Zoom Immunity**:
@@ -299,3 +299,17 @@ not the >=768px desktop rail. `app.js`, the dashboard and drawer CSS share that
 breakpoint policy. Dashboard phone styling respects the top safe area. It does not add a second bottom safe-area strip below the grid; the mobile regression uses Chromium safe-area emulation (34px) and asserts the stage reaches the dashboard bottom.
 The mobile regression spec checks jump/keyword geometry, landscape drawer open/
 close and full workspace width, plus 320px and 708px document overflow.
+
+
+### iPhone height-settling regression
+
+- Unit: `test/viewport-shell.test.ts` (keyboard close with focus retained, delayed
+  rotation measurements, page/visibility restore, pinch zoom, fallback, cleanup).
+- Integration: `test/viewport-recovery.test.ts` guards shared shell wiring.
+- Browser: `test/e2e/iphone-viewport-shell.spec.ts` runs the production UI with only
+  the `visualViewport.height` reporting boundary controlled: 844 → 480 → 844,
+  delayed orientation settling without a second event, pageshow, main-reader
+  scroll preservation, and the same bottom geometry for Dashboard.
+- Chromium emulation does not prove real iPhone Safari keyboard timing. The
+  supplied real-device recording is the reproduction source; device confirmation
+  is still required after deployment.

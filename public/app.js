@@ -28,6 +28,7 @@ import {
 } from './image-compression.js';
 import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
+import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createSessionDashboard } from './session-dashboard.js?v=dashboard-spring-bounce-3';
@@ -38,8 +39,6 @@ import {
   formatElapsed,
   isTranscriptNearBottom,
   jumpToLatest,
-  needsViewportRecovery,
-  recoverViewportShell,
   readAutoScrollPreference,
   saveAutoScrollPreference,
   shouldAutoScrollTranscript,
@@ -3442,12 +3441,11 @@ function scheduleComposerSendSettlement() {
   if (composerSendSettleTimer) clearTimeout(composerSendSettleTimer);
   composerSendSettleTimer = setTimeout(() => {
     composerSendSettleTimer = 0;
-    recoverStandaloneViewport();
     requestAnimationFrame(() => {
       if (!autoScrollEnabled || !composerSendLockActive || document.activeElement === input) return;
-      // The reflow above is best-effort. Clamp once in the current viewport and
-      // release; a later viewport expansion only moves the tail closer, while
-      // retrying until innerHeight changes can loop forever on broken WebKit.
+      // Clamp once in the shared measured viewport and release. Further
+      // keyboard/rotation settling is owned by bindViewportShell, not a
+      // display:none remount or an innerHeight recovery loop.
       scrollToBottom(true);
       releaseComposerBottomLock();
     });
@@ -3482,12 +3480,9 @@ $('btn-send').addEventListener('pointerdown', captureComposerSendIntent);
 $('btn-send').addEventListener('pointerup', scheduleComposerSendIntentCleanup);
 $('btn-send').addEventListener('pointerleave', cancelMouseSendIntentOnLeave);
 $('btn-send').addEventListener('pointercancel', cancelComposerSendIntent);
-input.addEventListener('pointerdown', cancelStandaloneViewportRecovery);
 input.addEventListener('focus', () => promptTurnScroll.release());
 input.addEventListener('focus', captureComposerBottomLock);
-input.addEventListener('focus', cancelStandaloneViewportRecovery);
 input.addEventListener('blur', handleComposerBlur);
-input.addEventListener('blur', scheduleStandaloneViewportRecovery);
 
 const uploadProgress = {
   container: $('upload-progress'),
@@ -5370,57 +5365,6 @@ $('btn-restore-inline').addEventListener('click', async () => {
  * runs off the top of the screen instead of scrolling.
  */
 /** Sheets are capped to the visible viewport, which the keyboard shrinks. */
-let maximumViewportHeight = window.innerHeight;
-let viewportRecoveryTimer = 0;
-let orientationRecoveryTimer = 0;
-let orientationChanging = false;
-
-function isStandaloneApp() {
-  return (
-    window.matchMedia?.('(display-mode: standalone)').matches ||
-    window.navigator.standalone === true
-  );
-}
-
-function recoverStandaloneViewport() {
-  if (
-    orientationChanging ||
-    !isStandaloneApp() ||
-    !needsViewportRecovery(maximumViewportHeight, window.innerHeight)
-  )
-    return;
-
-  const messages = $('messages');
-  const followLatest = shouldFollowTranscriptTail();
-  recoverViewportShell($('app'), messages, followLatest);
-}
-
-function cancelStandaloneViewportRecovery() {
-  if (viewportRecoveryTimer) clearTimeout(viewportRecoveryTimer);
-  viewportRecoveryTimer = 0;
-}
-
-function scheduleStandaloneViewportRecovery() {
-  cancelStandaloneViewportRecovery();
-  viewportRecoveryTimer = setTimeout(() => {
-    viewportRecoveryTimer = 0;
-    if (document.activeElement === input) return;
-    recoverStandaloneViewport();
-  }, 140);
-}
-
-function handleOrientationChange() {
-  orientationChanging = true;
-  cancelStandaloneViewportRecovery();
-  if (orientationRecoveryTimer) clearTimeout(orientationRecoveryTimer);
-  orientationRecoveryTimer = setTimeout(() => {
-    orientationRecoveryTimer = 0;
-    maximumViewportHeight = window.innerHeight;
-    orientationChanging = false;
-    syncViewportSizes();
-  }, 250);
-}
-
 function syncSheetHeight() {
   const vv = window.visualViewport;
   const available = vv ? vv.height : window.innerHeight;
@@ -5437,7 +5381,6 @@ function syncAutocompleteHeight() {
 }
 
 function syncViewportSizes() {
-  maximumViewportHeight = Math.max(maximumViewportHeight, window.innerHeight);
   syncAutocompleteHeight();
   syncSheetHeight();
   // iOS reports the keyboard through visualViewport after focus. Re-anchor on
@@ -5449,12 +5392,9 @@ function syncViewportSizes() {
   promptTurnScroll.viewportChanged();
 }
 
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncViewportSizes);
-  window.visualViewport.addEventListener('scroll', syncViewportSizes);
-}
-window.addEventListener('resize', syncViewportSizes);
-window.addEventListener('orientationchange', handleOrientationChange);
+// Height is measured before the existing transcript/composer policies run.
+// Keyboard dismissal may retain focus, so recovery must not depend on blur.
+bindViewportShell(window, document, syncViewportSizes);
 syncViewportSizes();
 
 // ── drawer ───────────────────────────────────────────────────────────────

@@ -292,7 +292,10 @@ grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, 
   reconstruction when the session signature is unchanged, dynamic index/JID lookup in
   splitter callbacks prevents resized weights from snapping back on poll, toolbar/pane
   buttons prevent focus theft on `pointerdown`, and touch inputs keep `font-size: 16px`
-  with `visualViewport` height tracking (`--dashboard-vv-h`).
+  with a shared `visualViewport` shell height (`--app-viewport-height`) for both
+  single chat and Dashboard. Keyboard close/restore must remeasure even while
+  the textarea retains focus; delayed WebKit orientation layout is sampled
+  without a second rotation, `display:none` remount, or forced reader scrolling.
 
 ## Verification
 

@@ -1,7 +1,6 @@
 const DEFAULT_LONG_PRESS_MS = 550;
 const DEFAULT_MOVE_TOLERANCE_PX = 10;
 const DEFAULT_BOTTOM_THRESHOLD_PX = 16;
-const DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX = 4;
 const MIN_HISTORY_PREFETCH_PX = 300;
 const HISTORY_PREFETCH_VIEWPORTS = 2;
 const AUTO_SCROLL_KEY = 'piweb.autoScroll';
@@ -25,28 +24,6 @@ export function saveAutoScrollPreference(enabled, storage) {
 
 export function shouldAutoScrollTranscript(scroller, enabled, bottomLocked = false) {
   return Boolean(enabled && (bottomLocked || isTranscriptNearBottom(scroller)));
-}
-
-/** Whether iOS left the standalone viewport shorter after dismissing its keyboard. */
-export function needsViewportRecovery(
-  maximumHeight,
-  currentHeight,
-  tolerance = DEFAULT_VIEWPORT_RECOVERY_TOLERANCE_PX,
-) {
-  return maximumHeight - currentHeight > tolerance;
-}
-
-/**
- * Force WebKit to remeasure a full-height shell after its standalone keyboard
- * leaves the viewport stuck short. Preserve the reader's transcript position.
- */
-export function recoverViewportShell(shell, scroller, followLatest) {
-  const display = shell.style.display;
-  const scrollTop = scroller.scrollTop;
-  shell.style.display = 'none';
-  void shell.offsetHeight;
-  shell.style.display = display;
-  scroller.scrollTop = followLatest ? scroller.scrollHeight : scrollTop;
 }
 
 /**
