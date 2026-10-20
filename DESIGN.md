@@ -243,7 +243,10 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
 On viewports `>= 768px`, the **Dashboard** workspace (`public/session-dashboard.js`,
 `public/session-dashboard.css`) tiles 1 to 12 concurrent sessions in a 2D split-tree
 grid (`horizontal`, `vertical`, or auto-balanced `grid` such as `2×2`, `3×2`, `3×3`,
-`4×3`) with independent live SSE streams and composers per pane.
+`4×3`) with independent live SSE streams and composers per pane. Only one composer is
+shown at a time: a floating blurred card at the bottom of the pane last touched, which
+hops to another pane in an arc when that pane is touched; the transcript under it is
+padded by the card's height (`--dock-h`) so nothing is hidden behind it.
 
 - **Header (52px, directly in `.main`)**: same `--bg` surface and `1px solid var(--border)`
   bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: “Session Dashboard” at 15px/650

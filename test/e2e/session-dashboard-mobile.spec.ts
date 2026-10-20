@@ -256,7 +256,28 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await expect(page.locator('.dashboard-splitter').first()).toBeVisible();
   const pane = page.locator('.dashboard-pane').last();
   await pane.scrollIntoViewIfNeeded();
+  // One floating input for the whole Dashboard (2026-10-20 redesign): only the
+  // pane last touched shows it, as a card over the bottom of its transcript,
+  // and touching another pane makes it hop there.
+  await expect(page.locator('.dashboard-pane-composer-wrap:visible')).toHaveCount(1);
+  await expect(page.locator('.dashboard-pane').first().locator('textarea')).toBeVisible();
+  await expect(pane.locator('textarea')).toBeHidden();
+  await pane.locator('.dashboard-pane-transcript').click();
+  await expect(page.locator('.dashboard-dock-ghost')).toHaveCount(1); // mid-hop
+  await page.screenshot({ path: info.outputPath('01a-composer-hop.png') });
+  await expect(page.locator('.dashboard-dock-ghost')).toHaveCount(0);
   await expect(pane.locator('textarea')).toBeVisible();
+  await expect(page.locator('.dashboard-pane-composer-wrap:visible')).toHaveCount(1);
+  const dockLayout = await pane.evaluate((paneEl) => {
+    const dock = paneEl.querySelector('.dashboard-pane-dock')!.getBoundingClientRect();
+    const box = paneEl.getBoundingClientRect();
+    const scroller = paneEl.querySelector('.dashboard-pane-messages') as HTMLElement;
+    scroller.scrollTop = scroller.scrollHeight;
+    const last = [...scroller.querySelectorAll('.msg')].pop()!.getBoundingClientRect();
+    return { dockBottom: dock.bottom, dockTop: dock.top, paneBottom: box.bottom, lastBottom: last.bottom };
+  });
+  expect(Math.abs(dockLayout.paneBottom - 8 - dockLayout.dockBottom)).toBeLessThanOrEqual(1);
+  expect(dockLayout.lastBottom).toBeLessThanOrEqual(dockLayout.dockTop);
   await page.screenshot({ path: info.outputPath('01-phone-dashboard.png') });
   // A pane drag may start on the session name or an icon button (iPhone
   // recording 2026-10-20: a finger on the name refused to drag). Movement

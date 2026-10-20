@@ -600,6 +600,9 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     // Send a message with multimedia image attachment in the 12th pane and verify immediate display
     const pane12 = page.locator('.dashboard-pane[data-jid="web:s12"]');
     const input12 = pane12.locator('.dashboard-pane-input');
+    // The Dashboard has one floating input: touching a pane moves it there.
+    await pane12.locator('.dashboard-pane-transcript').click();
+    await expect(input12).toBeVisible();
     await input12.focus();
     await input12.fill('測試第 12 個視窗即時發送多媒體圖片訊息');
     await pane12.locator('input[type="file"]').setInputFiles({

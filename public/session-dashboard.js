@@ -9,6 +9,7 @@
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
+const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MIME_EXT_MAP = {
@@ -127,6 +128,28 @@ export function createSessionDashboard({
   const wideQuery = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
   let active = false;
   let panes = new Map(); // jid -> pane state
+  let composerJid = null;
+  try {
+    composerJid = localStorage.getItem(COMPOSER_PANE_KEY);
+  } catch {
+    // Storage blocked: start on the first pane.
+  }
+  let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
+
+  /** The floating card's height becomes its pane's transcript bottom padding. */
+  const dockObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const paneEl = entry.target.closest('.dashboard-pane');
+            paneEl?.style.setProperty('--dock-h', `${Math.ceil(entry.target.offsetHeight)}px`);
+          }
+        })
+      : null;
+
+  const isNearBottom = (scroller) =>
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+
   /**
    * 2D Grid State:
    * - `direction`: 'row' (columns of rows) or 'column' (rows of columns)
@@ -868,17 +891,23 @@ export function createSessionDashboard({
     const transcript = el('div', 'dashboard-pane-transcript');
     transcript.append(messagesEl, btwMessagesEl, jumpBtn);
 
-    paneEl.append(
-      header,
-      menuScrim,
-      moreMenu,
-      searchPanel,
-      btwCard,
-      transcript,
-      typingEl,
-      btwPendingRow,
-      composerWrap,
+    // One floating input for the whole Dashboard: every pane keeps its own
+    // composer (draft, attachments, BTW), but only the pane last touched shows
+    // it, as a card over the bottom of its transcript (selectComposerPane).
+    const dock = el('div', 'dashboard-pane-dock');
+    dock.append(typingEl, btwPendingRow, composerWrap);
+
+    paneEl.append(header, menuScrim, moreMenu, searchPanel, btwCard, transcript, dock);
+    paneEl.addEventListener(
+      'pointerdown',
+      (e) => {
+        // Closing a pane is no reason to send the input there first.
+        if (!e.target.closest('.pane-close-btn')) selectComposerPane(jid);
+      },
+      true,
     );
+    paneEl.addEventListener('focusin', () => selectComposerPane(jid));
+    dockObserver?.observe(dock);
 
     // Mount pinned prompt bar inside the pane right above messagesEl
     if (typeof createPromptPin === 'function') {
@@ -930,6 +959,7 @@ export function createSessionDashboard({
       typingEl,
       btwPendingRow,
       btwPendingLink,
+      dock,
       composerWrap,
       acBox,
       uploadProgressEl,
@@ -2169,10 +2199,100 @@ export function createSessionDashboard({
     }
   }
 
+  // ── Floating composer ─────────────────────────────────────────────────────
+  /**
+   * Move the floating input to `jid`'s pane. The pane's transcript is padded
+   * by the card's height, so it never covers the newest message; a reader
+   * already at the bottom stays there. With `animate`, a copy of the card hops
+   * from the old pane to the new one in an arc (it must fly above the grid:
+   * panes clip their own overflow).
+   */
+  function selectComposerPane(jid, { animate = true } = {}) {
+    const pane = panes.get(jid);
+    if (!pane) return;
+    if (composerJid === jid && pane.dock.classList.contains('is-floating')) return;
+    const prev = composerJid && composerJid !== jid ? panes.get(composerJid) : null;
+    const from =
+      animate && prev?.dock.classList.contains('is-floating') && prev.el.isConnected
+        ? prev.dock.getBoundingClientRect()
+        : null;
+    let ghost = null;
+    if (from && from.width > 0 && !prefersReducedMotion()) {
+      dockGhost?.el.remove();
+      ghost = prev.dock.cloneNode(true);
+      const typed = prev.dock.querySelector('textarea');
+      const ghostInput = ghost.querySelector('textarea');
+      if (typed && ghostInput) ghostInput.value = typed.value;
+      ghost.classList.add('dashboard-dock-ghost');
+      ghost.setAttribute('aria-hidden', 'true');
+      Object.assign(ghost.style, {
+        left: `${from.left}px`,
+        top: `${from.top}px`,
+        width: `${from.width}px`,
+        height: `${from.height}px`,
+      });
+    }
+
+    const keepBottom = isNearBottom(pane.messagesEl);
+    for (const p of panes.values()) {
+      const on = p.jid === jid;
+      p.el.classList.toggle('composer-active', on);
+      p.dock.classList.toggle('is-floating', on);
+    }
+    composerJid = jid;
+    try {
+      localStorage.setItem(COMPOSER_PANE_KEY, jid);
+    } catch {
+      // Not persisted; the in-memory choice still holds.
+    }
+    pane.el.style.setProperty('--dock-h', `${Math.ceil(pane.dock.offsetHeight)}px`);
+    if (keepBottom) pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+
+    if (!ghost) return;
+    const to = pane.dock.getBoundingClientRect();
+    if (!to.width) return;
+    document.body.append(ghost);
+    dockGhost = { el: ghost, jid };
+    pane.dock.classList.add('dock-arriving');
+    const lift = Math.min(56, 18 + Math.hypot(to.left - from.left, to.top - from.top) * 0.1);
+    const midTop = Math.min(from.top, to.top) - lift;
+    const flight = ghost.animate(
+      [
+        { left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px` },
+        {
+          left: `${(from.left + to.left) / 2}px`,
+          top: `${midTop}px`,
+          width: `${(from.width + to.width) / 2}px`,
+          transform: 'scale(1.03)',
+          offset: 0.45,
+        },
+        { left: `${to.left}px`, top: `${to.top}px`, width: `${to.width}px`, height: `${to.height}px` },
+      ],
+      { duration: 380, easing: 'cubic-bezier(0.3, 0.9, 0.35, 1.05)', fill: 'forwards' },
+    );
+    const land = () => {
+      ghost.remove();
+      if (dockGhost?.el === ghost) dockGhost = null;
+      pane.dock.classList.remove('dock-arriving');
+    };
+    flight.onfinish = land;
+    flight.oncancel = land;
+  }
+
+  /** Keep the floating input on a pane that exists (after add/remove/reload). */
+  function ensureComposerPane() {
+    const jids = allJids();
+    if (jids.length === 0) return;
+    const target = jids.includes(composerJid) ? composerJid : jids[0];
+    selectComposerPane(target, { animate: false });
+  }
+
   function disposePane(jid) {
     const pane = panes.get(jid);
     if (!pane) return;
     pane.disposed = true;
+    dockObserver?.unobserve(pane.dock);
+    if (dockGhost?.jid === jid) dockGhost.el.getAnimations().forEach((a) => a.cancel());
     if (pane.source) {
       pane.source.close();
       pane.source = null;
@@ -2676,6 +2796,7 @@ export function createSessionDashboard({
     for (const jid of [...panes.keys()]) {
       if (!jids.includes(jid)) disposePane(jid);
     }
+    ensureComposerPane();
 
     // iPadOS Safari critical fix: NEVER call replaceChildren() when the group/pane
     // topology hasn't changed! Re-parenting a focused <textarea> on iOS/iPadOS WebKit

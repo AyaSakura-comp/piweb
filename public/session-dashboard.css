@@ -868,6 +868,90 @@
     padding: 0 8px 8px;
   }
 
+  /* Floating composer: one input card for the whole Dashboard. Each pane's
+     dock holds its typing line, BTW switch and composer; only the pane last
+     touched (.composer-active) shows the composer, floating over the bottom of
+     its transcript. The others keep just the typing line. */
+  .dashboard-pane-dock {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    min-width: 0;
+  }
+
+  .dashboard-pane:not(.composer-active) .dashboard-pane-dock > .pane-btw-pending-row,
+  .dashboard-pane:not(.composer-active) .dashboard-pane-dock > .dashboard-pane-composer-wrap {
+    display: none;
+  }
+
+  .dashboard-pane-dock.is-floating,
+  .dashboard-dock-ghost {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 20;
+    justify-content: flex-end;
+    /* A pane squeezed to its minimum keeps the input row, not the chips. */
+    max-height: calc(100% - 52px);
+    overflow: hidden;
+    padding-top: 4px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--bg-alt) 90%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow:
+      0 0 0 1px var(--border),
+      0 8px 28px rgb(0 0 0 / 0.32);
+  }
+
+  .dashboard-pane-dock.is-floating .dashboard-pane-composer-wrap,
+  .dashboard-dock-ghost .dashboard-pane-composer-wrap {
+    padding: 0 6px 6px;
+  }
+
+  .dashboard-dock-ghost {
+    position: fixed;
+    right: auto;
+    bottom: auto;
+    z-index: 80;
+    pointer-events: none;
+    transform-origin: center;
+  }
+
+  .dashboard-pane-dock.dock-arriving {
+    visibility: hidden;
+  }
+
+  /* Narrow card: the text box gets the room (paste stays on long-press) and
+     the placeholder stays on one line instead of wrapping into a squiggle. */
+  .dashboard-pane-dock {
+    container-type: inline-size;
+  }
+
+  .dashboard-pane-composer textarea::placeholder {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  @container (max-width: 240px) {
+    .dashboard-pane-composer .pane-paste-btn {
+      display: none;
+    }
+  }
+
+  /* The newest message and Jump to present sit above the card, never under it. */
+  .dashboard-pane.composer-active .dashboard-pane-messages {
+    padding-bottom: calc(var(--dock-h, 0px) + 14px);
+    scroll-padding-bottom: calc(var(--dock-h, 0px) + 14px);
+  }
+
+  .dashboard-pane.composer-active .pane-jump-live,
+  .dashboard-pane.composer-active .pane-jump-live.visible {
+    bottom: calc(var(--dock-h, 0px) + 16px);
+  }
+
   .dashboard-pane-composer {
     min-width: 0;
     overflow: hidden;
