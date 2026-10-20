@@ -134,6 +134,20 @@ Users can drag any existing pane header or drag a session card from the sidebar 
   - `relX > 0.80`: Right edge split (`→ 水平並排（右側）`)
   - `relY < 0.20`: Top edge split (`↑ 垂直並排（上方）`)
   - `relY > 0.80`: Bottom edge split (`↓ 垂直並排（下方）`)
+- **An edge drop splits the pane under the finger, exactly as the preview shows.** The two panes
+  share that pane's old space; the rest of its column (or row) is untouched. If the pane's own
+  split already runs that way the dropped pane is inserted beside it; otherwise the pane becomes a
+  nested split across the other axis. (Previously left/right inserted a whole new column next to
+  the target's column, so dropping on the right half of a pane stacked over another one just moved
+  the dragged pane to its own column — desktop screen recording, 2026-10-21.)
+- **Layout model**: a split tree. `direction` is the top-level axis; `groups` are the top-level
+  cells `{ weight, items }`; an item is a pane `{ jid, weight }` or a nested split
+  `{ weight, items }`, and each level runs perpendicular to its parent. `normalizeGroups()`
+  collapses a split left with one child, flattens a split that ends up on its parent's axis, and
+  lifts a lone top-level-axis split into separate top-level cells. Layouts saved before nesting are
+  the same two-level shape and load unchanged; the server stores the layout as opaque JSON.
+  Splitters locate their split by the first pane on each side (`siblingsOf()`), since normalization
+  rebuilds the model objects. `test/e2e/session-dashboard-split.spec.ts`.
 - Smooth animated reflows execute via a coordinated FLIP (First, Last, Invert, Play) spring animation.
 
 ### iOS Touch Drag Isolation & Session List Scroll Freeze

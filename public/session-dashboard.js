@@ -159,9 +159,13 @@ export function createSessionDashboard({
     scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
 
   /**
-   * 2D Grid State:
-   * - `direction`: 'row' (columns of rows) or 'column' (rows of columns)
-   * - `groups`: Array<{ weight: number, items: Array<{ jid: string, weight: number }> }>
+   * Split-tree layout:
+   * - `direction`: 'row' (top level is columns) or 'column' (top level is rows)
+   * - `groups`: the top-level cells, each `{ weight, items }`. An item is a
+   *   pane `{ jid, weight }` or a nested split `{ weight, items }`; every level
+   *   runs perpendicular to its parent (columns → rows → columns …), so a cell
+   *   in a column can itself be split side by side. Saved layouts without
+   *   nesting are the same two-level shape as before.
    */
   let direction = 'row';
   let groups = [];
@@ -297,59 +301,145 @@ export function createSessionDashboard({
   // ── State Helpers ──────────────────────────────────────────────────────────
   function allJids() {
     const out = [];
-    for (const g of groups) {
-      for (const item of g.items) {
-        if (item.jid && !out.includes(item.jid)) out.push(item.jid);
+    const walk = (node) => {
+      if (node.jid) {
+        if (!out.includes(node.jid)) out.push(node.jid);
+      } else {
+        node.items.forEach(walk);
       }
-    }
+    };
+    groups.forEach(walk);
     return out;
+  }
+
+  const cleanWeight = (w) => (Number.isFinite(w) && w > 0.05 ? Number(w) : 1);
+
+  // Siblings must fill their container: a lone child takes all of it, and in
+  // CSS flexbox a flex-grow sum below 1 leaves space unallocated.
+  function balanceWeights(nodes) {
+    if (nodes.length === 1) {
+      nodes[0].weight = 1;
+      return;
+    }
+    const total = nodes.reduce((sum, n) => sum + n.weight, 0);
+    if (total > 0 && total < 1) {
+      for (const n of nodes) n.weight = Number((n.weight / total).toFixed(4));
+    }
+  }
+
+  // Replace a child split by its own children (same axis as `into`), keeping
+  // their share of the space the split had.
+  function spliceFlattened(into, split) {
+    const total = split.items.reduce((sum, n) => sum + n.weight, 0) || 1;
+    for (const n of split.items) {
+      into.push({ ...n, weight: Number(((n.weight / total) * split.weight).toFixed(4)) });
+    }
+  }
+
+  // Clean a nested split's children: drop empty/duplicate panes, collapse a
+  // split left with one child into that child, and flatten a child split that
+  // ended up on the same axis as its parent (its children join the parent).
+  function normalizeItems(rawItems, seen) {
+    const items = [];
+    for (const it of Array.isArray(rawItems) ? rawItems : []) {
+      if (!it || typeof it !== 'object') continue;
+      if (typeof it.jid === 'string' && it.jid) {
+        if (seen.has(it.jid)) continue;
+        seen.add(it.jid);
+        items.push({ jid: it.jid, weight: cleanWeight(it.weight) });
+        continue;
+      }
+      if (!Array.isArray(it.items)) continue;
+      const children = normalizeItems(it.items, seen);
+      if (children.length === 0) continue;
+      const weight = cleanWeight(it.weight);
+      if (children.length === 1) {
+        const only = children[0];
+        // A lone grandchild split runs on this level's axis: lift its children.
+        if (only.items) spliceFlattened(items, { weight, items: only.items });
+        else items.push({ ...only, weight });
+        continue;
+      }
+      items.push({ weight, items: children });
+    }
+    balanceWeights(items);
+    return items;
   }
 
   function normalizeGroups() {
     const seen = new Set();
     const cleaned = [];
-    for (const g of groups) {
-      if (!g || !Array.isArray(g.items)) continue;
-      const items = [];
-      for (const it of g.items) {
-        if (!it || typeof it.jid !== 'string' || !it.jid || seen.has(it.jid)) continue;
-        seen.add(it.jid);
-        items.push({
-          jid: it.jid,
-          weight: Number.isFinite(it.weight) && it.weight > 0.05 ? Number(it.weight) : 1,
-        });
-      }
-      if (items.length > 0) {
-        if (items.length === 1) {
-          // If only one pane remains in this column/row group, it MUST take 100% of the group!
-          items[0].weight = 1;
-        } else {
-          // In CSS flexbox, if sum of flex-grow < 1, empty space is left unallocated.
-          // Scale item weights up so sum is >= 1.
-          const totalItemWeight = items.reduce((sum, it) => sum + it.weight, 0);
-          if (totalItemWeight > 0 && totalItemWeight < 1) {
-            for (const it of items) {
-              it.weight = Number((it.weight / totalItemWeight).toFixed(4));
-            }
-          }
+    for (const g of Array.isArray(groups) ? groups : []) {
+      if (!g || typeof g !== 'object') continue;
+      // A bare pane at the top level becomes its own cell.
+      const items = normalizeItems(g.jid ? [g] : g.items, seen);
+      if (items.length === 0) continue;
+      const weight = cleanWeight(g.weight);
+      if (items.length === 1 && items[0].items) {
+        // A cell holding only a split on the top-level axis: its children
+        // become top-level cells side by side.
+        const lifted = [];
+        spliceFlattened(lifted, { weight, items: items[0].items });
+        for (const n of lifted) {
+          cleaned.push(n.items ? n : { weight: n.weight, items: [{ jid: n.jid, weight: 1 }] });
         }
-        cleaned.push({
-          weight: Number.isFinite(g.weight) && g.weight > 0.05 ? Number(g.weight) : 1,
-          items,
-        });
+        continue;
       }
+      cleaned.push({ weight, items });
     }
-    if (cleaned.length === 1) {
-      cleaned[0].weight = 1;
-    } else if (cleaned.length > 1) {
-      const totalGroupWeight = cleaned.reduce((sum, g) => sum + g.weight, 0);
-      if (totalGroupWeight > 0 && totalGroupWeight < 1) {
-        for (const g of cleaned) {
-          g.weight = Number((g.weight / totalGroupWeight).toFixed(4));
-        }
-      }
-    }
+    balanceWeights(cleaned);
     groups = cleaned;
+  }
+
+  function serializeNode(node) {
+    return node.jid
+      ? { jid: node.jid, weight: Number(node.weight.toFixed(4)) }
+      : { weight: Number(node.weight.toFixed(4)), items: node.items.map(serializeNode) };
+  }
+
+  function serializeLayout() {
+    return { direction, groups: groups.map(serializeNode), updatedAt: localUpdatedAt };
+  }
+
+  /**
+   * Where a pane sits: the chain of `{ node, index }` from the virtual root
+   * (`{ items: groups }`, depth 0) down to the pane's parent. A split at depth
+   * d lays its children out along `axisAt(d)`.
+   */
+  function pathToJid(jid) {
+    const walk = (node, trail) => {
+      for (let i = 0; i < node.items.length; i++) {
+        const child = node.items[i];
+        const step = [...trail, { node, index: i }];
+        if (child.jid === jid) return step;
+        if (child.items) {
+          const found = walk(child, step);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return walk({ items: groups }, []);
+  }
+
+  const crossAxis = (axis) => (axis === 'row' ? 'column' : 'row');
+  const axisAt = (depth) => (depth % 2 === 0 ? direction : crossAxis(direction));
+
+  function firstLeafJid(node) {
+    return node.jid ?? firstLeafJid(node.items[0]);
+  }
+
+  // The split whose children i and i+1 start with these panes (for splitters).
+  function siblingsOf(firstJid, secondJid) {
+    const a = pathToJid(firstJid);
+    const b = pathToJid(secondJid);
+    if (!a || !b) return null;
+    for (let d = 0; d < Math.min(a.length, b.length); d++) {
+      // Compare child arrays: each call wraps `groups` in a fresh virtual root.
+      if (a[d].node.items !== b[d].node.items) return null;
+      if (a[d].index !== b[d].index) return { node: a[d].node, index: a[d].index };
+    }
+    return null;
   }
 
   let cloudSyncTimer = null;
@@ -358,17 +448,7 @@ export function createSessionDashboard({
     cloudSyncTimer = setTimeout(async () => {
       try {
         if (typeof api !== 'function') return;
-        const payload = {
-          direction,
-          groups: groups.map((g) => ({
-            weight: Number(g.weight.toFixed(4)),
-            items: g.items.map((it) => ({
-              jid: it.jid,
-              weight: Number(it.weight.toFixed(4)),
-            })),
-          })),
-          updatedAt: localUpdatedAt,
-        };
+        const payload = serializeLayout();
         await api('/api/dashboard-layout', {
           method: 'POST',
           body: JSON.stringify({ layout: payload }),
@@ -432,20 +512,7 @@ export function createSessionDashboard({
         localUpdatedAt = serverUpdatedAt || Date.now();
         normalizeGroups();
         try {
-          localStorage.setItem(
-            DASHBOARD_STORAGE_KEY,
-            JSON.stringify({
-              direction,
-              groups: groups.map((g) => ({
-                weight: Number(g.weight.toFixed(4)),
-                items: g.items.map((it) => ({
-                  jid: it.jid,
-                  weight: Number(it.weight.toFixed(4)),
-                })),
-              })),
-              updatedAt: localUpdatedAt,
-            }),
-          );
+          localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(serializeLayout()));
         } catch {
           // Ignore storage quota
         }
@@ -466,20 +533,7 @@ export function createSessionDashboard({
     try {
       normalizeGroups();
       localUpdatedAt = Date.now();
-      localStorage.setItem(
-        DASHBOARD_STORAGE_KEY,
-        JSON.stringify({
-          direction,
-          groups: groups.map((g) => ({
-            weight: Number(g.weight.toFixed(4)),
-            items: g.items.map((it) => ({
-              jid: it.jid,
-              weight: Number(it.weight.toFixed(4)),
-            })),
-          })),
-          updatedAt: localUpdatedAt,
-        }),
-      );
+      localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(serializeLayout()));
     } catch {
       // Ignore storage quota errors
     }
@@ -499,6 +553,7 @@ export function createSessionDashboard({
   function currentLayoutMode() {
     const jids = allJids();
     if (jids.length <= 1) return 'horizontal';
+    if (groups.some((g) => g.items.some((it) => it.items))) return 'grid';
     const hasMultiPerGroup = groups.some((g) => g.items.length > 1);
     if (direction === 'row' && !hasMultiPerGroup) return 'horizontal';
     if (direction === 'column' && !hasMultiPerGroup) return 'vertical';
@@ -2839,7 +2894,8 @@ export function createSessionDashboard({
   let lastLayoutSignature = '';
 
   function computeLayoutSignature() {
-    return `${direction}|${groups.map((g) => g.items.map((it) => it.jid).join(',')).join(';')}`;
+    const sig = (node) => (node.jid ? node.jid : `(${node.items.map(sig).join(',')})`);
+    return `${direction}|${groups.map(sig).join(';')}`;
   }
 
   function rebuildGrid(forceRebuildDOM = false) {
@@ -2890,17 +2946,19 @@ export function createSessionDashboard({
     // immediately blurs it and collapses the software keyboard (especially on the 5s poll).
     const nextSignature = computeLayoutSignature();
     if (!forceRebuildDOM && nextSignature === lastLayoutSignature && gridEl.children.length > 0) {
-      const groupEls = [...gridEl.querySelectorAll(':scope > .dashboard-group')];
-      groups.forEach((group, gIdx) => {
-        const groupEl = groupEls[gIdx];
-        const groupWeight = groups.length === 1 ? 1 : group.weight;
-        if (groupEl) groupEl.style.flex = `${groupWeight} 1 0px`;
-        group.items.forEach((item) => {
-          const pane = panes.get(item.jid);
-          const itemWeight = group.items.length === 1 ? 1 : item.weight;
-          if (pane) pane.el.style.flex = `${itemWeight} 1 0px`;
+      // Same topology: walk the DOM alongside the model and update weights only.
+      const applyWeights = (nodes, container) => {
+        const childEls = [...container.children].filter(
+          (c) => c.classList.contains('dashboard-group') || c.classList.contains('dashboard-pane'),
+        );
+        nodes.forEach((node, i) => {
+          const nodeEl = childEls[i];
+          if (!nodeEl) return;
+          nodeEl.style.flex = `${nodes.length === 1 ? 1 : node.weight} 1 0px`;
+          if (node.items) applyWeights(node.items, nodeEl);
         });
-      });
+      };
+      applyWeights(groups, gridEl);
       return;
     }
 
@@ -2914,122 +2972,84 @@ export function createSessionDashboard({
 
     lastLayoutSignature = nextSignature;
 
-    const outerAxis = direction === 'row' ? 'x' : 'y';
-    const innerAxis = direction === 'row' ? 'y' : 'x';
-    const innerDirection = direction === 'row' ? 'column' : 'row';
-
-    const groupEls = groups.map((group) => {
-      const groupEl = el('div', `dashboard-group dashboard-group-${innerDirection}`);
-      groupEl.style.flexDirection = innerDirection;
-      const groupWeight = groups.length === 1 ? 1 : group.weight;
-      groupEl.style.flex = `${groupWeight} 1 0px`;
-
-      const itemChildren = [];
-      group.items.forEach((item, itemIdx) => {
-        const pane = panes.get(item.jid);
-        if (!pane) return;
-        const itemWeight = group.items.length === 1 ? 1 : item.weight;
-        pane.el.style.flex = `${itemWeight} 1 0px`;
-        itemChildren.push(pane.el);
-
-        if (itemIdx < group.items.length - 1) {
-          const nextItem = group.items[itemIdx + 1];
-          const nextPane = panes.get(nextItem.jid);
-          if (nextPane) {
-            const firstJid = item.jid;
-            const secondJid = nextItem.jid;
-            itemChildren.push(
-              createAxisSplitter({
-                axis: innerAxis,
-                label:
-                  innerAxis === 'y'
-                    ? `Resize vertical panes ${itemIdx + 1} and ${itemIdx + 2}`
-                    : `Resize horizontal panes ${itemIdx + 1} and ${itemIdx + 2}`,
-                firstEl: pane.el,
-                secondEl: nextPane.el,
-                getWeights: () => {
-                  const loc1 = findJidLocation(firstJid);
-                  const loc2 = findJidLocation(secondJid);
-                  const w1 = loc1 ? groups[loc1.gIdx].items[loc1.iIdx].weight : 1;
-                  const w2 = loc2 ? groups[loc2.gIdx].items[loc2.iIdx].weight : 1;
-                  return [w1, w2];
-                },
-                setWeights: (w1, w2) => {
-                  const loc1 = findJidLocation(firstJid);
-                  const loc2 = findJidLocation(secondJid);
-                  if (loc1) groups[loc1.gIdx].items[loc1.iIdx].weight = w1;
-                  if (loc2) groups[loc2.gIdx].items[loc2.iIdx].weight = w2;
-                  pane.el.style.flex = `${w1} 1 0px`;
-                  nextPane.el.style.flex = `${w2} 1 0px`;
-                },
-                getChain: () => {
-                  const loc = findJidLocation(firstJid);
-                  if (!loc) return null;
-                  const items = groups[loc.gIdx].items;
-                  return {
-                    index: loc.iIdx,
-                    els: items.map((it) => panes.get(it.jid)?.el),
-                    weights: items.map((it) => it.weight),
-                    set: (weights) => {
-                      items.forEach((it, i) => {
-                        it.weight = weights[i];
-                        const p = panes.get(it.jid);
-                        if (p) p.el.style.flex = `${weights[i]} 1 0px`;
-                      });
-                    },
-                  };
-                },
-              }),
-            );
-          }
+    // Render one split's children along axisAt(depth), with a splitter between
+    // each pair. Splitters find their split again by the panes that start each
+    // side, because normalizeGroups() rebuilds the model objects on every save.
+    const renderSplit = (nodes, depth, container) => {
+      const splitterAxis = axisAt(depth) === 'row' ? 'x' : 'y';
+      const childEls = nodes.map((node) => {
+        let nodeEl;
+        if (node.jid) {
+          nodeEl = panes.get(node.jid)?.el;
+        } else {
+          const innerDirection = axisAt(depth + 1);
+          nodeEl = el('div', `dashboard-group dashboard-group-${innerDirection}`);
+          nodeEl.style.flexDirection = innerDirection;
+          renderSplit(node.items, depth + 1, nodeEl);
         }
+        if (nodeEl) nodeEl.style.flex = `${nodes.length === 1 ? 1 : node.weight} 1 0px`;
+        return nodeEl;
       });
 
-      groupEl.replaceChildren(...itemChildren);
-      return groupEl;
-    });
-
-    const gridChildren = [];
-    groupEls.forEach((groupEl, gIdx) => {
-      gridChildren.push(groupEl);
-      if (gIdx < groupEls.length - 1) {
-        const nextGroupEl = groupEls[gIdx + 1];
-        gridChildren.push(
+      const children = [];
+      childEls.forEach((childEl, i) => {
+        if (!childEl) return;
+        children.push(childEl);
+        const nextEl = childEls[i + 1];
+        if (!nextEl) return;
+        const firstJid = firstLeafJid(nodes[i]);
+        const secondJid = firstLeafJid(nodes[i + 1]);
+        const label =
+          depth === 0
+            ? splitterAxis === 'x'
+              ? `Resize columns ${i + 1} and ${i + 2}`
+              : `Resize rows ${i + 1} and ${i + 2}`
+            : splitterAxis === 'y'
+              ? `Resize vertical panes ${i + 1} and ${i + 2}`
+              : `Resize horizontal panes ${i + 1} and ${i + 2}`;
+        children.push(
           createAxisSplitter({
-            axis: outerAxis,
-            label:
-              outerAxis === 'x'
-                ? `Resize columns ${gIdx + 1} and ${gIdx + 2}`
-                : `Resize rows ${gIdx + 1} and ${gIdx + 2}`,
-            firstEl: groupEl,
-            secondEl: nextGroupEl,
-            getWeights: () => [
-              groups[gIdx]?.weight ?? 1,
-              groups[gIdx + 1]?.weight ?? 1,
-            ],
-            setWeights: (w1, w2) => {
-              if (groups[gIdx]) groups[gIdx].weight = w1;
-              if (groups[gIdx + 1]) groups[gIdx + 1].weight = w2;
-              groupEl.style.flex = `${w1} 1 0px`;
-              nextGroupEl.style.flex = `${w2} 1 0px`;
+            axis: splitterAxis,
+            label,
+            firstEl: childEl,
+            secondEl: nextEl,
+            getWeights: () => {
+              const at = siblingsOf(firstJid, secondJid);
+              return at
+                ? [at.node.items[at.index].weight, at.node.items[at.index + 1].weight]
+                : [1, 1];
             },
-            getChain: () => ({
-              index: gIdx,
-              els: groupEls,
-              weights: groups.map((g) => g.weight),
-              set: (weights) => {
-                groups.forEach((g, i) => {
-                  g.weight = weights[i];
-                  if (groupEls[i]) groupEls[i].style.flex = `${weights[i]} 1 0px`;
-                });
-              },
-            }),
+            setWeights: (w1, w2) => {
+              const at = siblingsOf(firstJid, secondJid);
+              if (at) {
+                at.node.items[at.index].weight = w1;
+                at.node.items[at.index + 1].weight = w2;
+              }
+              childEl.style.flex = `${w1} 1 0px`;
+              nextEl.style.flex = `${w2} 1 0px`;
+            },
+            getChain: () => {
+              const at = siblingsOf(firstJid, secondJid);
+              if (!at) return null;
+              const siblings = at.node.items;
+              return {
+                index: at.index,
+                els: childEls,
+                weights: siblings.map((n) => n.weight),
+                set: (weights) => {
+                  siblings.forEach((n, j) => {
+                    n.weight = weights[j];
+                    if (childEls[j]) childEls[j].style.flex = `${weights[j]} 1 0px`;
+                  });
+                },
+              };
+            },
           }),
         );
-      }
-    });
-
-    gridEl.replaceChildren(...gridChildren);
+      });
+      container.replaceChildren(...children);
+    };
+    renderSplit(groups, 0, gridEl);
 
     if (prevFocusedEl && gridEl.contains(prevFocusedEl)) {
       prevFocusedEl.focus({ preventScroll: true });
@@ -3045,31 +3065,32 @@ export function createSessionDashboard({
 
   // ── Layout Mutations (Swap, Horizontal, Vertical, 2D Grid, Directional Drop) ──
   function detachJidFromGroups(jid) {
-    for (const g of groups) {
-      const idx = g.items.findIndex((it) => it.jid === jid);
-      if (idx !== -1) g.items.splice(idx, 1);
+    const path = pathToJid(jid);
+    if (path) {
+      const { node, index } = path[path.length - 1];
+      node.items.splice(index, 1);
     }
     normalizeGroups();
   }
 
-  function findJidLocation(jid) {
-    for (let gIdx = 0; gIdx < groups.length; gIdx++) {
-      const iIdx = groups[gIdx].items.findIndex((it) => it.jid === jid);
-      if (iIdx !== -1) return { gIdx, iIdx };
-    }
-    return null;
-  }
-
   function swapPanesInPlace(jidA, jidB) {
     if (!jidA || !jidB || jidA === jidB) return false;
-    const locA = findJidLocation(jidA);
-    const locB = findJidLocation(jidB);
-    if (!locA || !locB) return false;
-    groups[locA.gIdx].items[locA.iIdx].jid = jidB;
-    groups[locB.gIdx].items[locB.iIdx].jid = jidA;
+    const pathA = pathToJid(jidA);
+    const pathB = pathToJid(jidB);
+    if (!pathA || !pathB) return false;
+    const a = pathA[pathA.length - 1];
+    const b = pathB[pathB.length - 1];
+    a.node.items[a.index].jid = jidB;
+    b.node.items[b.index].jid = jidA;
     return true;
   }
 
+  /**
+   * Put `jid` where the drop preview showed it. An edge drop splits the pane
+   * under the finger: left/right make two panes side by side, top/bottom two
+   * stacked, each taking half of that pane's space — never the whole column
+   * or row it sits in.
+   */
   function placeSessionAt(jid, target = null) {
     if (!jid || jid === 'web:life') return;
     if (target?.mode === 'pane' && target.jid === jid) return;
@@ -3078,71 +3099,57 @@ export function createSessionDashboard({
     if (target?.mode === 'pane' && target.zone === 'swap' && target.jid) {
       if (swapPanesInPlace(jid, target.jid)) return;
       // If `jid` was dragged from the sidebar (not yet in dashboard), insert as a new pane adjacent to target.jid
-      const loc = findJidLocation(target.jid);
-      if (loc) {
+      const path = pathToJid(target.jid);
+      if (path) {
         detachJidFromGroups(jid);
-        groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [{ jid, weight: 1 }] });
+        groups.splice(path[0].index + 1, 0, { weight: 1, items: [{ jid, weight: 1 }] });
         return;
       }
     }
 
     detachJidFromGroups(jid);
 
-    if (!target || groups.length === 0) {
-      groups.push({ weight: 1, items: [{ jid, weight: 1 }] });
+    const zone = target?.zone || 'right';
+    const path = target?.jid ? pathToJid(target.jid) : null;
+    if (!path) {
+      // No pane to split: add a whole column/row at that edge of the stage.
+      const cell = { weight: 1, items: [{ jid, weight: 1 }] };
+      const atStart = zone === 'left' || zone === 'top';
+      if (direction === 'row' && (zone === 'left' || zone === 'right')) {
+        groups.splice(atStart ? 0 : groups.length, 0, cell);
+      } else if (direction === 'column' && (zone === 'top' || zone === 'bottom')) {
+        groups.splice(atStart ? 0 : groups.length, 0, cell);
+      } else if (groups.length === 0) {
+        groups.push(cell);
+      } else if (atStart) {
+        groups[0].items.unshift({ jid, weight: 1 });
+      } else {
+        groups[groups.length - 1].items.push({ jid, weight: 1 });
+      }
       return;
     }
 
-    const zone = target.zone || 'right';
-    const loc = target.jid ? findJidLocation(target.jid) : null;
-
-    if (direction === 'row') {
-      // Outer groups are columns (left/right); inner items are rows (top/bottom)
-      if (zone === 'left' || zone === 'right') {
-        const insertAt = loc
-          ? zone === 'left'
-            ? loc.gIdx
-            : loc.gIdx + 1
-          : zone === 'left'
-            ? 0
-            : groups.length;
-        groups.splice(insertAt, 0, { weight: 1, items: [{ jid, weight: 1 }] });
-      } else {
-        // 'top' or 'bottom'
-        if (loc) {
-          const grp = groups[loc.gIdx];
-          const insertItemAt = zone === 'top' ? loc.iIdx : loc.iIdx + 1;
-          grp.items.splice(insertItemAt, 0, { jid, weight: 1 });
-        } else {
-          const firstGrp = groups[0];
-          if (zone === 'top') firstGrp.items.unshift({ jid, weight: 1 });
-          else firstGrp.items.push({ jid, weight: 1 });
-        }
-      }
+    const wanted = zone === 'left' || zone === 'right' ? 'row' : 'column';
+    const before = zone === 'left' || zone === 'top';
+    const depth = path.length - 1;
+    const { node: parent, index } = path[depth];
+    const targetNode = parent.items[index];
+    if (axisAt(depth) === wanted) {
+      // The pane's own split already runs this way: insert beside it and let
+      // the two share the pane's old space.
+      const half = targetNode.weight / 2;
+      targetNode.weight = half;
+      parent.items.splice(before ? index : index + 1, 0, { jid, weight: half });
     } else {
-      // direction === 'column': Outer groups are rows (top/bottom); inner items are columns (left/right)
-      if (zone === 'top' || zone === 'bottom') {
-        const insertAt = loc
-          ? zone === 'top'
-            ? loc.gIdx
-            : loc.gIdx + 1
-          : zone === 'top'
-            ? 0
-            : groups.length;
-        groups.splice(insertAt, 0, { weight: 1, items: [{ jid, weight: 1 }] });
-      } else {
-        // 'left' or 'right'
-        if (loc) {
-          const grp = groups[loc.gIdx];
-          const insertItemAt = zone === 'left' ? loc.iIdx : loc.iIdx + 1;
-          grp.items.splice(insertItemAt, 0, { jid, weight: 1 });
-        } else {
-          const firstGrp = groups[0];
-          if (zone === 'left') firstGrp.items.unshift({ jid, weight: 1 });
-          else firstGrp.items.push({ jid, weight: 1 });
-        }
-      }
+      // Split the pane itself across the other axis.
+      const pair = before
+        ? [{ jid, weight: 1 }, { jid: targetNode.jid, weight: 1 }]
+        : [{ jid: targetNode.jid, weight: 1 }, { jid, weight: 1 }];
+      parent.items[index] = { weight: targetNode.weight, items: pair };
     }
+    // A pane alone in its top-level cell split along the top-level axis is
+    // just two cells; normalizeGroups() lifts it to that shape.
+    normalizeGroups();
   }
 
   function applyPreset(preset) {
@@ -3175,20 +3182,26 @@ export function createSessionDashboard({
   function togglePaneAxis(jid) {
     const jids = allJids();
     if (jids.length < 2) return;
-    const loc = findJidLocation(jid);
-    if (!loc) return;
+    const path = pathToJid(jid);
+    if (!path) return;
+    const gIdx = path[0].index;
 
     animatePaneLayoutTransition(() => {
-      const grp = groups[loc.gIdx];
-      if (grp.items.length > 1) {
+      const grp = groups[gIdx];
+      if (path.length > 2) {
+        // Inside a split within a cell -> lift it out to its own cell next to that cell
+        const { node, index } = path[path.length - 1];
+        const [removed] = node.items.splice(index, 1);
+        groups.splice(gIdx + 1, 0, { weight: 1, items: [{ jid: removed.jid, weight: 1 }] });
+      } else if (grp.items.length > 1) {
         // Currently stacked with another pane -> extract to its own outer group next to this one
-        const [removed] = grp.items.splice(loc.iIdx, 1);
-        groups.splice(loc.gIdx + 1, 0, { weight: 1, items: [removed] });
+        const [removed] = grp.items.splice(path[1].index, 1);
+        groups.splice(gIdx + 1, 0, { weight: 1, items: [removed] });
       } else if (groups.length > 1) {
         // Currently in its own outer group -> merge into neighbor group to stack perpendicularly
-        const targetGroupIdx = loc.gIdx > 0 ? loc.gIdx - 1 : 1;
-        const [removedGroup] = groups.splice(loc.gIdx, 1);
-        const neighbor = groups[loc.gIdx > 0 ? targetGroupIdx : 0];
+        const targetGroupIdx = gIdx > 0 ? gIdx - 1 : 1;
+        const [removedGroup] = groups.splice(gIdx, 1);
+        const neighbor = groups[gIdx > 0 ? targetGroupIdx : 0];
         neighbor.items.push(...removedGroup.items);
       }
       saveState();
@@ -3269,10 +3282,11 @@ export function createSessionDashboard({
 
   function equalizeWeights() {
     animatePaneLayoutTransition(() => {
-      for (const g of groups) {
-        g.weight = 1;
-        for (const it of g.items) it.weight = 1;
-      }
+      const reset = (node) => {
+        node.weight = 1;
+        node.items?.forEach(reset);
+      };
+      groups.forEach(reset);
       saveState();
       rebuildGrid();
     });
@@ -3728,13 +3742,18 @@ export function createSessionDashboard({
       const validJids = new Set(getSessions().map((s) => s.jid));
       if (validJids.size > 0) {
         const beforeCount = allJids().length;
-        for (const g of groups) {
-          g.items = g.items.filter((it) => {
+        const prune = (node) => {
+          node.items = node.items.filter((it) => {
+            if (it.items) {
+              prune(it);
+              return true;
+            }
             const keep = validJids.has(it.jid);
             if (!keep) disposePane(it.jid);
             return keep;
           });
-        }
+        };
+        groups.forEach(prune);
         normalizeGroups();
         if (allJids().length !== beforeCount) saveState();
       }
