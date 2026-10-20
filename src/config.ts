@@ -320,6 +320,13 @@ export const config = {
 
   // ── piweb: web server ──
 
+  /**
+   * Max size of one file sent from the web UI. Separate from the Discord limit
+   * above (whose host config is 10 MB): phone and Mac screen recordings are
+   * routinely tens of MB. The request body cap is derived from it.
+   */
+  webMaxAttachmentBytes: envInt('WEB_MAX_ATTACHMENT_BYTES', 100 * 1024 * 1024, { min: 1 }),
+
   /** Port the web UI/API listens on */
   webPort: envInt('WEB_PORT', 8099, { min: 1 }),
 

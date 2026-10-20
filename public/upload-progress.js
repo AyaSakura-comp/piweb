@@ -134,3 +134,52 @@ export function sendJsonWithUploadProgress(path, payload, options = {}) {
     request.send(serialized);
   });
 }
+
+// What the server accepted before it reported its own limits in /api/me:
+// 25 MB per file and a 64 MB JSON body (files travel base64-encoded, +33%).
+export const DEFAULT_UPLOAD_LIMITS = Object.freeze({
+  file: 25 * 1024 * 1024,
+  body: 64 * 1024 * 1024,
+});
+
+const base64Length = (bytes) => Math.ceil(bytes / 3) * 4;
+
+function formatMegabytes(bytes) {
+  const mb = bytes / (1024 * 1024);
+  return `${mb >= 10 ? Math.round(mb) : mb.toFixed(1)} MB`;
+}
+
+/**
+ * Explain why these attachments cannot be sent, before anything is uploaded,
+ * or return '' when they fit. Images that will be recompressed are skipped:
+ * their final size is not known yet and is far below either limit.
+ */
+export function attachmentLimitProblem(
+  attachments,
+  limits = DEFAULT_UPLOAD_LIMITS,
+  { compressImages = false } = {},
+) {
+  const sized = attachments.filter((a) => !(compressImages && a.isImage));
+  const tooBig = sized.find((a) => limits.file > 0 && a.file.size > limits.file);
+  if (tooBig) {
+    return `${tooBig.name} 有 ${formatMegabytes(tooBig.file.size)}，超過單檔上限 ${formatMegabytes(limits.file)}。請先壓縮或剪短再傳。`;
+  }
+  const encoded = sized.reduce((sum, a) => sum + base64Length(a.file.size), 0);
+  // Leave 1 MB of the body for the JSON envelope and message text.
+  if (limits.body > 0 && encoded > limits.body - 1024 * 1024) {
+    const total = sized.reduce((sum, a) => sum + a.file.size, 0);
+    const room = Math.floor(((limits.body - 1024 * 1024) / 4) * 3);
+    return `這次附件合計 ${formatMegabytes(total)}，超過一次可傳的 ${formatMegabytes(room)}。請分成幾則訊息傳送。`;
+  }
+  return '';
+}
+
+/** Server limits from /api/me, falling back to the old fixed ones. */
+export function uploadLimitsFrom(me) {
+  const file = Number(me?.maxAttachmentBytes);
+  const body = Number(me?.maxUploadBodyBytes);
+  return {
+    file: Number.isFinite(file) && file >= 0 ? file : DEFAULT_UPLOAD_LIMITS.file,
+    body: Number.isFinite(body) && body > 0 ? body : DEFAULT_UPLOAD_LIMITS.body,
+  };
+}

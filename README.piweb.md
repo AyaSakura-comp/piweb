@@ -659,8 +659,12 @@ PIWEB_E2E_TOKEN=... npm run test:e2e
 - **iPadOS Window Multitasking Clearance**: Topbar layout incorporates dynamic safe area padding (`padding-left: max(60px, ...)`) to prevent obstruction by iPadOS system multitasking pills (`•••`).
 - **Self-Healing & OOM Auto-Resume**: Interrupted runs (SIGTERM / SIGKILL code 143/137) during heavy local inference
   automatically requeue and resume with session context preserved.
-- **Uploads** are capped by `MAX_ATTACHMENT_BYTES`; they are sent base64 in JSON
-  rather than multipart to keep the container dependency-free. Browser-reported size, upload time and response time
+- **Uploads** are capped per file by `WEB_MAX_ATTACHMENT_BYTES` (default 100 MB; separate from
+  the Discord `MAX_ATTACHMENT_BYTES`); they are sent base64 in JSON
+  rather than multipart to keep the container dependency-free. Only the message route accepts a
+  body that large (one max-size file base64-encoded + 4 MB); every other route keeps 64 MB.
+  `/api/me` reports both limits and the composer refuses an oversized file before uploading,
+  keeping it in place (without them it assumes the old 25 MB / 64 MB). Browser-reported size, upload time and response time
   are logged as `Upload metrics`, without filenames or content. Timings are not yet displayed in the UI;
   refresh the page after deployment to enable recording. Attachment requests have an explicit
   five-minute browser/server receive deadline; expiry reports an error without automatically

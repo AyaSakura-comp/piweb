@@ -2,9 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  attachmentLimitProblem,
+  DEFAULT_UPLOAD_LIMITS,
   hideUploadProgress,
   sendJsonWithUploadProgress,
   showUploadProgress,
+  uploadLimitsFrom,
 } from '../public/upload-progress.js';
 
 type Listener = (event?: { lengthComputable?: boolean; loaded?: number; total?: number }) => void;
@@ -287,5 +290,50 @@ describe('upload progress UI', () => {
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.upload-progress-bar \{[^}]*transition: none/,
     );
+  });
+});
+
+describe('attachment limits', () => {
+  const MB = 1024 * 1024;
+  const item = (name: string, size: number, isImage = false) => ({
+    name,
+    isImage,
+    file: { size },
+  });
+
+  it('refuses a screen recording over the per-file limit before uploading', () => {
+    const problem = attachmentLimitProblem(
+      [item('螢幕錄影 2026-10-21 凌晨1.37.34.mov', 38 * MB)],
+      DEFAULT_UPLOAD_LIMITS,
+    );
+    expect(problem).toContain('螢幕錄影 2026-10-21 凌晨1.37.34.mov 有 38 MB');
+    expect(problem).toContain('單檔上限 25 MB');
+  });
+
+  it('accepts the same file once the server reports a larger limit', () => {
+    const limits = uploadLimitsFrom({ maxAttachmentBytes: 100 * MB, maxUploadBodyBytes: 138 * MB });
+    expect(attachmentLimitProblem([item('clip.mov', 38 * MB)], limits)).toBe('');
+  });
+
+  it('checks the base64-inflated total against the request body cap', () => {
+    const problem = attachmentLimitProblem(
+      [item('a.mov', 20 * MB), item('b.mov', 20 * MB), item('c.mov', 20 * MB)],
+      DEFAULT_UPLOAD_LIMITS,
+    );
+    expect(problem).toContain('合計 60 MB');
+    expect(problem).toContain('分成幾則訊息');
+  });
+
+  it('skips images that will be recompressed', () => {
+    const photo = item('IMG_0001.png', 30 * MB, true);
+    expect(attachmentLimitProblem([photo], DEFAULT_UPLOAD_LIMITS, { compressImages: true })).toBe(
+      '',
+    );
+    expect(attachmentLimitProblem([photo], DEFAULT_UPLOAD_LIMITS)).toContain('IMG_0001.png');
+  });
+
+  it('falls back to the old fixed limits when /api/me does not report any', () => {
+    expect(uploadLimitsFrom({ authed: true })).toEqual(DEFAULT_UPLOAD_LIMITS);
+    expect(uploadLimitsFrom(undefined)).toEqual(DEFAULT_UPLOAD_LIMITS);
   });
 });

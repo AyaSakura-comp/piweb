@@ -112,6 +112,18 @@ export const PUBLIC_DIR = resolve(fileURLToPath(new URL('../../public', import.m
 /** Body cap. Phone photos arrive base64-inflated, so allow generous headroom. */
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Body cap for a message with attachments: one maximum-size file after base64
+ * (+33%) plus room for the JSON around it. Only the authenticated message
+ * route reads bodies this large; everything else keeps MAX_BODY_BYTES.
+ */
+const MAX_MESSAGE_BODY_BYTES = Math.max(
+  MAX_BODY_BYTES,
+  Math.ceil(config.webMaxAttachmentBytes / 3) * 4 + 4 * 1024 * 1024,
+);
+
+const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -146,13 +158,13 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(new Error('Request body too large'));
         req.destroy();
         return;
@@ -164,8 +176,8 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-async function readJson<T>(req: IncomingMessage): Promise<T> {
-  const raw = await readBody(req);
+async function readJson<T>(req: IncomingMessage, maxBytes?: number): Promise<T> {
+  const raw = await readBody(req, maxBytes);
   if (!raw) return {} as T;
   return JSON.parse(raw) as T;
 }
@@ -526,6 +538,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       via: identity ? 'tailscale' : isAuthed(req) ? 'token' : null,
       login: identity?.login,
       name: identity?.name,
+      // Lets the composer refuse an oversized file before uploading it.
+      maxAttachmentBytes: config.webMaxAttachmentBytes,
+      maxUploadBodyBytes: MAX_MESSAGE_BODY_BYTES,
     });
     return;
   }
@@ -1344,7 +1359,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           quote?: string;
           attachments?: Array<{ name: string; dataBase64: string }>;
           lifeGeneration?: unknown;
-        }>(req);
+        }>(req, MAX_MESSAGE_BODY_BYTES);
         if (!operationHeartbeat.renew()) {
           sendJson(res, 409, {
             error:
@@ -1648,8 +1663,10 @@ async function saveUploads(
       const safeName = mediaFileName(randomUUID().slice(0, 8), attachment.name);
       const buffer = Buffer.from(attachment.dataBase64, 'base64');
 
-      if (config.maxAttachmentBytes > 0 && buffer.length > config.maxAttachmentBytes) {
-        throw new Error(`Attachment exceeds the size limit: ${attachment.name}`);
+      if (buffer.length > config.webMaxAttachmentBytes) {
+        throw new Error(
+          `Attachment exceeds the ${megabytes(config.webMaxAttachmentBytes)} size limit: ${attachment.name} (${megabytes(buffer.length)})`,
+        );
       }
 
       const piPath = join(uploadDir, safeName);

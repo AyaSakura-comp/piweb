@@ -550,7 +550,8 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `MAX_CONCURRENCY`, `POLL_INTERVAL_MS`                | worker | queue behaviour                                  |
 | `ARCHIVE_RETENTION_DAYS`                             | worker | archived session cleanup (default 30)            |
 | `PIWEB_HIDDEN_MODELS`                                | worker | comma-separated exact refs hidden from picker    |
-| `MAX_ATTACHMENT_BYTES`                               | both   | upload cap                                       |
+| `MAX_ATTACHMENT_BYTES`                               | worker | Discord upload cap (host config: 10 MB)          |
+| `WEB_MAX_ATTACHMENT_BYTES`                           | web    | per-file web upload cap (default 100 MB)         |
 
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
 from piscord and unused by the web transport.

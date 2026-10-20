@@ -49,9 +49,12 @@ import {
   settleTranscriptUpdate,
 } from './session-ui.js';
 import {
+  attachmentLimitProblem,
+  DEFAULT_UPLOAD_LIMITS,
   hideUploadProgress,
   sendJsonWithUploadProgress,
   showUploadProgress,
+  uploadLimitsFrom,
 } from './upload-progress.js';
 
 const $ = (id) => document.getElementById(id);
@@ -2137,6 +2140,8 @@ const sessionDashboard = createSessionDashboard({
   onApplySessionTitle: (jid, name) => applyImmediateSessionTitle(jid, name),
   showToast: (msg) => showToast(msg),
   isAutoScrollEnabled: () => autoScrollEnabled,
+  attachmentLimitProblem: (attachments, options) =>
+    attachmentLimitProblem(attachments, uploadLimits, options),
 });
 // Dashboard panes re-render their transcripts too: re-home a player embedded
 // in one, as for the chat above.
@@ -3943,6 +3948,9 @@ function renderAttachments() {
   cameraComposer.setCount(state.attachments.filter(a => a.isCamera).length, state.attachments.length);
 }
 
+/** Per-file and per-request upload limits; replaced from /api/me at boot. */
+let uploadLimits = DEFAULT_UPLOAD_LIMITS;
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -4009,6 +4017,17 @@ $('composer').addEventListener('submit', async (e) => {
   const quote = state.pendingQuote;
   if (!draft && !quote && state.attachments.length === 0) {
     abandonComposerSend();
+    return;
+  }
+  // Refuse an oversized file here, while it is still in the composer: once
+  // the send starts the attachments are detached, and a server rejection
+  // after a long upload would leave nothing to retry with.
+  const limitProblem = attachmentLimitProblem(state.attachments, uploadLimits, {
+    compressImages: imageCompressionCheckbox.checked,
+  });
+  if (limitProblem) {
+    abandonComposerSend();
+    alert(limitProblem);
     return;
   }
   const text = lifeTag ? `【${lifeTag.label}】${draft}` : draft;
@@ -6301,6 +6320,7 @@ document.addEventListener('visibilitychange', () => {
 
 (async () => {
   const me = await api('/api/me').catch(() => ({ authed: false }));
+  uploadLimits = uploadLimitsFrom(me);
   if (!me.authed) return showLogin();
   // Authenticated by Tailscale identity: there is no cookie to drop, so a
   // "Sign out" button would do nothing visible. Hide it and show who serve

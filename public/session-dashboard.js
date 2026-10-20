@@ -127,6 +127,8 @@ export function createSessionDashboard({
   onApplySessionTitle,
   showToast,
   isAutoScrollEnabled = () => false,
+  // Returns '' when the attachments fit the server's upload limits, else why not.
+  attachmentLimitProblem = () => '',
 }) {
   const wideQuery = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
   let active = false;
@@ -1892,6 +1894,14 @@ export function createSessionDashboard({
 
       if (!text && !quote && submittedAttachments.length === 0) {
         if (keepKeyboardOpen) textarea.focus({ preventScroll: true });
+        return;
+      }
+      // Keep an oversized file in the pane rather than failing after upload.
+      const limitProblem = attachmentLimitProblem(submittedAttachments, {
+        compressImages: compressionCheckbox.checked,
+      });
+      if (limitProblem) {
+        alert(limitProblem);
         return;
       }
 
