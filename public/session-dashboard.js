@@ -2471,7 +2471,11 @@ export function createSessionDashboard({
       pane.kbLift = lift;
       if (instant) pane.dock.style.transition = 'none';
       pane.dock.style.setProperty('--kb-lift', `${lift}px`);
-      pane.el.classList.toggle('kb-lifted', lift > 0);
+      clearTimeout(pane.kbLiftTimer);
+      if (lift > 0) pane.el.classList.add('kb-lifted');
+      // Stay unclipped while the card slides back down into its pane.
+      else if (instant) pane.el.classList.remove('kb-lifted');
+      else pane.kbLiftTimer = setTimeout(() => pane.el.classList.remove('kb-lifted'), 260);
       if (instant) {
         pane.dock.getBoundingClientRect();
         pane.dock.style.transition = '';

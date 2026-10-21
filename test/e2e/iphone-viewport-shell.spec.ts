@@ -263,11 +263,73 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   expect(await mainBottom()).toBe(844);
   await page.locator('#btn-topbar-dashboard').click();
   await expect(page.locator('#dashboard-view')).toBeVisible();
+  // Dashboard (iPhone recording 2026-10-22): the keyboard must not squeeze the
+  // panes into the visible strip. The shell keeps its full height at the pan,
+  // so every pane stays where it was on screen and the keyboard covers what is
+  // below; only an input card it would cover moves up, just clear of it.
+  await page.locator('#btn-dashboard-drawer').click();
+  await page.locator('#session-list .session-item').nth(1).locator('.session-tile-btn').click();
+  await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+  await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
+  await page.waitForTimeout(700);
+  const onScreen = () => page.evaluate(() => {
+    const top = window.visualViewport!.offsetTop;
+    const box = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return { top: Math.round(r.top - top), bottom: Math.round(r.bottom - top) };
+    };
+    return {
+      panes: [...document.querySelectorAll('.dashboard-pane')].map(box),
+      dock: box(document.querySelector('.dashboard-pane.composer-active .dashboard-pane-dock')!),
+      lifted: [...document.querySelectorAll('.dashboard-pane')].map(p => p.classList.contains('kb-lifted')),
+    };
+  });
+  const paneAt = (i: number) => page.locator('.dashboard-pane').nth(i);
+  await paneAt(0).locator('.msg-text').first().tap();
+  await expect(paneAt(0)).toHaveClass(/composer-active/);
+  const rest = await onScreen();
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);
-  expect(await rect('#dashboard-view')).toEqual({ top: 364, bottom: 844 });
+  const app = await rect('.app');
+  expect(app).toEqual({ top: 364, bottom: 364 + 844 });
+  const topTyping = await onScreen();
+  expect(topTyping.panes).toEqual(rest.panes);
+  expect(topTyping.dock.bottom).toBeLessThanOrEqual(480 - 6);
+  // The top card is above the keyboard already: nothing moves at all.
+  expect(rest.dock.bottom).toBeLessThanOrEqual(480 - 6);
+  expect(topTyping.dock).toEqual(rest.dock);
+  expect(topTyping.lifted).toEqual([false, false]);
+  await page.screenshot({ path: info.outputPath('02-dashboard-keyboard-top-pane.png') });
+
+  // Typing in the lower pane (it sits under the keyboard, so it is tapped with
+  // the keyboard down): its card rises over the pane above, the panes stay.
+  await page.evaluate(() => (window as any).__setVisibleHeight(844));
+  await page.waitForTimeout(800);
+  await paneAt(1).locator('.msg-text').first().tap();
+  await expect(paneAt(1)).toHaveClass(/composer-active/);
+  await page.waitForTimeout(500);
+  const bottomRest = (await onScreen()).dock;
+  await page.evaluate(() => (window as any).__setVisibleHeight(480));
+  await page.waitForTimeout(800);
+  const bottomTyping = await onScreen();
+  expect(bottomTyping.panes).toEqual(rest.panes);
+  expect(bottomTyping.lifted).toEqual([false, true]);
+  expect(bottomTyping.dock.bottom).toBe(480 - 6);
+  expect(bottomTyping.dock.top).toBeGreaterThanOrEqual(8);
+  await expect(paneAt(1).locator('textarea')).toBeFocused();
+  // The lifted card is what a tap there hits, not the pane above.
+  const hit = await page.evaluate(({ y }) => {
+    const top = window.visualViewport!.offsetTop;
+    return document.elementFromPoint(195, top + y)?.closest('.dashboard-pane-dock')?.closest('.dashboard-pane') ===
+      document.querySelectorAll('.dashboard-pane')[1];
+  }, { y: bottomTyping.dock.bottom - 20 });
+  expect(hit).toBe(true);
+  await page.screenshot({ path: info.outputPath('02b-dashboard-keyboard-bottom-pane.png') });
+
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect.poll(() => page.locator('.dashboard-stage').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);
+  await expect.poll(async () => (await onScreen()).lifted).toEqual([false, false]);
+  expect((await onScreen()).dock).toEqual(bottomRest);
   await page.screenshot({ path: info.outputPath('02-dashboard-after-keyboard.png') });
   // iOS 26 standalone short-viewport rule (WebKit 301108). Chromium cannot
   // emulate standalone or the bug, so force the media rule on and check the

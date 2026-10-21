@@ -972,7 +972,6 @@
   }
 
   .dashboard-pane.kb-lifted,
-  .dashboard-group:has(> .dashboard-pane.kb-lifted),
   .dashboard-group:has(.dashboard-pane.kb-lifted) {
     overflow: visible;
     z-index: 40;
