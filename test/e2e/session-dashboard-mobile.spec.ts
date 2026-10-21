@@ -423,6 +423,35 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.waitForTimeout(600);
     await page.locator(`.dashboard-preset-btn[data-preset="${presetBefore}"]`).click();
   };
+  // Two stacked panes with an image attached (recording 2026-10-21): the card
+  // used to fill the pane and leave a sliver of transcript with Jump to present
+  // painted over the header. A short pane drops the shortcut chips and the
+  // compression hint instead.
+  const expectShortPaneKeepsTranscript = async () => {
+    await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+    const presetBefore = await page.locator('.dashboard-preset-btn.active').getAttribute('data-preset');
+    await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
+    await page.waitForTimeout(600);
+    const active = page.locator('.dashboard-pane.composer-active');
+    await active.locator('input[type="file"]').setInputFiles({
+      name: 'shot.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+    });
+    await expect(active.locator('.chip-image')).toHaveCount(1);
+    await expect(active.locator('.pane-compression-options')).toBeVisible();
+    await expect(active.locator('.pane-compression-hint')).toBeHidden();
+    await expect(active.locator('.pane-hot-keywords')).toBeHidden();
+    const transcript = await active.locator('.dashboard-pane-transcript').boundingBox();
+    expect(transcript!.height).toBeGreaterThanOrEqual(90);
+    await page.screenshot({ path: info.outputPath('01d-short-pane-attachment.png') });
+    await active.locator('.chip-remove').click();
+    await expect(active.locator('.chip-image')).toHaveCount(0);
+    await page.locator(`.dashboard-preset-btn[data-preset="${presetBefore}"]`).click();
+    await page.waitForTimeout(600);
+    await expect(active.locator('.pane-hot-keywords')).toBeVisible();
+  };
+  await expectShortPaneKeepsTranscript();
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();
     await page.locator('#session-list .session-item').nth(index).locator('.session-tile-btn').click();

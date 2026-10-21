@@ -530,6 +530,9 @@
     will-change: transform;
     transform: translateZ(0);
     backface-visibility: hidden;
+    /* Its size comes from the layout, never its content: a height query
+       lets a short pane trim the card instead of the transcript. */
+    container: pane / size;
   }
 
   /* Compact density adaptations for 6–12 concurrent session panes */
@@ -875,6 +878,20 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* A short pane (vertical split, 2x2 grid) with an image attached: the card
+     drops its shortcut chips and the compression hint, and the transcript
+     keeps room for a few lines and Jump to present. */
+  .dashboard-pane-transcript {
+    min-height: min(30%, 96px);
+  }
+
+  @container pane (max-height: 460px) {
+    .pane-hot-keywords,
+    .pane-compression-hint {
+      display: none;
+    }
   }
 
   .pane-jump-live,
