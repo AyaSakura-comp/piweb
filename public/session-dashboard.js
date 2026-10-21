@@ -13,6 +13,8 @@ const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
   'a, button, input, textarea, select, summary, label, img, video, audio, [role="button"], [contenteditable], .stream-player';
+/** Same rule as viewport-shell.js: a visual viewport this much shorter is a keyboard. */
+const KEYBOARD_MIN_PX = 150;
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MIME_EXT_MAP = {
@@ -765,6 +767,16 @@ export function createSessionDashboard({
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5M6 7l3 3-3 3m6-6h5" /><circle cx="17" cy="17" r="5" /><path d="M17 14v3l2 1" /></svg>
         <span class="mi-label">背景命令</span>
       </button>
+      <button type="button" class="menu-item" data-action="status" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.6v.9" /></svg>
+        <span class="mi-label">Status</span>
+        <span class="mi-cmd">/pi status</span>
+      </button>
+      <button type="button" class="menu-item" data-action="usage" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1116 0" /><path d="M12 18l4-5.5" /><circle cx="12" cy="18" r="1.1" /></svg>
+        <span class="mi-label">Usage</span>
+        <span class="mi-cmd">/gpt-usage</span>
+      </button>
       <button type="button" class="menu-item" data-action="btw" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z" /></svg>
         <span class="mi-label">BTW 側聊</span>
@@ -1247,6 +1259,13 @@ export function createSessionDashboard({
       if (commandsItem) commandsItem.hidden = !isAgyCommandSession(jid);
       if (btwItem) btwItem.hidden = !isPiBtwSession(jid);
       if (splitItem) splitItem.hidden = allJids().length < 2;
+      // A narrow pane drops its Status / Usage icons (CSS container query);
+      // the menu then carries them, naming the quota this session draws on.
+      const statusItem = moreMenu.querySelector('[data-action="status"]');
+      const usageItem = moreMenu.querySelector('[data-action="usage"]');
+      statusItem.hidden = getComputedStyle(statusBtn).display !== 'none';
+      usageItem.hidden = getComputedStyle(usageBtn).display !== 'none';
+      usageItem.querySelector('.mi-cmd').textContent = `/${usageCommandForSession(jid)}`;
       moreMenu.hidden = false;
       menuScrim.hidden = false;
       moreBtn.setAttribute('aria-expanded', 'true');
@@ -1296,6 +1315,10 @@ export function createSessionDashboard({
         searchInput.focus();
       } else if (action === 'new-chat') {
         void runQuickCommand('pi new', {}, jid);
+      } else if (action === 'status') {
+        void runQuickCommand('pi status', {}, jid);
+      } else if (action === 'usage') {
+        void runQuickCommand(usageCommandForSession(jid), {}, jid);
       } else if (action === 'commands-running') {
         onOpenCommandsRunning(jid);
       } else if (action === 'btw') {
@@ -2364,6 +2387,8 @@ export function createSessionDashboard({
       // Not persisted; the in-memory choice still holds.
     }
     if (keepBottom) pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
+    // With the keyboard up the card lands already clear of it.
+    syncKeyboardLift({ instant: true });
 
     if (!ghost) return;
     const to = pane.dock.getBoundingClientRect();
@@ -2421,12 +2446,47 @@ export function createSessionDashboard({
     flight.oncancel = land;
   }
 
+  /** Keyboard up: the panes keep their places and the keyboard covers what is
+   *  under it. Only the input card moves, and only as far as it must to clear
+   *  the keyboard (iPhone recording 2026-10-22: shrinking the whole Dashboard
+   *  to the visible strip crushed both stacked panes to a line or two). */
+  function syncKeyboardLift({ instant = false } = {}) {
+    const vv = window.visualViewport;
+    const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const keyboard = vv && Math.abs((vv.scale ?? 1) - 1) <= 0.01 && layoutHeight - vv.height >= KEYBOARD_MIN_PX;
+    const target = active && keyboard && composerJid ? panes.get(composerJid) : null;
+    for (const pane of panes.values()) {
+      let lift = 0;
+      if (pane === target && !pane.disposed && pane.dock.classList.contains('is-floating')) {
+        const rect = pane.dock.getBoundingClientRect();
+        const current = pane.kbLift || 0;
+        const visibleTop = vv.offsetTop || 0;
+        const visibleBottom = visibleTop + vv.height;
+        // Just above the keyboard, but never past the top of the visible strip.
+        const need = rect.bottom + current - (visibleBottom - 6);
+        const room = rect.top + current - (visibleTop + 8);
+        lift = Math.round(Math.max(0, Math.min(need, room)));
+      }
+      if (lift === (pane.kbLift || 0)) continue;
+      pane.kbLift = lift;
+      if (instant) pane.dock.style.transition = 'none';
+      pane.dock.style.setProperty('--kb-lift', `${lift}px`);
+      pane.el.classList.toggle('kb-lifted', lift > 0);
+      if (instant) {
+        pane.dock.getBoundingClientRect();
+        pane.dock.style.transition = '';
+      }
+    }
+  }
+
   /** Keep the floating input on a pane that exists (after add/remove/reload). */
   function ensureComposerPane() {
     const jids = allJids();
     if (jids.length === 0) return;
     const target = jids.includes(composerJid) ? composerJid : jids[0];
     selectComposerPane(target, { animate: false });
+    // A rebuilt or resized layout moves the card relative to the keyboard.
+    requestAnimationFrame(() => syncKeyboardLift());
   }
 
   function disposePane(jid) {
@@ -3244,6 +3304,7 @@ export function createSessionDashboard({
       }
     }
     if (active && !wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
+    syncKeyboardLift();
     onRenderSessionListDecorations();
   }
 
@@ -3782,6 +3843,17 @@ export function createSessionDashboard({
 
   // Height follows the shared .app/.main viewport shell on every device.
   // Do not maintain a second cached visualViewport height for the dashboard.
+  // The keyboard only moves the input card (syncKeyboardLift). iOS may finish
+  // its keyboard layout after the last viewport event, so sample again briefly.
+  let liftTimers = [];
+  const scheduleKeyboardLift = () => {
+    for (const timer of liftTimers) clearTimeout(timer);
+    syncKeyboardLift();
+    liftTimers = [120, 350, 700].map((delay) => setTimeout(() => syncKeyboardLift(), delay));
+  };
+  window.visualViewport?.addEventListener('resize', scheduleKeyboardLift);
+  window.visualViewport?.addEventListener('scroll', scheduleKeyboardLift);
+  window.addEventListener('resize', scheduleKeyboardLift);
 
   syncNavCounts();
 

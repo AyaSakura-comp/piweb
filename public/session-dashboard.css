@@ -751,8 +751,8 @@
     height: 16px;
   }
 
-  /* On narrower panes (< 460px), hide secondary direct buttons that are already
-     accessible inside the pane's ⋯ overflow menu so Model / Thinking / ⋯ / × stay clear */
+  /* On narrower panes (< 460px), hide secondary direct buttons so Model / Thinking /
+     ⋯ / × stay clear; the pane's ⋯ menu then shows Status and Usage in their place */
   @container (max-width: 460px) {
     .dashboard-pane-actions .pane-status-btn,
     .dashboard-pane-actions .pane-usage-btn,
@@ -956,6 +956,26 @@
     pointer-events: none;
     transform-origin: 0 0;
     will-change: transform;
+  }
+
+  /* Keyboard up: the panes stay exactly where they were (the shell keeps its
+     full height and the keyboard covers whatever is below it). Only a card
+     the keyboard would cover moves, lifted just above the keyboard by
+     syncKeyboardLift(), over its own transcript or the pane above. */
+  html.keyboard-shell .app.dashboard-active {
+    height: 100dvh;
+  }
+
+  .dashboard-pane-dock.is-floating {
+    translate: 0 calc(-1 * var(--kb-lift, 0px));
+    transition: translate 0.22s cubic-bezier(0.25, 0.8, 0.3, 1);
+  }
+
+  .dashboard-pane.kb-lifted,
+  .dashboard-group:has(> .dashboard-pane.kb-lifted),
+  .dashboard-group:has(.dashboard-pane.kb-lifted) {
+    overflow: visible;
+    z-index: 40;
   }
 
   /* Hidden while its copy flies in, but still focusable: a tap that opens the
