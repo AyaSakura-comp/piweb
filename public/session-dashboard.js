@@ -171,7 +171,7 @@ export function createSessionDashboard({
   let groups = [];
   let dragSourceJid = null;
   let pointerDrag = null;
-  let currentDropTarget = null; // { mode: 'stage' | 'pane', jid?: string, zone: 'left' | 'right' | 'top' | 'bottom' }
+  let currentDropTarget = null; // { mode: 'stage' | 'edge' | 'pane', jid?: string, zone: 'left' | 'right' | 'top' | 'bottom' }
   const PANE_CONTROL_DRAG_PX = 10;
 
   /**
@@ -3086,10 +3086,35 @@ export function createSessionDashboard({
   }
 
   /**
+   * Put `jid` at the far edge of the whole dashboard: a full-height column
+   * (left/right) or full-width row (top/bottom). Along the top-level axis it
+   * becomes one more cell with an average share; across it, the existing
+   * layout and the new pane split the stage in two.
+   */
+  function placeAtStageEdge(jid, zone) {
+    const axis = zone === 'left' || zone === 'right' ? 'row' : 'column';
+    const atStart = zone === 'left' || zone === 'top';
+    const cell = { weight: 1, items: [{ jid, weight: 1 }] };
+    if (groups.length === 0) {
+      direction = axis;
+      groups = [cell];
+    } else if (axis === direction) {
+      cell.weight = groups.reduce((sum, g) => sum + g.weight, 0) / groups.length;
+      groups.splice(atStart ? 0 : groups.length, 0, cell);
+    } else {
+      const rest = { weight: 1, items: groups };
+      direction = axis;
+      groups = atStart ? [cell, rest] : [rest, cell];
+    }
+    normalizeGroups();
+  }
+
+  /**
    * Put `jid` where the drop preview showed it. An edge drop splits the pane
    * under the finger: left/right make two panes side by side, top/bottom two
    * stacked, each taking half of that pane's space — never the whole column
-   * or row it sits in.
+   * or row it sits in. The stage's outer band (`mode: 'edge'`) instead puts
+   * it beside everything (placeAtStageEdge).
    */
   function placeSessionAt(jid, target = null) {
     if (!jid || jid === 'web:life') return;
@@ -3110,22 +3135,10 @@ export function createSessionDashboard({
     detachJidFromGroups(jid);
 
     const zone = target?.zone || 'right';
-    const path = target?.jid ? pathToJid(target.jid) : null;
+    const path = target?.mode === 'pane' && target.jid ? pathToJid(target.jid) : null;
     if (!path) {
       // No pane to split: add a whole column/row at that edge of the stage.
-      const cell = { weight: 1, items: [{ jid, weight: 1 }] };
-      const atStart = zone === 'left' || zone === 'top';
-      if (direction === 'row' && (zone === 'left' || zone === 'right')) {
-        groups.splice(atStart ? 0 : groups.length, 0, cell);
-      } else if (direction === 'column' && (zone === 'top' || zone === 'bottom')) {
-        groups.splice(atStart ? 0 : groups.length, 0, cell);
-      } else if (groups.length === 0) {
-        groups.push(cell);
-      } else if (atStart) {
-        groups[0].items.unshift({ jid, weight: 1 });
-      } else {
-        groups[groups.length - 1].items.push({ jid, weight: 1 });
-      }
+      placeAtStageEdge(jid, zone);
       return;
     }
 
@@ -3248,7 +3261,7 @@ export function createSessionDashboard({
     if (!wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
     const wasAlreadyIn = allJids().includes(jid);
     animatePaneLayoutTransition(() => {
-      if (dropTarget && dropTarget.mode === 'pane') {
+      if (dropTarget && (dropTarget.mode === 'pane' || dropTarget.mode === 'edge')) {
         placeSessionAt(jid, dropTarget);
       } else if (!wasAlreadyIn) {
         const nextJids = [...allJids(), jid];
@@ -3293,6 +3306,55 @@ export function createSessionDashboard({
   }
 
   // ── 2D Directional Drop & Swap Detection & Visual Preview ──────────────────
+  // A thin band along the grid's outer edge drops beside everything (a full
+  // column or row) rather than splitting the pane there. Top and bottom are
+  // thinner so picking a pane up by its header does not land in the top band.
+  const STAGE_EDGE_SIDE_PX = 28;
+  const STAGE_EDGE_END_PX = 16;
+
+  function stageEdgeTarget(clientX, clientY, stageRect) {
+    if (!wideQuery.matches) return null;
+    const g = gridEl.getBoundingClientRect();
+    if (clientX < g.left || clientX > g.right || clientY < g.top || clientY > g.bottom) return null;
+    const dist = {
+      left: clientX - g.left,
+      right: g.right - clientX,
+      top: clientY - g.top,
+      bottom: g.bottom - clientY,
+    };
+    const zone = ['left', 'right', 'top', 'bottom'].find(
+      (z) => dist[z] < (z === 'left' || z === 'right' ? STAGE_EDGE_SIDE_PX : STAGE_EDGE_END_PX),
+    );
+    if (!zone) return null;
+    const axis = zone === 'left' || zone === 'right' ? 'row' : 'column';
+    // Show the share the new cell will get (placeAtStageEdge).
+    const others = allJids().filter((j) => j !== dragSourceJid).length;
+    const cells = groups.filter((cell) => {
+      const ids = [];
+      const walk = (n) => (n.jid ? ids.push(n.jid) : n.items.forEach(walk));
+      walk(cell);
+      return ids.some((j) => j !== dragSourceJid);
+    }).length;
+    const share = others === 0 ? 1 : axis === direction ? 1 / (cells + 1) : 1 / 2;
+    const left = g.left - stageRect.left;
+    const top = g.top - stageRect.top;
+    const w = axis === 'row' ? g.width * share : g.width;
+    const h = axis === 'column' ? g.height * share : g.height;
+    const rect = {
+      left: left + (zone === 'right' ? g.width - w : 0) + 6,
+      top: top + (zone === 'bottom' ? g.height - h : 0) + 6,
+      width: w - 12,
+      height: h - 12,
+    };
+    const label = {
+      left: '⇤ 最左側（整欄）',
+      right: '最右側（整欄）⇥',
+      top: '⤒ 最上方（整列）',
+      bottom: '⤓ 最下方（整列）',
+    }[zone];
+    return { mode: 'edge', zone, rect, label };
+  }
+
   function computeDropTarget(clientX, clientY) {
     const stageRect = stageEl.getBoundingClientRect();
     const paneEls = [...gridEl.querySelectorAll('.dashboard-pane')];
@@ -3309,6 +3371,9 @@ export function createSessionDashboard({
         label: '放開以加入並排視窗',
       };
     }
+
+    const edge = stageEdgeTarget(clientX, clientY, stageRect);
+    if (edge) return edge;
 
     // Find hovered pane (or closest pane)
     let hoveredPane = paneEls.find((el) => {
@@ -3665,9 +3730,9 @@ export function createSessionDashboard({
     const mainRect = main.getBoundingClientRect();
     const isOverMain =
       (typeof e.clientX === 'number' && e.clientX >= mainRect.left) ||
-      (target && target.mode === 'pane');
+      (target && (target.mode === 'pane' || target.mode === 'edge'));
 
-    if ((commit || target?.mode === 'pane') && isOverMain) {
+    if ((commit || target?.mode === 'pane' || target?.mode === 'edge') && isOverMain) {
       addPane(drag.jid, target || computeDropTarget(e.clientX, e.clientY));
     }
   };

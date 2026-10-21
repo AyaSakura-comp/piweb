@@ -178,3 +178,62 @@ test('right edge of a full-height column still makes a new column beside it', as
   const saved = await savedGroups(page);
   expect(saved[0].weight).toBeGreaterThan(saved[1].weight);
 });
+
+test('the outer band of the dashboard drops beside everything', async ({ page }, info) => {
+  const errors = await setup(page);
+  const grid = (await page.locator('#dashboard-grid').boundingBox())!;
+  const header = page.locator(`.dashboard-pane[data-jid="${NOTES}"] .dashboard-pane-header`);
+  const h = (await header.boundingBox())!;
+
+  // Far right, over the stacked Hay layout / Browser column: a full-height
+  // column of its own instead of a split of either pane.
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grid.x + grid.width - 60, grid.y + grid.height / 2, { steps: 15 });
+  await page.mouse.move(grid.x + grid.width - 10, grid.y + grid.height / 2, { steps: 5 });
+  const preview = page.locator('#dashboard-drop-preview');
+  await expect(preview).toContainText('最右側');
+  await page.waitForTimeout(350); // the preview box glides to its new rect
+  await page.screenshot({ path: info.outputPath('10-edge-right-hover.png') });
+  const p = (await preview.boundingBox())!;
+  expect(p.height).toBeGreaterThan(grid.height - 20);
+  expect(p.x + p.width).toBeGreaterThan(grid.x + grid.width - 12);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: info.outputPath('11-edge-right-after.png') });
+  expect(shape(await savedGroups(page))).toEqual([[PIWEB], [HAY, BROWSER], [NOTES]]);
+  const notes = await box(page, NOTES);
+  expect(notes.height).toBeGreaterThan(grid.height - 4);
+  expect(notes.x + notes.width).toBeGreaterThan(grid.x + grid.width - 4);
+  expect(Math.abs(notes.width - grid.width / 3)).toBeLessThan(24);
+
+  // Bottom edge: a full-width row under the whole layout.
+  const h2 = (await page
+    .locator(`.dashboard-pane[data-jid="${PIWEB}"] .dashboard-pane-header`)
+    .boundingBox())!;
+  await page.mouse.move(h2.x + h2.width / 2, h2.y + h2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grid.x + grid.width / 2, grid.y + grid.height - 60, { steps: 15 });
+  await page.mouse.move(grid.x + grid.width / 2, grid.y + grid.height - 6, { steps: 5 });
+  await expect(preview).toContainText('最下方');
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: info.outputPath('12-edge-bottom-after.png') });
+  const piweb = await box(page, PIWEB);
+  expect(piweb.width).toBeGreaterThan(grid.width - 4);
+  expect(piweb.y + piweb.height).toBeGreaterThan(grid.y + grid.height - 4);
+  const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('piweb.dashboard')!));
+  expect(saved.direction).toBe('column');
+  expect(shape(saved.groups)).toEqual([[[HAY, BROWSER], NOTES], [PIWEB]]);
+
+  // A drag that starts on a header and stays there does not trip the top band.
+  const h3 = (await page
+    .locator(`.dashboard-pane[data-jid="${HAY}"] .dashboard-pane-header`)
+    .boundingBox())!;
+  await page.mouse.move(h3.x + 40, h3.y + h3.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(h3.x + 80, h3.y + h3.height / 2, { steps: 8 });
+  await expect(preview).not.toContainText('最上方');
+  await page.mouse.up();
+  expect(errors).toEqual([]);
+});

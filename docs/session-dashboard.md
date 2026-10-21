@@ -140,6 +140,13 @@ Users can drag any existing pane header or drag a session card from the sidebar 
   nested split across the other axis. (Previously left/right inserted a whole new column next to
   the target's column, so dropping on the right half of a pane stacked over another one just moved
   the dragged pane to its own column — desktop screen recording, 2026-10-21.)
+- **Stage edge band (wide layout only)**: the outermost `28px` on the left/right of the grid and
+  `16px` at the top/bottom (thinner so picking a pane up by its header does not land there) drop
+  *beside everything* instead of splitting the pane under the pointer: `⇤ 最左側（整欄）`,
+  `最右側（整欄）⇥`, `⤒ 最上方（整列）`, `⤓ 最下方（整列）`. Along the top-level axis the pane becomes
+  one more top-level cell with an average share (`1/(n+1)` of the stage); across it, the whole
+  existing layout and the new pane split the stage in half and `direction` flips
+  (`placeAtStageEdge()`). The preview strip shows that exact share.
 - **Layout model**: a split tree. `direction` is the top-level axis; `groups` are the top-level
   cells `{ weight, items }`; an item is a pane `{ jid, weight }` or a nested split
   `{ weight, items }`, and each level runs perpendicular to its parent. `normalizeGroups()`
