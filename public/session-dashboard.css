@@ -887,8 +887,10 @@
     min-height: min(30%, 96px);
   }
 
+  /* Only with something attached: an empty card keeps its shortcut chips in a
+     short pane (they went missing from every stacked pane, 2026-10-22). */
   @container pane (max-height: 460px) {
-    .pane-hot-keywords,
+    .dashboard-pane-dock:has(.pane-attachments .chip) .pane-hot-keywords,
     .pane-compression-hint {
       display: none;
     }

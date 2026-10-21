@@ -433,6 +433,8 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
     await page.waitForTimeout(600);
     const active = page.locator('.dashboard-pane.composer-active');
+    // Nothing attached: a short pane keeps its shortcut chips.
+    await expect(active.locator('.pane-hot-keywords')).toBeVisible();
     await active.locator('input[type="file"]').setInputFiles({
       name: 'shot.png',
       mimeType: 'image/png',
