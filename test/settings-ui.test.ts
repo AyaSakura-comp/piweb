@@ -41,7 +41,11 @@ describe('settings page', () => {
     expect(trashPage.indexOf('id="btn-trash-close"')).toBeLessThan(
       trashPage.indexOf('id="trash-title"'),
     );
-    expect(app).toContain("api('/api/subscriptions/openai-codex'");
+    expect(settings).toContain('id="subscription-anthropic"');
+    expect(settings).toContain('id="subscription-anthropic-link"');
+    expect(settings).toContain('id="subscription-anthropic-code"');
+    expect(app).toContain('api(`/api/subscriptions/${provider}`');
+    expect(app).toContain("api('/api/subscriptions/anthropic/code'");
     expect(app).toContain("$('btn-settings').addEventListener('click'");
     expect(app).toContain("setAttribute('aria-checked'");
     // Motion is driven by settings-motion.js so the exit can animate too.

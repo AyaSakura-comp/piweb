@@ -3252,6 +3252,47 @@ html.keyboard-shell .life-edge-hint {
   text-decoration: none;
 }
 
+.subscription-card + .subscription-card {
+  margin-top: 10px;
+}
+
+.subscription-logo-claude {
+  color: #d97757;
+}
+
+.subscription-code-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.subscription-code-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-input);
+  color: var(--text-bright);
+  /* 16px keeps iOS from zooming the page when the field is focused. */
+  font: 16px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.subscription-code-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.subscription-code-submit {
+  flex: none;
+  min-height: 44px;
+}
+
+.subscription-code-submit:disabled {
+  opacity: 0.6;
+}
+
 .subscription-progress {
   display: block;
   margin-top: 10px;

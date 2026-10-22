@@ -237,9 +237,25 @@ and public job status. The web container queues login/logout work in
 stores credentials only in Pi's host-side `auth.json`. OAuth access and refresh
 tokens are never written to the Piweb database.
 
-The Settings client polls `GET /api/subscriptions/openai-codex` while a login is
-active, starts one with `POST`, and disconnects with `DELETE`. Closing Settings
-stops polling without cancelling the host-side login job.
+**Claude** connects Pi's `anthropic` provider to a Claude Pro/Max subscription
+through Pi's own Anthropic OAuth flow (PKCE). Connect shows an **Open Claude**
+link (only `https://` links to claude.ai / claude.com / Anthropic hosts are
+accepted) and a field for what Claude hands back. Pi's redirect points at
+`http://localhost:53692/callback` on the host, so on a phone that last page fails
+to load: copy its full address (or the `code#state` it shows) and submit it.
+`POST /api/subscriptions/anthropic/code` stores the pasted value in
+`subscription_jobs.manual_code` only until the worker takes it (taken and
+cleared at once; finishing or cancelling a job clears it too), and the status
+API reports only `codeSubmitted`. A login on the host itself can also finish
+through Pi's callback server directly. A login waits 10 minutes for the code;
+a code the token exchange rejects ends the job with "Authorization code was not
+accepted; connect again for a new link".
+
+The Settings client polls `GET /api/subscriptions/{openai-codex|anthropic}`
+while a login is active, starts one with `POST`, disconnects with `DELETE`, and
+stops an in-flight login with `POST …/cancel` (the worker watches the job row
+and aborts Pi's flow). Closing Settings stops polling without cancelling the
+host-side login job.
 
 ## Authentication
 

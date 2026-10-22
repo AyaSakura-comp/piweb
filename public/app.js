@@ -700,48 +700,93 @@ function stopSubscriptionPolling() {
   subscriptionPollTimer = undefined;
 }
 
-function renderSubscriptionStatus(status) {
-  const job = status.job;
-  const active = job && ['pending', 'processing', 'waiting'].includes(job.status);
-  const connected = Boolean(status.connected);
-  const action = $('subscription-action');
-  const device = $('subscription-device');
-  const label = $('subscription-status');
+const SUBSCRIPTION_ACTIVE = ['pending', 'processing', 'waiting'];
 
-  action.disabled = Boolean(active);
-  action.textContent = connected ? 'Disconnect' : active ? 'Connecting…' : 'Connect';
-  label.textContent = connected
-    ? 'Connected to ChatGPT Plus / Pro'
-    : job?.status === 'failed'
+// One card per Pi provider subscription. OpenAI Codex signs in with a device
+// code; Claude (pi's `anthropic` provider) with a browser link whose final
+// address — or the code it shows — is pasted back here and relayed to Pi.
+const subscriptionCards = {
+  'openai-codex': {
+    status: 'subscription-status',
+    action: 'subscription-action',
+    panel: 'subscription-device',
+    connectedLabel: 'Connected to ChatGPT Plus / Pro',
+    renderPanel(job) {
+      if (!job.userCode || !job.verificationUri) return false;
+      $('subscription-device-code').textContent = job.userCode;
+      $('subscription-verification-link').href = job.verificationUri;
+      $('subscription-progress').textContent = job.message || 'Waiting for authorization…';
+      return true;
+    },
+  },
+  anthropic: {
+    status: 'subscription-anthropic-status',
+    action: 'subscription-anthropic-action',
+    panel: 'subscription-anthropic-auth',
+    connectedLabel: 'Connected to Claude Pro / Max',
+    jobId: '',
+    renderPanel(job) {
+      if (!job.authUrl) return false;
+      const input = $('subscription-anthropic-code');
+      // A new sign-in gets a fresh field; polling never clears what is typed.
+      if (this.jobId !== job.id) {
+        this.jobId = job.id;
+        input.value = '';
+      }
+      $('subscription-anthropic-link').href = job.authUrl;
+      input.disabled = job.codeSubmitted;
+      $('subscription-anthropic-submit').disabled = job.codeSubmitted;
+      $('subscription-anthropic-progress').textContent = job.codeSubmitted
+        ? 'Checking code…'
+        : 'Waiting for authorization code…';
+      return true;
+    },
+  },
+};
+const subscriptionState = {};
+
+function renderSubscriptionStatus(provider, status) {
+  const card = subscriptionCards[provider];
+  const job = status.job;
+  const active = Boolean(job && SUBSCRIPTION_ACTIVE.includes(job.status));
+  const connected = Boolean(status.connected);
+  subscriptionState[provider] = { connected, active };
+  const action = $(card.action);
+  const panel = $(card.panel);
+
+  action.disabled = false;
+  action.textContent = connected ? 'Disconnect' : active ? 'Cancel' : 'Connect';
+  $(card.status).textContent = connected
+    ? card.connectedLabel
+    : job?.status === 'failed' && job.error !== 'Cancelled'
       ? job.error || 'Sign-in failed'
       : active
         ? 'Waiting for sign-in'
         : 'Not connected';
 
-  const hasCode = Boolean(active && job.userCode && job.verificationUri);
-  const appearing = hasCode && device.hidden;
-  device.hidden = !hasCode;
-  // The code appears below Connect, under the fold on a phone; bring it up.
-  if (appearing) device.scrollIntoView({ block: 'nearest' });
-  if (hasCode) {
-    $('subscription-device-code').textContent = job.userCode;
-    $('subscription-verification-link').href = job.verificationUri;
-    $('subscription-progress').textContent = job.message || 'Waiting for authorization…';
-  }
-  return Boolean(active);
+  const shown = active && card.renderPanel(job);
+  const appearing = shown && panel.hidden;
+  panel.hidden = !shown;
+  // The code or link appears below Connect, under the fold on a phone; bring it up.
+  if (appearing) panel.scrollIntoView({ block: 'nearest' });
+  return active;
 }
 
 async function refreshSubscriptionStatus({ keepPolling = true } = {}) {
   stopSubscriptionPolling();
-  try {
-    const status = await api('/api/subscriptions/openai-codex');
-    const active = renderSubscriptionStatus(status);
-    if (active && keepPolling && $('settings-dialog').open) {
-      subscriptionPollTimer = setTimeout(() => refreshSubscriptionStatus(), 2000);
-    }
-  } catch (error) {
-    $('subscription-status').textContent = error.message;
-    $('subscription-action').disabled = false;
+  const results = await Promise.all(
+    Object.keys(subscriptionCards).map(async (provider) => {
+      try {
+        return renderSubscriptionStatus(provider, await api(`/api/subscriptions/${provider}`));
+      } catch (error) {
+        $(subscriptionCards[provider].status).textContent = error.message;
+        $(subscriptionCards[provider].action).disabled = false;
+        return false;
+      }
+    }),
+  );
+  if (results.some(Boolean) && keepPolling && $('settings-dialog').open) {
+    subscriptionPollTimer = setTimeout(() => refreshSubscriptionStatus(), 2000);
   }
 }
 
@@ -771,15 +816,43 @@ $('btn-settings').addEventListener('click', () => void openSettings());
 $('btn-settings-close').addEventListener('click', () => closeSettings({ animate: true }));
 $('settings-dialog').addEventListener('close', stopSubscriptionPolling);
 
-$('subscription-action').addEventListener('click', async () => {
-  const disconnect = $('subscription-action').textContent === 'Disconnect';
-  $('subscription-action').disabled = true;
+for (const [provider, card] of Object.entries(subscriptionCards)) {
+  $(card.action).addEventListener('click', async () => {
+    const { connected, active } = subscriptionState[provider] ?? {};
+    $(card.action).disabled = true;
+    try {
+      if (active) {
+        await api(`/api/subscriptions/${provider}/cancel`, { method: 'POST' });
+      } else {
+        await api(`/api/subscriptions/${provider}`, { method: connected ? 'DELETE' : 'POST' });
+      }
+      await refreshSubscriptionStatus();
+    } catch (error) {
+      $(card.status).textContent = error.message;
+      $(card.action).disabled = false;
+    }
+  });
+}
+
+$('subscription-anthropic-code-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = $('subscription-anthropic-code');
+  const code = input.value.trim();
+  if (!code) {
+    input.focus();
+    return;
+  }
+  $('subscription-anthropic-submit').disabled = true;
   try {
-    await api('/api/subscriptions/openai-codex', { method: disconnect ? 'DELETE' : 'POST' });
+    await api('/api/subscriptions/anthropic/code', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    input.blur();
     await refreshSubscriptionStatus();
   } catch (error) {
-    $('subscription-status').textContent = error.message;
-    $('subscription-action').disabled = false;
+    $('subscription-anthropic-progress').textContent = error.message;
+    $('subscription-anthropic-submit').disabled = false;
   }
 });
 

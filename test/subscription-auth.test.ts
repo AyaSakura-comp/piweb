@@ -105,9 +105,12 @@ describe('Pi subscription jobs', () => {
       .spyOn(modelCatalog, 'getModelRuntime')
       .mockRejectedValueOnce(new Error('runtime init leaked refresh-token-VERY-SECRET'))
       .mockResolvedValue(runtime as any);
-    const { startSubscriptionLoop, stopSubscriptionLoop } = await import('../src/worker/subscriptions.js');
+    const { startSubscriptionLoop, stopSubscriptionLoop } =
+      await import('../src/worker/subscriptions.js');
 
-    await expect(startSubscriptionLoop()).rejects.toThrow('Subscription manager initialization failed');
+    await expect(startSubscriptionLoop()).rejects.toThrow(
+      'Subscription manager initialization failed',
+    );
     await expect(startSubscriptionLoop()).resolves.toBeUndefined();
     expect(getRuntime).toHaveBeenCalledTimes(2);
     await stopSubscriptionLoop();
@@ -136,7 +139,12 @@ describe('Pi subscription jobs', () => {
           verificationUri: 'https://example.test/device',
           expiresInSeconds: 600,
         });
-        return { type: 'oauth', access: 'secret', refresh: 'secret', expires: Date.now() + 600_000 };
+        return {
+          type: 'oauth',
+          access: 'secret',
+          refresh: 'secret',
+          expires: Date.now() + 600_000,
+        };
       }),
       logout: vi.fn(),
     };
@@ -153,5 +161,117 @@ describe('Pi subscription jobs', () => {
       userCode: 'WXYZ-1234',
       verificationUri: 'https://example.test/device',
     });
+  });
+
+  it('drives the Claude browser-link flow with a pasted code and never keeps the code', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+    const id = db.enqueueSubscriptionJob('anthropic', 'login');
+    const job = db.claimPendingSubscriptionJob()!;
+    const authUrl = 'https://claude.ai/oauth/authorize?code=true&state=abc';
+    let received = '';
+
+    const runtime = {
+      login: vi.fn(async (_provider: string, _type: string, interaction: any) => {
+        interaction.notify({ type: 'auth_url', url: authUrl });
+        const pending = interaction.prompt({ type: 'manual_code', message: 'Paste code' });
+        // The web tier relays the pasted value; the worker takes it once.
+        await vi.waitFor(() =>
+          expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'waiting', authUrl }),
+        );
+        expect(db.submitSubscriptionJobCode('anthropic', 'the-code#abc')).toBe(true);
+        expect(db.getSubscriptionJob(id)).toMatchObject({ codeSubmitted: true });
+        received = await pending;
+        expect(db.getSubscriptionJob(id)).toMatchObject({ codeSubmitted: false });
+        return {
+          type: 'oauth',
+          access: 'secret',
+          refresh: 'secret',
+          expires: Date.now() + 600_000,
+        };
+      }),
+      logout: vi.fn(),
+    };
+
+    await runSubscriptionJob(job, runtime as any, new AbortController().signal);
+
+    expect(received).toBe('the-code#abc');
+    expect(runtime.login).toHaveBeenCalledWith('anthropic', 'oauth', expect.anything());
+    expect(db.getSubscriptionJob(id)).toMatchObject({
+      status: 'succeeded',
+      authUrl: '',
+      codeSubmitted: false,
+    });
+    expect(db.getMeta('subscription.anthropic')).toContain('"connected":true');
+  });
+
+  it('reports a rejected Claude code and refuses links to other hosts', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+
+    const id = db.enqueueSubscriptionJob('anthropic', 'login');
+    const job = db.claimPendingSubscriptionJob()!;
+    await runSubscriptionJob(
+      job,
+      {
+        login: vi.fn(async (_p: string, _t: string, interaction: any) => {
+          interaction.notify({ type: 'auth_url', url: 'https://claude.ai/oauth/authorize' });
+          const pending = interaction.prompt({ type: 'manual_code', message: 'Paste code' });
+          db.submitSubscriptionJobCode('anthropic', 'wrong');
+          await pending;
+          throw new Error('Token exchange request failed. body=secret');
+        }),
+        logout: vi.fn(),
+      } as any,
+      new AbortController().signal,
+    );
+    expect(db.getSubscriptionJob(id)).toMatchObject({
+      status: 'failed',
+      error: 'Authorization code was not accepted; connect again for a new link',
+    });
+
+    const id2 = db.enqueueSubscriptionJob('anthropic', 'login');
+    await runSubscriptionJob(
+      db.claimPendingSubscriptionJob()!,
+      {
+        login: vi.fn(async (_p: string, _t: string, interaction: any) => {
+          interaction.notify({ type: 'auth_url', url: 'https://evil.example/oauth' });
+        }),
+        logout: vi.fn(),
+      } as any,
+      new AbortController().signal,
+    );
+    expect(db.getSubscriptionJob(id2)).toMatchObject({
+      status: 'failed',
+      error: 'Provider returned an unsafe verification URL',
+      authUrl: '',
+    });
+  });
+
+  it('a cancelled Claude sign-in stops waiting for the code', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+    const id = db.enqueueSubscriptionJob('anthropic', 'login');
+    const job = db.claimPendingSubscriptionJob()!;
+    const controller = new AbortController();
+    const run = runSubscriptionJob(
+      job,
+      {
+        login: vi.fn(async (_p: string, _t: string, interaction: any) => {
+          interaction.notify({ type: 'auth_url', url: 'https://claude.ai/oauth/authorize' });
+          return interaction.prompt({ type: 'manual_code', message: 'Paste code' });
+        }),
+        logout: vi.fn(),
+      } as any,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(db.getSubscriptionJob(id)?.status).toBe('waiting'));
+    expect(db.cancelSubscriptionJob('anthropic')).toBe(true);
+    controller.abort(); // what the loop's cancel watcher does
+    await run;
+    expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'failed', error: 'Cancelled' });
+    expect(db.submitSubscriptionJobCode('anthropic', 'late')).toBe(false);
+    // A new sign-in can start right away.
+    expect(() => db.enqueueSubscriptionJob('anthropic', 'login')).not.toThrow();
   });
 });

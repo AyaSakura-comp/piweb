@@ -26,7 +26,9 @@ async function unusedPort(): Promise<number> {
 }
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((done) => server.close(() => done()))));
+  await Promise.all(
+    servers.splice(0).map((server) => new Promise<void>((done) => server.close(() => done()))),
+  );
   (await import('../src/web/push.js').catch(() => null))?.stopPush();
   (await import('../src/db.js').catch(() => null))?.closeDb();
   vi.resetModules();
@@ -70,13 +72,56 @@ describe('subscription API', () => {
     const queued = await request('POST');
     expect(queued.status).toBe(202);
     const queuedBody = await queued.json();
-    expect(queuedBody).toMatchObject({ job: { provider: 'openai-codex', action: 'login', status: 'pending' } });
+    expect(queuedBody).toMatchObject({
+      job: { provider: 'openai-codex', action: 'login', status: 'pending' },
+    });
 
     const status = await request();
     expect(status.status).toBe(200);
     const body = await status.json();
-    expect(body).toMatchObject({ provider: 'openai-codex', connected: false, job: { id: queuedBody.job.id } });
+    expect(body).toMatchObject({
+      provider: 'openai-codex',
+      connected: false,
+      job: { id: queuedBody.job.id },
+    });
     expect(JSON.stringify(body)).not.toContain('access');
     expect(JSON.stringify(body)).not.toContain('refresh');
+
+    // Claude: the pasted code is relayed to the waiting login but never echoed.
+    const claude = (suffix = '', method = 'GET', payload?: unknown) =>
+      fetch(`${origin}/api/subscriptions/anthropic${suffix}`, {
+        method,
+        headers: { cookie, 'content-type': 'application/json' },
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+      });
+    expect((await claude('/code', 'POST', { code: 'early' })).status).toBe(409);
+    const claudeLogin = await (await claude('', 'POST')).json();
+    const claimed = db.claimPendingSubscriptionJob();
+    expect(claimed?.id).not.toBe(claudeLogin.job.id); // OpenAI's job is first in line
+    const claudeJob = db.claimPendingSubscriptionJob()!;
+    expect(claudeJob.id).toBe(claudeLogin.job.id);
+    db.updateSubscriptionJobAuthUrl(
+      claudeJob.id,
+      'https://claude.ai/oauth/authorize',
+      new Date(Date.now() + 60_000),
+    );
+    expect((await claude('/code', 'POST', { code: '  ' })).status).toBe(400);
+    const submitted = await claude('/code', 'POST', { code: 'SECRET-CODE#state' });
+    expect(submitted.status).toBe(202);
+    const claudeStatus = await (await claude()).json();
+    expect(claudeStatus).toMatchObject({
+      provider: 'anthropic',
+      connected: false,
+      job: { status: 'waiting', authUrl: 'https://claude.ai/oauth/authorize', codeSubmitted: true },
+    });
+    expect(JSON.stringify(claudeStatus)).not.toContain('SECRET-CODE');
+    expect(db.takeSubscriptionJobCode(claudeJob.id)).toBe('SECRET-CODE#state');
+
+    const cancelled = await claude('/cancel', 'POST');
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toMatchObject({ job: { status: 'failed', error: 'Cancelled' } });
+    expect(
+      (await fetch(`${origin}/api/subscriptions/unknown`, { headers: { cookie } })).status,
+    ).toBe(404);
   });
 });

@@ -653,7 +653,26 @@
                 <span class="subscription-progress" id="subscription-progress" aria-live="polite">Waiting for authorization…</span>
               </div>
             </div>
-            <p class="settings-footnote">Credentials are stored by Pi on the host. Piweb only displays the temporary device code.</p>
+            <div class="subscription-card" id="subscription-anthropic">
+              <div class="subscription-summary">
+                <div class="subscription-logo subscription-logo-claude" aria-hidden="true">✳</div>
+                <div>
+                  <strong>Claude</strong>
+                  <span id="subscription-anthropic-status">Checking…</span>
+                </div>
+                <button class="subscription-action" id="subscription-anthropic-action" type="button">Connect</button>
+              </div>
+              <div class="subscription-device" id="subscription-anthropic-auth" hidden>
+                <p>Open Claude and approve. The page it lands on won't load — copy its full address (or the code it shows) and paste it below.</p>
+                <a class="btn-primary subscription-open" id="subscription-anthropic-link" target="_blank" rel="noopener noreferrer">Open Claude</a>
+                <form class="subscription-code-form" id="subscription-anthropic-code-form">
+                  <input class="subscription-code-input" id="subscription-anthropic-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code or address" aria-label="Claude authorization code">
+                  <button class="btn-primary subscription-code-submit" id="subscription-anthropic-submit" type="submit">Submit</button>
+                </form>
+                <span class="subscription-progress" id="subscription-anthropic-progress" aria-live="polite">Waiting for authorization code…</span>
+              </div>
+            </div>
+            <p class="settings-footnote">Credentials are stored by Pi on the host. Piweb only displays the temporary device code or sign-in link, and passes the pasted code straight to Pi.</p>
           </section>
 
           <section class="settings-section" aria-labelledby="settings-account-title">

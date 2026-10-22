@@ -35,6 +35,7 @@ import {
   commitWebMessageOperation,
   deletePushSubscription,
   enqueueControl,
+  cancelSubscriptionJob,
   enqueueSubscriptionJob,
   getChannel,
   getControl,
@@ -42,6 +43,8 @@ import {
   getMeta,
   setMeta,
   getLatestSubscriptionJob,
+  isSubscriptionProvider,
+  submitSubscriptionJobCode,
   getOrCreateLifeChannel,
   getRecentWebEvents,
   getSessionTitleJob,
@@ -687,10 +690,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // ── Pi provider subscriptions ──
   // The web tier never imports pi or sees auth.json. It only queues a host-side
-  // operation and returns the public device code emitted by pi's OAuth flow.
-  if (path === '/api/subscriptions/openai-codex') {
+  // operation and returns the public device code or authorization link emitted
+  // by pi's OAuth flow, and relays a pasted authorization code back to it.
+  const subscriptionRoute = path.match(/^\/api\/subscriptions\/([a-z-]+)(\/code|\/cancel)?$/);
+  const subscriptionProvider =
+    subscriptionRoute && isSubscriptionProvider(subscriptionRoute[1]) ? subscriptionRoute[1] : null;
+  if (subscriptionProvider && subscriptionRoute?.[2] === '/cancel' && method === 'POST') {
+    cancelSubscriptionJob(subscriptionProvider);
+    sendJson(res, 200, { job: getLatestSubscriptionJob(subscriptionProvider) ?? null });
+    return;
+  }
+  if (subscriptionProvider && subscriptionRoute?.[2] === '/code' && method === 'POST') {
+    const body = await readJson<{ code?: unknown }>(req);
+    const code = typeof body?.code === 'string' ? body.code.trim() : '';
+    if (!code || code.length > 4096) {
+      sendJson(res, 400, { error: 'Paste the authorization code' });
+      return;
+    }
+    if (!submitSubscriptionJobCode(subscriptionProvider, code)) {
+      sendJson(res, 409, { error: 'No sign-in is waiting for a code; connect again' });
+      return;
+    }
+    sendJson(res, 202, { job: getLatestSubscriptionJob(subscriptionProvider)! });
+    return;
+  }
+  if (subscriptionProvider && !subscriptionRoute?.[2]) {
     if (method === 'GET') {
-      const raw = getMeta('subscription.openai-codex');
+      const raw = getMeta(`subscription.${subscriptionProvider}`);
       let connected = false;
       try {
         connected = Boolean(raw && JSON.parse(raw).connected);
@@ -698,16 +724,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // A malformed/old status snapshot is safely treated as disconnected.
       }
       sendJson(res, 200, {
-        provider: 'openai-codex',
+        provider: subscriptionProvider,
         connected,
-        job: getLatestSubscriptionJob('openai-codex') ?? null,
+        job: getLatestSubscriptionJob(subscriptionProvider) ?? null,
       });
       return;
     }
     if (method === 'POST' || method === 'DELETE') {
       try {
-        enqueueSubscriptionJob('openai-codex', method === 'POST' ? 'login' : 'logout');
-        sendJson(res, 202, { job: getLatestSubscriptionJob('openai-codex')! });
+        enqueueSubscriptionJob(subscriptionProvider, method === 'POST' ? 'login' : 'logout');
+        sendJson(res, 202, { job: getLatestSubscriptionJob(subscriptionProvider)! });
       } catch (error: any) {
         if (error?.message === 'A subscription operation is already active') {
           sendJson(res, 409, { error: error.message });

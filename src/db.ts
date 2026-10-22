@@ -161,8 +161,10 @@ export function initDb(): void {
     );
 
     -- Provider subscription login/logout is executed by the host worker because
-    -- only it has pi's credential store. Device codes are intentionally the only
-    -- OAuth values mirrored here; access and refresh tokens stay in auth.json.
+    -- only it has pi's credential store. Device codes and authorization links are
+    -- the only OAuth values mirrored here; access and refresh tokens stay in
+    -- auth.json. A pasted authorization code passes through manual_code once:
+    -- the worker takes and clears it, and finishing a job clears it too.
     create table if not exists subscription_jobs (
       id               text primary key,
       provider         text not null,
@@ -322,6 +324,8 @@ export function initDb(): void {
   );
   ensureTableColumn('channels', 'storage_token', "text not null default ''");
   ensureTableColumn('channels', 'ownership_epoch', 'integer not null default 0');
+  ensureTableColumn('subscription_jobs', 'auth_url', "text not null default ''");
+  ensureTableColumn('subscription_jobs', 'manual_code', "text not null default ''");
   const channelsWithoutStorageToken = db
     .prepare("select jid from channels where storage_token = ''")
     .all() as Array<{ jid: string }>;
@@ -2885,6 +2889,13 @@ export function getMeta(key: string): string | undefined {
 
 // ── piweb: provider subscription jobs ──
 
+// OpenAI Codex signs in with a device code; Anthropic (Claude Pro/Max) with a
+// browser link whose final redirect URL or code the user pastes back.
+export const SUBSCRIPTION_PROVIDERS = ['openai-codex', 'anthropic'] as const;
+export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
+export const isSubscriptionProvider = (value: string): value is SubscriptionProvider =>
+  (SUBSCRIPTION_PROVIDERS as readonly string[]).includes(value);
+
 export type SubscriptionJobAction = 'login' | 'logout';
 export type SubscriptionJobStatus = 'pending' | 'processing' | 'waiting' | 'succeeded' | 'failed';
 
@@ -2895,6 +2906,10 @@ export interface SubscriptionJob {
   status: SubscriptionJobStatus;
   userCode: string;
   verificationUri: string;
+  /** Browser authorization link for flows that end in a pasted code (Claude). */
+  authUrl: string;
+  /** Whether a pasted code is queued for the worker; the code itself never leaves the DB. */
+  codeSubmitted: boolean;
   message: string;
   error: string;
   expiresAt: string | null;
@@ -2909,6 +2924,8 @@ interface SubscriptionJobRow {
   status: SubscriptionJobStatus;
   user_code: string;
   verification_uri: string;
+  auth_url: string;
+  manual_code: string;
   message: string;
   error: string;
   expires_at: string | null;
@@ -2925,6 +2942,8 @@ function subscriptionJobFromRow(row: SubscriptionJobRow | undefined): Subscripti
     status: row.status,
     userCode: row.user_code,
     verificationUri: row.verification_uri,
+    authUrl: row.auth_url,
+    codeSubmitted: Boolean(row.manual_code),
     message: row.message,
     error: row.error,
     expiresAt: row.expires_at,
@@ -3000,6 +3019,62 @@ export function updateSubscriptionJobDeviceCode(
   ).run(device.userCode, device.verificationUri, expiresAt, id);
 }
 
+/** A browser-link flow is ready: show the link and wait for the pasted code. */
+export function updateSubscriptionJobAuthUrl(id: string, authUrl: string, expiresAt: Date): void {
+  db.prepare(
+    `update subscription_jobs
+        set status = 'waiting', auth_url = ?, expires_at = ?,
+            message = 'Waiting for authorization code', updated_at = datetime('now')
+      where id = ? and status in ('processing', 'waiting')`,
+  ).run(authUrl, expiresAt.toISOString(), id);
+}
+
+/**
+ * Hand a pasted authorization code to the provider's waiting login. Returns
+ * false when no login is waiting for one.
+ */
+export function submitSubscriptionJobCode(provider: string, code: string): boolean {
+  return (
+    db
+      .prepare(
+        `update subscription_jobs
+            set manual_code = ?, message = 'Checking authorization code', updated_at = datetime('now')
+          where provider = ? and status = 'waiting' and auth_url != ''`,
+      )
+      .run(code, provider).changes > 0
+  );
+}
+
+/** Take (and clear) the pasted code for a job, if one has been submitted. */
+export function takeSubscriptionJobCode(id: string): string {
+  return db
+    .transaction(() => {
+      const row = db
+        .prepare(
+          "select manual_code from subscription_jobs where id = ? and status in ('processing', 'waiting')",
+        )
+        .get(id) as { manual_code: string } | undefined;
+      if (!row?.manual_code) return '';
+      db.prepare("update subscription_jobs set manual_code = '' where id = ?").run(id);
+      return row.manual_code;
+    })
+    .immediate();
+}
+
+/** Stop the provider's in-flight operation; the worker notices and aborts it. */
+export function cancelSubscriptionJob(provider: string): boolean {
+  return (
+    db
+      .prepare(
+        `update subscription_jobs
+            set status = 'failed', error = 'Cancelled', manual_code = '', auth_url = '',
+                updated_at = datetime('now'), done_at = datetime('now')
+          where provider = ? and status in ('pending', 'processing', 'waiting')`,
+      )
+      .run(provider).changes > 0
+  );
+}
+
 export function updateSubscriptionJobMessage(id: string, message: string): void {
   db.prepare(
     "update subscription_jobs set message = ?, updated_at = datetime('now') where id = ? and status in ('processing', 'waiting')",
@@ -3009,7 +3084,8 @@ export function updateSubscriptionJobMessage(id: string, message: string): void 
 export function finishSubscriptionJob(id: string, ok: boolean, detail: string): void {
   db.prepare(
     `update subscription_jobs
-        set status = ?, message = ?, error = ?, updated_at = datetime('now'), done_at = datetime('now')
+        set status = ?, message = ?, error = ?, manual_code = '', auth_url = '',
+            updated_at = datetime('now'), done_at = datetime('now')
       where id = ? and status in ('pending', 'processing', 'waiting')`,
   ).run(ok ? 'succeeded' : 'failed', ok ? detail : '', ok ? '' : detail, id);
 }
@@ -3019,7 +3095,7 @@ export function recoverStuckSubscriptionJobs(): number {
     .prepare(
       `update subscription_jobs
         set status = 'failed', error = 'Worker restarted during subscription operation',
-            updated_at = datetime('now'), done_at = datetime('now')
+            manual_code = '', auth_url = '', updated_at = datetime('now'), done_at = datetime('now')
       where status in ('processing', 'waiting')`,
     )
     .run().changes;
