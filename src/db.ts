@@ -2891,7 +2891,9 @@ export function getMeta(key: string): string | undefined {
 
 // OpenAI Codex signs in with a device code; Anthropic (Claude Pro/Max) with a
 // browser link whose final redirect URL or code the user pastes back.
-export const SUBSCRIPTION_PROVIDERS = ['openai-codex', 'anthropic'] as const;
+// `agy` is the Antigravity CLI, signed in by Piweb itself (src/agy-login.ts);
+// the others are pi providers.
+export const SUBSCRIPTION_PROVIDERS = ['openai-codex', 'anthropic', 'agy'] as const;
 export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
 export const isSubscriptionProvider = (value: string): value is SubscriptionProvider =>
   (SUBSCRIPTION_PROVIDERS as readonly string[]).includes(value);

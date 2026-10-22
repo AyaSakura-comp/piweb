@@ -274,4 +274,44 @@ describe('Pi subscription jobs', () => {
     // A new sign-in can start right away.
     expect(() => db.enqueueSubscriptionJob('anthropic', 'login')).not.toThrow();
   });
+
+  it('signs the agy CLI in with the code Google shows, through the same job flow', async () => {
+    const tokenPath = resolve(tempDir, 'agy', 'antigravity-oauth-token');
+    vi.stubEnv('AGY_TOKEN_PATH', tokenPath);
+    vi.stubEnv('AGY_OAUTH_CLIENT_SECRET', 'GOCSPX-test');
+    const exchange = vi.fn(async (_url: string, init: any) => {
+      const body = new URLSearchParams(init.body);
+      expect(body.get('code')).toBe('4/0AVG-code');
+      return new Response(
+        JSON.stringify({ access_token: 'ya29', refresh_token: '1//r', expires_in: 3599 }),
+      );
+    });
+    vi.stubGlobal('fetch', exchange);
+    try {
+      const db = await import('../src/db.js');
+      const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+      const { agySubscriptionRuntime } = await import('../src/agy-login.js');
+      const id = db.enqueueSubscriptionJob('agy', 'login');
+      const run = runSubscriptionJob(
+        db.claimPendingSubscriptionJob()!,
+        agySubscriptionRuntime as any,
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(db.getSubscriptionJob(id)?.status).toBe('waiting'));
+      const authUrl = new URL(db.getSubscriptionJob(id)!.authUrl);
+      expect(authUrl.hostname).toBe('accounts.google.com');
+      // A pasted callback address works as well as the bare code.
+      const state = authUrl.searchParams.get('state');
+      const callback = `https://antigravity.google/oauth-callback?code=4%2F0AVG-code&state=${state}`;
+      expect(db.submitSubscriptionJobCode('agy', callback)).toBe(true);
+      await run;
+      expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'succeeded', authUrl: '' });
+      expect(db.getMeta('subscription.agy')).toContain('"connected":true');
+      expect(await agySubscriptionRuntime.checkAuth()).toBe(true);
+      expect(exchange).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
 });

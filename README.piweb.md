@@ -251,7 +251,20 @@ through Pi's callback server directly. A login waits 10 minutes for the code;
 a code the token exchange rejects ends the job with "Authorization code was not
 accepted; connect again for a new link".
 
-The Settings client polls `GET /api/subscriptions/{openai-codex|anthropic}`
+**Antigravity (agy)** signs the host's `agy` CLI in to Google. agy has no login
+subcommand, so the worker (`src/agy-login.ts`) runs the same Google OAuth flow
+agy starts on its own — agy's installed-app client, scopes and
+`https://antigravity.google/oauth-callback` redirect, with PKCE. **Open Google**
+leads to that callback page, which shows a code with a copy button; paste it
+(or the callback address) and the worker exchanges it, writing
+`~/.gemini/antigravity-cli/antigravity-oauth-token` in agy's own format (the
+file `/agy-usage` and the agy bridge already refresh). The client secret is read
+from the agy binary, never stored in the repo; `AGY_OAUTH_CLIENT_ID` /
+`AGY_OAUTH_CLIENT_SECRET` override it. Disconnect deletes that file. Only
+`https://accounts.google.com` links are accepted, and the pasted code follows
+the same take-once rules as Claude's.
+
+The Settings client polls `GET /api/subscriptions/{openai-codex|anthropic|agy}`
 while a login is active, starts one with `POST`, disconnects with `DELETE`, and
 stops an in-flight login with `POST …/cancel` (the worker watches the job row
 and aborts Pi's flow). Closing Settings stops polling without cancelling the

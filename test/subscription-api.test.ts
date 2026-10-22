@@ -120,6 +120,10 @@ describe('subscription API', () => {
     const cancelled = await claude('/cancel', 'POST');
     expect(cancelled.status).toBe(200);
     expect(await cancelled.json()).toMatchObject({ job: { status: 'failed', error: 'Cancelled' } });
+    // Antigravity (agy) is offered next to the pi providers.
+    const agy = await fetch(`${origin}/api/subscriptions/agy`, { headers: { cookie } });
+    expect(agy.status).toBe(200);
+    expect(await agy.json()).toMatchObject({ provider: 'agy', connected: false, job: null });
     expect(
       (await fetch(`${origin}/api/subscriptions/unknown`, { headers: { cookie } })).status,
     ).toBe(404);

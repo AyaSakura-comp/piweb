@@ -14,9 +14,9 @@
  * "simplify" the header away.
  */
 import { constants } from 'node:fs';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
 
 const QUOTA_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
@@ -60,11 +60,12 @@ export interface AgyAuth {
     refresh_token?: string;
     token_type?: string;
     expiry?: string;
+    expires_in?: number;
   };
   [key: string]: unknown;
 }
 
-type OAuthClient = readonly [clientId: string, clientSecret: string];
+export type OAuthClient = readonly [clientId: string, clientSecret: string];
 
 interface AgyTokenDependencies {
   fetchImpl: typeof fetch;
@@ -74,17 +75,21 @@ interface AgyTokenDependencies {
   oauthClientCandidates: () => Promise<OAuthClient[]>;
 }
 
-async function writeAgyAuth(auth: AgyAuth): Promise<void> {
+/** Replace agy's credential file in one step, so agy never reads half of it. */
+export async function writeAgyAuth(auth: AgyAuth): Promise<void> {
   const path = agyTokenPath();
-  await writeFile(path, `${JSON.stringify(auth, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${path}.${process.pid}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(temporary, `${JSON.stringify(auth, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, path);
 }
 
-async function readAgyAuth(): Promise<AgyAuth> {
+export async function readAgyAuth(): Promise<AgyAuth> {
   let raw: string;
   try {
     raw = await readFile(agyTokenPath(), 'utf8');
   } catch {
-    throw new AgyUsageError('找不到 agy 的登入憑證，請先在終端機跑一次 agy 登入。');
+    throw new AgyUsageError('找不到 agy 的登入憑證，請到 Piweb Settings 連接 Antigravity（或在終端機跑一次 agy 登入）。');
   }
 
   let parsed: any;
@@ -133,7 +138,7 @@ async function resolveAgyBinaryPath(): Promise<string> {
   throw new AgyUsageError(`在 PATH 中找不到 agy 執行檔：${config.agyBin}`);
 }
 
-async function findAgyOAuthClientCandidates(): Promise<OAuthClient[]> {
+export async function findAgyOAuthClientCandidates(): Promise<OAuthClient[]> {
   const envId = process.env.AGY_OAUTH_CLIENT_ID;
   const envSecret = process.env.AGY_OAUTH_CLIENT_SECRET;
   if (envId && envSecret) return [[envId, envSecret]];

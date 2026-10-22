@@ -1,4 +1,4 @@
-import type { AuthEvent, AuthInteraction, AuthPrompt, Credential } from '@earendil-works/pi-ai';
+import type { AuthEvent, AuthInteraction, AuthPrompt } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import {
   claimPendingSubscriptionJob,
@@ -15,6 +15,8 @@ import {
   updateSubscriptionJobMessage,
 } from '../db.js';
 import { getModelRuntime } from '../agent/model-catalog.js';
+import { AGY_PROVIDER, listAgyModels } from '../agent/agy.js';
+import { agySubscriptionRuntime } from '../agy-login.js';
 import { logger } from '../logger.js';
 
 const SUBSCRIPTION_POLL_MS = 500;
@@ -23,6 +25,7 @@ const MANUAL_CODE_TIMEOUT_MS = 10 * 60_000;
 // Hosts a provider's authorization link may point at.
 const AUTH_URL_HOSTS: Record<string, readonly string[]> = {
   anthropic: ['claude.ai', 'claude.com', 'console.anthropic.com', 'platform.claude.com'],
+  agy: ['accounts.google.com'],
 };
 const statusMetaKey = (provider: string) => `subscription.${provider}`;
 const PUBLIC_STATUS = {
@@ -53,7 +56,7 @@ class SafeSubscriptionError extends Error {
 }
 
 interface SubscriptionRuntime {
-  login(providerId: string, type: 'oauth', interaction: AuthInteraction): Promise<Credential>;
+  login(providerId: string, type: 'oauth', interaction: AuthInteraction): Promise<unknown>;
   logout(providerId: string, options?: { signal?: AbortSignal }): Promise<void>;
   checkAuth?(providerId: string, options?: { signal?: AbortSignal }): Promise<unknown>;
 }
@@ -198,6 +201,22 @@ export async function runSubscriptionJob(
   }
 }
 
+// agy is not a pi provider; Piweb signs it in itself, then refetches its
+// model list so the picker has agy's models without waiting out the cache.
+function routeRuntime(pi: SubscriptionRuntime): SubscriptionRuntime {
+  const pick = (provider: string): SubscriptionRuntime =>
+    provider === AGY_PROVIDER ? agySubscriptionRuntime : pi;
+  return {
+    login: async (provider, type, interaction) => {
+      const credential = await pick(provider).login(provider, type, interaction);
+      if (provider === AGY_PROVIDER) void listAgyModels({ forceRefresh: true }).catch(() => undefined);
+      return credential;
+    },
+    logout: (provider, options) => pick(provider).logout(provider, options),
+    checkAuth: async (provider, options) => pick(provider).checkAuth?.(provider, options),
+  };
+}
+
 async function publishInitialStatus(runtime: SubscriptionRuntime): Promise<void> {
   for (const provider of SUBSCRIPTION_PROVIDERS) {
     try {
@@ -231,7 +250,7 @@ function schedule(delay = SUBSCRIPTION_POLL_MS): void {
     activeController = controller;
     const unwatch = watchForCancel(job.id, controller);
     const current = getModelRuntime()
-      .then((runtime) => runSubscriptionJob(job, runtime, controller.signal))
+      .then((runtime) => runSubscriptionJob(job, routeRuntime(runtime), controller.signal))
       .finally(() => {
         unwatch();
         if (active === current) active = undefined;
@@ -250,7 +269,7 @@ export async function startSubscriptionLoop(): Promise<void> {
   running = true;
   try {
     const runtime = await getModelRuntime();
-    await publishInitialStatus(runtime);
+    await publishInitialStatus(routeRuntime(runtime));
     schedule(0);
   } catch {
     running = false;

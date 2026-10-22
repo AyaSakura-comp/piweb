@@ -70,8 +70,9 @@ async function installApi(
     if (path === '/api/sessions/deleted') {
       return route.fulfill({ json: { sessions: deletedSessions } });
     }
-    if (path === '/api/subscriptions/anthropic') {
-      return route.fulfill({ json: { provider: 'anthropic', connected: false, job: null } });
+    if (path === '/api/subscriptions/anthropic' || path === '/api/subscriptions/agy') {
+      const provider = path.split('/').pop();
+      return route.fulfill({ json: { provider, connected: false, job: null } });
     }
     if (path === '/api/subscriptions/openai-codex') {
       if (request.method() === 'POST') subscription = 'waiting';

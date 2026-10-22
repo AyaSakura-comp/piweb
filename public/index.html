@@ -672,7 +672,26 @@
                 <span class="subscription-progress" id="subscription-anthropic-progress" aria-live="polite">Waiting for authorization code…</span>
               </div>
             </div>
-            <p class="settings-footnote">Credentials are stored by Pi on the host. Piweb only displays the temporary device code or sign-in link, and passes the pasted code straight to Pi.</p>
+            <div class="subscription-card" id="subscription-agy">
+              <div class="subscription-summary">
+                <div class="subscription-logo subscription-logo-agy" aria-hidden="true">▲</div>
+                <div>
+                  <strong>Antigravity (agy)</strong>
+                  <span id="subscription-agy-status">Checking…</span>
+                </div>
+                <button class="subscription-action" id="subscription-agy-action" type="button">Connect</button>
+              </div>
+              <div class="subscription-device" id="subscription-agy-auth" hidden>
+                <p>Open Google and approve. Antigravity then shows a code — copy it and paste it below.</p>
+                <a class="btn-primary subscription-open" id="subscription-agy-link" target="_blank" rel="noopener noreferrer">Open Google</a>
+                <form class="subscription-code-form" id="subscription-agy-code-form">
+                  <input class="subscription-code-input" id="subscription-agy-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code" aria-label="Antigravity authorization code">
+                  <button class="btn-primary subscription-code-submit" id="subscription-agy-submit" type="submit">Submit</button>
+                </form>
+                <span class="subscription-progress" id="subscription-agy-progress" aria-live="polite">Waiting for authorization code…</span>
+              </div>
+            </div>
+            <p class="settings-footnote">Credentials are stored on the host — by Pi, and by the agy CLI for Antigravity. Piweb only displays the temporary device code or sign-in link, and passes the pasted code straight on.</p>
           </section>
 
           <section class="settings-section" aria-labelledby="settings-account-title">
@@ -725,6 +744,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=settings-motion-1" type="module"></script>
+    <script src="/app.js?v=agy-login-1" type="module"></script>
   </body>
 </html>

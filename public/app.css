@@ -3260,6 +3260,10 @@ html.keyboard-shell .life-edge-hint {
   color: #d97757;
 }
 
+.subscription-logo-agy {
+  color: #4285f4;
+}
+
 .subscription-code-form {
   display: flex;
   gap: 8px;

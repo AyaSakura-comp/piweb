@@ -702,9 +702,43 @@ function stopSubscriptionPolling() {
 
 const SUBSCRIPTION_ACTIVE = ['pending', 'processing', 'waiting'];
 
-// One card per Pi provider subscription. OpenAI Codex signs in with a device
-// code; Claude (pi's `anthropic` provider) with a browser link whose final
-// address — or the code it shows — is pasted back here and relayed to Pi.
+// Cards whose sign-in is a browser link: the provider ends on a page that
+// shows a code (or, for Claude, an address that won't load), which is pasted
+// back here and relayed to the worker.
+function pasteCodeCard(provider, connectedLabel) {
+  const id = (part) => `subscription-${provider}-${part}`;
+  return {
+    status: id('status'),
+    action: id('action'),
+    panel: id('auth'),
+    form: id('code-form'),
+    input: id('code'),
+    submit: id('submit'),
+    progress: id('progress'),
+    connectedLabel,
+    jobId: '',
+    renderPanel(job) {
+      if (!job.authUrl) return false;
+      const input = $(this.input);
+      // A new sign-in gets a fresh field; polling never clears what is typed.
+      if (this.jobId !== job.id) {
+        this.jobId = job.id;
+        input.value = '';
+      }
+      $(id('link')).href = job.authUrl;
+      input.disabled = job.codeSubmitted;
+      $(this.submit).disabled = job.codeSubmitted;
+      $(this.progress).textContent = job.codeSubmitted
+        ? 'Checking code…'
+        : 'Waiting for authorization code…';
+      return true;
+    },
+  };
+}
+
+// One card per subscription. OpenAI Codex signs in with a device code;
+// Claude (pi's `anthropic` provider) and Antigravity (the host's `agy` CLI)
+// with a pasted code.
 const subscriptionCards = {
   'openai-codex': {
     status: 'subscription-status',
@@ -719,29 +753,8 @@ const subscriptionCards = {
       return true;
     },
   },
-  anthropic: {
-    status: 'subscription-anthropic-status',
-    action: 'subscription-anthropic-action',
-    panel: 'subscription-anthropic-auth',
-    connectedLabel: 'Connected to Claude Pro / Max',
-    jobId: '',
-    renderPanel(job) {
-      if (!job.authUrl) return false;
-      const input = $('subscription-anthropic-code');
-      // A new sign-in gets a fresh field; polling never clears what is typed.
-      if (this.jobId !== job.id) {
-        this.jobId = job.id;
-        input.value = '';
-      }
-      $('subscription-anthropic-link').href = job.authUrl;
-      input.disabled = job.codeSubmitted;
-      $('subscription-anthropic-submit').disabled = job.codeSubmitted;
-      $('subscription-anthropic-progress').textContent = job.codeSubmitted
-        ? 'Checking code…'
-        : 'Waiting for authorization code…';
-      return true;
-    },
-  },
+  anthropic: pasteCodeCard('anthropic', 'Connected to Claude Pro / Max'),
+  agy: pasteCodeCard('agy', 'Connected to Google'),
 };
 const subscriptionState = {};
 
@@ -834,27 +847,30 @@ for (const [provider, card] of Object.entries(subscriptionCards)) {
   });
 }
 
-$('subscription-anthropic-code-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const input = $('subscription-anthropic-code');
-  const code = input.value.trim();
-  if (!code) {
-    input.focus();
-    return;
-  }
-  $('subscription-anthropic-submit').disabled = true;
-  try {
-    await api('/api/subscriptions/anthropic/code', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
-    input.blur();
-    await refreshSubscriptionStatus();
-  } catch (error) {
-    $('subscription-anthropic-progress').textContent = error.message;
-    $('subscription-anthropic-submit').disabled = false;
-  }
-});
+for (const [provider, card] of Object.entries(subscriptionCards)) {
+  if (!card.form) continue;
+  $(card.form).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const input = $(card.input);
+    const code = input.value.trim();
+    if (!code) {
+      input.focus();
+      return;
+    }
+    $(card.submit).disabled = true;
+    try {
+      await api(`/api/subscriptions/${provider}/code`, {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      });
+      input.blur();
+      await refreshSubscriptionStatus();
+    } catch (error) {
+      $(card.progress).textContent = error.message;
+      $(card.submit).disabled = false;
+    }
+  });
+}
 
 $('subscription-device-code').addEventListener('click', async () => {
   const copied = await copyText($('subscription-device-code').textContent.trim());
