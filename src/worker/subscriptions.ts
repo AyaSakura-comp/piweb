@@ -1,5 +1,5 @@
-import type { AuthEvent, AuthInteraction, AuthPrompt } from '@earendil-works/pi-ai';
-import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import type { AuthEvent, AuthPrompt } from '@earendil-works/pi-ai';
+import { CredentialSynchronizationError, type ModelRuntime } from '@earendil-works/pi-coding-agent';
 import {
   claimPendingSubscriptionJob,
   finishSubscriptionJob,
@@ -17,9 +17,14 @@ import {
 import { getModelRuntime } from '../agent/model-catalog.js';
 import { AGY_PROVIDER, listAgyModels } from '../agent/agy.js';
 import { agySubscriptionRuntime } from '../agy-login.js';
+import { CLAUDE_PROVIDER, claudeSubscriptionRuntime } from '../claude-login.js';
+import { type CodeLoginInteraction, PublicLoginError } from '../subscription-login.js';
 import { logger } from '../logger.js';
 
 const SUBSCRIPTION_POLL_MS = 500;
+// Sign-ins made outside Settings (pi /login, agy in a terminal) or tokens that
+// went away show up on the card within this long.
+const STATUS_REFRESH_MS = 30_000;
 // How long a browser-link login (Claude) waits for the pasted code.
 const MANUAL_CODE_TIMEOUT_MS = 10 * 60_000;
 // Hosts a provider's authorization link may point at.
@@ -31,12 +36,13 @@ const statusMetaKey = (provider: string) => `subscription.${provider}`;
 const PUBLIC_STATUS = {
   connecting: 'Connecting to provider',
   failed: 'Subscription operation failed',
+  logoutFailed: 'Could not disconnect; try again',
   cancelled: 'Subscription operation cancelled',
   unsupportedProvider: 'Unsupported subscription provider',
   unsupportedPrompt: 'Device login prompt is unsupported',
   unavailableDeviceCode: 'This provider does not offer device-code login',
   unsafeVerificationUrl: 'Provider returned an unsafe verification URL',
-  codeTimedOut: 'Timed out waiting for the authorization code',
+  codeTimedOut: 'Timed out waiting for the authorization code; connect again for a new link',
   codeRejected: 'Authorization code was not accepted; connect again for a new link',
   initializationFailed: 'Subscription manager initialization failed',
 } as const;
@@ -56,7 +62,7 @@ class SafeSubscriptionError extends Error {
 }
 
 interface SubscriptionRuntime {
-  login(providerId: string, type: 'oauth', interaction: AuthInteraction): Promise<unknown>;
+  login(providerId: string, type: 'oauth', interaction: CodeLoginInteraction): Promise<unknown>;
   logout(providerId: string, options?: { signal?: AbortSignal }): Promise<void>;
   checkAuth?(providerId: string, options?: { signal?: AbortSignal }): Promise<unknown>;
 }
@@ -65,12 +71,26 @@ let running = false;
 let timer: NodeJS.Timeout | undefined;
 let active: Promise<void> | undefined;
 let activeController: AbortController | undefined;
+let lastStatusRefresh = 0;
+const publishedStatus = new Map<string, boolean>();
 
 function publishStatus(provider: string, connected: boolean): void {
+  publishedStatus.set(provider, connected);
   setMeta(
     statusMetaKey(provider),
     JSON.stringify({ connected, updatedAt: new Date().toISOString() }),
   );
+}
+
+/**
+ * A subscription counts as connected only through a sign-in: pi's check also
+ * answers for an API key in the environment, which is not a subscription.
+ */
+function isSubscriptionAuth(check: unknown): boolean {
+  if (check && typeof check === 'object' && 'type' in check) {
+    return (check as { type?: unknown }).type === 'oauth';
+  }
+  return Boolean(check);
 }
 
 function selectDeviceCode(prompt: AuthPrompt): Promise<string> {
@@ -179,33 +199,55 @@ export async function runSubscriptionJob(
       return;
     }
 
-    await runtime.login(job.provider, 'oauth', {
-      signal,
-      prompt: promptFor(job.id, signal, flow),
-      notify: (event) => onAuthEvent(job, event),
-    });
+    try {
+      await runtime.login(job.provider, 'oauth', {
+        signal,
+        prompt: promptFor(job.id, signal, flow),
+        notify: (event) => onAuthEvent(job, event),
+        // The sign-in keeps waiting; Settings shows why the last code failed.
+        rejectCode: (message) => updateSubscriptionJobMessage(job.id, message),
+      });
+    } catch (error: unknown) {
+      // pi stored the credential and only failed to reload its model list;
+      // the sign-in itself succeeded and the next refresh catches up.
+      if (!(error instanceof CredentialSynchronizationError) || signal.aborted) throw error;
+      logger.warn({ provider: job.provider }, 'Signed in, but pi could not reload the provider');
+    }
     publishStatus(job.provider, true);
     finishSubscriptionJob(job.id, true, 'Connected');
   } catch (error: unknown) {
     // A pasted code that reached the token exchange and failed there is the
-    // usual way a Claude login goes wrong (wrong/expired/truncated code).
+    // usual way a pi-run login goes wrong (wrong/expired/truncated code).
     const message = signal.aborted
       ? PUBLIC_STATUS.cancelled
       : error instanceof SafeSubscriptionError
         ? PUBLIC_STATUS[error.code]
-        : flow.codeTaken
-          ? PUBLIC_STATUS.codeRejected
-          : PUBLIC_STATUS.failed;
+        : error instanceof PublicLoginError
+          ? error.message
+          : job.action === 'logout'
+            ? PUBLIC_STATUS.logoutFailed
+            : flow.codeTaken
+              ? PUBLIC_STATUS.codeRejected
+              : PUBLIC_STATUS.failed;
     finishSubscriptionJob(job.id, false, message);
-    if (!signal.aborted) logger.warn({ err: message, provider: job.provider }, PUBLIC_STATUS.failed);
+    // Upstream errors can quote tokens or response bodies: log only their kind.
+    if (!signal.aborted) {
+      logger.warn(
+        { err: message, kind: (error as Error)?.name ?? typeof error, provider: job.provider },
+        PUBLIC_STATUS.failed,
+      );
+    }
   }
 }
 
 // agy is not a pi provider; Piweb signs it in itself, then refetches its
 // model list so the picker has agy's models without waiting out the cache.
-function routeRuntime(pi: SubscriptionRuntime): SubscriptionRuntime {
+// Claude is pi's, but Piweb runs its sign-in so the phone gets a code page
+// instead of pi's localhost redirect (src/claude-login.ts).
+function routeRuntime(pi: ModelRuntime | SubscriptionRuntime): SubscriptionRuntime {
+  const claude = claudeSubscriptionRuntime(pi as ModelRuntime);
   const pick = (provider: string): SubscriptionRuntime =>
-    provider === AGY_PROVIDER ? agySubscriptionRuntime : pi;
+    provider === AGY_PROVIDER ? agySubscriptionRuntime : provider === CLAUDE_PROVIDER ? claude : pi;
   return {
     login: async (provider, type, interaction) => {
       const credential = await pick(provider).login(provider, type, interaction);
@@ -217,10 +259,15 @@ function routeRuntime(pi: SubscriptionRuntime): SubscriptionRuntime {
   };
 }
 
-async function publishInitialStatus(runtime: SubscriptionRuntime): Promise<void> {
+/** Publish every provider's status; `changedOnly` skips rewriting unchanged ones. */
+async function publishAllStatus(runtime: SubscriptionRuntime, changedOnly = false): Promise<void> {
+  lastStatusRefresh = Date.now();
   for (const provider of SUBSCRIPTION_PROVIDERS) {
     try {
-      publishStatus(provider, Boolean(await runtime.checkAuth?.(provider)));
+      const connected = isSubscriptionAuth(await runtime.checkAuth?.(provider));
+      if (!changedOnly || publishedStatus.get(provider) !== connected) {
+        publishStatus(provider, connected);
+      }
     } catch {
       logger.warn({ err: 'Subscription status unavailable', provider }, 'Could not read subscription status');
     }
@@ -243,6 +290,17 @@ function schedule(delay = SUBSCRIPTION_POLL_MS): void {
     timer = undefined;
     const job = claimPendingSubscriptionJob();
     if (!job) {
+      if (Date.now() - lastStatusRefresh >= STATUS_REFRESH_MS) {
+        const refresh = getModelRuntime()
+          .then((runtime) => publishAllStatus(routeRuntime(runtime), true))
+          .catch(() => undefined)
+          .finally(() => {
+            if (active === refresh) active = undefined;
+            schedule();
+          });
+        active = refresh;
+        return;
+      }
       schedule();
       return;
     }
@@ -269,7 +327,7 @@ export async function startSubscriptionLoop(): Promise<void> {
   running = true;
   try {
     const runtime = await getModelRuntime();
-    await publishInitialStatus(routeRuntime(runtime));
+    await publishAllStatus(routeRuntime(runtime));
     schedule(0);
   } catch {
     running = false;

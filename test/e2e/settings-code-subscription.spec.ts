@@ -16,7 +16,8 @@ const PROVIDERS = [
     provider: 'anthropic',
     title: 'Claude',
     authUrl: 'https://claude.ai/oauth/authorize?code=true&state=fixture',
-    pasted: 'http://localhost:53692/callback?code=abc&state=fixture',
+    pasted: 'abc#fixture',
+    signInLink: 'https://claude.ai/oauth/authorize?code=true&state=fixture',
     connected: 'Connected to Claude Pro / Max',
   },
   {
@@ -24,16 +25,20 @@ const PROVIDERS = [
     title: 'Antigravity',
     authUrl: 'https://accounts.google.com/o/oauth2/auth?client_id=x&state=fixture',
     pasted: '4/0AVGtestCODE123',
+    signInLink: 'https://accounts.google.com/o/oauth2/auth?client_id=x&state=fixture',
     connected: 'Connected to Google',
   },
 ];
 
-for (const { provider, title, authUrl: AUTH_URL, pasted, connected } of PROVIDERS) {
+const RETRY_NOTICE = 'That code was not accepted — open the link again and paste the new code.';
+
+for (const { provider, title, authUrl: AUTH_URL, pasted, signInLink, connected } of PROVIDERS) {
   const id = (part: string) => `#subscription-${provider}-${part}`;
 
   async function installApi(page: Page) {
     const calls: { path: string; method: string; body?: unknown }[] = [];
-    let stage: 'idle' | 'waiting' | 'checking' | 'connected' | 'rejected' = 'idle';
+    let stage: 'idle' | 'pending' | 'waiting' | 'checking' | 'retry' | 'connected' | 'rejected' =
+      'idle';
     const job = () =>
       stage === 'idle' || stage === 'connected'
         ? null
@@ -41,12 +46,19 @@ for (const { provider, title, authUrl: AUTH_URL, pasted, connected } of PROVIDER
             id: `${provider}-job`,
             provider,
             action: 'login',
-            status: stage === 'rejected' ? 'failed' : 'waiting',
-            authUrl: stage === 'rejected' ? '' : AUTH_URL,
+            status: stage === 'rejected' ? 'failed' : stage === 'pending' ? 'pending' : 'waiting',
+            authUrl: stage === 'rejected' || stage === 'pending' ? '' : AUTH_URL,
             codeSubmitted: stage === 'checking',
             userCode: '',
             verificationUri: '',
-            message: '',
+            message:
+              stage === 'retry'
+                ? RETRY_NOTICE
+                : stage === 'checking'
+                  ? 'Checking authorization code'
+                  : stage === 'waiting'
+                    ? 'Waiting for authorization code'
+                    : '',
             error:
               stage === 'rejected'
                 ? 'Authorization code was not accepted; connect again for a new link'
@@ -164,5 +176,56 @@ for (const { provider, title, authUrl: AUTH_URL, pasted, connected } of PROVIDER
     );
     await expect(action).toHaveText('Connect');
     await expect(page.locator(id('auth'))).toBeHidden();
+  });
+
+  test(`${title} sign-in stays open after a fixable code and explains it`, async ({ page }, info) => {
+    const api = await installApi(page);
+    await page.goto('/');
+    await page.locator('#btn-menu').click();
+    await page.locator('#btn-settings').click();
+    await page.locator(id('action')).click();
+    const input = page.locator(id('code'));
+    const progress = page.locator(id('progress'));
+
+    // Pasting the sign-in link back is caught before anything is sent.
+    await input.fill(signInLink);
+    await page.locator(id('submit')).click();
+    await expect(progress).toContainText('sign-in link itself');
+    expect(api.calls.some((c) => c.path.endsWith('/code'))).toBe(false);
+
+    await input.fill('expired');
+    await page.locator(id('submit')).click();
+    await expect(progress).toHaveText('Checking code…');
+    api.set('retry');
+    await expect(progress).toHaveText(RETRY_NOTICE, { timeout: 5000 });
+    await expect(progress).toHaveClass(/is-error/);
+    await expect(input).toBeEnabled();
+    await expect(page.locator(id('submit'))).toBeEnabled();
+    await expect(page.locator(id('action'))).toHaveText('Cancel');
+    await page.locator(id('auth')).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`04-${provider}-retry.png`) });
+
+    await input.fill(pasted);
+    await input.press('Enter');
+    api.set('connected');
+    await expect(page.locator(id('status'))).toHaveText(connected, { timeout: 5000 });
+  });
+
+  test(`${title} card says so when the host worker never picks the sign-in up`, async ({ page }) => {
+    await page.clock.install();
+    const api = await installApi(page);
+    await page.goto('/');
+    await page.locator('#btn-menu').click();
+    await page.locator('#btn-settings').click();
+    await page.locator(id('action')).click();
+    // The job stays queued: no worker claims it.
+    api.set('pending');
+    const status = page.locator(id('status'));
+    await expect(status).toHaveText('Waiting for sign-in');
+    await expect(async () => {
+      await page.clock.runFor(3000);
+      await expect(status).toContainText('host worker is not answering', { timeout: 500 });
+    }).toPass({ timeout: 15_000 });
+    await expect(status).toHaveClass(/is-error/);
   });
 }

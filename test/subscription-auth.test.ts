@@ -314,4 +314,131 @@ describe('Pi subscription jobs', () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it('a Claude code that fails for a fixable reason keeps the sign-in waiting and says why', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+    const { claudeSubscriptionRuntime } = await import('../src/claude-login.js');
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_in: 3600 })),
+      );
+    const saveCredential = vi.fn(async () => undefined);
+    const pi = { refresh: vi.fn(async () => undefined), logout: vi.fn(), checkAuth: vi.fn() };
+    const id = db.enqueueSubscriptionJob('anthropic', 'login');
+    const run = runSubscriptionJob(
+      db.claimPendingSubscriptionJob()!,
+      claudeSubscriptionRuntime(pi, { fetchImpl: fetchImpl as any, saveCredential }) as any,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(db.getSubscriptionJob(id)?.status).toBe('waiting'));
+    const authUrl = new URL(db.getSubscriptionJob(id)!.authUrl);
+    expect(authUrl.searchParams.get('redirect_uri')).toBe('https://platform.claude.com/oauth/code/callback');
+    const state = authUrl.searchParams.get('state');
+
+    expect(db.submitSubscriptionJobCode('anthropic', 'abc#someone-elses-state')).toBe(true);
+    await vi.waitFor(() =>
+      expect(db.getSubscriptionJob(id)).toMatchObject({
+        status: 'waiting',
+        codeSubmitted: false,
+        message: expect.stringContaining('older sign-in link'),
+      }),
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    expect(db.submitSubscriptionJobCode('anthropic', `expired#${state}`)).toBe(true);
+    await vi.waitFor(() =>
+      expect(db.getSubscriptionJob(id)).toMatchObject({
+        status: 'waiting',
+        message: expect.stringContaining('did not accept'),
+      }),
+    );
+
+    expect(db.submitSubscriptionJobCode('anthropic', `good#${state}`)).toBe(true);
+    await run;
+    expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'succeeded', authUrl: '' });
+    expect(db.getMeta('subscription.anthropic')).toContain('"connected":true');
+    expect(saveCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a safe reason for a fatal sign-in error, and for a failed disconnect', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+    const { PublicLoginError } = await import('../src/subscription-login.js');
+    const id = db.enqueueSubscriptionJob('agy', 'login');
+    await runSubscriptionJob(
+      db.claimPendingSubscriptionJob()!,
+      {
+        login: vi.fn(async () => {
+          throw new PublicLoginError('Antigravity sign-in needs the agy CLI on the host');
+        }),
+        logout: vi.fn(),
+      } as any,
+      new AbortController().signal,
+    );
+    expect(db.getSubscriptionJob(id)).toMatchObject({
+      status: 'failed',
+      error: 'Antigravity sign-in needs the agy CLI on the host',
+    });
+
+    const out = db.enqueueSubscriptionJob('agy', 'logout');
+    await runSubscriptionJob(
+      db.claimPendingSubscriptionJob()!,
+      {
+        login: vi.fn(),
+        logout: vi.fn(async () => {
+          throw new Error('EACCES /secret/path');
+        }),
+      } as any,
+      new AbortController().signal,
+    );
+    expect(db.getSubscriptionJob(out)).toMatchObject({
+      status: 'failed',
+      error: 'Could not disconnect; try again',
+    });
+  });
+
+  it('a pi sign-in whose model reload fails is still connected', async () => {
+    const db = await import('../src/db.js');
+    const { runSubscriptionJob } = await import('../src/worker/subscriptions.js');
+    const { CredentialSynchronizationError } = await import('@earendil-works/pi-coding-agent');
+    const id = db.enqueueSubscriptionJob('openai-codex', 'login');
+    await runSubscriptionJob(
+      db.claimPendingSubscriptionJob()!,
+      {
+        login: vi.fn(async () => {
+          throw new CredentialSynchronizationError('openai-codex', 'login', undefined, {
+            cause: new Error('reload'),
+          });
+        }),
+        logout: vi.fn(),
+      } as any,
+      new AbortController().signal,
+    );
+    expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'succeeded' });
+    expect(db.getMeta('subscription.openai-codex')).toContain('"connected":true');
+  });
+
+  it('counts only a sign-in as a connected subscription, not an API key', async () => {
+    const db = await import('../src/db.js');
+    const modelCatalog = await import('../src/agent/model-catalog.js');
+    const agyLogin = await import('../src/agy-login.js');
+    vi.spyOn(agyLogin.agySubscriptionRuntime, 'checkAuth').mockResolvedValue(false);
+    const runtime = {
+      login: vi.fn(),
+      logout: vi.fn(),
+      checkAuth: vi.fn(async (provider: string) =>
+        provider === 'anthropic' ? { source: 'ANTHROPIC_API_KEY', type: 'api_key' } : { source: 'OAuth', type: 'oauth' },
+      ),
+    };
+    vi.spyOn(modelCatalog, 'getModelRuntime').mockResolvedValue(runtime as any);
+    const { startSubscriptionLoop, stopSubscriptionLoop } = await import('../src/worker/subscriptions.js');
+    await startSubscriptionLoop();
+    await stopSubscriptionLoop();
+    expect(db.getMeta('subscription.anthropic')).toContain('"connected":false');
+    expect(db.getMeta('subscription.openai-codex')).toContain('"connected":true');
+    expect(db.getMeta('subscription.agy')).toContain('"connected":false');
+  });
 });

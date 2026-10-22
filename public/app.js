@@ -169,7 +169,9 @@ async function api(path, options = {}) {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed (${res.status})`);
+    const error = new Error(body.error || `Request failed (${res.status})`);
+    error.status = res.status;
+    throw error;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -701,10 +703,30 @@ function stopSubscriptionPolling() {
 }
 
 const SUBSCRIPTION_ACTIVE = ['pending', 'processing', 'waiting'];
+// The worker claims a queued job within a second; this long means it is not running.
+const SUBSCRIPTION_STALL_MS = 15_000;
+// What the worker writes while a pasted code is fine so far; any other message
+// on a waiting job explains why the last code failed.
+const SUBSCRIPTION_CODE_WAITING = 'Waiting for authorization code';
+const SUBSCRIPTION_CODE_CHECKING = ['Checking authorization code', 'Connecting to provider'];
+
+// When this page first saw each job still queued, to notice a worker that is down.
+const subscriptionPendingSince = new Map();
+function subscriptionStalled(job) {
+  if (job?.status !== 'pending') return false;
+  if (!subscriptionPendingSince.has(job.id)) subscriptionPendingSince.set(job.id, Date.now());
+  return Date.now() - subscriptionPendingSince.get(job.id) > SUBSCRIPTION_STALL_MS;
+}
+
+// A sign-in link pasted back instead of the code it leads to.
+function looksLikeSignInLink(value) {
+  return /^https?:\/\/[^/]*(claude\.ai|claude\.com|accounts\.google\.com)\/[^?]*(oauth\/authorize|o\/oauth2)/i.test(value);
+}
 
 // Cards whose sign-in is a browser link: the provider ends on a page that
-// shows a code (or, for Claude, an address that won't load), which is pasted
-// back here and relayed to the worker.
+// shows a code, which is pasted back here and relayed to the worker. A code
+// that fails for a fixable reason keeps the sign-in waiting, with the reason
+// shown under the field.
 function pasteCodeCard(provider, connectedLabel) {
   const id = (part) => `subscription-${provider}-${part}`;
   return {
@@ -726,11 +748,17 @@ function pasteCodeCard(provider, connectedLabel) {
         input.value = '';
       }
       $(id('link')).href = job.authUrl;
-      input.disabled = job.codeSubmitted;
-      $(this.submit).disabled = job.codeSubmitted;
-      $(this.progress).textContent = job.codeSubmitted
+      const checking = job.codeSubmitted || SUBSCRIPTION_CODE_CHECKING.includes(job.message);
+      const notice = !checking && job.message && job.message !== SUBSCRIPTION_CODE_WAITING;
+      input.disabled = checking;
+      $(this.submit).disabled = checking;
+      const progress = $(this.progress);
+      progress.textContent = checking
         ? 'Checking code…'
-        : 'Waiting for authorization code…';
+        : notice
+          ? job.message
+          : 'Waiting for authorization code…';
+      progress.classList.toggle('is-error', Boolean(notice));
       return true;
     },
   };
@@ -769,13 +797,20 @@ function renderSubscriptionStatus(provider, status) {
 
   action.disabled = false;
   action.textContent = connected ? 'Disconnect' : active ? 'Cancel' : 'Connect';
-  $(card.status).textContent = connected
-    ? card.connectedLabel
-    : job?.status === 'failed' && job.error !== 'Cancelled'
-      ? job.error || 'Sign-in failed'
-      : active
-        ? 'Waiting for sign-in'
-        : 'Not connected';
+  const failed = job?.status === 'failed' && job.error !== 'Cancelled';
+  const statusText = $(card.status);
+  statusText.textContent = subscriptionStalled(job)
+    ? 'The host worker is not answering — check that piweb-worker is running'
+    : active
+      ? job.action === 'logout'
+        ? 'Disconnecting…'
+        : 'Waiting for sign-in'
+      : connected
+        ? card.connectedLabel
+        : failed
+          ? job.error || 'Sign-in failed'
+          : 'Not connected';
+  statusText.classList.toggle('is-error', Boolean((failed && !connected && !active) || subscriptionStalled(job)));
 
   const shown = active && card.renderPanel(job);
   const appearing = shown && panel.hidden;
@@ -792,14 +827,24 @@ async function refreshSubscriptionStatus({ keepPolling = true } = {}) {
       try {
         return renderSubscriptionStatus(provider, await api(`/api/subscriptions/${provider}`));
       } catch (error) {
-        $(subscriptionCards[provider].status).textContent = error.message;
-        $(subscriptionCards[provider].action).disabled = false;
-        return false;
+        const card = subscriptionCards[provider];
+        const status = $(card.status);
+        status.textContent =
+          error.status === undefined ? 'Could not reach Piweb — retrying…' : error.message;
+        status.classList.add('is-error');
+        $(card.action).disabled = false;
+        // A sign-in in progress keeps polling through a dropped connection.
+        return Boolean(subscriptionState[provider]?.active);
       }
     }),
   );
-  if (results.some(Boolean) && keepPolling && $('settings-dialog').open) {
-    subscriptionPollTimer = setTimeout(() => refreshSubscriptionStatus(), 2000);
+  // Keep polling while anything is active; otherwise slowly, so a sign-in made
+  // on the host (or one that lapses) shows up while Settings stays open.
+  if (keepPolling && $('settings-dialog').open) {
+    subscriptionPollTimer = setTimeout(
+      () => refreshSubscriptionStatus(),
+      results.some(Boolean) ? 2000 : 15000,
+    );
   }
 }
 
@@ -841,7 +886,14 @@ for (const [provider, card] of Object.entries(subscriptionCards)) {
       }
       await refreshSubscriptionStatus();
     } catch (error) {
-      $(card.status).textContent = error.message;
+      // 409: another tab or device already started one; show that one.
+      if (error.status === 409) {
+        await refreshSubscriptionStatus().catch(() => undefined);
+        return;
+      }
+      $(card.status).textContent =
+        error.status === undefined ? 'Could not reach Piweb; try again' : error.message;
+      $(card.status).classList.add('is-error');
       $(card.action).disabled = false;
     }
   });
@@ -852,9 +904,24 @@ for (const [provider, card] of Object.entries(subscriptionCards)) {
   $(card.form).addEventListener('submit', async (event) => {
     event.preventDefault();
     const input = $(card.input);
+    const progress = $(card.progress);
     const code = input.value.trim();
+    const say = (message) => {
+      progress.textContent = message;
+      progress.classList.add('is-error');
+    };
     if (!code) {
+      say('Paste the code first.');
       input.focus();
+      return;
+    }
+    if (looksLikeSignInLink(code)) {
+      say('That is the sign-in link itself. Open it, approve, then paste the code it shows.');
+      input.select();
+      return;
+    }
+    if (code.length > 4096) {
+      say('That is too long to be a code. Copy just the code and paste it again.');
       return;
     }
     $(card.submit).disabled = true;
@@ -866,8 +933,14 @@ for (const [provider, card] of Object.entries(subscriptionCards)) {
       input.blur();
       await refreshSubscriptionStatus();
     } catch (error) {
-      $(card.progress).textContent = error.message;
       $(card.submit).disabled = false;
+      if (error.status === undefined) {
+        say('Could not reach Piweb. Check the connection, then Submit again.');
+        return;
+      }
+      say(error.message);
+      // 409: the sign-in ended (timed out, cancelled, host restarted).
+      if (error.status === 409) await refreshSubscriptionStatus().catch(() => undefined);
     }
   });
 }

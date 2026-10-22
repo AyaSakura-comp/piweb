@@ -3304,6 +3304,12 @@ html.keyboard-shell .life-edge-hint {
   font-size: 12px;
 }
 
+/* A pasted code that failed, a stalled worker, or a failed sign-in. */
+.subscription-progress.is-error,
+.subscription-card .is-error {
+  color: var(--danger);
+}
+
 .settings-footnote {
   margin: 8px 4px 0;
   color: var(--text-dim);

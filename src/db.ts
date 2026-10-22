@@ -3096,7 +3096,7 @@ export function recoverStuckSubscriptionJobs(): number {
   return db
     .prepare(
       `update subscription_jobs
-        set status = 'failed', error = 'Worker restarted during subscription operation',
+        set status = 'failed', error = 'Sign-in was interrupted by a host restart; connect again',
             manual_code = '', auth_url = '', updated_at = datetime('now'), done_at = datetime('now')
       where status in ('processing', 'waiting')`,
     )

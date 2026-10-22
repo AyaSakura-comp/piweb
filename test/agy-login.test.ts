@@ -8,6 +8,7 @@ import {
   AGY_REDIRECT_URI,
   agySubscriptionRuntime,
   createAgyAuthorization,
+  createAgySubscriptionRuntime,
   exchangeAgyCode,
   parseAgyAuthorizationCode,
 } from '../src/agy-login.js';
@@ -82,12 +83,21 @@ describe('agy sign-in', () => {
       parseAgyAuthorizationCode(`${AGY_REDIRECT_URI}?code=4%2F0AVG&state=s&scope=email`, 's'),
     ).toBe('4/0AVG');
     expect(parseAgyAuthorizationCode('code=4%2F0AVG&state=s', 's')).toBe('4/0AVG');
+    // What a phone clipboard adds around the code is dropped.
+    expect(parseAgyAuthorizationCode('"4/0AVG-\ncode_1"\n', 's')).toBe('4/0AVG-code_1');
     expect(() => parseAgyAuthorizationCode(`${AGY_REDIRECT_URI}?code=x&state=other`, 's')).toThrow(
-      'does not match',
+      'older sign-in link',
     );
     expect(() => parseAgyAuthorizationCode(`${AGY_REDIRECT_URI}?state=s`, 's')).toThrow(
-      'No authorization code',
+      'No code found',
     );
+    expect(() =>
+      parseAgyAuthorizationCode(`${AGY_REDIRECT_URI}?error=access_denied&state=s`, 's'),
+    ).toThrow('declined');
+    expect(() =>
+      parseAgyAuthorizationCode('https://accounts.google.com/o/oauth2/auth?client_id=x', 's'),
+    ).toThrow('sign-in link itself');
+    expect(() => parseAgyAuthorizationCode('   ', 's')).toThrow('Paste the code');
   });
 
   it("exchanges the code with agy's client and writes the file agy reads", async () => {
@@ -133,9 +143,71 @@ describe('agy sign-in', () => {
         fetchImpl: fetchImpl as any,
         clientCandidates: candidates as any,
       }),
-    ).rejects.toThrow('invalid_grant');
+    ).rejects.toMatchObject({ retryable: true, message: expect.stringContaining('did not accept') });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(await agySubscriptionRuntime.checkAuth()).toBe(false);
+  });
+
+  it('says what went wrong for every way the exchange can fail, keeping fixable ones retryable', async () => {
+    const run = (fetchImpl: any, extra: Record<string, unknown> = {}) =>
+      exchangeAgyCode('4/c', 'v', undefined, {
+        fetchImpl,
+        clientCandidates: candidates as any,
+        ...extra,
+      });
+    const answer = (status: number, body: unknown) => async () =>
+      new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+
+    await expect(run(answer(429, {}))).rejects.toMatchObject({
+      retryable: true,
+      message: expect.stringContaining('limiting'),
+    });
+    await expect(run(answer(503, '<html>oops</html>'))).rejects.toMatchObject({
+      retryable: true,
+      message: expect.stringContaining('HTTP 503'),
+    });
+    await expect(
+      run(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    ).rejects.toMatchObject({ retryable: true, message: expect.stringContaining('Could not reach Google') });
+    await expect(run(answer(200, { access_token: 'a' }))).rejects.toMatchObject({
+      retryable: true,
+      message: expect.stringContaining('lasting token'),
+    });
+    // Every bundled secret refused: agy itself needs updating, not the code.
+    await expect(run(answer(401, { error: 'invalid_client' }))).rejects.toMatchObject({
+      retryable: false,
+      message: expect.stringContaining('Update agy'),
+    });
+    await expect(
+      run(answer(200, tokenResponse), {
+        clientCandidates: async () => [[AGY_LOGIN_CLIENT_ID, 'GOCSPX-right']],
+        writeAuth: async () => {
+          throw Object.assign(new Error('EACCES: secret path'), { code: 'EACCES' });
+        },
+      }),
+    ).rejects.toMatchObject({ retryable: false, message: expect.stringContaining("couldn't save") });
+    await expect(
+      run(answer(200, tokenResponse), {
+        clientCandidates: async () => {
+          throw new Error('agy not on PATH');
+        },
+      }),
+    ).rejects.toThrow('needs the agy CLI');
+  });
+
+  it('refuses to show a sign-in link when agy is missing on the host', async () => {
+    const notify = vi.fn();
+    const runtime = createAgySubscriptionRuntime({
+      clientCandidates: async () => {
+        throw new Error('agy not on PATH');
+      },
+    });
+    await expect(
+      runtime.login('agy', 'oauth', { notify, prompt: vi.fn() } as any),
+    ).rejects.toThrow('needs the agy CLI');
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('disconnecting removes the credential file, and is fine when there is none', async () => {
