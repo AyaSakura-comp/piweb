@@ -314,11 +314,17 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
 
   // Typing in the lower pane (it sits under the keyboard, so it is tapped with
   // the keyboard down): its card rises over the pane above, the panes stay.
+  // Closing the iOS keyboard also blurs the textarea.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await page.waitForTimeout(800);
   await paneAt(1).locator('.msg-text').first().tap();
   await expect(paneAt(1)).toHaveClass(/composer-active/);
   await page.waitForTimeout(500);
+  // The first tap brings the card; the second opens the keyboard.
+  await expect(paneAt(1).locator('textarea')).not.toBeFocused();
+  await paneAt(1).locator('.msg-text').first().tap();
+  await expect(paneAt(1).locator('textarea')).toBeFocused();
   const bottomRest = (await onScreen()).dock;
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);

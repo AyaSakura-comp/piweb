@@ -977,17 +977,33 @@ export function createSessionDashboard({
     // bottom) out from under the finger before the tap lands.
     // A finger scroll never ends in a click, so browsing moves nothing.
     let pressPointer = '';
-    paneEl.addEventListener('pointerdown', (e) => (pressPointer = e.pointerType), true);
+    // Read on press: by the click, the tap itself may have blurred the input.
+    let pressTyping = false;
+    paneEl.addEventListener(
+      'pointerdown',
+      (e) => {
+        pressPointer = e.pointerType;
+        pressTyping = Boolean(document.activeElement?.closest?.('.dashboard-pane-composer'));
+      },
+      true,
+    );
     paneEl.addEventListener(
       'click',
       (e) => {
         // Closing a pane is no reason to send the input there first.
         if (e.target.closest('.pane-close-btn')) return;
+        // The first tap only brings the card here; a second tap on the pane
+        // that already holds it opens the keyboard (2026-10-22: the keyboard
+        // popping up on every pane switch was unwanted). A keyboard that is
+        // already up moves along with the card instead of closing.
+        const holdsCard = composerJid === jid && dock.classList.contains('is-floating');
+        const typing = pressTyping;
         selectComposerPane(jid);
         // iPhone / iPad: a finger tap on the transcript itself (not a control,
-        // image or video, not ending a text selection) opens the keyboard at
-        // once. focus() must run inside the tap for iOS to raise the keyboard.
+        // image or video, not ending a text selection) opens the keyboard.
+        // focus() must run inside the tap for iOS to raise the keyboard.
         if (
+          (holdsCard || typing) &&
           pressPointer === 'touch' &&
           e.target.closest('.dashboard-pane-transcript') &&
           !e.target.closest(PANE_TAP_KEEPS_FOCUS) &&

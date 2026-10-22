@@ -312,7 +312,8 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await pane.locator('.dashboard-pane-transcript').click();
   await expect(pane.locator('textarea')).toBeVisible();
   // iPhone / iPad (2026-10-21): a finger scroll through another pane moves
-  // nothing; a finger tap on it brings the card and opens the keyboard at once.
+  // nothing; a finger tap on it brings the card, and a second tap opens the
+  // keyboard (2026-10-22).
   const tapPane = page.locator('.dashboard-pane').first();
   const scrollBox = (await tapPane.locator('.dashboard-pane-messages').boundingBox())!;
   const sx = scrollBox.x + scrollBox.width / 2;
@@ -327,9 +328,19 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await expect(pane.locator('textarea')).toBeVisible();
   await expect(tapPane.locator('textarea')).toBeHidden();
   await expect(page.locator('textarea:focus')).toHaveCount(0);
+  // The first tap only brings the card; the second tap opens the keyboard.
+  await tapPane.locator('.msg-text').first().tap();
+  await expect(tapPane.locator('textarea')).toBeVisible();
+  await page.waitForTimeout(400);
+  await expect(page.locator('textarea:focus')).toHaveCount(0);
   await tapPane.locator('.msg-text').first().tap();
   await expect(tapPane.locator('textarea')).toBeFocused();
   await expect(tapPane.locator('textarea')).toBeVisible();
+  // With the keyboard already up, a tap on another pane moves it along.
+  await pane.locator('.msg-text').first().tap();
+  await expect(pane.locator('textarea')).toBeFocused();
+  await tapPane.locator('.msg-text').first().tap();
+  await expect(tapPane.locator('textarea')).toBeFocused();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await pane.locator('.dashboard-pane-transcript').click();
   await expect(pane.locator('textarea')).toBeVisible();
