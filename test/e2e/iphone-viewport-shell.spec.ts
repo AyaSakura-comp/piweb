@@ -250,6 +250,17 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   await page.evaluate(() => (window as any).__setVisibleHeight(480, true, 300)); // iOS moved the pan
   await expect.poll(() => rect('.app')).toEqual({ top: 300, bottom: 780 });
   expect((await rect('#composer')).bottom).toBe(780 - 10);
+  // iOS 26 can leave the visual viewport short after the keyboard closes
+  // (WebKit 301857): the shell stayed squeezed into the top part of an empty
+  // screen (iPhone screenshot, 2026-10-22). No typing focus, no keyboard.
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await expect.poll(() => rect('.app')).toEqual({ top: 0, bottom: 844 });
+  await page.waitForTimeout(800);
+  expect(await rect('.app')).toEqual({ top: 0, bottom: 844 });
+  expect(await mainBottom()).toBe(844);
+  await page.screenshot({ path: info.outputPath('01b-chat-blurred-viewport-left-short.png') });
+  await page.locator('#input').focus();
+  await expect.poll(() => rect('.app')).toEqual({ top: 300, bottom: 780 });
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect(page.locator('#input')).toBeFocused();
   expect(await mainBottom()).toBe(844);

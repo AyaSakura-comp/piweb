@@ -13,8 +13,10 @@ function setup() {
     cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
     setTimeout, clearTimeout,
   });
+  // The composer has focus unless a test says otherwise: no focus, no keyboard.
   const doc = Object.assign(new EventTarget(), {
     visibilityState: 'visible',
+    activeElement: { tagName: 'TEXTAREA', readOnly: false, disabled: false } as any,
     documentElement: {
       clientHeight: 844,
       style: { setProperty: vi.fn(), removeProperty: vi.fn() },
@@ -61,6 +63,40 @@ describe('viewport shell', () => {
     expect(root.classList.remove).toHaveBeenCalledWith('keyboard-shell');
     expect(root.style.removeProperty).toHaveBeenCalledWith('--keyboard-shell-top');
     expect(win.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('releases the pin when typing focus goes, even if iOS 26 leaves the viewport short', () => {
+    const { viewport, doc } = setup();
+    const root = doc.documentElement;
+    viewport.height = 480;
+    viewport.offsetTop = 364;
+    viewport.dispatchEvent(new Event('resize'));
+    expect(root.classList.add).toHaveBeenCalledWith('keyboard-shell');
+    // Keyboard dismissed: focus leaves the textarea, the viewport stays 480 (WebKit 301857).
+    doc.activeElement = { tagName: 'BODY' };
+    doc.dispatchEvent(new Event('focusout'));
+    expect(root.classList.remove).toHaveBeenCalledWith('keyboard-shell');
+    expect(root.style.removeProperty).toHaveBeenCalledWith('--keyboard-shell-height');
+    // A later viewport event with the stale height does not pin it again.
+    root.classList.add.mockClear();
+    viewport.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(1000);
+    expect(root.classList.add).not.toHaveBeenCalled();
+    // Focus back in a text field with the keyboard up: pinned again.
+    doc.activeElement = { tagName: 'INPUT', type: 'search' };
+    doc.dispatchEvent(new Event('focusin'));
+    expect(root.classList.add).toHaveBeenCalledWith('keyboard-shell');
+  });
+
+  it('a button or checkbox with focus is not a keyboard', () => {
+    const { viewport, doc } = setup();
+    for (const el of [{ tagName: 'BUTTON' }, { tagName: 'INPUT', type: 'checkbox' }, { tagName: 'TEXTAREA', readOnly: true }]) {
+      doc.activeElement = el;
+      viewport.height = 480;
+      viewport.dispatchEvent(new Event('resize'));
+    }
+    vi.advanceTimersByTime(1000);
+    expect(doc.documentElement.classList.add).not.toHaveBeenCalled();
   });
 
   it('ignores browser-toolbar size changes and pinch zoom', () => {

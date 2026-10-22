@@ -14,7 +14,6 @@ const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 const PANE_TAP_KEEPS_FOCUS =
   'a, button, input, textarea, select, summary, label, img, video, audio, [role="button"], [contenteditable], .stream-player';
 /** Same rule as viewport-shell.js: a visual viewport this much shorter is a keyboard. */
-const KEYBOARD_MIN_PX = 150;
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MIME_EXT_MAP = {
@@ -2482,8 +2481,10 @@ export function createSessionDashboard({
    *  to the visible strip crushed both stacked panes to a line or two). */
   function syncKeyboardLift({ instant = false } = {}) {
     const vv = window.visualViewport;
-    const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
-    const keyboard = vv && Math.abs((vv.scale ?? 1) - 1) <= 0.01 && layoutHeight - vv.height >= KEYBOARD_MIN_PX;
+    // viewport-shell.js decides whether the keyboard is up (a short visual
+    // viewport AND typing focus: iOS 26 can leave the viewport short after
+    // the keyboard closes).
+    const keyboard = vv && document.documentElement.classList.contains('keyboard-shell');
     const target = active && keyboard && composerJid ? panes.get(composerJid) : null;
     for (const pane of panes.values()) {
       let lift = 0;
@@ -3879,15 +3880,17 @@ export function createSessionDashboard({
   // Do not maintain a second cached visualViewport height for the dashboard.
   // The keyboard only moves the input card (syncKeyboardLift). iOS may finish
   // its keyboard layout after the last viewport event, so sample again briefly.
+  // The first sample waits a frame: viewport-shell.js, bound after this, must
+  // first update `keyboard-shell` for the same event.
   let liftTimers = [];
   const scheduleKeyboardLift = () => {
     for (const timer of liftTimers) clearTimeout(timer);
-    syncKeyboardLift();
-    liftTimers = [120, 350, 700].map((delay) => setTimeout(() => syncKeyboardLift(), delay));
+    liftTimers = [0, 120, 350, 700].map((delay) => setTimeout(() => syncKeyboardLift(), delay));
   };
   window.visualViewport?.addEventListener('resize', scheduleKeyboardLift);
   window.visualViewport?.addEventListener('scroll', scheduleKeyboardLift);
   window.addEventListener('resize', scheduleKeyboardLift);
+  document.addEventListener('focusout', scheduleKeyboardLift);
 
   syncNavCounts();
 
