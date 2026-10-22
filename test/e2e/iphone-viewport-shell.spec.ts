@@ -342,6 +342,23 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   }, { y: bottomTyping.dock.bottom - 20 });
   expect(hit).toBe(true);
   await page.screenshot({ path: info.outputPath('02b-dashboard-keyboard-bottom-pane.png') });
+  // While iOS animates the keyboard, offsetTop and the pinned shell disagree
+  // for a moment; measured against offsetTop the card flew ~100px too high
+  // (iPhone recording 2026-10-22). The card is placed against the shell.
+  const againstShell = await page.evaluate(async () => {
+    const root = document.documentElement;
+    root.style.setProperty('--keyboard-shell-top', '264px'); // shell 100px behind offsetTop 364
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const shellTop = document.querySelector('.app')!.getBoundingClientRect().top;
+    const dock = document.querySelector('.dashboard-pane.composer-active .dashboard-pane-dock')!.getBoundingClientRect();
+    root.style.setProperty('--keyboard-shell-top', '364px');
+    window.dispatchEvent(new Event('resize'));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    return Math.round(dock.bottom - shellTop);
+  });
+  expect(againstShell).toBe(480 - 6);
+  expect((await onScreen()).dock.bottom).toBe(480 - 6);
 
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect.poll(() => page.locator('.dashboard-stage').evaluate(el => Math.round(el.getBoundingClientRect().bottom))).toBe(844);

@@ -2512,13 +2512,18 @@ export function createSessionDashboard({
     for (const pane of panes.values()) {
       let lift = 0;
       if (pane === target && !pane.disposed && pane.dock.classList.contains('is-floating')) {
+        // Measured against the shell, not visualViewport.offsetTop: the shell
+        // is pinned to the top of the visible strip, so the strip is
+        // [0, vv.height] in its coordinates. While iOS animates the keyboard,
+        // offsetTop and the shell's position disagree for a moment, and the
+        // card flew ~100px too high before settling (iPhone recording
+        // 2026-10-22).
         const rect = pane.dock.getBoundingClientRect();
+        const shellTop = app.getBoundingClientRect().top;
         const current = pane.kbLift || 0;
-        const visibleTop = vv.offsetTop || 0;
-        const visibleBottom = visibleTop + vv.height;
         // Just above the keyboard, but never past the top of the visible strip.
-        const need = rect.bottom + current - (visibleBottom - 6);
-        const room = rect.top + current - (visibleTop + 8);
+        const need = rect.bottom - shellTop + current - (vv.height - 6);
+        const room = rect.top - shellTop + current - 8;
         lift = Math.round(Math.max(0, Math.min(need, room)));
       }
       if (lift === (pane.kbLift || 0)) continue;
