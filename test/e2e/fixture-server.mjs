@@ -276,6 +276,13 @@ const server = createServer((request, response) => {
     response.end('ok');
     return;
   }
+  // The worker always publishes this file in production; without it every page
+  // logs a 404 for the composer's keyword chips. Specs that care route their own.
+  if (pathname === '/media/piweb-shared/hot-keywords.json') {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end('{"items":[]}');
+    return;
+  }
 
   const fixturePrefix = '/fixtures/';
   const file = pathname.startsWith(fixturePrefix)
