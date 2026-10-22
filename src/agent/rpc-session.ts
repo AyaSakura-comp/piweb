@@ -46,6 +46,13 @@ interface PendingRpcRequest {
   timeout: NodeJS.Timeout;
 }
 
+/** A blocking extension confirm() the web user answers with a chat reply. */
+interface PendingConfirm {
+  id: string;
+  title: string;
+  timer?: NodeJS.Timeout;
+}
+
 interface PendingTurn {
   proc?: ChildProcess;
   onEvent?: (event: any) => void | Promise<void>;
@@ -91,6 +98,7 @@ class RpcSession {
   private readonly btwRequests = new Map<string, PendingRpcRequest>();
   /** Questions whose side answer is still running, so a snapshot can show them. */
   private readonly btwPendingSends = new Map<string, string>();
+  private pendingConfirm?: PendingConfirm;
 
   constructor(
     private readonly folder: string,
@@ -377,9 +385,13 @@ class RpcSession {
           getChannel(this.opts.channelJid)?.kind === 'life'
         ) this.armIdleTimer();
       }
-      // Dialog requests are blocking, unlike widgets. Explicitly cancel rather
-      // than silently stranding the model on an unsupported terminal UI.
-      if (['select', 'confirm', 'input', 'editor'].includes(event.method)) {
+      // Dialog requests are blocking, unlike widgets. A confirm is posted to the
+      // channel and answered by the user's next message (see answerConfirm);
+      // other dialogs have no web equivalent, so cancel rather than strand the
+      // model on an unsupported terminal UI.
+      if (event.method === 'confirm' && typeof event.id === 'string' && this.opts.channelJid) {
+        this.openConfirm(event);
+      } else if (['select', 'confirm', 'input', 'editor'].includes(event.method)) {
         this.send({ type: 'extension_ui_response', id: event.id, cancelled: true });
       }
       return;
@@ -471,6 +483,7 @@ class RpcSession {
     // agent_settled is the durable session-level completion boundary.
     if (event.type === 'agent_settled') {
       this.streaming = false;
+      this.dropConfirm();
       if (turn) this.finishTurn();
     }
   }
@@ -557,6 +570,7 @@ class RpcSession {
   private onExit(proc: ChildProcess, code: number | null): void {
     if (this.proc !== proc) return;
     logger.info({ folder: this.folder, code }, 'RPC session exited');
+    this.dropConfirm();
     this.publication?.close();
     this.publication = undefined;
     this.proc = undefined;
@@ -805,6 +819,65 @@ class RpcSession {
     });
   }
 
+  get hasPendingConfirm(): boolean {
+    return Boolean(this.pendingConfirm) && this.isAlive;
+  }
+
+  private notice(text: string): void {
+    if (!this.opts.channelJid || !this.renewOwnership()) return;
+    void getTransport().sendNotice?.(this.opts.channelJid, text, {
+      expectedFolder: this.folder,
+      expectedStorageToken: this.opts.channelStorageToken,
+      expectedOwnershipEpoch: this.opts.channelOwnershipEpoch,
+    });
+  }
+
+  private openConfirm(event: any): void {
+    // Only one dialog can block a turn; a newer request supersedes the old one.
+    if (this.pendingConfirm) this.answerConfirm(false, 'superseded');
+    const title = String(event.title || 'Confirm');
+    const confirm: PendingConfirm = { id: event.id, title };
+    // Pi resolves the dialog to false on its own timeout; mirror it here so a
+    // late reply is not consumed as an answer.
+    if (typeof event.timeout === 'number' && event.timeout > 0) {
+      confirm.timer = setTimeout(() => {
+        if (this.pendingConfirm !== confirm) return;
+        this.pendingConfirm = undefined;
+        this.notice(`⌛ 「${title}」逾時，視為拒絕。`);
+      }, event.timeout);
+    }
+    this.pendingConfirm = confirm;
+    const seconds =
+      typeof event.timeout === 'number' && event.timeout > 0
+        ? `，${Math.round(event.timeout / 1000)} 秒內`
+        : '';
+    this.notice(
+      `🔐 ${title}\n${String(event.message || '')}\n\n回覆「yes／批准」執行，「no／拒絕」取消${seconds}。其他訊息一律視為拒絕。`,
+    );
+  }
+
+  /** Resolve the pending confirm dialog. Returns false if none is open. */
+  answerConfirm(confirmed: boolean, reason?: 'superseded' | 'other-message'): boolean {
+    const confirm = this.pendingConfirm;
+    if (!confirm) return false;
+    this.pendingConfirm = undefined;
+    if (confirm.timer) clearTimeout(confirm.timer);
+    this.send({ type: 'extension_ui_response', id: confirm.id, confirmed });
+    this.notice(
+      confirmed
+        ? `✅ 已批准：${confirm.title}`
+        : reason === 'other-message'
+          ? `🚫 收到其他訊息，已拒絕：${confirm.title}`
+          : `🚫 已拒絕：${confirm.title}`,
+    );
+    return true;
+  }
+
+  private dropConfirm(): void {
+    if (this.pendingConfirm?.timer) clearTimeout(this.pendingConfirm.timer);
+    this.pendingConfirm = undefined;
+  }
+
   /** Inject a message into the running turn (redirect the agent in-flight). */
   steer(message: string): boolean {
     if (!this.isAlive || !this.pending) return false;
@@ -931,6 +1004,21 @@ export function rpcSessionHasLiveSubagents(folder: string): boolean {
 export function rpcSessionIsStreaming(folder: string): boolean {
   const session = sessions.get(keyFor(folder));
   return Boolean(session && session.isAlive && session.isStreaming);
+}
+
+/** True if the folder's live session is blocked on a web-answerable confirm. */
+export function rpcSessionHasPendingConfirm(folder: string): boolean {
+  return sessions.get(keyFor(folder))?.hasPendingConfirm ?? false;
+}
+
+/** Answer the folder's pending confirm dialog. Returns false if none is open. */
+export function answerRpcConfirm(
+  folder: string,
+  confirmed: boolean,
+  reason?: 'other-message',
+): boolean {
+  const session = sessions.get(keyFor(folder));
+  return Boolean(session?.hasPendingConfirm && session.answerConfirm(confirmed, reason));
 }
 
 /** Steer a message into the running turn. Returns false if not steer-able. */

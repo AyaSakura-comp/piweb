@@ -10,6 +10,8 @@ vi.mock('../src/agent/rpc-session.js', () => ({
   abortRpcSession: vi.fn(),
   closeAllRpcSessions: vi.fn(),
   rpcSessionIsStreaming: vi.fn(() => false),
+  rpcSessionHasPendingConfirm: vi.fn(() => false),
+  answerRpcConfirm: vi.fn(() => false),
   rpcSessionHasLiveSubagents: vi.fn(() => false),
   prepareRpcSession: vi.fn(async () => ({ prompt: promptMock })),
 }));

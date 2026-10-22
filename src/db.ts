@@ -954,6 +954,20 @@ export function claimNextMessage(channelJid: string): QueuedMessage | undefined 
   return row;
 }
 
+/** The next pending message for a channel, without claiming it. */
+export function peekNextMessage(channelJid: string): QueuedMessage | undefined {
+  return db
+    .prepare(
+      `select rowid, channel_jid, sender, sender_name, content, timestamp, status, attachments,
+              interrupt_active
+         from message_queue
+        where status = 'pending' and channel_jid = ?
+        order by rowid asc
+        limit 1`,
+    )
+    .get(channelJid) as QueuedMessage | undefined;
+}
+
 export function markMessageDone(rowid: number): void {
   db.prepare(
     "update message_queue set status = 'done', processed_at = datetime('now') where rowid = ?",

@@ -18,6 +18,7 @@ import {
   markMessageAborted,
   markMessageDone,
   markMessageFailed,
+  peekNextMessage,
   requeueMessage,
   recoverStuckMessages,
   logMessage,
@@ -37,6 +38,8 @@ import {
   closeRpcSession,
   rpcSessionIsStreaming,
   rpcSessionHasLiveSubagents,
+  rpcSessionHasPendingConfirm,
+  answerRpcConfirm,
   retireRpcSessionWhenSettled,
 } from './rpc-session.js';
 import { parseOutboxMarkers } from './outbox.js';
@@ -232,10 +235,38 @@ function interruptSupersededRuns(): void {
   }
 }
 
+const CONFIRM_YES = /^(y|yes|ok|okay|approve|approved|confirm|批准|同意|確認|确认|可以|好|好的|是|對|对)$/i;
+const CONFIRM_NO = /^(n|no|deny|denied|reject|cancel|拒絕|拒绝|不要|不|否|取消|不行|不可以)$/i;
+
+/**
+ * Answer an extension confirm() blocking a live RPC turn with the user's next
+ * message. A yes/no reply is consumed as the answer; anything else denies the
+ * dialog (fail closed) and is left queued for the normal interrupt/dispatch.
+ */
+export function answerPendingConfirms(): void {
+  for (const jid of channelsWithPending()) {
+    const channel = getChannel(jid);
+    if (!channel || !rpcSessionHasPendingConfirm(channel.folder)) continue;
+    const msg = peekNextMessage(jid);
+    if (!msg) continue;
+    const reply = msg.attachments ? '' : msg.content.trim().replace(/[\s!！。.,，~～]+$/u, '');
+    const answer = CONFIRM_YES.test(reply) ? true : CONFIRM_NO.test(reply) ? false : undefined;
+    if (answer === undefined) {
+      answerRpcConfirm(channel.folder, false, 'other-message');
+      continue;
+    }
+    const claimed = claimNextMessage(jid);
+    if (!claimed || claimed.rowid !== msg.rowid) continue;
+    markMessageDone(claimed.rowid);
+    answerRpcConfirm(channel.folder, answer);
+  }
+}
+
 function poll(): void {
   if (!running) return;
 
   try {
+    answerPendingConfirms();
     interruptSupersededRuns();
     dispatch();
   } catch (err: any) {
