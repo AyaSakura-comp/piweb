@@ -979,11 +979,14 @@ export function createSessionDashboard({
     let pressPointer = '';
     // Read on press: by the click, the tap itself may have blurred the input.
     let pressTyping = false;
+    let pressTypingHere = false;
     paneEl.addEventListener(
       'pointerdown',
       (e) => {
         pressPointer = e.pointerType;
-        pressTyping = Boolean(document.activeElement?.closest?.('.dashboard-pane-composer'));
+        const typingIn = document.activeElement?.closest?.('.dashboard-pane-composer');
+        pressTyping = Boolean(typingIn);
+        pressTypingHere = Boolean(typingIn && dock.contains(typingIn));
       },
       true,
     );
@@ -993,14 +996,16 @@ export function createSessionDashboard({
         // Closing a pane is no reason to send the input there first.
         if (e.target.closest('.pane-close-btn')) return;
         // The first tap only brings the card here; a second tap on the pane
-        // that already holds it opens the keyboard (2026-10-22: the keyboard
-        // popping up on every pane switch was unwanted). A keyboard that is
-        // already up moves along with the card instead of closing.
+        // that already holds it opens the keyboard, and a third closes it
+        // again (2026-10-22: the keyboard popping up on every pane switch was
+        // unwanted). A keyboard that is up in another pane moves along with
+        // the card instead of closing.
         const holdsCard = composerJid === jid && dock.classList.contains('is-floating');
         const typing = pressTyping;
+        const typingHere = pressTypingHere;
         selectComposerPane(jid);
         // iPhone / iPad: a finger tap on the transcript itself (not a control,
-        // image or video, not ending a text selection) opens the keyboard.
+        // image or video, not ending a text selection) toggles the keyboard.
         // focus() must run inside the tap for iOS to raise the keyboard.
         if (
           (holdsCard || typing) &&
@@ -1009,7 +1014,9 @@ export function createSessionDashboard({
           !e.target.closest(PANE_TAP_KEEPS_FOCUS) &&
           !document.getSelection()?.toString()
         ) {
-          dock.querySelector('.dashboard-pane-composer textarea')?.focus({ preventScroll: true });
+          const input = dock.querySelector('.dashboard-pane-composer textarea');
+          if (typingHere) document.activeElement?.blur();
+          else input?.focus({ preventScroll: true });
         }
       },
       true,

@@ -336,6 +336,12 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await tapPane.locator('.msg-text').first().tap();
   await expect(tapPane.locator('textarea')).toBeFocused();
   await expect(tapPane.locator('textarea')).toBeVisible();
+  // A third tap on the same pane closes the keyboard; the card stays.
+  await tapPane.locator('.msg-text').first().tap();
+  await expect(page.locator('textarea:focus')).toHaveCount(0);
+  await expect(tapPane.locator('textarea')).toBeVisible();
+  await tapPane.locator('.msg-text').first().tap();
+  await expect(tapPane.locator('textarea')).toBeFocused();
   // With the keyboard already up, a tap on another pane moves it along.
   await pane.locator('.msg-text').first().tap();
   await expect(pane.locator('textarea')).toBeFocused();
