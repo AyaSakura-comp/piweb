@@ -1,3 +1,5 @@
+import { createSelectionBubble } from './selection-bubble.js';
+
 const DEFAULT_PREVIEW_LENGTH = 72;
 const MAX_SELECTION_LENGTH = 12_000;
 const LONG_PRESS_MS = 300;
@@ -213,8 +215,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
 
   const startHandle = overlayEl?.querySelector('#sel-handle-start');
   const endHandle = overlayEl?.querySelector('#sel-handle-end');
-  const boxesContainer = overlayEl?.querySelector('#sel-highlight-boxes');
+  // The bubble layer sits beside the overlay, not in it, so it can still
+  // shrink away after the overlay is hidden.
+  const boxesContainer =
+    overlayEl?.querySelector('#sel-highlight-boxes') ?? document.getElementById?.('sel-highlight-boxes');
   const backdrop = overlayEl?.querySelector('#sel-backdrop');
+  const bubble = createSelectionBubble(boxesContainer, { window, scroller: root });
 
   let currentRange = null;
   let startPoint = null;
@@ -233,7 +239,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     startPoint = null;
     endPoint = null;
     isDragging = false;
-    if (boxesContainer) boxesContainer.innerHTML = '';
+    bubble.clear();
     if (overlayEl) {
       overlayEl.hidden = true;
       overlayEl.classList.remove('active');
@@ -241,8 +247,31 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     onClear();
   }
 
+  /**
+   * Rects of the selected text alone. A range's own client rects also carry
+   * boxes for the gaps between blocks (Chrome reports one per paragraph
+   * break), which drew stray tabs between paragraphs.
+   */
+  function textRects(range) {
+    const common = range.commonAncestorContainer;
+    if (!common || !document.createTreeWalker) return Array.from(range.getClientRects());
+    if (common.nodeType === 3) return Array.from(range.getClientRects());
+    const walker = document.createTreeWalker(common, 4 /* NodeFilter.SHOW_TEXT */);
+    const part = document.createRange();
+    const rects = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!range.intersectsNode(node)) continue;
+      part.selectNodeContents(node);
+      if (node === range.startContainer) part.setStart(node, range.startOffset);
+      if (node === range.endContainer) part.setEnd(node, range.endOffset);
+      rects.push(...part.getClientRects());
+    }
+    return rects;
+  }
+
   function getFilteredLineRects(range) {
-    const raw = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+    const raw = textRects(range).filter((r) => r.width > 0 && r.height > 0);
     if (raw.length <= 1) return raw;
 
     // Discard any container bounding box that completely wraps multiple smaller line boxes
@@ -304,22 +333,6 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     return el ? el.getBoundingClientRect() : null;
   }
 
-  function renderHighlightBoxes(rects) {
-    if (!boxesContainer) return;
-    boxesContainer.innerHTML = '';
-    for (let i = 0; i < rects.length; i++) {
-      const r = rects[i];
-      if (r.width <= 0 || r.height <= 0) continue;
-      const box = document.createElement('div');
-      box.className = 'sel-highlight-rect';
-      box.style.left = `${r.left}px`;
-      box.style.top = `${r.top}px`;
-      box.style.width = `${r.width}px`;
-      box.style.height = `${r.height}px`;
-      boxesContainer.appendChild(box);
-    }
-  }
-
   function updateHandlesAndHighlight() {
     if (!currentRange || currentRange.collapsed) {
       clearSelection();
@@ -333,7 +346,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     const lineRects = getFilteredLineRects(currentRange);
     if (lineRects.length === 0 || !overlayEl || !startHandle || !endHandle) return;
 
-    renderHighlightBoxes(lineRects);
+    bubble.set(lineRects);
 
     const startRect = getHandlePointRect(document, startPoint, true) || lineRects[0];
     const endRect = getHandlePointRect(document, endPoint, false) || lineRects[lineRects.length - 1];

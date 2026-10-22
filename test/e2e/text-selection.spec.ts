@@ -31,6 +31,7 @@ test('touch long-press uses only the in-app transcript selection', async ({ page
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   await expect(page.getByRole('toolbar')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.getSelection()?.rangeCount ?? -1)).toBe(0);
+  await expect(page.locator('#sel-highlight-boxes')).toHaveAttribute('data-bubble', 'settled');
 
   const geometry = await page.evaluate(() => {
     const message = document.querySelector('.msg-text')!.getBoundingClientRect();
@@ -38,7 +39,7 @@ test('touch long-press uses only the in-app transcript selection', async ({ page
       .querySelector('#sel-handle-start .sel-handle-line')!
       .getBoundingClientRect();
     const end = document.querySelector('#sel-handle-end .sel-handle-line')!.getBoundingClientRect();
-    const boxes = [...document.querySelectorAll('.sel-highlight-rect')].map((element) =>
+    const boxes = [...document.querySelectorAll('.sel-bubble')].map((element) =>
       element.getBoundingClientRect(),
     );
     return {
@@ -67,11 +68,13 @@ test('touch long-press uses only the in-app transcript selection', async ({ page
     expect(handle.right).toBeLessThan(geometry.viewport.width);
     expect(handle.bottom).toBeLessThan(geometry.viewport.height);
   }
+  // The bubble hugs the selected text: its padding may spill a few px past the
+  // message, never further.
   for (const box of geometry.boxes) {
-    expect(box.left).toBeGreaterThanOrEqual(geometry.message.left - 1);
-    expect(box.top).toBeGreaterThanOrEqual(geometry.message.top - 1);
-    expect(box.right).toBeLessThanOrEqual(geometry.message.right + 1);
-    expect(box.bottom).toBeLessThanOrEqual(geometry.message.bottom + 1);
+    expect(box.left).toBeGreaterThanOrEqual(geometry.message.left - 7);
+    expect(box.top).toBeGreaterThanOrEqual(geometry.message.top - 4);
+    expect(box.right).toBeLessThanOrEqual(geometry.message.right + 7);
+    expect(box.bottom).toBeLessThanOrEqual(geometry.message.bottom + 4);
   }
 
   await page.screenshot({

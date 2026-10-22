@@ -2000,9 +2000,11 @@ html.keyboard-shell .life-edge-hint {
   background: rgb(88 101 242 / 0.48);
 }
 
+/* The selection bubble (.sel-bubble) paints the tint; a second one here would
+   show through it as hard per-line boxes. */
 ::highlight(piweb-selection) {
   color: inherit;
-  background-color: rgba(99, 102, 241, 0.28);
+  background-color: transparent;
 }
 
 .custom-selection-overlay {
@@ -2035,13 +2037,33 @@ html.keyboard-shell .life-edge-hint {
   z-index: 34;
 }
 
-.sel-highlight-rect {
+.sel-bubble-layer {
   position: fixed;
-  background: rgba(99, 102, 241, 0.25);
-  border-radius: 4px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   pointer-events: none;
-  box-shadow: none;
+  opacity: 1;
+  transition: opacity 0.22s ease;
 }
+
+.sel-bubble-layer.leaving {
+  opacity: 0;
+}
+
+/* One translucent bubble around the selection: a light top, a deeper base,
+   a bright rim and a soft glow, like a soap bubble resting on the text. */
+.sel-bubble {
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 6px 16px rgb(88 101 242 / 0.3));
+}
+
+.sel-bubble-fill-top { stop-color: rgb(186 196 255 / 0.34); }
+.sel-bubble-fill-bottom { stop-color: rgb(99 102 241 / 0.24); }
+.sel-bubble-rim-top { stop-color: rgb(255 255 255 / 0.7); }
+.sel-bubble-rim-bottom { stop-color: rgb(165 180 252 / 0.38); }
 
 /* ── iOS-style sleek teardrop selection handles ────────────────────────── */
 
@@ -2121,7 +2143,7 @@ html.keyboard-shell .life-edge-hint {
   box-shadow: 0 0 10px var(--accent);
 }
 
-/* ── Apple-style Floating Glass Pill Action Bar ────────────────────────── */
+/* ── Floating action bubble ───────────────────────────────────────────── */
 
 .selection-actions {
   position: fixed;
@@ -2130,39 +2152,64 @@ html.keyboard-shell .life-edge-hint {
   align-items: center;
   overflow: hidden;
   transform: translateX(-50%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  transform-origin: 50% 0;
+  border: 1px solid rgb(255 255 255 / 0.32);
   border-radius: 999px;
-  background: rgba(28, 28, 32, 0.88);
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgb(255 255 255 / 0.22), transparent 60%),
+    rgb(52 54 78 / 0.5);
   box-shadow:
-    0 8px 28px rgba(0, 0, 0, 0.55),
-    0 2px 8px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  animation: actionsPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  padding: 3px 6px;
+    inset 0 1px 1px rgb(255 255 255 / 0.35),
+    inset 0 -6px 14px rgb(129 140 248 / 0.18),
+    0 12px 30px rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  animation: actionsPop 0.5s linear both;
+  padding: 3px;
   gap: 2px;
 }
 
+/* A bubble blowing up: overshoot, a small rebound, settle. */
 @keyframes actionsPop {
   0% {
     opacity: 0;
-    transform: translateX(-50%) scale(0.88) translateY(6px);
+    transform: translateX(-50%) translateY(-6px) scale(0.55);
+  }
+  30% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1.08);
+  }
+  55% {
+    transform: translateX(-50%) scale(0.97);
+  }
+  78% {
+    transform: translateX(-50%) scale(1.01);
   }
   100% {
     opacity: 1;
-    transform: translateX(-50%) scale(1) translateY(0);
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-actions {
+    animation: none;
+  }
+
+  .sel-bubble-layer {
+    transition: none;
   }
 }
 
 .selection-actions button {
-  min-width: 58px;
-  height: 32px;
-  padding: 0 12px;
+  min-width: 64px;
+  height: 44px;
+  padding: 0 16px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.2px;
   display: inline-flex;
@@ -5220,8 +5267,36 @@ dialog.sheet::backdrop {
   background: rgb(63 95 111 / 0.22);
 }
 
-:root[data-theme='light'] ::highlight(piweb-selection) {
-  background-color: rgb(63 95 111 / 0.18);
+:root[data-theme='light'] .sel-bubble {
+  filter: drop-shadow(0 6px 14px rgb(63 95 111 / 0.2));
+}
+
+:root[data-theme='light'] .sel-bubble-fill-top { stop-color: rgb(150 196 214 / 0.3); }
+:root[data-theme='light'] .sel-bubble-fill-bottom { stop-color: rgb(63 95 111 / 0.2); }
+:root[data-theme='light'] .sel-bubble-rim-top { stop-color: rgb(255 255 255 / 0.95); }
+:root[data-theme='light'] .sel-bubble-rim-bottom { stop-color: rgb(63 95 111 / 0.4); }
+
+:root[data-theme='light'] .selection-actions {
+  border-color: rgb(255 255 255 / 0.8);
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgb(255 255 255 / 0.75), transparent 60%),
+    rgb(240 244 246 / 0.55);
+  box-shadow:
+    inset 0 1px 1px rgb(255 255 255 / 0.9),
+    inset 0 -6px 14px rgb(63 95 111 / 0.12),
+    0 12px 30px rgb(45 43 38 / 0.18);
+}
+
+:root[data-theme='light'] .selection-actions button {
+  color: var(--text-bright);
+}
+
+:root[data-theme='light'] .selection-actions button:active {
+  background: rgb(63 95 111 / 0.12);
+}
+
+:root[data-theme='light'] .selection-actions button:disabled {
+  color: rgb(63 95 111 / 0.4);
 }
 
 /* The lightbox is always dark, including labels that would otherwise inherit

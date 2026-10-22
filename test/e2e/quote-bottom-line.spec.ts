@@ -51,11 +51,11 @@ test('selecting the last transcript line keeps it above the quote bar, and BTW o
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(page.locator('#quote-preview')).toBeVisible();
   await expect(page.locator('#selection-actions')).toBeVisible();
-  await page.waitForTimeout(250);
+  await expect(page.locator('#sel-highlight-boxes')).toHaveAttribute('data-bubble', 'settled');
 
   const geometry = await page.evaluate(() => {
     const rect = (el: Element | null) => el!.getBoundingClientRect();
-    const highlights = [...document.querySelectorAll('.sel-highlight-rect')].map((el) => el.getBoundingClientRect());
+    const highlights = [...document.querySelectorAll('.sel-bubble')].map((el) => el.getBoundingClientRect());
     return {
       composerTop: rect(document.getElementById('composer-wrap')).top,
       btwTop: document.querySelector('.btw-pending-row:not([hidden])')?.getBoundingClientRect().top ?? Infinity,

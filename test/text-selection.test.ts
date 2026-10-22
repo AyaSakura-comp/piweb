@@ -74,7 +74,7 @@ describe('transcript text selection', () => {
     expect(css).toContain('-webkit-touch-callout: none');
     expect(css).toContain('.sel-backdrop');
     expect(css).toContain('.sel-highlight-boxes');
-    expect(css).toContain('.sel-highlight-rect');
+    expect(css).toContain('.sel-bubble');
     expect(css).toContain('.sel-handle');
     expect(css).toContain('.sel-handle-pin');
     expect(css).toContain('::highlight(piweb-selection)');
@@ -149,7 +149,16 @@ describe('transcript text selection', () => {
 
     const startHandle = { style: { left: '', top: '' }, addEventListener: vi.fn() };
     const endHandle = { style: { left: '', top: '' }, addEventListener: vi.fn() };
-    const boxesContainer = { innerHTML: '', appendChild: vi.fn() };
+    const bubblePath = { setAttribute: vi.fn() };
+    const bubbleSvg = {
+      innerHTML: '',
+      setAttribute: vi.fn(),
+      querySelector: () => bubblePath,
+      classList: { add: vi.fn(), remove: vi.fn() },
+      remove: vi.fn(),
+    };
+    (document as any).createElementNS = () => bubbleSvg;
+    const boxesContainer = { innerHTML: '', appendChild: vi.fn(), dataset: {} as Record<string, string>, ownerDocument: document };
     const backdropListeners = new Map<string, (e: any) => void>();
     const backdrop = {
       addEventListener: (type: string, fn: (e: any) => void) => backdropListeners.set(type, fn),
@@ -206,7 +215,10 @@ describe('transcript text selection', () => {
     expect(overlayEl.hidden).toBe(false);
     expect(startHandle.style.left).toBe('10px');
     expect(endHandle.style.left).toBe('60px');
-    expect(boxesContainer.appendChild).toHaveBeenCalled();
+    expect(boxesContainer.appendChild).toHaveBeenCalledWith(bubbleSvg);
+    // Without requestAnimationFrame the bubble lands at once around the word.
+    expect(boxesContainer.dataset.bubble).toBe('settled');
+    expect(bubblePath.setAttribute).toHaveBeenLastCalledWith('d', expect.stringMatching(/^M.*Z$/));
 
     // Test backdrop touch clears selection
     backdropListeners.get('touchstart')?.({
