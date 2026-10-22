@@ -1011,6 +1011,36 @@ export function createSessionDashboard({
       createPromptPin({
         scroller: messagesEl,
         isCommand: isCommandEchoText,
+        // A pane holds only the newest page, often one prompt or none: a turn
+        // that began before it (scrolled up past the latest prompt, or one long
+        // tool loop) looks its prompt up on the server.
+        getEarlier: () => {
+          let oldest = Infinity;
+          for (const node of messagesEl.querySelectorAll('[data-event-id]')) {
+            const id = Number(node.dataset.eventId);
+            if (id > 0 && id < oldest) oldest = id;
+          }
+          if (!Number.isFinite(oldest) || oldest <= 1) return null;
+          return {
+            key: `${jid}:${oldest}`,
+            load: async () => {
+              let before = oldest;
+              for (let page = 0; page < 5 && before; page++) {
+                const { events = [], hasMore } = await api(
+                  `/api/sessions/${encodeURIComponent(jid)}/events?before=${before}&limit=200`,
+                );
+                const prompt = events.findLast(
+                  (event) =>
+                    event.kind === 'message' && event.role === 'user' && !isCommandEchoText(event.content),
+                );
+                if (prompt) return prompt.content || '';
+                if (!hasMore || !events.length) break;
+                before = Math.min(...events.map((event) => event.id));
+              }
+              return '';
+            },
+          };
+        },
       });
     }
 

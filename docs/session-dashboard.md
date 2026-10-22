@@ -88,7 +88,7 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 ### Under-Header Utilities
 - **Per-Pane Search Bar (`.dashboard-pane-search-bar`)**: Real-time message query matching, match counter (`X / Y`), previous/next navigation, and Esc dismissal.
 - **Per-Pane BTW Side Chat (`.dashboard-pane-btw`)**: Isolated side-channel transcript with dedicated header (`‹ 回主對話`, status label `BTW 側聊 · 不會加入主對話`, live dot, trash button). BTW turns execute in background without polluting main conversation history.
-- **Sticky Prompt Pin (`createPromptPin`)**: Pinned header bar tracking the prompt for the turn currently in view. Folded (44px) by default; expands on click to `min(40dvh, 320px)`. Pushes up and down synchronously as adjacent prompt rows scroll past.
+- **Sticky Prompt Pin (`createPromptPin`)**: Pinned header bar tracking the prompt for the turn currently in view. Folded (44px) by default; expands on click to `min(40dvh, 320px)`. Pushes up and down synchronously as adjacent prompt rows scroll past. A pane loads only the newest page (`?limit=50`), which in an agent session often holds one prompt or none, so its `getEarlier` asks `/events?before=<oldest loaded id>` for the prompt of a turn that began earlier, once per boundary; without it the pin vanished as soon as the reader scrolled up past the latest prompt (iPhone, 2026-10-22).
 
 ### Transcript & Message Rendering
 - **Markdown Architecture**: Uses `@lobehub/streamdown` and `CachedMarkdown` for rendering streaming and static messages, mathematical LaTeX (`rehype-katex`), syntax-highlighted code blocks, and Mermaid diagrams.

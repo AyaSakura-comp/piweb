@@ -262,3 +262,64 @@ test('a prompt placed flush with the top edge (just sent) is not covered by its 
   await messages.evaluate((node) => node.scrollBy(0, 60));
   await expect(page.locator('#prompt-pin')).toHaveText('Second question: why is the cache cold?');
 });
+
+test('a dashboard pane, holding only the newest page, looks up the prompt of a turn that began before it', async ({
+  page,
+}, info) => {
+  // The newest page starts mid tool loop: the previous turn's prompt is on an
+  // older page, and only the latest prompt is loaded (as in a real agent session).
+  const loop = Array.from({ length: 12 }, (_, i) => ({
+    id: 151 + i,
+    kind: 'message',
+    role: 'assistant',
+    content: `Tool loop step ${i + 1}\n\n${longReply.slice(0, 200)}`,
+    files: [],
+    createdAt: '2026-01-01T00:00:02Z',
+  }));
+  const newest = [
+    ...loop,
+    { id: 181, kind: 'message', role: 'user', content: 'Latest prompt', files: [], createdAt: '2026-01-01T00:00:03Z' },
+    { id: 182, kind: 'message', role: 'assistant', content: longReply, files: [], createdAt: '2026-01-01T00:00:04Z' },
+  ];
+  const older = [
+    { id: 10, kind: 'message', role: 'user', content: 'Tool loop prompt\nwith detail', files: [], createdAt: '2026-01-01T00:00:00Z' },
+    { id: 11, kind: 'message', role: 'user', content: '/claude-usage', files: [], createdAt: '2026-01-01T00:00:01Z' },
+  ];
+  const befores: string[] = [];
+  routes(page);
+  await page.route('**/api/sessions/*/events**', async (route) => {
+    const before = new URL(route.request().url()).searchParams.get('before');
+    if (before) {
+      befores.push(before);
+      return route.fulfill({ json: { events: Number(before) <= 151 ? older : [], hasMore: false, session } });
+    }
+    return route.fulfill({ json: { events: newest, busy: false, hasMore: true, session } });
+  });
+  await page.goto('/');
+  await page.locator('#btn-topbar-dashboard').click();
+  const pane = page.locator('.dashboard-pane').first();
+  const messages = pane.locator('.dashboard-pane-messages');
+  await expect(messages.getByText('Latest prompt')).toBeAttached();
+  const pin = pane.locator('.prompt-pin');
+
+  // In the latest reply: the loaded latest prompt is pinned.
+  await messages.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(pin).toHaveText('Latest prompt');
+
+  // Scrolled up past it, into the tool loop: that turn's prompt comes from the server.
+  await messages.evaluate((node) => {
+    const row = node.querySelector('[data-event-id="170"], [data-event-id="160"]') as HTMLElement;
+    node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top + 40;
+  });
+  await expect(pin).toHaveText('Tool loop prompt');
+  await expect(pin).toBeVisible();
+  const pinBox = (await pin.boundingBox())!;
+  const top = (await messages.boundingBox())!.y;
+  expect(Math.abs(pinBox.y - top)).toBeLessThan(1);
+  await page.screenshot({ path: info.outputPath('dashboard-pin-earlier.png') });
+  await messages.evaluate((node) => node.scrollBy(0, -80));
+  await page.waitForTimeout(300);
+  expect(befores.filter((value) => value === '151')).toHaveLength(1);
+});
