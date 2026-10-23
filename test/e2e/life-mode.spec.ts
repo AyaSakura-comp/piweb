@@ -217,10 +217,9 @@ async function installLifeApi(
     }
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/push/key') return route.fulfill({ json: { key: '' } });
-    if (path === '/api/subscriptions/openai-codex') {
-      return route.fulfill({
-        json: { provider: 'openai-codex', connected: false, job: null },
-      });
+    const subscription = path.match(/^\/api\/subscriptions\/([a-z-]+)$/)?.[1];
+    if (subscription) {
+      return route.fulfill({ json: { provider: subscription, connected: false, job: null } });
     }
     if (path === '/api/sessions/deleted/purge' && request.method() === 'POST') {
       const body = request.postDataJSON() as {

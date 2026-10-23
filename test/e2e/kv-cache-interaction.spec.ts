@@ -99,6 +99,12 @@ test.describe('piweb kv-cache extension command workflow and visual verification
 
       if (path === '/api/me') return route.fulfill({ json: { authed: true } });
       if (path === '/api/commands') return route.fulfill({ json: { commands: COMMANDS } });
+      if (path === '/api/dashboard-layout') return route.fulfill({ json: { layout: null } });
+      if (path === '/api/system-metrics') return route.fulfill({ json: {} });
+      const subscription = path.match(/^\/api\/subscriptions\/([a-z-]+)$/)?.[1];
+      if (subscription) {
+        return route.fulfill({ json: { provider: subscription, connected: false, job: null } });
+      }
       if (path === '/api/models') {
         return route.fulfill({
           json: {

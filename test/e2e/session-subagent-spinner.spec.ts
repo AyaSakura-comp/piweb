@@ -13,8 +13,19 @@ test('sidebar keeps spinning for child-only work and stops when children finish'
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
     if (path === '/api/sessions') return route.fulfill({ json: { sessions: [session, other] } });
-    if (path.endsWith('/events')) return route.fulfill({ json: { events: [], busy: session.busy, session } });
-    if (path.endsWith('/stream')) return route.fulfill({ contentType: 'text/event-stream', body: 'event: busy\ndata: {"busy":false}\n\n' });
+    if (path.endsWith('/events')) {
+      // The app opens a session only when the reply names that same live session.
+      const jid = decodeURIComponent(path.split('/')[3]);
+      const opened = jid === other.jid ? other : session;
+      return route.fulfill({ json: { events: [], busy: opened.busy, session: { ...opened, deleted: false } } });
+    }
+    // Like the server, the open session's stream reports its current busy state.
+    if (path.endsWith('/stream')) {
+      return route.fulfill({
+        contentType: 'text/event-stream',
+        body: `event: busy\ndata: ${JSON.stringify({ busy: session.busy })}\n\n`,
+      });
+    }
     return route.fulfill({ json: { commands: [], models: [], sessions: [] } });
   });
   await page.goto('/');

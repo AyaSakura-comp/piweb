@@ -189,6 +189,19 @@ function handleClaudeFixtureApi(request, response, pathname) {
     sendJson(response, 200, { sessions: [] });
     return true;
   }
+  if (pathname === '/api/dashboard-layout') {
+    sendJson(response, 200, method === 'GET' ? { layout: null } : { ok: true });
+    return true;
+  }
+  if (pathname === '/api/system-metrics' && method === 'GET') {
+    sendJson(response, 200, {});
+    return true;
+  }
+  const subscription = pathname.match(/^\/api\/subscriptions\/([a-z-]+)$/)?.[1];
+  if (subscription && method === 'GET') {
+    sendJson(response, 200, { provider: subscription, connected: false, job: null });
+    return true;
+  }
 
   const decoded = decodeURIComponent(pathname);
   if (decoded === '/api/sessions/web:claude1/events' && method === 'GET') {

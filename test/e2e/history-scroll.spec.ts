@@ -34,6 +34,12 @@ async function installHistoryApi(page: Page, responseDelayMs?: number) {
     if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
+    if (path === '/api/dashboard-layout') return route.fulfill({ json: { layout: null } });
+    if (path === '/api/system-metrics') return route.fulfill({ json: {} });
+    const subscription = path.match(/^\/api\/subscriptions\/([a-z-]+)$/)?.[1];
+    if (subscription) {
+      return route.fulfill({ json: { provider: subscription, connected: false, job: null } });
+    }
     if (path === '/api/sessions') {
       return route.fulfill({
         json: {
@@ -79,17 +85,27 @@ async function installHistoryApi(page: Page, responseDelayMs?: number) {
         });
       }
 
+      const limit = Number(url.searchParams.get('limit') || 0);
+      const pageEnd = before - 1;
+      // The pinned prompt looks further back for the turn being read; that is
+      // not a history page, so it neither counts nor waits for a release.
+      if (limit !== PAGE_SIZE) {
+        return route.fulfill({
+          json: {
+            events: events(Math.max(1, before - limit), pageEnd),
+            busy: false,
+            hasMore: before - limit > 1,
+            partial: null,
+          },
+        });
+      }
       olderRequests += 1;
-      olderRequestQueries.push({
-        before,
-        limit: Number(url.searchParams.get('limit') || 0),
-      });
+      olderRequestQueries.push({ before, limit });
       if (responseDelayMs == null) {
         await new Promise<void>((resolve) => pendingReleases.push(resolve));
       } else {
         await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
       }
-      const pageEnd = before - 1;
       const pageStart = Math.max(1, pageEnd - PAGE_SIZE + 1);
       return route.fulfill({
         json: {
@@ -371,7 +387,14 @@ test('500-message touch history remains continuous across every older page', asy
     totalSwipes += await swipeUntilRequest(page, historyApi.requestCount, pageNumber);
     const activeMomentumBoundary = pageNumber === 4;
     if (activeMomentumBoundary) {
-      const movingAnchor = await armMovingPrependAnchorProbe(page);
+      let movingAnchor = await armMovingPrependAnchorProbe(page);
+      // Emulated swipes fling only some of the time. The page is still held, so
+      // swipe again until it lands mid-fling, which is the case under test.
+      for (let retry = 0; Math.abs(movingAnchor.scrollDelta) <= 1 && retry < 3; retry += 1) {
+        await swipeTowardOlderHistory(page);
+        totalSwipes += 1;
+        movingAnchor = await armMovingPrependAnchorProbe(page);
+      }
       expect(Math.abs(movingAnchor.scrollDelta), 'page 4 momentum was not active').toBeGreaterThan(
         1,
       );

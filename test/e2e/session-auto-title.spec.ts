@@ -53,6 +53,12 @@ async function installSessionApi(page: Page) {
     if (path === '/api/commands') return route.fulfill({ json: { commands: [] } });
     if (path === '/api/models') return route.fulfill({ json: { models: [] } });
     if (path === '/api/sessions/deleted') return route.fulfill({ json: { sessions: [] } });
+    if (path === '/api/dashboard-layout') return route.fulfill({ json: { layout: null } });
+    if (path === '/api/system-metrics') return route.fulfill({ json: {} });
+    const subscription = path.match(/^\/api\/subscriptions\/([a-z-]+)$/)?.[1];
+    if (subscription) {
+      return route.fulfill({ json: { provider: subscription, connected: false, job: null } });
+    }
 
     if (path === '/api/sessions' && request.method() === 'POST') {
       created = true;
