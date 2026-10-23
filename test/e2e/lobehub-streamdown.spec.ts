@@ -209,8 +209,27 @@ test.describe('document-context desktop selection', () => {
       getSelection()!.addRange(range);
       (window as any).__referencePrefix = n;
       (window as any).__referenceText = n.firstChild;
-      (window as any).__referenceTop = document.getElementById('messages')!.scrollTop;
     });
+    // The selection opens the quote bar, which scrolls the transcript up by the
+    // bar's height. Measure drift from where it settles, not from before it.
+    await expect(page.locator('#quote-preview')).toBeVisible();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const messages = document.getElementById('messages')!;
+          let last = messages.scrollTop;
+          let still = 0;
+          const step = () => {
+            still = messages.scrollTop === last ? still + 1 : 0;
+            last = messages.scrollTop;
+            if (still >= 10) {
+              (window as any).__referenceTop = last;
+              resolve();
+            } else requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }),
+    );
     await partial(page, source);
     await expect(page.locator('#partial-msg a[href="https://example.test/first"]')).toHaveCount(3);
     expect(
@@ -1169,6 +1188,8 @@ test('LobeHub continuous video uses real Send dark light upstream streaming fina
       await page.locator('#btn-settings').click();
       await page.locator('#btn-theme').click();
       await page.locator('#btn-settings-close').click();
+      // Settings slides out before it closes; Send is covered until then.
+      await expect(page.locator('#settings-dialog')).toBeHidden();
     }
     await page.locator('#input').fill(`${theme}：使用 LobeHub 原生效果`);
     const hit = await page.locator('#btn-send').evaluate((n) => {
