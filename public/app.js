@@ -397,11 +397,12 @@ let selectionTargetPaneJid = null;
 function showSelectionActions(text, rect, paneJid = null) {
   selectedText = text;
   selectionTargetPaneJid = paneJid;
-  if (paneJid && typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
-    if (text) {
-      sessionDashboard.setPaneQuote?.(paneJid, text);
-    }
-  } else if (!state.previewingDeleted && text) {
+  // A pane's quote waits for 引用 (#selection-quote): set on selection, its
+  // quote bar grew the card, the pane kept to the bottom and scrolled the
+  // selection out from under the pill, and a pane not holding the card got a
+  // quote nobody saw.
+  const inPane = Boolean(paneJid && typeof sessionDashboard !== 'undefined' && sessionDashboard.active);
+  if (!inPane && !state.previewingDeleted && text) {
     state.pendingQuote = text;
     // The first selection opens the quote bar, which scrolls the transcript up
     // by its height (renderQuotePreview); the selection moved with it.
@@ -420,7 +421,10 @@ function showSelectionActions(text, rect, paneJid = null) {
     ? document.querySelector(`.dashboard-pane[data-jid="${CSS.escape(paneJid)}"] .dashboard-pane-composer-wrap`)
     : null;
   const composer = paneComposer || $('composer-wrap');
-  const composerTop = composer ? composer.getBoundingClientRect().top : window.innerHeight - 70;
+  // A pane without the card has a hidden composer (an all-zero rect): every
+  // selection would "overflow" it and flip above, over the pane header.
+  const composerRect = composer?.getBoundingClientRect();
+  const composerTop = composerRect?.height ? composerRect.top : window.innerHeight - 70;
 
   // Center horizontally over selection, clamped within margins
   const left = Math.min(
@@ -2305,6 +2309,25 @@ const sessionDashboard = createSessionDashboard({
   attachmentLimitProblem: (attachments, options) =>
     attachmentLimitProblem(attachments, uploadLimits, options),
 });
+// The same long-press selection in every Dashboard pane: on touch the panes'
+// transcripts are user-select:none like the chat's, so without it a pane's
+// text could not be selected and quoted at all.
+const clearChatSelection = clearCustomSelection;
+const clearPaneSelection = bindCustomSelection($('dashboard-grid'), $('custom-selection-overlay'), {
+  scope: '.dashboard-pane-messages',
+  onSelection: (text, rect, scroller) => {
+    customSelectionActive = true;
+    showSelectionActions(text, rect, scroller.closest('.dashboard-pane')?.dataset.jid || null);
+  },
+  onClear: () => {
+    customSelectionActive = false;
+    hideSelectionActions();
+  },
+});
+clearCustomSelection = () => {
+  clearChatSelection();
+  clearPaneSelection();
+};
 // Dashboard panes re-render their transcripts too: re-home a player embedded
 // in one, as for the chat above.
 new MutationObserver(() => streamPlayer.relocate()).observe($('dashboard-view'), {

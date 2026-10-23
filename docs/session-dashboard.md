@@ -103,6 +103,27 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 - **Per-Pane Typing Status & BTW Link**: Live typing indicator row with `BTW ›` / `‹ 主對話` toggle link.
 - **Slash Command Autocomplete**: Popup menu suggesting available slash commands (`/pi`, `/model`, `/clear`, etc.).
 - **Quote Reply Preview**: Quote bar with dismiss button (`✕`), triggered by message `❝` quote buttons or transcript text selection.
+- **Selecting and quoting in a pane (2026-10-24)**: a text selection in a pane gets the same
+  `引用 / 複製` pill as the chat. Two things had kept it from ever appearing:
+  - The Dashboard hides every `.main` child but `#dashboard-view`, and the pill
+    (`#selection-actions`), highlight layer (`#sel-highlight-boxes`) and handle overlay
+    (`#custom-selection-overlay`) are `.main` children. They are exempt from that rule now.
+  - On touch every transcript is `user-select: none`, and the long-press selection was bound
+    to the chat's `#messages` only. `app.js` binds a second instance to `#dashboard-grid` with
+    `scope: '.dashboard-pane-messages'`: the pane long-pressed becomes the scroller, and the
+    selection stays inside it. Both instances share the one overlay, so a module-level owner
+    lets only the instance holding the selection drag the handles, and one starting a selection
+    ends the other's.
+
+  In a pane the quote is set by `引用`, not by the selection itself (the chat's quote bar
+  follows the selection). A pane's quote bar grew the card, the pane kept to its bottom and
+  scrolled the selection out from under the pill, and a pane not holding the card got a quote
+  nobody saw. `引用` brings the card to the pane (`setPaneQuote(jid, text, true)` →
+  `selectComposerPane`) and focuses it. The click that ends a mouse drag-select does not move
+  the card either, for the same scrolling reason. The pill is placed against the window bottom
+  when the pane's composer is hidden (an all-zero rect used to flip it over the pane header).
+  Tests: `session-dashboard-mobile.spec.ts` (long-press, 引用, handle drag in a second pane) and
+  `session-dashboard-split.spec.ts` (mouse selection, pill under the line, no scroll).
 - **Multimedia Attachment Pipeline (`.pane-attachments`)**:
   - Supports image (PNG, JPEG, WebP, GIF), audio, and video attachments.
   - Thumbnail preview strip with file size tags and individual remove buttons.

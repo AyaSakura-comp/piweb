@@ -218,7 +218,7 @@ describe('transcript text selection', () => {
     vi.advanceTimersByTime(320);
 
     expect(removeAllRanges).toHaveBeenCalled();
-    expect(onSelection).toHaveBeenCalledWith('hello', expect.anything());
+    expect(onSelection).toHaveBeenCalledWith('hello', expect.anything(), root);
 
     // Lifting the long press must not click the actions now under the finger.
     const longPressClick = vi.fn();
@@ -315,7 +315,7 @@ describe('transcript text selection', () => {
     });
     vi.advanceTimersByTime(320);
 
-    expect(onSelection).toHaveBeenLastCalledWith('first', expect.anything());
+    expect(onSelection).toHaveBeenLastCalledWith('first', expect.anything(), root);
 
     // Drag finger forward to offset 22 ("first line\nsecond line")
     globalListeners.get('touchmove')?.({
@@ -325,7 +325,7 @@ describe('transcript text selection', () => {
     });
 
     // Start anchor should remain locked at 0; trailing pivot moved to 22!
-    expect(onSelection).toHaveBeenLastCalledWith('first line\nsecond line', expect.anything());
+    expect(onSelection).toHaveBeenLastCalledWith('first line\nsecond line', expect.anything(), root);
 
     vi.useRealTimers();
   });

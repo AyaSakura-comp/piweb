@@ -995,6 +995,11 @@ export function createSessionDashboard({
       (e) => {
         // Closing a pane is no reason to send the input there first.
         if (e.target.closest('.pane-close-btn')) return;
+        // Neither is ending a mouse drag-select: the arriving card would
+        // shrink the transcript, which keeps to its bottom and scrolls the
+        // selection out from under its 引用 / 複製 pill. 引用 brings the card.
+        const selection = document.getSelection();
+        if (selection && !selection.isCollapsed && messagesEl.contains(selection.anchorNode)) return;
         // The first tap only brings the card here; a second tap on the pane
         // that already holds it opens the keyboard, and a third closes it
         // again (2026-10-22: the keyboard popping up on every pane switch was
@@ -3929,6 +3934,8 @@ export function createSessionDashboard({
       pane.pendingQuote = (text || '').trim();
       pane.renderQuote?.();
       if (focusInput && pane.textarea) {
+        // Quote goes to this pane's card: bring the card here before focusing it.
+        selectComposerPane(jid);
         pane.textarea.focus({ preventScroll: true });
       }
     },

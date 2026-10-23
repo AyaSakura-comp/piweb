@@ -20,7 +20,7 @@ const [NOTES, PIWEB, HAY, BROWSER] = sessions.map((s) => s.jid);
 
 test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
-async function setup(page: Page) {
+async function setup(page: Page, events: Record<string, unknown[]> = {}) {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.addInitScript(
@@ -61,7 +61,7 @@ async function setup(page: Page) {
     if (path === '/api/system-metrics') return route.fulfill({ json: {} });
     if (path.endsWith('/events')) {
       const session = sessions.find((s) => s.jid === path.split('/')[3]);
-      return route.fulfill({ json: { events: [], busy: false, hasMore: false, session } });
+      return route.fulfill({ json: { events: events[session!.jid] ?? [], busy: false, hasMore: false, session } });
     }
     if (path.endsWith('/stream'))
       return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
@@ -267,5 +267,45 @@ test('thirds of the pane under the pointer pick the split, no edge band needed',
   await page.mouse.up();
   await page.waitForTimeout(600);
   expect(shape(await savedGroups(page))).toEqual([[PIWEB, NOTES], [HAY, BROWSER]]);
+  expect(errors).toEqual([]);
+});
+
+test('a mouse selection in a pane offers 引用, which quotes it into that pane', async ({ page }, info) => {
+  const lines = Array.from({ length: 40 }, (_, i) => `Log line ${i + 1}: selectable text`).join('\n\n');
+  const errors = await setup(page, {
+    [BROWSER]: [{ id: 1, kind: 'message', role: 'assistant', content: lines, files: [], createdAt: '2026-10-21T01:00:00Z' }],
+  });
+  const pane = page.locator(`.dashboard-pane[data-jid="${BROWSER}"]`);
+  const scroller = pane.locator('.dashboard-pane-messages');
+  await expect(pane.locator('.msg-text p').first()).toBeVisible();
+  await page.waitForTimeout(800);
+  const line = await pane.evaluate((p) => {
+    const sc = p.querySelector('.dashboard-pane-messages')!.getBoundingClientRect();
+    for (const el of p.querySelectorAll('.dashboard-pane-messages .msg-text p')) {
+      const r = el.getBoundingClientRect();
+      if (r.top >= sc.top + 80 && r.bottom <= sc.bottom - 4) return { x: r.left, y: r.top + r.height / 2, text: el.textContent! };
+    }
+    throw new Error('no visible line');
+  });
+  const top = await scroller.evaluate((e) => e.scrollTop);
+  await page.mouse.move(line.x + 2, line.y);
+  await page.mouse.down();
+  await page.mouse.move(line.x + 80, line.y, { steps: 8 });
+  await page.mouse.up();
+  const actions = page.locator('#selection-actions');
+  await expect(actions).toBeVisible();
+  // The click ending the drag does not bring the card, which would scroll the
+  // selection away; the pill sits just under the selected line.
+  await page.waitForTimeout(500);
+  expect(await scroller.evaluate((e) => e.scrollTop)).toBe(top);
+  const pill = (await actions.boundingBox())!;
+  expect(pill.y).toBeGreaterThan(line.y);
+  expect(pill.y).toBeLessThan(line.y + 60);
+  expect(await pane.locator('.pane-quote-preview').isVisible()).toBe(false);
+  await page.screenshot({ path: info.outputPath('30-pane-selection.png') });
+  await page.locator('#selection-quote').click();
+  await expect(pane.locator('.pane-quote-preview')).toBeVisible();
+  await expect(pane.locator('.pane-quote-preview .quote-preview-text')).toContainText(line.text.slice(0, 4));
+  await expect(pane.locator('textarea')).toBeFocused();
   expect(errors).toEqual([]);
 });

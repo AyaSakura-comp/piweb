@@ -230,7 +230,17 @@ function expandToWord(point) {
  * Locks initial anchor during swipe, moves trailing pivot across multiple lines,
  * and maintains locked opposite anchor during handle dragging.
  */
-export function bindCustomSelection(root, overlayEl, { onSelection, onClear = () => {} }) {
+// The instance holding the selection: the overlay, handles and highlight are
+// shared, so a selection starting in another root ends this one first.
+let selectionOwner = null;
+
+/**
+ * Long-press selection inside `root`. With `scope` (a selector), `root` holds
+ * several transcripts (the Dashboard's panes): the one long-pressed becomes
+ * the scroller, and the selection stays inside it. onSelection gets
+ * (text, rect, scroller).
+ */
+export function bindCustomSelection(root, overlayEl, { onSelection, onClear = () => {}, scope = null }) {
   const document = root.ownerDocument;
   const window = document.defaultView;
   const highlights = window?.CSS?.highlights;
@@ -243,7 +253,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   const boxesContainer =
     overlayEl?.querySelector('#sel-highlight-boxes') ?? document.getElementById?.('sel-highlight-boxes');
   const backdrop = overlayEl?.querySelector('#sel-backdrop');
-  const bubble = createSelectionBubble(boxesContainer, { window, scroller: root });
+  let scroller = root;
+  const bubble = createSelectionBubble(boxesContainer, {
+    window,
+    scroller: { get scrollTop() { return scroller.scrollTop; } },
+  });
+  const self = { clear: () => clearSelection() };
 
   let currentRange = null;
   let startPoint = null;
@@ -263,6 +278,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     endPoint = null;
     isDragging = false;
     bubble.clear();
+    if (selectionOwner === self) selectionOwner = null;
     if (overlayEl) {
       overlayEl.hidden = true;
       overlayEl.classList.remove('active');
@@ -385,7 +401,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
 
     const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
     if (text) {
-      onSelection(text, currentRange.getBoundingClientRect());
+      onSelection(text, currentRange.getBoundingClientRect(), scroller);
     } else {
       clearSelection();
     }
@@ -412,6 +428,10 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     if (!p1 || !p2) return;
     const isForward = defaultComparePoints(document, p1, p2) <= 0;
     const [s, e] = isForward ? [p1, p2] : [p2, p1];
+    if (selectionOwner !== self) {
+      selectionOwner?.clear();
+      selectionOwner = self;
+    }
     startPoint = s;
     endPoint = e;
     currentRange = createRangeBetween(document, s, e);
@@ -442,9 +462,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     }
 
     if (!target.closest('.msg-text, .event-body')) return;
+    const transcript = scope ? target.closest(scope) : root;
+    if (!transcript || !root.contains(transcript)) return;
+    scroller = transcript;
 
     const touch = event.touches[0];
-    const point = findTextPoint(document, touch.clientX, touch.clientY, root);
+    const point = findTextPoint(document, touch.clientX, touch.clientY, scroller);
     if (!point) return;
 
     const pending = {
@@ -490,7 +513,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       overlayEl?.classList.add('dragging');
       onClear(); // Hide floating action bar while actively dragging
     }
-    const current = findTextPoint(document, touch.clientX, touch.clientY, root);
+    const current = findTextPoint(document, touch.clientX, touch.clientY, scroller);
     if (current && pendingGesture.anchor) {
       extendFromAnchorWord(pendingGesture.anchor, current);
     }
@@ -508,7 +531,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       overlayEl?.classList.remove('dragging');
       if (currentRange && !currentRange.collapsed) {
         const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
-        if (text) onSelection(text, currentRange.getBoundingClientRect());
+        if (text) onSelection(text, currentRange.getBoundingClientRect(), scroller);
       }
     }
     pendingGesture = null;
@@ -522,7 +545,8 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     let dragAnchor = null;
 
     handleEl.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) return;
+      // Every root binds the shared handles; only the one holding the selection drags them.
+      if (e.touches.length !== 1 || selectionOwner !== self) return;
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
       touchId = e.touches[0].identifier;
@@ -541,7 +565,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       if (e.cancelable) e.preventDefault();
 
       const yOffset = isStart ? -14 : 14;
-      const newPoint = findTextPoint(document, touch.clientX, touch.clientY + yOffset, root);
+      const newPoint = findTextPoint(document, touch.clientX, touch.clientY + yOffset, scroller);
       if (newPoint) {
         setRangePoints(dragAnchor, newPoint);
       }
@@ -556,7 +580,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       handleEl.classList.remove('dragging');
       if (currentRange && !currentRange.collapsed) {
         const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
-        if (text) onSelection(text, currentRange.getBoundingClientRect());
+        if (text) onSelection(text, currentRange.getBoundingClientRect(), scroller);
       }
     }
 
@@ -608,9 +632,10 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: false });
   globalTarget?.addEventListener?.('touchcancel', onTouchEnd, { passive: true });
 
-  root.addEventListener('scroll', () => {
-    if (currentRange) updateHandlesAndHighlight();
-  }, { passive: true });
+  // Captured: a pane's transcript scrolls inside `root`, and scroll does not bubble.
+  root.addEventListener('scroll', (event) => {
+    if (currentRange && event.target === scroller) updateHandlesAndHighlight();
+  }, { passive: true, capture: true });
 
   return clearSelection;
 }

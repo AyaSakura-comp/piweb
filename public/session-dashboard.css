@@ -164,8 +164,12 @@
     height: 17px;
   }
 
-  /* When Dashboard is active, hide single-session chrome inside .main */
-  .app.dashboard-active .main > :not(#dashboard-view) {
+  /* When Dashboard is active, hide single-session chrome inside .main. The
+     text-selection layers (fixed, shared with the panes) stay: hidden, a
+     pane's selection had no quote/copy pill, highlight or handles. */
+  .app.dashboard-active
+    .main
+    > :not(#dashboard-view, #selection-actions, #sel-highlight-boxes, #custom-selection-overlay) {
     display: none !important;
   }
 

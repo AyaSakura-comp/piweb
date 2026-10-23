@@ -523,6 +523,70 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.waitForTimeout(600);
   };
   await expectDropJudgedByFinger();
+  // Long-press quoting works in a pane as in the chat: on touch every
+  // transcript is user-select:none, so panes need the custom selection too.
+  const expectPaneQuote = async () => {
+    const panes = page.locator('.dashboard-pane');
+    const longPress = async (i: number) => {
+      const pt = await panes.nth(i).evaluate((p) => {
+        const sc = p.querySelector('.dashboard-pane-messages')!.getBoundingClientRect();
+        for (const el of p.querySelectorAll('.dashboard-pane-messages .msg-text')) {
+          const r = el.getBoundingClientRect();
+          if (r.top >= sc.top + 4 && r.top + 16 <= sc.bottom) return { x: r.left + 12, y: r.top + 10 };
+        }
+        return null;
+      });
+      expect(pt).not.toBeNull();
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pt!.x, y: pt!.y, id: 9 }] });
+      await page.waitForTimeout(500);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
+    const quoteOf = (i: number) => panes.nth(i).locator('.pane-quote-preview .quote-preview-text');
+    const selected = () => page.evaluate(() =>
+      [...((CSS as any).highlights.get('piweb-selection') ?? [])].map((r: Range) => r.toString()).join(''));
+    await longPress(1);
+    await expect(page.locator('#selection-actions')).toBeVisible();
+    // Selecting alone quotes nothing; 引用 does.
+    await expect(quoteOf(1)).toBeEmpty();
+    const picked = await selected();
+    expect(picked.length).toBeGreaterThan(0);
+    const jid1 = await panes.nth(1).getAttribute('data-jid');
+    await page.locator('#selection-quote').tap();
+    await expect(page.locator('#selection-actions')).toBeHidden();
+    await expect(page.locator(`.dashboard-pane[data-jid="${jid1}"] textarea`)).toBeFocused();
+    await expect(page.locator(`.dashboard-pane[data-jid="${jid1}"] .pane-quote-preview`)).toBeVisible();
+    await expect(quoteOf(1)).toContainText(picked.slice(0, 4));
+    await page.screenshot({ path: info.outputPath('01f-pane-quote.png') });
+    await page.locator(`.dashboard-pane[data-jid="${jid1}"] .pane-quote-remove`).tap();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    // A tap ends it (the backdrop), then a long press selects in another pane,
+    // whose handle drags, though every pane shares the one set of handles.
+    await longPress(1);
+    await expect(page.locator('#selection-actions')).toBeVisible();
+    await page.locator('#sel-backdrop').tap();
+    await expect(page.locator('#selection-actions')).toBeHidden();
+    await longPress(0);
+    await expect(page.locator('#selection-actions')).toBeVisible();
+    const before = await selected();
+    expect(before.length).toBeGreaterThan(0);
+    const end = (await page.locator('#sel-handle-end').boundingBox())!;
+    const ex = end.x + end.width / 2;
+    const ey = end.y + end.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: ex, y: ey, id: 10 }] });
+    for (let i = 1; i <= 6; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: ex + i * 10, y: ey + i * 8, id: 10 }] });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect.poll(async () => (await selected()).length).toBeGreaterThan(before.length);
+    await page.waitForTimeout(600); // the first bubble has shrunk away
+    await expect(page.locator('#sel-highlight-boxes .sel-bubble-layer')).toHaveCount(1);
+    await page.screenshot({ path: info.outputPath('01g-pane-selection.png') });
+    await page.locator('#sel-backdrop').tap();
+    await expect(page.locator('#selection-actions')).toBeHidden();
+    await expect(quoteOf(0)).toBeEmpty();
+    await page.waitForTimeout(800); // a control tapped right after ending a selection is swallowed (700ms)
+  };
+  await expectPaneQuote();
   await expectShortPaneKeepsTranscript();
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();
