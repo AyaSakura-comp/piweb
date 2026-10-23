@@ -263,7 +263,8 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   await expect.poll(() => rect('.app')).toEqual({ top: 300, bottom: 780 });
   await page.evaluate(() => (window as any).__setVisibleHeight(844));
   await expect(page.locator('#input')).toBeFocused();
-  expect(await mainBottom()).toBe(844);
+  // Reported all at once, the close eases along the iOS pan before letting go.
+  await expect.poll(mainBottom).toBe(844);
   expect(await page.locator('#messages').evaluate(el => el.scrollTop)).toBe(readerTop);
   await page.evaluate(() => {
     (window as any).__setVisibleHeight(390, false);

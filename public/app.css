@@ -231,6 +231,21 @@ html.keyboard-shell .composer-wrap {
   padding-bottom: 10px;
 }
 
+/* A keyboard move iOS reports all at once eases along its pan (viewport-shell.js). */
+html.keyboard-shell-easing .app {
+  transition:
+    top var(--keyboard-shell-ease),
+    height var(--keyboard-shell-ease);
+}
+
+html.keyboard-shell-easing .composer-wrap {
+  transition: padding-bottom var(--keyboard-shell-ease);
+}
+
+html.keyboard-shell-leaving .composer-wrap {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
 /* Placed at 42% of the full screen, it would sit on the pinned topbar. */
 html.keyboard-shell .life-edge-hint {
   display: none;

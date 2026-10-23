@@ -1862,11 +1862,14 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
     Math.max(...steps.map((s: any) => s.top - data.samples[data.samples.indexOf(s) - 1].top)),
   ).toBeLessThan(120);
   await recordSamples(info, 'keyboard-smooth-scroll', data);
-  // Clearing a two-line draft legitimately resizes the composer once. The
-  // simulated visualViewport reports themselves must not resize the layout shell.
+  // Send blurs the box, and the shell follows the keyboard down: the
+  // transcript only grows with each report (clearing a two-line draft grows it
+  // once more), then holds still. No remount, no bounce.
   const closingStart = data.keyboard.find((r: any) => r.height === 650).time;
+  const closing = data.samples.filter((s: any) => s.time >= closingStart);
+  expect(closing.every((s: any, i: number) => !i || s.height >= closing[i - 1].height)).toBe(true);
   expect(
-    new Set(data.samples.filter((s: any) => s.time >= closingStart).map((s: any) => s.height)).size,
+    new Set(closing.filter((s: any) => s.time >= lastReport + 50).map((s: any) => s.height)).size,
   ).toBe(1);
   await shot(page, info, 'motion-01-keyboard-settled-prompt-at-top.png');
   await partial(page, '## 從這輪下面開始\n\n鍵盤收合後，平滑向上。不搶讀者的位置。\n\n');

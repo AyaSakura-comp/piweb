@@ -3845,12 +3845,34 @@ input.addEventListener('input', () => {
 // that lands in the same tick-ish window; a human follow-up keypress is far
 // slower than this.
 let compositionEndedAt = 0;
+let composing = false;
 input.addEventListener('compositionstart', () => {
   compositionEndedAt = 0;
+  composing = true;
 });
 input.addEventListener('compositionend', () => {
   compositionEndedAt = Date.now();
+  composing = false;
 });
+
+/**
+ * Send tapped mid-composition (注音 not yet converted): the box shows the
+ * marked text, but iOS commits it only as focus leaves, which can land after
+ * submit has read and cleared the box. Commit first, then read the box.
+ */
+function commitComposition() {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      input.removeEventListener('compositionend', done);
+      composing = false;
+      resolve();
+    };
+    const timer = setTimeout(done, 300);
+    input.addEventListener('compositionend', done);
+    input.blur();
+  });
+}
 
 input.addEventListener('keydown', (e) => {
   // An IME (Chinese, Japanese, …) uses Enter to commit the composition; that
@@ -4152,6 +4174,7 @@ input.addEventListener('focus', () => {
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   const followAfterSend = consumeComposerSendIntent();
+  if (composing) await commitComposition();
   if (state.uploading || state.selectionPending) {
     abandonComposerSend();
     return;
