@@ -136,11 +136,46 @@ async function partial(page: Page, content: string, thinking = '') {
   await emit(page, 'partial', { content, thinking });
 }
 
+/** LobeHub's per-character fade-ins still running in `node` (passed to evaluate). */
+function runningFades(node: Element) {
+  return node
+    .getAnimations({ subtree: true })
+    .filter(
+      (a) =>
+        (a as CSSAnimation).animationName === 'streamdown-fade-in' && a.playState === 'running',
+    ).length;
+}
+
+/**
+ * Wait until streamed text has settled: no fade-in running and the rendered
+ * text unchanged for 250ms. The stream catches up on new text in batches, so
+ * the gap between two batches alone is not settled.
+ */
 async function ready(page: Page) {
-  await expect(
-    page.locator('.reply-chunk[data-reveal="pending"], .reply-chunk[data-reveal="revealing"]'),
-    // Adaptive slow streams may take longer than the old fixed-speed 5s budget.
-  ).toHaveCount(0, { timeout: 10_000 });
+  await page.waitForFunction(
+    () => {
+      const host = window as any;
+      const text = [...document.querySelectorAll('.msg-text, .event-body')]
+        .map((node) => node.textContent)
+        .join('\u0000');
+      const fading = document
+        .getAnimations()
+        .some(
+          (a) =>
+            (a as CSSAnimation).animationName === 'streamdown-fade-in' &&
+            a.playState === 'running',
+        );
+      const now = performance.now();
+      if (fading || text !== host.__readyText) {
+        host.__readyText = text;
+        host.__readySince = now;
+        return false;
+      }
+      return now - host.__readySince >= 250;
+    },
+    null,
+    { polling: 50, timeout: 10_000 },
+  );
 }
 
 async function shot(page: Page, info: TestInfo, name: string) {
@@ -153,559 +188,9 @@ async function recordSamples(info: TestInfo, name: string, samples: unknown) {
   await info.attach(name, { path, contentType: 'application/json' });
 }
 
-test('reading-order masks advance left to right on wrapped text before the next row', async ({
-  page,
-}, info) => {
-  const { errors } = await setup(page);
-  const source = '## 逐行漸層\n\n' + '讀'.repeat(92) + '\n\n';
-  await partial(page, source);
-  const chunk = page.locator('#partial-msg .reply-chunk');
-  await expect(chunk).toHaveAttribute('data-reveal-mode', 'rows');
-  const samples = await chunk.evaluate(async (node) => {
-    const original = node.querySelector('p')!.firstChild;
-    const samples = [];
-    for (let i = 0; i < 75; i++) {
-      await new Promise(requestAnimationFrame);
-      const el = node as HTMLElement;
-      const css = getComputedStyle(el);
-      samples.push({
-        mode: el.dataset.revealMode,
-        row: Number(el.dataset.revealRow),
-        x: Number.parseFloat(el.style.getPropertyValue('--reply-row-front')),
-        top: Number.parseFloat(el.style.getPropertyValue('--reply-row-top')),
-        height: Number.parseFloat(el.style.getPropertyValue('--reply-row-height')),
-        mask: css.maskImage,
-        size: css.maskSize,
-        animation: css.animationName,
-        opacity: css.opacity,
-        sameNode: node.querySelector('p')!.firstChild === original,
-      });
-    }
-    return samples;
-  });
-  const scans = samples.filter(
-    (s, i) =>
-      i > 0 &&
-      s.mode === 'rows' &&
-      samples[i - 1].mode === 'rows' &&
-      s.row === samples[i - 1].row &&
-      s.x > samples[i - 1].x,
-  );
-  expect(scans.length).toBeGreaterThan(8);
-  expect(
-    scans.every(
-      (s) => s.mask.includes('90deg') && s.animation === 'none' && s.opacity === '1' && s.sameNode,
-    ),
-  ).toBe(true);
-  expect(
-    samples
-      .filter((s) => s.mode === 'rows')
-      .every((s, i, all) => i === 0 || s.row >= all[i - 1].row),
-  ).toBe(true);
-  expect(new Set(scans.map((s) => s.row)).size).toBeGreaterThan(1);
-  await recordSamples(info, 'reading-order-row-samples', samples);
-  await shot(page, info, 'rows-scan.png');
-  await ready(page);
-  await expect(chunk).toHaveCSS('mask-image', 'none');
-  expect(errors).toEqual([]);
-});
-
-test('reading-order pixels show the left glyphs while right and following rows stay hidden', async ({
-  page,
-}, info) => {
-  const { errors } = await setup(page);
-  await partial(page, '讀'.repeat(120) + '\n\n');
-  const chunk = page.locator('#partial-msg .reply-chunk');
-  await expect(chunk).toHaveAttribute('data-reveal-mode', 'rows');
-  await chunk.evaluate(async (node) => {
-    const el = node as HTMLElement;
-    for (let i = 0; i < 60; i++) {
-      await new Promise(requestAnimationFrame);
-      const x = Number.parseFloat(el.style.getPropertyValue('--reply-row-front'));
-      if (Number(el.dataset.revealRow) === 0 && x >= 80 && x <= 160) return;
-    }
-    throw new Error('Did not capture the first row mid-scan');
-  });
-  const buffer = await chunk
-    .locator('p')
-    .screenshot({ path: info.outputPath('rows-left-visible-right-hidden.png') });
-  const pixels = await page.evaluate(
-    async (bytes) => {
-      const bitmap = await createImageBitmap(
-        new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
-      );
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(bitmap, 0, 0);
-      const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-      const base = [data[0], data[1], data[2]];
-      const contrast = (x0: number, x1: number, y0: number, y1: number) => {
-        let maximum = 0;
-        for (let y = y0; y < Math.min(y1, bitmap.height); y++)
-          for (let x = x0; x < x1; x++) {
-            const offset = (y * bitmap.width + x) * 4;
-            for (let c = 0; c < 3; c++)
-              maximum = Math.max(maximum, Math.abs(data[offset + c] - base[c]));
-          }
-        return maximum;
-      };
-      const result = {
-        left: contrast(0, 60, 0, 20),
-        right: contrast(Math.floor(bitmap.width * 0.9), bitmap.width, 0, 20),
-        next: contrast(0, bitmap.width, 26, 44),
-      };
-      bitmap.close();
-      return result;
-    },
-    [...buffer],
-  );
-  expect(pixels.left).toBeGreaterThan(90);
-  expect(pixels.right).toBeLessThan(4);
-  expect(pixels.next).toBeLessThan(4);
-  await recordSamples(info, 'reading-order-pixel-contrast', pixels);
-  expect(errors).toEqual([]);
-});
-
-test('reading-order reflow releases already-started text instead of remasking read glyphs', async ({
-  page,
-}) => {
-  const { errors } = await setup(page);
-  await partial(
-    page,
-    '## 已讀內容不再變暗\n\n' +
-      '這段文字在變窄之後重新換行，已經讀到的位置仍保持清楚。'.repeat(30) +
-      '\n\n',
-  );
-  const flow = page.locator('#partial-msg .reply-flow');
-  const chunk = flow.locator('.reply-chunk');
-  await expect(chunk).toHaveAttribute('data-reveal-mode', 'rows');
-  await expect
-    .poll(() =>
-      flow.evaluate((node) => Number.parseFloat(node.style.getPropertyValue('--reply-front'))),
-    )
-    .toBeGreaterThan(0);
-  const previous = await flow.evaluate((node) => {
-    (window as any).__rowReflowHeading = node.querySelector('h2');
-    return Number.parseFloat(node.style.getPropertyValue('--reply-front'));
-  });
-  await page.setViewportSize({ width: 280, height: 844 });
-  await expect(chunk).toHaveAttribute('data-reveal', 'ready');
-  await expect(chunk).toHaveCSS('mask-image', 'none');
-  expect(
-    await flow.evaluate((node) => node.querySelector('h2') === (window as any).__rowReflowHeading),
-  ).toBe(true);
-  expect(
-    await flow.evaluate((node) => Number.parseFloat(node.style.getPropertyValue('--reply-front'))),
-  ).toBeGreaterThanOrEqual(previous);
-  expect(errors).toEqual([]);
-});
-
-test('unfinished slow text lowers velocity before another Markdown block is ready', async ({
-  page,
-}) => {
-  const { errors } = await setup(page);
-  const seed =
-    '## 已排版緩衝\n\n' + '這段已經完成排版，後續尚未結束的文字也會影響速度。'.repeat(9) + '\n\n';
-  await partial(page, seed);
-  const flow = page.locator('#partial-msg .reply-flow');
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  await page.evaluate(
-    ({ seed }) => {
-      const host = window as any;
-      for (let index = 1; index <= 8; index++) {
-        setTimeout(
-          () =>
-            host.__emitReply('partial', {
-              content: seed + '還在寫。'.repeat(index),
-              thinking: '',
-            }),
-          index * 200,
-        );
-      }
-    },
-    { seed },
-  );
-  await expect
-    .poll(() => flow.evaluate((node) => Number(node.style.getPropertyValue('--reply-speed'))), {
-      timeout: 2500,
-    })
-    .toBeLessThan(80);
-  await expect(flow.locator('.reply-chunk')).toHaveCount(1);
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  await partial(page, '');
-  expect(errors).toEqual([]);
-});
-
-test('a slow learned pace survives an idle frontier without a 120px/s restart', async ({
-  page,
-}) => {
-  const { errors } = await setup(page);
-  const seed = '## 先讀這段\n\n' + '這一段已完成排版。'.repeat(2) + '\n\n';
-  await partial(page, seed);
-  await page.evaluate(
-    ({ seed }) => {
-      const host = window as any;
-      for (let i = 1; i <= 8; i++)
-        setTimeout(
-          () =>
-            host.__emitReply('partial', {
-              content: seed + '還在寫。'.repeat(i),
-              thinking: '',
-            }),
-          i * 200,
-        );
-    },
-    { seed },
-  );
-  const flow = page.locator('#partial-msg .reply-flow');
-  await expect
-    .poll(() => flow.evaluate((node) => Number(node.style.getPropertyValue('--reply-speed'))))
-    .toBeLessThan(60);
-  await ready(page);
-  const previous = await flow.evaluate((node) =>
-    Number(node.style.getPropertyValue('--reply-speed')),
-  );
-  await partial(page, seed + '還在寫。'.repeat(8) + '結束。\n\n');
-  const resumed = await flow.evaluate(async (node) => {
-    for (let i = 0; i < 30; i++) {
-      await new Promise(requestAnimationFrame);
-      if (
-        node.querySelector('.reply-chunk:last-child')!.getAttribute('data-reveal') === 'revealing'
-      )
-        return Number(node.style.getPropertyValue('--reply-speed'));
-    }
-    throw new Error('Continuation never entered reveal');
-  });
-  expect(resumed).toBeLessThan(previous + 25);
-  await ready(page);
-  expect(errors).toEqual([]);
-});
-
-test('adaptive shared front walkthrough follows slow fast slow fast arrivals', async ({
-  page,
-}, info) => {
-  const consoleErrors: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
-  });
-  const { events, errors, session } = await setup(page);
-  await page.locator('#input').fill('請讓每排文字從左到右，以漸層接著顯示下一排。');
-  const reachable = await page.locator('#btn-send').evaluate((node) => {
-    const rect = node.getBoundingClientRect();
-    return node.contains(
-      document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
-    );
-  });
-  expect(reachable).toBe(true);
-  await page.locator('#btn-send').click();
-  await expect.poll(() => events.length).toBe(1);
-  await emit(page, 'event', events[0]);
-  session.busy = true;
-  await emit(page, 'busy', { busy: true });
-  await shot(page, info, 'adaptive-01-sent.png');
-
-  const seed =
-    '## 速度跟著串流，逐行向右\n\n' +
-    '每一行從左到右，用柔和的漸層帶出文字，再接著顯示下一行。字的位置與排版不變，已經讀過的內容不會重播。\n\n';
-  const phases = [
-    {
-      name: 'slow',
-      duration: 2200,
-      steps: 11,
-      text: '慢速串流時，前緣會放慢，讓準備好的文字留一點緩衝，而不是立刻衝到最下面再停住。\n\n',
-    },
-    {
-      name: 'fast',
-      duration: 1800,
-      steps: 12,
-      text:
-        '串流變快時，前緣會平滑加速。\n\n'.repeat(6) +
-        '速度不是突然跳到另一個數字，也不是每個段落各自重播動畫。\n\n',
-    },
-    {
-      name: 'slower',
-      duration: 2600,
-      steps: 13,
-      text: '後續文字又變慢，動畫也會降速。同一道前緣持續往下，不會把已經清楚的內容再次變暗。\n\n',
-    },
-    {
-      name: 'faster',
-      duration: 1800,
-      steps: 12,
-      text:
-        '文字再次加快，前緣也能重新加速。\n\n'.repeat(5) +
-        '完成後可以繼續輸入，重新開啟則顯示靜態歷史。\n\n',
-    },
-  ];
-  const content = seed + phases.map((phase) => phase.text).join('') + '完成。';
-  const final = replyEvent(2, content);
-  await page.exposeFunction('__persistAdaptiveFinal', () => {
-    events.push(final);
-    session.busy = false;
-  });
-  await page.evaluate(
-    ({ seed, phases, final }) => {
-      const host = window as any;
-      host.__adaptiveSamples = [];
-      host.__adaptiveDone = false;
-      const start = performance.now();
-      let prefix = seed;
-      let offset = 0;
-      host.__emitReply('partial', { content: seed, thinking: '' });
-      for (const phase of phases) {
-        const before = prefix;
-        for (let i = 1; i <= phase.steps; i++) {
-          const text =
-            before + phase.text.slice(0, Math.ceil((phase.text.length * i) / phase.steps));
-          setTimeout(
-            () => host.__emitReply('partial', { content: text, thinking: '' }),
-            offset + (phase.duration * i) / phase.steps,
-          );
-        }
-        prefix += phase.text;
-        offset += phase.duration;
-      }
-      setTimeout(async () => {
-        await host.__persistAdaptiveFinal();
-        host.__emitReply('event', final);
-        host.__emitReply('partial', { content: '', thinking: '' });
-        host.__emitReply('busy', { busy: false });
-        host.__adaptiveDone = true;
-      }, offset + 300);
-      const capture = () => {
-        const elapsed = performance.now() - start;
-        const node = document.querySelector(
-          '.msg:not(.msg-user) .reply-flow',
-        ) as HTMLElement | null;
-        if (node)
-          host.__adaptiveSamples.push({
-            time: elapsed,
-            speed: Number(node.style.getPropertyValue('--reply-speed')),
-            front: Number.parseFloat(node.style.getPropertyValue('--reply-front')),
-            active: node.dataset.reveal === 'revealing',
-            chunks: node.querySelectorAll('.reply-chunk').length,
-          });
-        if (elapsed < offset + 400) requestAnimationFrame(capture);
-        else host.__adaptiveSamplingDone = true;
-      };
-      requestAnimationFrame(capture);
-    },
-    { seed, phases, final },
-  );
-
-  const flow = page.locator('.msg:not(.msg-user) .reply-flow');
-  await expect(flow).toHaveCount(1);
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  await flow.evaluate((node) => ((window as any).__adaptiveFlow = node));
-  // Milestone capture only: the transport and sampler keep their own clocks.
-  for (const [at, name] of [
-    [1800, 'adaptive-02-slow.png'],
-    [3700, 'adaptive-03-fast.png'],
-    [6200, 'adaptive-04-slower.png'],
-    [8100, 'adaptive-05-faster.png'],
-  ] as const) {
-    await expect
-      .poll(() => page.evaluate(() => (window as any).__adaptiveSamples.at(-1)?.time ?? 0), {
-        timeout: 5000,
-      })
-      .toBeGreaterThan(at);
-    await shot(page, info, name);
-  }
-  await expect
-    .poll(() => page.evaluate(() => !!(window as any).__adaptiveSamplingDone), { timeout: 12_000 })
-    .toBe(true);
-  const samples = await page.evaluate(
-    () =>
-      (window as any).__adaptiveSamples as {
-        time: number;
-        speed: number;
-        front: number;
-        active: boolean;
-        chunks: number;
-      }[],
-  );
-  expect(samples.every((sample, i) => i === 0 || sample.front >= samples[i - 1].front)).toBe(true);
-  const average = (start: number, end: number) => {
-    const window = samples.filter(
-      (sample) => sample.active && sample.time >= start && sample.time <= end,
-    );
-    expect(window.length).toBeGreaterThan(5);
-    return window.reduce((sum, sample) => sum + sample.speed, 0) / window.length;
-  };
-  const slow = average(1200, 2000);
-  const fast = average(3300, 3900);
-  const slower = average(5800, 6500);
-  const faster = average(7700, 8300);
-  expect(fast).toBeGreaterThan(slow * 1.3);
-  expect(slower).toBeLessThan(fast * 0.85);
-  expect(faster).toBeGreaterThan(slower * 1.3);
-  await recordSamples(info, 'adaptive-front-samples', { slow, fast, slower, faster, samples });
-  await expect(page.locator('#partial-msg')).toHaveCount(0);
-  expect(await flow.evaluate((node) => node === (window as any).__adaptiveFlow)).toBe(true);
-  await ready(page);
-  await expect(flow).toContainText('完成。');
-  await expect(page.locator('.grow-tail, .ink')).toHaveCount(0);
-  await shot(page, info, 'adaptive-06-final.png');
-  await page.locator('#input').fill('速度會自動適應，現在也能繼續輸入。');
-  await expect(page.locator('#input')).toHaveValue('速度會自動適應，現在也能繼續輸入。');
-  await shot(page, info, 'adaptive-07-composer.png');
-  await page.reload();
-  await expect(page.locator('.msg:not(.msg-user) h2')).toHaveText('速度跟著串流，逐行向右');
-  await expect(page.locator('.reply-flow, .reply-chunk')).toHaveCount(0);
-  await shot(page, info, 'adaptive-08-history.png');
-  expect(errors).toEqual([]);
-  expect(consoleErrors).toEqual([]);
-});
-
-test('one continuous shared front walkthrough joins new content without restarting', async ({
-  page,
-}, info) => {
-  const { events, errors, session } = await setup(page);
-  await page.locator('#input').fill('請用同一道漸層，連續顯示排版好的回答。');
-  await page.locator('#btn-send').click();
-  await expect.poll(() => events.length).toBe(1);
-  await emit(page, 'event', events[0]);
-  session.busy = true;
-  await emit(page, 'busy', { busy: true });
-  await shot(page, info, 'continuous-01-sent.png');
-
-  const first =
-    '## 同一道漸層，連續往下\n\n' +
-    '先完成排版，再讓文字從柔和的前緣逐漸變清楚。**文字留在原位**，不會一塊一塊重新淡入。\n\n' +
-    '後面準備好的內容會接上同一道前緣。已經讀過的段落保持清楚，不會再次變暗。\n\n';
-  const second = first + '```typescript\nconst front = "持續往下";\nconsole.log(front);\n```\n\n';
-  const third = second + '段落與程式碼共用同一個位置，不因收到新內容而從零開始。\n\n';
-  const content =
-    third +
-    '- 先排版，再顯示\n- 新內容接上同一道前緣\n- 完成回覆也不重播\n\n完成，現在可以繼續輸入。';
-  const final = replyEvent(2, content);
-  events.push(final);
-  // Arrival cadence is transport-only and runs independently of screenshots,
-  // assertions and readiness. No wait-until-ready pauses between paragraphs.
-  await page.evaluate(
-    ({ first, second, third, final }) => {
-      const host = window as any;
-      host.__emitReply('partial', { content: first + '**尚未完成', thinking: '' });
-      setTimeout(() => host.__emitReply('partial', { content: second, thinking: '' }), 180);
-      setTimeout(() => host.__emitReply('partial', { content: third, thinking: '' }), 360);
-      setTimeout(() => {
-        host.__emitReply('event', final);
-        host.__emitReply('partial', { content: '', thinking: '' });
-        host.__emitReply('busy', { busy: false });
-      }, 540);
-    },
-    { first, second, third, final },
-  );
-
-  const flow = page.locator('.msg:not(.msg-user) .msg-text.reply-flow');
-  await expect(flow).toHaveCount(1);
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  const firstFront = await flow.evaluate((node) => {
-    const host = window as any;
-    host.__sharedFlow = node;
-    host.__sharedHeading = node.querySelector('h2');
-    return parseFloat(node.style.getPropertyValue('--reply-front'));
-  });
-  await expect(page.locator('.reply-chunk').first()).toHaveCSS('animation-name', 'none');
-  await expect(page.locator('.reply-chunk').first()).toHaveCSS('opacity', '1');
-  await shot(page, info, 'continuous-02-shared-gradient.png');
-  await expect(page.locator('#partial-msg')).toHaveCount(0);
-  session.busy = false;
-  await expect(page.locator('.msg:not(.msg-user) li')).toHaveCount(3);
-  expect(await flow.evaluate((node) => node === (window as any).__sharedFlow)).toBe(true);
-  expect(
-    await flow.locator('h2').evaluate((node) => node === (window as any).__sharedHeading),
-  ).toBe(true);
-  expect(
-    await flow.evaluate((node) => parseFloat(node.style.getPropertyValue('--reply-front'))),
-  ).toBeGreaterThanOrEqual(firstFront);
-
-  const samples = await flow.evaluate(async (node) => {
-    const samples = [];
-    for (let i = 0; i < 90; i++) {
-      await new Promise(requestAnimationFrame);
-      const rect = node.querySelector('h2')!.getBoundingClientRect();
-      samples.push({
-        time: performance.now(),
-        front: parseFloat(node.style.getPropertyValue('--reply-front')),
-        y: rect.y,
-        x: rect.x,
-        width: rect.width,
-        active: [...node.querySelectorAll('.reply-chunk[data-reveal="revealing"]')].map(
-          (chunk) => ({
-            top: parseFloat((chunk as HTMLElement).style.getPropertyValue('--chunk-top')),
-            mode: (chunk as HTMLElement).dataset.revealMode,
-            rowTop: parseFloat((chunk as HTMLElement).style.getPropertyValue('--reply-row-top')),
-            rowHeight: parseFloat(
-              (chunk as HTMLElement).style.getPropertyValue('--reply-row-height'),
-            ),
-            rowFront: parseFloat(
-              (chunk as HTMLElement).style.getPropertyValue('--reply-row-front'),
-            ),
-            mask: getComputedStyle(chunk).maskImage,
-            animation: getComputedStyle(chunk).animationName,
-            opacity: getComputedStyle(chunk).opacity,
-          }),
-        ),
-      });
-    }
-    return samples;
-  });
-  expect(samples.every((sample, i) => i === 0 || sample.front >= samples[i - 1].front)).toBe(true);
-  expect(
-    samples.filter((sample, i) => i > 0 && sample.front > samples[i - 1].front).length,
-  ).toBeGreaterThan(8);
-  expect(
-    samples
-      .flatMap((sample) => sample.active)
-      .every(
-        (chunk) =>
-          chunk.animation === 'none' && chunk.opacity === '1' && Number.isFinite(chunk.top),
-      ),
-  ).toBe(true);
-  for (const sample of samples) {
-    for (const chunk of sample.active) {
-      const stops = [...chunk.mask.matchAll(/\)\s(-?[\d.]+)px/g)].map((match) => Number(match[1]));
-      if (chunk.mode === 'hidden') {
-        expect(stops).toHaveLength(0);
-        continue;
-      }
-      expect(stops).toHaveLength(2);
-      if (chunk.mode === 'rows') {
-        expect(chunk.mask).toContain('90deg');
-        expect(Math.abs(stops[0] - chunk.rowFront)).toBeLessThan(0.05);
-        expect(chunk.rowHeight).toBeGreaterThan(0);
-      } else {
-        expect(chunk.mode).toBe('media');
-        expect(Math.abs(stops[0] + chunk.top + chunk.rowTop - sample.front)).toBeLessThan(0.05);
-      }
-      expect(Math.abs(stops[1] - stops[0] - 56)).toBeLessThan(0.05);
-    }
-  }
-  expect(
-    Math.max(...samples.map((sample) => sample.y)) - Math.min(...samples.map((sample) => sample.y)),
-  ).toBeLessThan(0.2);
-  await recordSamples(info, 'continuous-front-samples', samples);
-  await shot(page, info, 'continuous-03-crossing-blocks.png');
-  await ready(page);
-  await expect(flow).toHaveAttribute('data-reveal', 'ready');
-  await expect(flow.locator('.reply-chunk').first()).toHaveCSS('mask-image', 'none');
-  await expect(flow.locator('h2')).toHaveText('同一道漸層，連續往下');
-  await expect(page.locator('.grow-tail, .ink')).toHaveCount(0);
-  await shot(page, info, 'continuous-04-complete.png');
-  await page.locator('#input').fill('現在可以正常繼續輸入。');
-  await expect(page.locator('#input')).toHaveValue('現在可以正常繼續輸入。');
-  await shot(page, info, 'continuous-05-composer.png');
-  await page.reload();
-  await expect(page.locator('.msg:not(.msg-user) h2')).toHaveText('同一道漸層，連續往下');
-  await expect(page.locator('.reply-flow, .reply-chunk')).toHaveCount(0);
-  await shot(page, info, 'continuous-06-history.png');
-  expect(errors).toEqual([]);
-});
-
 // Transport is deterministic, but every node, Markdown renderer, control and style
 // comes from the production app. No replacement UI and no real agent conversation.
-test('mobile ready blocks reveal in place and survive finalization without replay', async ({
+test('mobile streamed blocks stay in place and survive finalization without replay', async ({
   page,
 }, info) => {
   const { events, errors, session } = await setup(page);
@@ -713,7 +198,7 @@ test('mobile ready blocks reveal in place and survive finalization without repla
   await page.locator('#btn-send').click();
   await expect.poll(() => events.length).toBe(1);
   await emit(page, 'event', events[0]);
-  // Send explicitly navigates the transcript. Measure the stationary reveal
+  // Send explicitly navigates the transcript. Measure the streamed reply
   // after that navigation; the dedicated motion tests inspect the tween itself.
   await expect(page.locator('#messages')).toHaveAttribute('data-prompt-turn', 'active');
   await expect(page.locator('#messages')).not.toHaveAttribute('data-prompt-motion', /.+/);
@@ -724,33 +209,23 @@ test('mobile ready blocks reveal in place and survive finalization without repla
   const heading = '## 先排版，再柔和顯示\n\n';
   const paragraph =
     '文字保持原位，**不會先跳出 Markdown 原始符號**，也不會每次更新就重畫舊內容。\n\n';
-  await partial(page, heading + '**尚未完成');
+  // A stream only ever appends. An unfinished emphasis is already formatted:
+  // raw Markdown never shows.
+  await partial(page, heading + paragraph.slice(0, paragraph.indexOf('出 Markdown')));
   await expect(page.locator('#partial-msg h2')).toHaveText('先排版，再柔和顯示');
-  await expect(page.locator('#partial-msg .grow-tail, #partial-msg .ink')).toHaveCount(0);
-  await expect(page.locator('#partial-msg')).not.toContainText('尚未完成');
+  await expect(page.locator('#partial-msg strong')).toHaveText('不會先跳');
   await expect(page.locator('#partial-msg')).not.toContainText('##');
+  await expect(page.locator('#partial-msg')).not.toContainText('**');
   await expect(page.locator('#partial-msg')).toHaveCSS('transform', 'none');
-  const chunk = page.locator('#partial-msg .reply-chunk').first();
-  await expect(chunk).toHaveAttribute('data-reveal', 'revealing');
-  await expect(chunk).toHaveCSS('animation-name', 'none');
-  await expect(chunk).toHaveCSS('transform', 'none');
-  await shot(page, info, '02-gradient-reveal.png');
-  const mobileFrames = await chunk.evaluate(async (node) => {
+  await shot(page, info, '02-streamed-fade.png');
+  const mobileFrames = await page.locator('#partial-msg h2').evaluate(async (node) => {
     const samples = [];
     let previous = performance.now();
     for (let i = 0; i < 36; i++) {
       await new Promise(requestAnimationFrame);
-      const heading = node.querySelector('h2')!.getBoundingClientRect();
+      const rect = node.getBoundingClientRect();
       const now = performance.now();
-      const style = getComputedStyle(node);
-      samples.push({
-        x: heading.x,
-        y: heading.y,
-        width: heading.width,
-        gap: now - previous,
-        mask: style.maskImage,
-        opacity: style.opacity,
-      });
+      samples.push({ x: rect.x, y: rect.y, width: rect.width, gap: now - previous });
       previous = now;
     }
     return samples;
@@ -759,14 +234,12 @@ test('mobile ready blocks reveal in place and survive finalization without repla
     Math.max(...mobileFrames.map((frame) => frame.y)) -
       Math.min(...mobileFrames.map((frame) => frame.y)),
   ).toBeLessThan(0.2);
-  expect(new Set(mobileFrames.map((frame) => frame.mask)).size).toBeGreaterThan(2);
-  await recordSamples(info, 'mobile-reveal-frame-samples', mobileFrames);
+  await recordSamples(info, 'mobile-stream-frame-samples', mobileFrames);
   await ready(page);
 
   await page.evaluate(() => {
     const host = window as any;
     host.__firstHeading = document.querySelector('#partial-msg h2');
-    host.__firstChunk = host.__firstHeading.closest('.reply-chunk');
     host.__firstOffset =
       host.__firstHeading.getBoundingClientRect().top -
       document.querySelector('#partial-msg .msg-text')!.getBoundingClientRect().top;
@@ -776,9 +249,10 @@ test('mobile ready blocks reveal in place and survive finalization without repla
   await ready(page);
   await shot(page, info, '03-formatted-paragraph.png');
 
+  // An open fence is already a highlighted code block, never literal backticks.
   const code = '```typescript\nconst message = "已完成排版";\n\nconsole.log(message);\n';
   await partial(page, heading + paragraph + code);
-  await expect(page.locator('#partial-msg pre')).toHaveCount(0);
+  await expect(page.locator('#partial-msg pre code')).toContainText('console.log(message);');
   await expect(page.locator('#partial-msg')).not.toContainText('```');
   const closedCode = code + '```\n\n';
   await partial(page, heading + paragraph + closedCode);
@@ -801,6 +275,7 @@ test('mobile ready blocks reveal in place and survive finalization without repla
   await partial(page, prefix + list + '完成。現在可');
   await expect(page.locator('#partial-msg li')).toHaveCount(3);
   await ready(page);
+  // Everything streamed so far kept its node and its place.
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -809,12 +284,7 @@ test('mobile ready blocks reveal in place and survive finalization without repla
         const offset =
           first!.getBoundingClientRect().top -
           document.querySelector('#partial-msg .msg-text')!.getBoundingClientRect().top;
-        return (
-          first === host.__firstHeading &&
-          first!.closest('.reply-chunk') === host.__firstChunk &&
-          Math.abs(offset - host.__firstOffset) < 0.1 &&
-          getComputedStyle(host.__firstChunk).animationName === 'none'
-        );
+        return first === host.__firstHeading && Math.abs(offset - host.__firstOffset) < 0.1;
       }),
     )
     .toBe(true);
@@ -833,6 +303,8 @@ test('mobile ready blocks reveal in place and survive finalization without repla
     )
     .toBe(true);
   await expect(page.locator('.msg:not(.msg-user)')).toHaveCSS('transform', 'none');
+  // Text read before the final arrived does not fade in a second time.
+  expect(await page.locator('.msg:not(.msg-user) h2').evaluate(runningFades)).toBe(0);
   await emit(page, 'partial', { content: '', thinking: '' });
   session.busy = false;
   await emit(page, 'busy', { busy: false });
@@ -859,10 +331,10 @@ test('mobile ready blocks reveal in place and survive finalization without repla
     });
   const finalLayout = await layout();
 
+  // History renders the same reply in exactly the same layout.
   await page.reload();
   await expect(page.locator('.msg:not(.msg-user) h2')).toHaveCount(1);
   await expect(page.locator('.msg:not(.msg-user)')).toContainText(finalTail);
-  await expect(page.locator('.reply-chunk')).toHaveCount(0);
   await expect(page.locator('.mermaid-chart svg')).toBeVisible();
   await expect(page.locator('pre code.lang-mermaid')).toHaveCount(0);
   const reloadedLayout = await layout();
@@ -875,151 +347,12 @@ test('mobile ready blocks reveal in place and survive finalization without repla
   expect(errors).toEqual([]);
 });
 
-test('a paused frontier resumes without fading previously read content again', async ({ page }) => {
-  const { errors } = await setup(page);
-  const first = '## 已讀內容\n\n';
-  await partial(page, first);
-  await expect(page.locator('#partial-msg h2')).toHaveText('已讀內容');
-  await ready(page);
-  const flow = page.locator('#partial-msg .reply-flow');
-  const previous = await flow.evaluate((node) => {
-    (window as any).__readHeading = node.querySelector('h2');
-    return parseFloat(node.style.getPropertyValue('--reply-front'));
-  });
-  await partial(page, first + '後續準備好的段落會接上原來的位置，不會重播已經讀過的標題。\n\n');
-  const last = flow.locator('.reply-chunk').last();
-  await expect(last).toHaveAttribute('data-reveal', 'revealing');
-  expect(
-    await flow.evaluate((node) => parseFloat(node.style.getPropertyValue('--reply-front'))),
-  ).toBeGreaterThanOrEqual(previous);
-  await expect(flow.locator('.reply-chunk').first()).toHaveCSS('mask-image', 'none');
-  await expect(flow.locator('.reply-chunk').first()).not.toHaveAttribute('inert', '');
-  expect(await flow.locator('h2').evaluate((node) => node === (window as any).__readHeading)).toBe(
-    true,
-  );
-  await ready(page);
-  expect(errors).toEqual([]);
-});
-
-test('a small continuation stays gradual after a large backlog has finished', async ({ page }) => {
-  const { errors } = await setup(page);
-  const first =
-    '## 很長的已讀回覆\n\n' + '大量內容先排版，再沿同一個前緣往下顯示。'.repeat(480) + '\n\n';
-  await partial(page, first);
-  await expect(page.locator('#partial-msg h2')).toHaveText('很長的已讀回覆');
-  await ready(page);
-  const flow = page.locator('#partial-msg .reply-flow');
-  const previous = await flow.evaluate((node) =>
-    parseFloat(node.style.getPropertyValue('--reply-front')),
-  );
-  expect(previous).toBeGreaterThan(3000);
-  await partial(page, first + '小段續文仍然柔和地接上，不會繼承大量內容的高速追趕而瞬間跳出。\n\n');
-  await expect(flow.locator('.reply-chunk')).toHaveCount(2);
-  const samples = await flow.evaluate(async (node) => {
-    const samples = [];
-    for (let i = 0; i < 18; i++) {
-      await new Promise(requestAnimationFrame);
-      samples.push({
-        front: parseFloat(node.style.getPropertyValue('--reply-front')),
-        state: node.querySelector('.reply-chunk:last-child')!.getAttribute('data-reveal'),
-      });
-    }
-    return samples;
-  });
-  expect(samples.every((sample) => sample.front >= previous)).toBe(true);
-  expect(samples.filter((sample) => sample.state === 'revealing').length).toBeGreaterThan(10);
-  await ready(page);
-  expect(errors).toEqual([]);
-});
-
-test('responsive reflow keeps read blocks opaque and never rewinds the active front', async ({
-  page,
-}) => {
-  const { errors } = await setup(page);
-  const first = '## 已讀過的標題，改變寬度也不會再淡入\n\n';
-  await partial(page, first);
-  await expect(page.locator('#partial-msg h2')).toHaveText('已讀過的標題，改變寬度也不會再淡入');
-  await ready(page);
-  await partial(
-    page,
-    first + '接上的段落要用同一個漸層位置，已讀內容始終保持清楚。'.repeat(12) + '\n\n',
-  );
-  const flow = page.locator('#partial-msg .reply-flow');
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  const previous = await flow.evaluate((node) =>
-    parseFloat(node.style.getPropertyValue('--reply-front')),
-  );
-  await page.setViewportSize({ width: 320, height: 844 });
-  await expect(flow.locator('.reply-chunk').first()).toHaveCSS('mask-image', 'none');
-  await expect
-    .poll(() =>
-      flow.evaluate((node) => {
-        const floor =
-          node.querySelector('.reply-chunk')!.getBoundingClientRect().bottom -
-          node.getBoundingClientRect().top;
-        return parseFloat(node.style.getPropertyValue('--reply-front')) >= floor;
-      }),
-    )
-    .toBe(true);
-  expect(
-    await flow.evaluate((node) => parseFloat(node.style.getPropertyValue('--reply-front'))),
-  ).toBeGreaterThanOrEqual(previous);
-  await ready(page);
-  expect(errors).toEqual([]);
-});
-
-test('changing reduced motion during reveal immediately releases prepared content', async ({
-  page,
-}) => {
-  const { errors } = await setup(page);
-  await partial(
-    page,
-    '## 動態減少動畫\n\n' + '已排版的內容保持原位，可以直接閱讀。'.repeat(18) + '\n\n',
-  );
-  const flow = page.locator('#partial-msg .reply-flow');
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  await expect(flow.locator('.reply-chunk')).toHaveAttribute('inert', '');
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await expect(flow).toHaveAttribute('data-reveal', 'ready');
-  await expect(flow.locator('.reply-chunk')).not.toHaveAttribute('inert', '');
-  const settled = await flow.evaluate((node) => node.style.getPropertyValue('--reply-front'));
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.waitForTimeout(100);
-  expect(await flow.evaluate((node) => node.style.getPropertyValue('--reply-front'))).toBe(settled);
-  await expect(flow.locator('.reply-chunk')).toHaveCSS('mask-image', 'none');
-  expect(errors).toEqual([]);
-});
-
-test('removing an active reveal stops writes from its abandoned controller', async ({ page }) => {
-  const { errors } = await setup(page);
-  await partial(page, '## 舊回覆\n\n' + '舊回覆的漸層尚未完成。'.repeat(24) + '\n\n');
-  const flow = page.locator('#partial-msg .reply-flow');
-  await expect(flow).toHaveAttribute('data-reveal', 'revealing');
-  await flow.evaluate((node) => ((window as any).__abandonedFlow = node));
-  await partial(page, '');
-  await expect(page.locator('#partial-msg')).toHaveCount(0);
-  const unchanged = await page.evaluate(async () => {
-    const node = (window as any).__abandonedFlow;
-    const before = node.style.getPropertyValue('--reply-front');
-    for (let i = 0; i < 15; i++) await new Promise(requestAnimationFrame);
-    return !node.isConnected && node.style.getPropertyValue('--reply-front') === before;
-  });
-  expect(unchanged).toBe(true);
-  await partial(page, '## 新回覆\n\n');
-  await expect(page.locator('#partial-msg h2')).toHaveText('新回覆');
-  await ready(page);
-  expect(errors).toEqual([]);
-});
-
-test('Mermaid is an SVG before the live reply becomes visible', async ({ page }, info) => {
+test('a streamed Mermaid block is an SVG, never its raw source', async ({ page }, info) => {
   const { errors } = await setup(page);
   await partial(page, '```mermaid\nflowchart LR\n A[完成排版] --> B[漸層顯示]\n```\n\n');
   await expect(page.locator('#partial-msg .mermaid-chart svg')).toBeVisible();
   await expect(page.locator('#partial-msg pre')).toHaveCount(0);
-  await expect(page.locator('#partial-msg .reply-chunk')).toHaveAttribute(
-    'data-reveal',
-    /revealing|ready/,
-  );
+  await expect(page.locator('#partial-msg')).not.toContainText('flowchart LR');
   await ready(page);
   await shot(page, info, 'mermaid-ready.png');
   expect(errors).toEqual([]);
@@ -1048,80 +381,23 @@ test('historical Mermaid does not flash its raw source while loading', async ({ 
   expect(errors).toEqual([]);
 });
 
-test('finalization during pending image preparation retains the queue once', async ({ page }) => {
-  const { errors } = await setup(page);
-  let release!: () => void;
-  let requested = false;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route('**/media/reveal-final.svg', async (route) => {
-    requested = true;
-    await held;
-    await route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"><rect width="100" height="80" fill="#465b73"/></svg>',
-    });
-  });
-  const prefix = '## 準備中完成回覆\n\n![圖片](/media/reveal-final.svg)\n\n';
-  await partial(page, prefix);
-  await expect.poll(() => requested).toBe(true);
-  await emit(page, 'event', replyEvent(1, prefix + '最後一段。'));
-  await expect(page.locator('#partial-msg')).toHaveCount(0);
-  await expect(page.locator('.msg:not(.msg-user) img')).toHaveCount(0);
-  release();
-  await expect(page.locator('.msg:not(.msg-user) h2')).toHaveCount(1);
-  await expect(page.locator('.msg:not(.msg-user) img')).toHaveCount(1);
-  await expect(page.locator('.msg:not(.msg-user)')).toContainText('最後一段。');
-  await ready(page);
-  expect(
-    await page
-      .locator('.msg:not(.msg-user) img')
-      .evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth === 100),
-  ).toBe(true);
-  expect(errors).toEqual([]);
-});
-
-test('a replaced or removed stream discards delayed image preparation', async ({ page }) => {
-  const { errors } = await setup(page);
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let requested = false;
-  await page.route('**/media/reveal-delayed.png', async (route) => {
-    requested = true;
-    await held;
-    await route.fulfill({
-      contentType: 'image/png',
-      body: Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=',
-        'base64',
-      ),
-    });
-  });
-  await partial(page, '![延遲圖片](/media/reveal-delayed.png)\n\n');
-  await expect.poll(() => requested).toBe(true);
-  await expect(page.locator('#partial-msg img')).toHaveCount(0);
-  await partial(page, '## 新內容\n\n');
-  await expect(page.locator('#partial-msg h2')).toHaveText('新內容');
-  await partial(page, '');
-  release();
-  await page.waitForTimeout(300);
-  await expect(page.locator('#partial-msg, .msg:not(.msg-user) img, .reply-chunk')).toHaveCount(0);
-  expect(errors).toEqual([]);
-});
-
-test('reduced motion shows only ready content immediately and no reveal animation', async ({
+test('reduced motion shows streamed content at once with no fade animation', async ({
   page,
 }, info) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const { errors } = await setup(page);
   await partial(page, '## 安靜顯示\n\n**已完成**。\n\n');
   await expect(page.locator('#partial-msg strong')).toHaveText('已完成');
-  await expect(page.locator('#partial-msg .reply-chunk')).toHaveAttribute('data-reveal', 'ready');
-  await expect(page.locator('#partial-msg .reply-chunk')).toHaveCSS('animation-name', 'none');
-  await expect(page.locator('#partial-msg .reply-chunk')).toHaveCSS('opacity', '1');
+  // Text is fully there at once: no per-character fade runs at all.
+  expect(
+    await page.locator('#partial-msg .msg-text').evaluate(
+      (node) =>
+        node
+          .getAnimations({ subtree: true })
+          .filter((a) => (a as CSSAnimation).animationName === 'streamdown-fade-in').length,
+    ),
+  ).toBe(0);
+  await expect(page.locator('#partial-msg strong')).toHaveCSS('opacity', '1');
   await expect(page.locator('#partial-msg')).toHaveCSS('transform', 'none');
   await shot(page, info, 'reduced-motion.png');
   expect(errors).toEqual([]);
@@ -1133,7 +409,7 @@ for (const kind of ['assistant', 'thinking']) {
     ['leading whitespace', ' \n\n', ''],
     ['outer whitespace', ' \n\n', '\n\n'],
   ]) {
-    test(`transport-trimmed ${kind} final preserves its body and frontier: ${name}`, async ({
+    test(`transport-trimmed ${kind} final preserves its body without replay: ${name}`, async ({
       page,
     }) => {
       const { errors } = await setup(page);
@@ -1146,10 +422,9 @@ for (const kind of ['assistant', 'thinking']) {
           .evaluate((node) => ((node as HTMLDetailsElement).open = true));
       await ready(page);
       const bodySelector = isThinking ? '#partial-thinking .event-body' : '#partial-msg .msg-text';
-      const front = await page.locator(bodySelector).evaluate((node) => {
+      await page.locator(bodySelector).evaluate((node) => {
         (window as any).__trimBody = node;
         (window as any).__trimHeading = node.querySelector('h2');
-        return Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front'));
       });
       await emit(
         page,
@@ -1168,11 +443,8 @@ for (const kind of ['assistant', 'thinking']) {
       expect(
         await final.evaluate((node) => node.querySelector('h2') === (window as any).__trimHeading),
       ).toBe(true);
-      expect(
-        await final.evaluate((node) =>
-          Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front')),
-        ),
-      ).toBeGreaterThanOrEqual(front);
+      // Trimming is not new text: nothing fades in a second time.
+      expect(await final.evaluate(runningFades)).toBe(0);
       await ready(page);
       if (isThinking) await expect(page.locator('.event.thinking')).toHaveAttribute('open', '');
       expect(errors).toEqual([]);
@@ -1451,9 +723,6 @@ test('outbox finalization preserves rendered content when delivery collapses ext
     host.__deliveryBody = node;
     host.__deliveryHeading = node.querySelector('h2');
     host.__deliveryParagraph = node.querySelector('p');
-    host.__deliveryFront = Number.parseFloat(
-      (node as HTMLElement).style.getPropertyValue('--reply-front'),
-    );
   });
   await emit(page, 'event', replyEvent(1, parseOutboxMarkers(source).text));
   const body = page.locator('.msg:not(.msg-user) .msg-text');
@@ -1464,14 +733,7 @@ test('outbox finalization preserves rendered content when delivery collapses ext
   expect(
     await body.evaluate((node) => node.querySelector('p') === (window as any).__deliveryParagraph),
   ).toBe(true);
-  expect(
-    await body.evaluate(
-      (node) =>
-        Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front')) >=
-        (window as any).__deliveryFront,
-    ),
-  ).toBe(true);
-  await expect(body.locator('.reply-chunk:not([data-reveal="ready"])')).toHaveCount(0);
+  expect(await body.evaluate(runningFades)).toBe(0);
   await shot(page, info, 'delivery-blank-lines-no-replay.png');
   expect(errors).toEqual([]);
 });
@@ -1489,9 +751,6 @@ for (const inline of [false, true]) {
       host.__deliveryBody = node;
       host.__deliveryHeading = node.querySelector('h2');
       host.__deliveryParagraph = node.querySelector('p');
-      host.__deliveryFront = Number.parseFloat(
-        (node as HTMLElement).style.getPropertyValue('--reply-front'),
-      );
     });
     const marker = '[[image: /tmp/piweb-delivery-chart.svg]]';
     const source =
@@ -1519,13 +778,9 @@ for (const inline of [false, true]) {
         (node) => node.querySelector('p') === (window as any).__deliveryParagraph,
       ),
     ).toBe(true);
-    expect(
-      await body.evaluate(
-        (node) =>
-          Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front')) >=
-          (window as any).__deliveryFront,
-      ),
-    ).toBe(true);
+    // The read heading and paragraph are not faded in again.
+    expect(await body.locator('h2').evaluate(runningFades)).toBe(0);
+    expect(await body.locator('p').first().evaluate(runningFades)).toBe(0);
     await ready(page);
     await expect(body.locator('img')).toHaveCount(1);
     await expect(body).toContainText('圖片後的說明。');
@@ -1551,42 +806,63 @@ test('transport whitespace compatibility does not accept a substantive prefix re
   await expect(body.locator('h2')).toHaveText('Replacement');
 });
 
+// History (a reload) renders the same Markdown through the same renderer
+// without streaming; a streamed reply must end with exactly that structure.
+async function historyStructure(page: Page, content: string) {
+  const reloaded = await page.context().newPage();
+  await setup(reloaded, [replyEvent(1, content)]);
+  const structure = await reloaded
+    .locator('.msg:not(.msg-user) .msg-text')
+    .evaluate(markupSkeleton);
+  await reloaded.close();
+  return structure;
+}
+
+/** Block structure as tag names and text, ignoring classes and inline wrappers. */
+function markupSkeleton(root: Element) {
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      // Whitespace between blocks is formatting; inside code it is content.
+      const text = node.textContent ?? '';
+      return text.trim() || node.parentElement?.closest('pre') ? text : '';
+    }
+    if (!(node instanceof Element)) return '';
+    const inner = [...node.childNodes].map(walk).join('');
+    // The fade wraps characters and blocks, and streamed code is highlighted
+    // while history's is not: spans are colour, not structure.
+    if (node.matches('span, div.streamdown-animated')) return inner;
+    return `<${node.tagName.toLowerCase()}>${inner}</${node.tagName.toLowerCase()}>`;
+  };
+  return [...root.childNodes].map(walk).join('');
+}
+
 for (const [first, fragment, rest, tag, name] of [
   ['- one\n\n', '-', '- two\n\nAfter', 'ul', 'ul'],
   ['1. one\n\n', '12', '12. two\n\nAfter', 'ol', 'ol'],
-  ['# Heading\n\n    - one\n\n', '    -', '    - two\n\nAfter', 'ul', 'indented ul'],
-  ['# Heading\n\n\t- one\n\n', '\t-', '\t- two\n\nAfter', 'ul', 'tab-indented ul'],
-  ['# Heading\n\n    1. one\n\n', '    12', '    12. two\n\nAfter', 'ol', 'indented ol'],
+  // Four spaces after a heading are an indented code block in CommonMark.
+  ['# Heading\n\n    - one\n\n', '    -', '    - two\n\nAfter', 'pre', 'indented ul'],
+  ['# Heading\n\n\t- one\n\n', '\t-', '\t- two\n\nAfter', 'pre', 'tab-indented ul'],
+  ['# Heading\n\n    1. one\n\n', '    12', '    12. two\n\nAfter', 'pre', 'indented ol'],
 ]) {
-  test(`unfinished ${name} marker preserves the same list hierarchy as static Markdown`, async ({
-    page,
-  }) => {
+  test(`unfinished ${name} marker ends in the same structure as history`, async ({ page }) => {
     const { errors } = await setup(page);
     await partial(page, first + fragment);
-    await expect(page.locator('#partial-msg li')).toHaveCount(0);
     const source = first + rest;
     await partial(page, source);
     await expect(page.locator(`#partial-msg ${tag}`)).toHaveCount(1);
-    await expect(page.locator('#partial-msg li')).toHaveCount(2);
+    if (tag !== 'pre') await expect(page.locator('#partial-msg li')).toHaveCount(2);
     await emit(page, 'event', replyEvent(1, source.trim()));
     await ready(page);
-    const same = await page
-      .locator('.msg:not(.msg-user) .msg-text')
-      .evaluate(async (node, source) => {
-        const { renderRich } = await import('/markdown.js');
-        const expected = document.createElement('div');
-        renderRich(expected, source);
-        const actual = node.cloneNode(true) as HTMLElement;
-        for (const chunk of actual.querySelectorAll('.reply-chunk'))
-          chunk.replaceWith(...chunk.childNodes);
-        return actual.innerHTML === expected.innerHTML;
-      }, source.trim());
-    expect(same).toBe(true);
+    // The stream catches up on the final text gradually, so poll.
+    const history = await historyStructure(page, source.trim());
+    await expect
+      .poll(() => page.locator('.msg:not(.msg-user) .msg-text').evaluate(markupSkeleton))
+      .toBe(history);
     expect(errors).toEqual([]);
   });
 }
 
-test('internally scrolled thinking keeps content-coordinate progress when another chunk joins', async ({
+test('internally scrolled thinking keeps the reader in place when another chunk joins', async ({
   page,
 }, info) => {
   const { errors } = await setup(page);
@@ -1600,33 +876,33 @@ test('internally scrolled thinking keeps content-coordinate progress when anothe
     .evaluate((node) => ((node as HTMLDetailsElement).open = true));
   const body = page.locator('#partial-thinking .event-body');
   await expect.poll(() => body.evaluate((node) => node.clientHeight)).toBeGreaterThan(375);
-  const first = body.locator('.reply-chunk').first();
-  await expect(first).toHaveAttribute('data-reveal', 'revealing');
+  await ready(page);
   const before = await body.evaluate((node) => {
-    const chunk = node.querySelector('.reply-chunk') as HTMLElement;
-    const result = {
-      front: Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front')),
-      top: Number.parseFloat(chunk.style.getPropertyValue('--chunk-top')),
-    };
     node.scrollTop = 150;
-    return { ...result, scrollTop: node.scrollTop };
+    const heading = node.querySelector('h2')!;
+    (window as any).__thinkingHeading = heading;
+    return {
+      scrollTop: node.scrollTop,
+      heading: heading.getBoundingClientRect().top - node.getBoundingClientRect().top,
+    };
   });
   expect(before.scrollTop).toBeGreaterThan(100);
   await partial(page, '', source + '追加下一段內容。\n\n');
-  await expect(body.locator('.reply-chunk')).toHaveCount(2);
-  await expect(first).toHaveAttribute('data-reveal', 'revealing');
-  const after = await body.evaluate((node) => ({
-    front: Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front')),
-    top: Number.parseFloat(
-      (node.querySelector('.reply-chunk') as HTMLElement).style.getPropertyValue('--chunk-top'),
-    ),
-    scrollTop: node.scrollTop,
-  }));
-  expect(Math.abs(after.top - before.top)).toBeLessThan(0.1);
-  expect(
-    Math.abs(after.front - after.top - (before.front - before.top) - (after.front - before.front)),
-  ).toBeLessThan(0.1);
-  await recordSamples(info, 'thinking-scroll-content-coordinates', { before, after });
+  await expect(body).toContainText('追加下一段內容。');
+  await ready(page);
+  const after = await body.evaluate((node) => {
+    const heading = node.querySelector('h2')!;
+    return {
+      scrollTop: node.scrollTop,
+      heading: heading.getBoundingClientRect().top - node.getBoundingClientRect().top,
+      same: heading === (window as any).__thinkingHeading,
+    };
+  });
+  // The appended chunk lands below; what the reader is looking at stays put.
+  expect(after.same).toBe(true);
+  expect(Math.abs(after.scrollTop - before.scrollTop)).toBeLessThan(1);
+  expect(Math.abs(after.heading - before.heading)).toBeLessThan(1);
+  await recordSamples(info, 'thinking-scroll-reader-position', { before, after });
   expect(errors).toEqual([]);
 });
 
@@ -1758,14 +1034,11 @@ test('completed thinking keeps its rendered nodes and expanded state', async ({ 
   expect(errors).toEqual([]);
 });
 
-test('list continuations and CRLF have the same final hierarchy as normal Markdown', async ({
-  page,
-}) => {
+test('list continuations and CRLF end in the same structure as history', async ({ page }) => {
   const { errors } = await setup(page);
   const heading = '## 清單\r\n\r\n';
   await partial(page, heading + '- 第一項\r\n\r\n');
   await expect(page.locator('#partial-msg h2')).toHaveText('清單');
-  await expect(page.locator('#partial-msg li')).toHaveCount(0);
   const list = '- 第一項\r\n\r\n  補充說明\r\n  - 子項\r\n\r\n- 第二項\r\n\r\n';
   const content = heading + list + '下一段';
   await partial(page, content);
@@ -1773,18 +1046,10 @@ test('list continuations and CRLF have the same final hierarchy as normal Markdo
   await expect(page.locator('#partial-msg ul ul li')).toHaveText('子項');
   await emit(page, 'event', replyEvent(1, content));
   await ready(page);
-  const same = await page
-    .locator('.msg:not(.msg-user) .msg-text')
-    .evaluate(async (node, content) => {
-      const { renderRich } = await import('/markdown.js');
-      const expected = document.createElement('div');
-      renderRich(expected, content);
-      const clone = node.cloneNode(true) as HTMLElement;
-      for (const chunk of clone.querySelectorAll('.reply-chunk'))
-        chunk.replaceWith(...chunk.childNodes);
-      return clone.innerHTML === expected.innerHTML;
-    }, content);
-  expect(same).toBe(true);
+  const history = await historyStructure(page, content);
+  await expect
+    .poll(() => page.locator('.msg:not(.msg-user) .msg-text').evaluate(markupSkeleton))
+    .toBe(history);
   expect(errors).toEqual([]);
 });
 
@@ -1839,135 +1104,91 @@ test('async asset completion respects scrolling up instead of dragging the reade
   expect(errors).toEqual([]);
 });
 
-test('light-theme formulas finish layout and font preparation before reveal', async ({
+test('light-theme formulas render with KaTeX while streaming and after the final', async ({
   page,
 }, info) => {
   await page.addInitScript(() => localStorage.setItem('piweb.theme', 'light'));
   const { errors } = await setup(page);
   const heading = '## 淺色主題也先排版\n\n';
-  const formula = '$$\na^2\n\n+b^2=c^2\n';
+  const formula = '$$\na^2+b^2=c^2\n';
   await partial(page, heading + formula);
   await expect(page.locator('#partial-msg h2')).toHaveText('淺色主題也先排版');
-  await expect(page.locator('#partial-msg .katex')).toHaveCount(0);
-  await partial(page, heading + formula + '$$\n\n');
+  const content = heading + formula + '$$\n\n';
+  await partial(page, content);
   await expect(page.locator('#partial-msg .katex')).toHaveCount(1);
-  await expect(page.locator('#partial-msg .reply-chunk').last()).toHaveAttribute(
-    'data-reveal',
-    /revealing|ready/,
-  );
-  expect(await page.evaluate(() => document.fonts.status)).toBe('loaded');
+  await expect(page.locator('#partial-msg')).not.toContainText('$$');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await ready(page);
-  await shot(page, info, 'light-theme-ready-formula.png');
+  // Dark ink on the light page, not the dark theme's light text.
+  const ink = await page
+    .locator('#partial-msg .katex')
+    .evaluate((node) => getComputedStyle(node).color);
+  const [r, g, b] = ink.match(/\d+/g)!.map(Number);
+  expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeLessThan(128);
+  await shot(page, info, 'light-theme-streamed-formula.png');
+  await emit(page, 'event', replyEvent(1, content.trim()));
+  await expect(page.locator('.msg:not(.msg-user) .katex')).toHaveCount(1);
+  await ready(page);
+  await shot(page, info, 'light-theme-final-formula.png');
   expect(errors).toEqual([]);
 });
 
-test('hidden future rows cannot open touch-selection actions during reveal', async ({
+test('a long press opens the selection actions on a streaming and a finished reply', async ({
   page,
 }, info) => {
   const { errors } = await setup(page);
-  await partial(page, 'FUTUREHIDDEN '.repeat(100) + '\n\n');
-  const chunk = page.locator('#partial-msg .reply-chunk');
-  await expect(chunk).toHaveAttribute('data-reveal', 'revealing');
-  const point = await chunk.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node.querySelector('p')!);
-    const bounds = node.getBoundingClientRect();
-    const rowTop = Number.parseFloat(
-      (node as HTMLElement).style.getPropertyValue('--reply-row-top'),
-    );
-    const messages = document.getElementById('messages')!.getBoundingClientRect();
-    const rect = [...range.getClientRects()].find(
-      (rect) =>
-        rect.top > bounds.top + rowTop + 150 &&
-        rect.top > messages.top + 40 &&
-        rect.bottom < messages.bottom - 40,
-    );
-    if (!rect) throw new Error('No on-screen invisible future row');
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      band: rect.top - bounds.top,
-    };
-  });
-  await page.evaluate(() => {
-    document.addEventListener(
-      'touchstart',
-      (event) => {
-        const target = event.target as HTMLElement;
-        (window as any).__actualRevealTouch = {
-          id: target.id,
-          className: target.className,
-          inBody: !!target.closest('.msg-text, .event-body'),
-        };
-      },
-      { once: true, capture: true },
-    );
-  });
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ x: point.x, y: point.y }],
-  });
-  await page.waitForTimeout(360);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await cdp.detach();
-  await expect(chunk).toHaveAttribute('data-reveal', 'revealing');
-  expect(
-    await chunk.evaluate((node) =>
-      Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-row-top')),
-    ),
-  ).toBeLessThan(point.band);
-  await shot(page, info, 'hidden-row-after-real-touch.png');
-  await expect(page.locator('#selection-actions')).toBeHidden();
-  await expect(page.locator('#custom-selection-overlay')).toBeHidden();
-  await recordSamples(
-    info,
-    'hidden-row-touch-target',
-    await page.evaluate(() => (window as any).__actualRevealTouch),
-  );
+  const text = 'STREAMING '.repeat(100) + '\n\n';
+  const longPress = async (selector: string) => {
+    const point = await page.locator(selector).evaluate((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node.querySelector('p')!);
+      const messages = document.getElementById('messages')!.getBoundingClientRect();
+      // The first on-screen row: near the top the actions open below the
+      // selection, right where the finger is about to lift.
+      const rect = [...range.getClientRects()].find(
+        (rect) => rect.top > messages.top + 40 && rect.bottom < messages.bottom - 40,
+      )!;
+      return { x: rect.left + 8, y: rect.top + rect.height / 2 };
+    });
+    const touch = await page.context().newCDPSession(page);
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+    await page.waitForTimeout(360);
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touch.detach();
+  };
+  await partial(page, text);
   await ready(page);
-  const readable = await chunk.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node.querySelector('p')!);
-    const messages = document.getElementById('messages')!.getBoundingClientRect();
-    const rect = [...range.getClientRects()].find(
-      (rect) => rect.top > messages.top + 40 && rect.bottom < messages.bottom - 40,
-    )!;
-    return { x: rect.left + 8, y: rect.top + rect.height / 2 };
-  });
-  const readyTouch = await page.context().newCDPSession(page);
-  await readyTouch.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [readable],
-  });
-  await page.waitForTimeout(360);
-  await readyTouch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await readyTouch.detach();
+  await longPress('#partial-msg .msg-text');
   await expect(page.locator('#selection-actions')).toBeVisible();
+  await shot(page, info, 'streaming-selection.png');
+  await page.locator('#sel-backdrop').click({ force: true });
+  await expect(page.locator('#selection-actions')).toBeHidden();
+
+  await emit(page, 'event', replyEvent(1, text.trim()));
+  await emit(page, 'partial', { content: '', thinking: '' });
+  await ready(page);
+  // Lifting the finger must not also press the action that opened under it.
+  await longPress('.msg:not(.msg-user) .msg-text');
+  await expect(page.locator('#selection-actions')).toBeVisible();
+  await expect(page.locator('#custom-selection-overlay')).toBeVisible();
+  await shot(page, info, 'finished-selection.png');
   expect(errors).toEqual([]);
 });
 
-test('revealing content cannot steal keyboard focus before it is ready', async ({ page }) => {
+test('a streaming reply never takes keyboard focus from the composer', async ({ page }) => {
   const { errors } = await setup(page);
+  const input = page.locator('#input');
+  await input.click();
+  await input.pressSequentially('邊看邊打');
   await partial(page, '[已完成的連結](https://example.test/reveal)\n\n');
-  const chunk = page.locator('#partial-msg .reply-chunk');
-  await expect(chunk).toHaveAttribute('data-reveal', 'revealing');
-  await expect(chunk).toHaveAttribute('inert', '');
-  await expect(chunk).toHaveAttribute('aria-hidden', 'true');
-  expect(
-    await chunk.evaluate((node) => {
-      const link = node.querySelector('a')!;
-      link.focus();
-      return document.activeElement === link;
-    }),
-  ).toBe(false);
+  await partial(page, '[已完成的連結](https://example.test/reveal)\n\n```js\nconst a = 1;\n```\n\n');
   await ready(page);
-  await expect(chunk).not.toHaveAttribute('inert', '');
-  await expect(chunk).not.toHaveAttribute('aria-hidden', 'true');
+  await expect(input).toBeFocused();
+  await input.pressSequentially('，還在輸入');
+  await expect(input).toHaveValue('邊看邊打，還在輸入');
+  // The streamed link itself is a normal, reachable link.
   expect(
-    await chunk.evaluate((node) => {
-      const link = node.querySelector('a')!;
+    await page.locator('#partial-msg a').evaluate((link) => {
       link.focus();
       const rect = link.getBoundingClientRect();
       return (
@@ -1979,37 +1200,36 @@ test('revealing content cannot steal keyboard focus before it is ready', async (
   expect(errors).toEqual([]);
 });
 
-test('desktop layout stays stationary through a soft reveal', async ({ page }, info) => {
+test('desktop layout stays stationary while a reply streams in', async ({ page }, info) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const { errors } = await setup(page);
-  await partial(page, '## 桌面也先完成排版\n\n第一段 **已完成排版**，沒有垂直滑動。\n\n');
-  await expect(page.locator('#partial-msg .reply-chunk')).toHaveAttribute(
-    'data-reveal',
-    'revealing',
-  );
-  const samples = await page.locator('#partial-msg h2').evaluate(async (node) => {
-    const samples: { x: number; y: number; width: number; transform: string; gap: number }[] = [];
-    let previous = performance.now();
-    for (let i = 0; i < 45; i++) {
-      await new Promise(requestAnimationFrame);
-      const rect = node.getBoundingClientRect();
-      const now = performance.now();
-      samples.push({
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        transform: getComputedStyle(node.closest('.reply-chunk')!).transform,
-        gap: now - previous,
-      });
-      previous = now;
-    }
-    return samples;
-  });
-  expect(
-    Math.max(...samples.map((sample) => sample.y)) - Math.min(...samples.map((sample) => sample.y)),
-  ).toBeLessThan(0.2);
-  expect(samples.every((sample) => sample.transform === 'none')).toBe(true);
-  await recordSamples(info, 'desktop-reveal-frame-samples', samples);
+  const first = '## 桌面也先完成排版\n\n第一段 **已完成排版**，沒有垂直滑動。\n\n';
+  await partial(page, first);
+  await expect(page.locator('#partial-msg h2')).toHaveText('桌面也先完成排版');
+  const sample = (frames: number) =>
+    page.locator('#partial-msg h2').evaluate(async (node, frames) => {
+      const samples: { x: number; y: number; width: number; transform: string }[] = [];
+      for (let i = 0; i < frames; i++) {
+        await new Promise(requestAnimationFrame);
+        const rect = node.getBoundingClientRect();
+        samples.push({
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          transform: getComputedStyle(node).transform,
+        });
+      }
+      return samples;
+    }, frames);
+  const fading = sample(45);
+  // More text arrives while the first block is still fading in.
+  await partial(page, first + '第二段接在下面，上面的標題不移動。'.repeat(6) + '\n\n');
+  const samples = await fading;
+  const spread = (values: number[]) => Math.max(...values) - Math.min(...values);
+  expect(spread(samples.map((s) => s.y))).toBeLessThan(0.2);
+  expect(spread(samples.map((s) => s.x))).toBeLessThan(0.2);
+  expect(samples.every((s) => s.transform === 'none')).toBe(true);
+  await recordSamples(info, 'desktop-stream-frame-samples', samples);
   await ready(page);
   await shot(page, info, 'desktop-ready.png');
   expect(errors).toEqual([]);
@@ -2023,6 +1243,13 @@ async function openScrollSettings(page: Page) {
     .locator('#settings-dialog')
     .evaluate((node) => Promise.all(node.getAnimations().map((a) => a.finished)));
   return page.getByRole('switch', { name: /自動捲動/ });
+}
+
+// Settings slides out before it closes and stays modal until then, so the
+// composer is inert for those 140ms.
+async function closeSettings(page: Page) {
+  await page.locator('#btn-settings-close').click();
+  await expect(page.locator('#settings-dialog')).toBeHidden();
 }
 
 async function scrollPosition(page: Page) {
@@ -2066,7 +1293,7 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
   expect(box.height).toBeGreaterThanOrEqual(44);
   expect(box.reachable).toBe(true);
   await shot(page, info, 'scroll-01-default-off.png');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   await page.locator('#input').fill('不要自動捲動');
   await page.locator('#btn-send').click();
   await expect(page.locator('#input')).toHaveValue('');
@@ -2078,11 +1305,15 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   const before = await scrollPosition(page);
   await page.evaluate(() => {
     (window as any).__liveScrollCalls = [];
@@ -2092,10 +1323,9 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
   await partial(page, content);
   await ready(page);
   await expect(page.locator('#messages')).toHaveAttribute('data-prompt-turn', 'active');
-  const front = await page.locator('#partial-msg .msg-text').evaluate((node) => {
+  await page.locator('#partial-msg .msg-text').evaluate((node) => {
     (window as any).__heldBody = node;
     (window as any).__heldHeading = node.querySelector('h2');
-    return Number.parseFloat((node as HTMLElement).style.getPropertyValue('--reply-front'));
   });
   const saved = replyEvent(24, content.trim());
   events.push(saved);
@@ -2116,11 +1346,6 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
       return node.isConnected && node.querySelector('h2') === (window as any).__heldHeading;
     }),
   ).toBe(true);
-  expect(
-    await page.evaluate(() =>
-      Number.parseFloat((window as any).__heldBody.style.getPropertyValue('--reply-front')),
-    ),
-  ).toBeGreaterThanOrEqual(front);
   await shot(page, info, 'scroll-02-position-held.png');
   await page.locator('#jump-live').click();
   await expect
@@ -2142,7 +1367,7 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
     )
     .toBe('matrix(1, 0, 0, 1, 18, 0)');
   await shot(page, info, 'scroll-04-enable-follow.png');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   const nextContent =
     '## 選擇跟隨最新回覆\n\n' + '只有開啟設定，而且位於底部，才會跟隨串流。'.repeat(12) + '\n\n';
   await partial(page, nextContent);
@@ -2171,7 +1396,7 @@ test('auto-scroll is OFF by default and updates preserve the submitted prompt po
     )
     .toBe('none');
   await shot(page, info, 'scroll-06-off-light.png');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   const frozenTop = await scrollPosition(page);
   const callsBefore = await page.evaluate(() => (window as any).__liveScrollCalls.length);
   const frozenGeometry = await page.locator('#messages').evaluate((node) => ({
@@ -2230,11 +1455,15 @@ test('prompt turn submission raises the new question and reserves the answer vie
     .poll(() =>
       prompt.evaluate(
         (node) =>
-          node.getBoundingClientRect().top -
-          document.getElementById('messages')!.getBoundingClientRect().top,
+          // Flush with the transcript edge; fractional edges round up, so the
+          // row may tuck under it by less than a pixel but never shows a gap.
+          Math.ceil(
+            node.getBoundingClientRect().top -
+              document.getElementById('messages')!.getBoundingClientRect().top,
+          ) + 0,
       ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   expect(await page.locator('.msg-user').count()).toBe(countBefore + 1);
   const initial = await page.locator('#messages').evaluate((node) => ({
     top: node.scrollTop,
@@ -2278,7 +1507,7 @@ test('prompt turn submission raises the new question and reserves the answer vie
   await openScrollSettings(page);
   await page.locator('#btn-theme').click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   await page.locator('#input').fill('下一輪也從上面開始');
   await send.click();
   await emit(page, 'event', events.at(-1));
@@ -2289,11 +1518,15 @@ test('prompt turn submission raises the new question and reserves the answer vie
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   await shot(page, info, 'prompt-05-next-turn.png');
   await page.setViewportSize({ width: 390, height: 550 });
   await expect
@@ -2303,11 +1536,15 @@ test('prompt turn submission raises the new question and reserves the answer vie
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() =>
@@ -2316,11 +1553,15 @@ test('prompt turn submission raises the new question and reserves the answer vie
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   await page.locator('#messages').hover();
   await page.mouse.wheel(0, -280);
   await expect
@@ -2501,11 +1742,15 @@ test('prompt turn follows overflow only when auto-scroll is enabled', async ({ p
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   await partial(page, '## 開啟跟隨\n\n' + '回覆超過一頁後可以繼續跟隨。'.repeat(120) + '\n\n');
   await ready(page);
   await expect
@@ -2526,12 +1771,12 @@ test('auto-scroll setting persists and turning it OFF fences pending image compl
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   expect(await page.evaluate(() => localStorage.getItem('piweb.autoScroll'))).toBe('true');
   await shot(page, info, 'scroll-04-enabled.png');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   await page.reload();
   await expect(page.locator('#session-name')).toHaveText('漸層顯示測試');
   toggle = await openScrollSettings(page);
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   let release!: () => void;
   let requested = false;
   const held = new Promise<void>((resolve) => {
@@ -2550,7 +1795,7 @@ test('auto-scroll setting persists and turning it OFF fences pending image compl
   toggle = await openScrollSettings(page);
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   const before = await scrollPosition(page);
   release();
   await expect(page.locator('#partial-msg img')).toBeAttached();
@@ -2593,11 +1838,15 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   const data = await finishPromptMotionSamples(page);
   const lastReport = data.keyboard.at(-1).time;
   const moving = data.samples.filter((s: any) => s.top > before + 2);
@@ -2625,7 +1874,7 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
   await shot(page, info, 'motion-02-ready-reply.png');
   await openScrollSettings(page);
   await page.locator('#btn-theme').click();
-  await page.locator('#btn-settings-close').click();
+  await closeSettings(page);
   await page.locator('#input').fill('淺色也平滑開始下一輪');
   await page.locator('#btn-send').click();
   await emit(page, 'event', events.at(-1));
@@ -2639,11 +1888,15 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
         .last()
         .evaluate(
           (node) =>
-            node.getBoundingClientRect().top -
-            document.getElementById('messages')!.getBoundingClientRect().top,
+            // Flush with the transcript edge; fractional edges round up, so the
+            // row may tuck under it by less than a pixel but never shows a gap.
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0,
         ),
     )
-    .toBeCloseTo(12, 0);
+    .toBe(0);
   await expect(page.locator('#messages')).not.toHaveAttribute('data-prompt-motion', /.+/);
   await shot(page, info, 'motion-03-light-next-turn.png');
   const beforeWheel = await scrollPosition(page);
