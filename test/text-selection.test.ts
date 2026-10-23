@@ -201,10 +201,29 @@ describe('transcript text selection', () => {
     });
     expect(preventNativeSelection).toHaveBeenCalledOnce();
 
+    // A tap shorter than a long press stays a tap: its click must go through.
+    // The handles add their own window touchend; this is the long-press one.
+    const windowListener = (type: string) =>
+      (document.defaultView.addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
+        ([name, listener]) => name === type && listener.name === 'onTouchEnd',
+      )![1] as (event: any) => void;
+    const tapClick = vi.fn();
+    windowListener('touchend')({ cancelable: true, preventDefault: tapClick });
+    expect(tapClick).not.toHaveBeenCalled();
+    listeners.get('touchstart')?.({
+      touches: [{ identifier: 1, clientX: 2, clientY: 5 }],
+      target,
+    });
+
     vi.advanceTimersByTime(320);
 
     expect(removeAllRanges).toHaveBeenCalled();
     expect(onSelection).toHaveBeenCalledWith('hello', expect.anything());
+
+    // Lifting the long press must not click the actions now under the finger.
+    const longPressClick = vi.fn();
+    windowListener('touchend')({ cancelable: true, preventDefault: longPressClick });
+    expect(longPressClick).toHaveBeenCalledOnce();
 
     // A native selection that slips past selectstart (iOS marks the gesture
     // non-cancelable once its own drag begins) is scrubbed on selectionchange.

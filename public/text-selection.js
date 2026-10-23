@@ -477,6 +477,10 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     if (!pendingGesture) return;
     if (pendingGesture.timer) window.clearTimeout(pendingGesture.timer);
     if (pendingGesture.active) {
+      // Lifting a long press is not a tap. Left alone, the browser clicks what
+      // is under the finger, and that can be the quote/copy pill that just
+      // appeared there: the selection would quote itself and vanish.
+      if (event?.cancelable) event.preventDefault();
       isDragging = false;
       overlayEl?.classList.remove('dragging');
       if (currentRange && !currentRange.collapsed) {
@@ -578,7 +582,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   });
   const globalTarget = window || document.defaultView || document;
   globalTarget?.addEventListener?.('touchmove', onTouchMove, { passive: false });
-  globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: true });
+  globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: false });
   globalTarget?.addEventListener?.('touchcancel', onTouchEnd, { passive: true });
 
   root.addEventListener('scroll', () => {
