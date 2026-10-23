@@ -3435,8 +3435,8 @@ export function createSessionDashboard({
   // thinner so picking a pane up by its header does not land in the top band.
   const STAGE_EDGE_SIDE_PX = 28;
   const STAGE_EDGE_END_PX = 16;
-  // Half the side of the centered square, in pane fractions, that swaps.
-  const DROP_SWAP_HALF = 1 / 6;
+  // A pane's drop zones are its thirds (computeDropTarget).
+  const DROP_THIRD = 1 / 3;
 
   function stageEdgeTarget(clientX, clientY, stageRect) {
     if (!wideQuery.matches) return null;
@@ -3481,15 +3481,7 @@ export function createSessionDashboard({
     return { mode: 'edge', zone, rect, label };
   }
 
-  /**
-   * `probe` is the point that picks the pane and zone, the pointer unless a
-   * touch drag carries a whole pane: then it is that pane's center, kept at
-   * the offset it had from the finger at pick-up (pointerDrag.centerOffset).
-   * A pane is lifted by its header, half a pane above its center, so judging
-   * by the finger alone meant carrying it that much further. The stage's
-   * outer band stays with the finger.
-   */
-  function computeDropTarget(clientX, clientY, probe = null) {
+  function computeDropTarget(clientX, clientY) {
     const stageRect = stageEl.getBoundingClientRect();
     const paneEls = [...gridEl.querySelectorAll('.dashboard-pane')];
     if (paneEls.length === 0) {
@@ -3508,11 +3500,6 @@ export function createSessionDashboard({
 
     const edge = stageEdgeTarget(clientX, clientY, stageRect);
     if (edge) return edge;
-    if (probe) {
-      const g = gridEl.getBoundingClientRect();
-      clientX = Math.min(Math.max(probe.x, g.left), g.right);
-      clientY = Math.min(Math.max(probe.y, g.top), g.bottom);
-    }
 
     // Find hovered pane (or closest pane)
     let hoveredPane = paneEls.find((el) => {
@@ -3533,24 +3520,21 @@ export function createSessionDashboard({
     const relX = (clientX - r.left) / Math.max(1, r.width);
     const relY = (clientY - r.top) / Math.max(1, r.height);
 
-    // 5-way zone detection, judged from the pane's center: the middle third
-    // swaps (or adds beside it from the sidebar); anywhere else the side of
-    // the center the pointer is on, along the axis it is further out on,
-    // picks the split. Crossing the center line is enough, so a pane picked
-    // up by its header need not be carried into a thin edge band (it used to
-    // take the outer 20%, which on a phone meant dragging nearly a whole pane
-    // further than where the preview flipped).
+    // 5-way zone detection by the finger/pointer, in thirds of the pane: the
+    // top third drops above, the bottom third below, and the middle row is
+    // left / swap (or add beside it from the sidebar) / right. Top and bottom
+    // win the corners, so a pane picked up by the name at the left of its
+    // header and dragged straight down flips above/below a third of the way
+    // in, wherever it was grabbed (it used to take the outer 20%).
     const isExistingPaneDrag = Boolean(dragSourceJid && allJids().includes(dragSourceJid));
     // Over its own pane a drop changes nothing (placeSessionAt): no preview.
     if (hoveredPane.dataset.jid === dragSourceJid) return null;
-    const offX = relX - 0.5;
-    const offY = relY - 0.5;
-    const inCenter = Math.abs(offX) < DROP_SWAP_HALF && Math.abs(offY) < DROP_SWAP_HALF;
-
     let zone;
-    if (inCenter) zone = 'swap';
-    else if (Math.abs(offY) >= Math.abs(offX)) zone = offY < 0 ? 'top' : 'bottom';
-    else zone = offX < 0 ? 'left' : 'right';
+    if (relY < DROP_THIRD) zone = 'top';
+    else if (relY > 1 - DROP_THIRD) zone = 'bottom';
+    else if (relX < DROP_THIRD) zone = 'left';
+    else if (relX > 1 - DROP_THIRD) zone = 'right';
+    else zone = 'swap';
 
     const localLeft = r.left - stageRect.left;
     const localTop = r.top - stageRect.top;
@@ -3810,14 +3794,6 @@ export function createSessionDashboard({
           window.getSelection()?.removeAllRanges();
           if (!active) setActive(true);
           if (!wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
-          const sourcePane = pointerDrag.source === 'pane' && pointerDrag.targetElement?.closest('.dashboard-pane');
-          if (sourcePane) {
-            const r = sourcePane.getBoundingClientRect();
-            pointerDrag.centerOffset = {
-              x: r.left + r.width / 2 - pointerDrag.startX,
-              y: r.top + r.height / 2 - pointerDrag.startY,
-            };
-          }
           const ghost = el('div', 'dashboard-drag-ghost', `# ${pointerDrag.name}`);
           document.body.append(ghost);
           pointerDrag.ghost = ghost;
@@ -3827,16 +3803,11 @@ export function createSessionDashboard({
         if (pointerDrag.ghost) {
           pointerDrag.ghost.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 18}px, 0)`;
         }
-        showDropPreview(computeDropTarget(e.clientX, e.clientY, dragProbe(pointerDrag, e)));
+        showDropPreview(computeDropTarget(e.clientX, e.clientY));
       }
     },
     { passive: false },
   );
-
-  const dragProbe = (drag, e) =>
-    drag.centerOffset
-      ? { x: e.clientX + drag.centerOffset.x, y: e.clientY + drag.centerOffset.y }
-      : null;
 
   const finishPointerDrag = (e, commit) => {
     if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
@@ -3878,7 +3849,7 @@ export function createSessionDashboard({
       (target && (target.mode === 'pane' || target.mode === 'edge'));
 
     if ((commit || target?.mode === 'pane' || target?.mode === 'edge') && isOverMain) {
-      addPane(drag.jid, target || computeDropTarget(e.clientX, e.clientY, dragProbe(drag, e)));
+      addPane(drag.jid, target || computeDropTarget(e.clientX, e.clientY));
     }
   };
   window.addEventListener('pointerup', (e) => finishPointerDrag(e, true));

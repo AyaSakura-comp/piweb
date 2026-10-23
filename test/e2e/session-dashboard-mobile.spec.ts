@@ -357,16 +357,9 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   // a still finger stays a tap.
   const paneOrder = () => page.locator('.dashboard-pane').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.jid));
   const touchDrag = async (fromSelector: string, toJid: string, pointerId: number) => {
-    await page.waitForTimeout(600); // a previous swap's layout spring settles
+    await page.waitForTimeout(600); // boxes measured mid-swap spring would aim at stale spots
     const from = (await page.locator(fromSelector).boundingBox())!;
     const to = (await page.locator(`.dashboard-pane[data-jid="${toJid}"]`).boundingBox())!;
-    // The drop is judged by the carried pane's center: bring that onto the target's.
-    const carried = await page.locator(fromSelector).evaluate((el) => {
-      const r = el.closest('.dashboard-pane')!.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height };
-    });
-    const sx = from.x + Math.min(20, from.width / 2);
-    const sy = from.y + from.height / 2;
     await page.evaluate(({ fromSelector, sx, sy, tx, ty, pointerId }) => {
       const source = document.querySelector(fromSelector)!;
       const init = { pointerId, pointerType: 'touch', button: 0, bubbles: true, cancelable: true };
@@ -380,9 +373,8 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
       source.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }, {
       fromSelector, pointerId,
-      sx, sy,
-      tx: to.x + to.width / 2 - (carried.x + carried.width / 2 - sx),
-      ty: to.y + to.height / 2 - (carried.y + carried.height / 2 - sy),
+      sx: from.x + Math.min(20, from.width / 2), sy: from.y + from.height / 2,
+      tx: to.x + to.width / 2, ty: to.y + to.height / 2,
     });
   };
   const [leftJid, rightJid] = await paneOrder();
@@ -479,22 +471,20 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.waitForTimeout(600);
     await expect(active.locator('.pane-hot-keywords')).toBeVisible();
   };
-  // A pane is carried by its header, half a pane above its center, so a
-  // touch drag judges the drop by the carried pane's center, and the target's
-  // own center splits it: past the center line is enough, no 20% edge band.
-  const expectDropJudgedByPaneCenter = async () => {
+  // The finger decides, by thirds of the target pane: a third of the way in
+  // is enough for above/below, no 20% edge band, wherever the header was
+  // grabbed. The middle row is left / swap / right.
+  const expectDropJudgedByFinger = async () => {
     const presetBefore = await page.locator('.dashboard-preset-btn.active').getAttribute('data-preset');
     await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
     await page.waitForTimeout(600);
     const order = () => page.locator('.dashboard-pane').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
     const before = await order();
-    const dragTopPane = async (stops: Array<[number, string | null]>) => {
-      const a = (await page.locator('.dashboard-pane').nth(0).boundingBox())!;
+    const dragTopPane = async (stops: Array<[number, string | null]>, grabX: number) => {
       const b = (await page.locator('.dashboard-pane').nth(1).boundingBox())!;
       const h = (await page.locator('.dashboard-pane').nth(0).locator('.dashboard-pane-header').boundingBox())!;
-      const x = h.x + 60;
+      const x = h.x + h.width * grabX;
       const y0 = h.y + h.height / 2;
-      const toCenter = a.y + a.height / 2 - y0;
       await page.locator('.dashboard-pane').nth(0).locator('.dashboard-pane-header').dispatchEvent('pointerdown', {
         pointerId: 55, pointerType: 'touch', button: 0, clientX: x, clientY: y0, isPrimary: true,
       });
@@ -509,8 +499,7 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
         y = to;
       };
       for (const [rel, text] of stops) {
-        // The finger sits half a pane above the point being judged.
-        await move(rel < 0 ? y0 + 20 : b.y + b.height * rel - toCenter);
+        await move(rel < 0 ? y0 + 20 : b.y + b.height * rel);
         if (text) {
           await expect(page.locator('#dashboard-drop-label')).toContainText(text);
           await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
@@ -518,21 +507,22 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
           await expect(page.locator('#dashboard-drop-preview')).toBeHidden(); // still over itself
         }
       }
-      expect(y).toBeLessThan(b.y + b.height * 0.8 - 100); // the old bottom band was below 80%
+      expect(y).toBeLessThan(b.y + b.height * 0.8); // the old bottom band was below 80%
       await page.evaluate(({ x, y }) => window.dispatchEvent(new PointerEvent('pointerup', {
         pointerId: 55, pointerType: 'touch', clientX: x, clientY: y, bubbles: true,
       })), { x, y });
       await page.waitForTimeout(700);
     };
-    await dragTopPane([[-1, null], [0.25, '上方'], [0.5, '交換'], [0.72, '下方']]);
-    await page.screenshot({ path: info.outputPath('01e-drag-by-pane-center.png') });
+    // Grabbed by the name at the left of the header and dragged straight down.
+    await dragTopPane([[-1, null], [0.3, '上方'], [0.5, '左側'], [0.7, '下方']], 0.15);
+    await page.screenshot({ path: info.outputPath('01e-drag-by-finger.png') });
     expect(await order()).toEqual([before[1], before[0]]);
-    await dragTopPane([[0.45, '交換']]);
+    await dragTopPane([[0.45, '交換']], 0.5);
     expect(await order()).toEqual(before);
     await page.locator(`.dashboard-preset-btn[data-preset="${presetBefore}"]`).click();
     await page.waitForTimeout(600);
   };
-  await expectDropJudgedByPaneCenter();
+  await expectDropJudgedByFinger();
   await expectShortPaneKeepsTranscript();
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();

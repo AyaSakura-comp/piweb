@@ -238,7 +238,7 @@ test('the outer band of the dashboard drops beside everything', async ({ page },
   expect(errors).toEqual([]);
 });
 
-test('the side of the pane center picks the split, no edge band needed', async ({ page }, info) => {
+test('thirds of the pane under the pointer pick the split, no edge band needed', async ({ page }, info) => {
   const errors = await setup(page);
   const header = page.locator(`.dashboard-pane[data-jid="${NOTES}"] .dashboard-pane-header`);
   const h = (await header.boundingBox())!;
@@ -246,7 +246,8 @@ test('the side of the pane center picks the split, no edge band needed', async (
   const label = page.locator('#dashboard-drop-label');
   await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
   await page.mouse.down();
-  // Each of these used to sit in the 20%..80% swap box; only the middle third swaps now.
+  // Most of these used to sit in the 20%..80% swap box; only the middle third swaps now,
+  // and the top/bottom thirds win the corners.
   for (const [relX, relY, text] of [
     [0.5, 0.5, '交換'],
     [0.5, 0.62, '交換'],
@@ -254,6 +255,8 @@ test('the side of the pane center picks the split, no edge band needed', async (
     [0.5, 0.3, '上方'],
     [0.72, 0.55, '右側'],
     [0.28, 0.45, '左側'],
+    [0.15, 0.25, '上方'],
+    [0.85, 0.8, '下方'],
   ] as const) {
     await page.mouse.move(t.x + t.width * relX, t.y + t.height * relY, { steps: 6 });
     await expect(label).toContainText(text);
