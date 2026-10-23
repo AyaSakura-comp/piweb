@@ -357,8 +357,16 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   // a still finger stays a tap.
   const paneOrder = () => page.locator('.dashboard-pane').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.jid));
   const touchDrag = async (fromSelector: string, toJid: string, pointerId: number) => {
+    await page.waitForTimeout(600); // a previous swap's layout spring settles
     const from = (await page.locator(fromSelector).boundingBox())!;
     const to = (await page.locator(`.dashboard-pane[data-jid="${toJid}"]`).boundingBox())!;
+    // The drop is judged by the carried pane's center: bring that onto the target's.
+    const carried = await page.locator(fromSelector).evaluate((el) => {
+      const r = el.closest('.dashboard-pane')!.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    const sx = from.x + Math.min(20, from.width / 2);
+    const sy = from.y + from.height / 2;
     await page.evaluate(({ fromSelector, sx, sy, tx, ty, pointerId }) => {
       const source = document.querySelector(fromSelector)!;
       const init = { pointerId, pointerType: 'touch', button: 0, bubbles: true, cancelable: true };
@@ -372,8 +380,9 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
       source.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }, {
       fromSelector, pointerId,
-      sx: from.x + Math.min(20, from.width / 2), sy: from.y + from.height / 2,
-      tx: to.x + to.width / 2, ty: to.y + to.height / 2,
+      sx, sy,
+      tx: to.x + to.width / 2 - (carried.x + carried.width / 2 - sx),
+      ty: to.y + to.height / 2 - (carried.y + carried.height / 2 - sy),
     });
   };
   const [leftJid, rightJid] = await paneOrder();
@@ -470,6 +479,60 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.waitForTimeout(600);
     await expect(active.locator('.pane-hot-keywords')).toBeVisible();
   };
+  // A pane is carried by its header, half a pane above its center, so a
+  // touch drag judges the drop by the carried pane's center, and the target's
+  // own center splits it: past the center line is enough, no 20% edge band.
+  const expectDropJudgedByPaneCenter = async () => {
+    const presetBefore = await page.locator('.dashboard-preset-btn.active').getAttribute('data-preset');
+    await page.locator('.dashboard-preset-btn[data-preset="vertical"]').click();
+    await page.waitForTimeout(600);
+    const order = () => page.locator('.dashboard-pane').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.jid));
+    const before = await order();
+    const dragTopPane = async (stops: Array<[number, string | null]>) => {
+      const a = (await page.locator('.dashboard-pane').nth(0).boundingBox())!;
+      const b = (await page.locator('.dashboard-pane').nth(1).boundingBox())!;
+      const h = (await page.locator('.dashboard-pane').nth(0).locator('.dashboard-pane-header').boundingBox())!;
+      const x = h.x + 60;
+      const y0 = h.y + h.height / 2;
+      const toCenter = a.y + a.height / 2 - y0;
+      await page.locator('.dashboard-pane').nth(0).locator('.dashboard-pane-header').dispatchEvent('pointerdown', {
+        pointerId: 55, pointerType: 'touch', button: 0, clientX: x, clientY: y0, isPrimary: true,
+      });
+      let y = y0;
+      const move = async (to: number) => {
+        for (let i = 1; i <= 6; i++) {
+          const cy = y + ((to - y) * i) / 6;
+          await page.evaluate(({ x, cy }) => window.dispatchEvent(new PointerEvent('pointermove', {
+            pointerId: 55, pointerType: 'touch', clientX: x, clientY: cy, cancelable: true, bubbles: true,
+          })), { x, cy });
+        }
+        y = to;
+      };
+      for (const [rel, text] of stops) {
+        // The finger sits half a pane above the point being judged.
+        await move(rel < 0 ? y0 + 20 : b.y + b.height * rel - toCenter);
+        if (text) {
+          await expect(page.locator('#dashboard-drop-label')).toContainText(text);
+          await expect(page.locator('#dashboard-drop-preview')).toBeVisible();
+        } else {
+          await expect(page.locator('#dashboard-drop-preview')).toBeHidden(); // still over itself
+        }
+      }
+      expect(y).toBeLessThan(b.y + b.height * 0.8 - 100); // the old bottom band was below 80%
+      await page.evaluate(({ x, y }) => window.dispatchEvent(new PointerEvent('pointerup', {
+        pointerId: 55, pointerType: 'touch', clientX: x, clientY: y, bubbles: true,
+      })), { x, y });
+      await page.waitForTimeout(700);
+    };
+    await dragTopPane([[-1, null], [0.25, '上方'], [0.5, '交換'], [0.72, '下方']]);
+    await page.screenshot({ path: info.outputPath('01e-drag-by-pane-center.png') });
+    expect(await order()).toEqual([before[1], before[0]]);
+    await dragTopPane([[0.45, '交換']]);
+    expect(await order()).toEqual(before);
+    await page.locator(`.dashboard-preset-btn[data-preset="${presetBefore}"]`).click();
+    await page.waitForTimeout(600);
+  };
+  await expectDropJudgedByPaneCenter();
   await expectShortPaneKeepsTranscript();
   for (const index of [2, 3]) {
     await page.locator('#btn-dashboard-drawer').click();

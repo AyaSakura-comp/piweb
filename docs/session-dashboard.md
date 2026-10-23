@@ -126,15 +126,20 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 - The root container adds `.resizing-active` during active drag to lock cursor appearance, disable text selection, and eliminate pointer event overhead on underlying iframes and message text.
 
 ### Drag-and-Swap & Cross-Pane Dropping
-Users can drag any existing pane header or drag a session card from the sidebar drawer directly onto any pane across the workspace. On touch the drag may start anywhere on the header, the session name and icon buttons included: movement decides intent (6px on bare header, 10px on a control so tap jitter stays a tap), and once a drag started on a control its trailing click is swallowed on the header itself (a swap re-parents the pane, so a window listener never sees it). Only the open rename field never starts a drag. Hovering over any pane activates a **5-way directional drop target** with clear contextual visual feedback:
-- **Center Zone (`20%..80%` relative X and Y)**:
+Users can drag any existing pane header or drag a session card from the sidebar drawer directly onto any pane across the workspace. On touch the drag may start anywhere on the header, the session name and icon buttons included: movement decides intent (6px on bare header, 10px on a control so tap jitter stays a tap), and once a drag started on a control its trailing click is swallowed on the header itself (a swap re-parents the pane, so a window listener never sees it). Only the open rename field never starts a drag. Hovering over any pane activates a **5-way directional drop target** with clear contextual visual feedback, judged from the target pane's center (2026-10-23; it used to take the outer 20% band, which on a phone meant carrying a pane most of the way through the other one before the preview flipped):
+- **Center Zone (the middle third, `|rel − 0.5| < 1/6` on both axes)**:
   - **Existing Pane Drag**: Displays `⇄ 交換視窗順序`. Dropping swaps the positions of the two panes in-place.
   - **Sidebar Session Drag**: Displays `➕ 加入此視窗旁`. Dropping cleanly inserts the new session adjacent to the target pane in the layout tree.
-- **Outer Edge Zones (`< 20%` or `> 80%`)**:
-  - `relX < 0.20`: Left edge split (`← 水平並排（左側）`)
-  - `relX > 0.80`: Right edge split (`→ 水平並排（右側）`)
-  - `relY < 0.20`: Top edge split (`↑ 垂直並排（上方）`)
-  - `relY > 0.80`: Bottom edge split (`↓ 垂直並排（下方）`)
+- **Anywhere else**: the side of the center the point is on, along the axis it is further out on
+  (relative to the pane's size), picks the split, so crossing the center line is enough:
+  `← 水平並排（左側）`, `→ 水平並排（右側）`, `↑ 垂直並排（上方）`, `↓ 垂直並排（下方）`.
+- **Over its own pane** there is no preview (the drop changes nothing).
+- **A touch drag of a pane is judged by that pane's center, not the finger.** A pane is lifted by
+  its header, half a pane above its center, so at pick-up `pointerDrag.centerOffset` records the
+  pane center's offset from the finger and every move judges `finger + offset` (clamped to the
+  grid). On a 390px phone with two stacked panes, the top pane now swaps after ~320px of travel and
+  goes below after ~440px (it took ~420px / ~640px). The stage edge band below still follows the
+  finger, and desktop HTML5 drags still judge the pointer.
 - **An edge drop splits the pane under the finger, exactly as the preview shows.** The two panes
   share that pane's old space; the rest of its column (or row) is untouched. If the pane's own
   split already runs that way the dropped pane is inserted beside it; otherwise the pane becomes a
