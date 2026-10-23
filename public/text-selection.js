@@ -105,6 +105,60 @@ function withOverlayTransparent(document, fn) {
   }
 }
 
+// Markdown renderers leave "\n" text nodes between blocks (`<ul>\n<li>`). They
+// draw nothing, yet WebKit's caret lookup returns one for some points beside a
+// list item, and its DOM position is before the whole list: a dragged end then
+// lands above its anchor and the selection flips up the screen. Only text that
+// is actually drawn may be a selection point (whitespace inside code is drawn).
+function isLayoutWhitespace(node) {
+  return !/\S/.test(node.textContent || '') && !node.parentElement?.closest?.('pre');
+}
+
+/** The drawn character boundary in `msgEl` nearest to (x, y), line first. */
+function nearestTextPoint(document, msgEl, x, y) {
+  const walker = document.createTreeWalker?.(msgEl, 4 /* NodeFilter.SHOW_TEXT */);
+  const range = document.createRange?.();
+  if (!walker || !range) return null;
+  const distance = (rect) => {
+    const dx = Math.max(rect.left - x, 0, x - rect.right);
+    const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+    // Another line is a worse match than any distance along this one.
+    return dy * 1000 + dx;
+  };
+
+  let best = null;
+  let node;
+  while ((node = walker.nextNode())) {
+    if (isLayoutWhitespace(node)) continue;
+    range.selectNodeContents(node);
+    for (const rect of range.getClientRects?.() ?? []) {
+      if (!rect.width && !rect.height) continue;
+      const score = distance(rect);
+      if (!best || score < best.score) best = { node, line: rect, score };
+    }
+  }
+  if (!best) return null;
+
+  // Walk the characters on that line; the boundary nearest x wins.
+  const len = best.node.textContent?.length ?? 0;
+  let point = { node: best.node, offset: 0 };
+  let bestDx = Infinity;
+  for (let i = 0; i < len && i < 4000; i++) {
+    range.setStart(best.node, i);
+    range.setEnd(best.node, i + 1);
+    const rect = range.getBoundingClientRect();
+    if (!rect.width || rect.bottom <= best.line.top || rect.top >= best.line.bottom) continue;
+    for (const [edge, offset] of [[rect.left, i], [rect.right, i + 1]]) {
+      const dx = Math.abs(x - edge);
+      if (dx < bestDx) {
+        bestDx = dx;
+        point = { node: best.node, offset };
+      }
+    }
+  }
+  return point;
+}
+
 export function findTextPoint(document, x, y, rootContainer) {
   const probe = withOverlayTransparent(document, () => {
     let raw = null;
@@ -122,55 +176,24 @@ export function findTextPoint(document, x, y, rootContainer) {
   const raw = probe.raw;
 
   // 1. Direct text node match (fast path, <0.01ms)
-  if (raw && raw.node && raw.node.nodeType === 3) {
+  if (raw && raw.node && raw.node.nodeType === 3 && !isLayoutWhitespace(raw.node)) {
     if (!rootContainer || rootContainer.contains(raw.node.parentNode)) {
       const len = raw.node.textContent?.length ?? 0;
       return { node: raw.node, offset: Math.max(0, Math.min(len, raw.offset)) };
     }
   }
 
-  // 2. Element node match: scope search strictly to the hovered message/element
+  // 2. Otherwise search the drawn text of the message under the point
   const elUnderPoint = probe.el;
+  const rawEl = raw?.node?.nodeType === 3 ? raw.node.parentElement : raw?.node;
 
   const msgEl = elUnderPoint?.closest?.('.msg-text, .event-body') ||
-                (raw?.node?.nodeType === 1 ? raw.node.closest?.('.msg-text, .event-body') : null) ||
+                (rawEl?.nodeType === 1 ? rawEl.closest?.('.msg-text, .event-body') : null) ||
                 (raw?.node?.nodeType === 1 ? raw.node : null);
 
   if (!msgEl || (rootContainer && !rootContainer.contains(msgEl))) return null;
 
-  const walker = document.createTreeWalker?.(msgEl, 4 /* NodeFilter.SHOW_TEXT */);
-  if (!walker) return null;
-
-  let bestTextNode = null;
-  let bestDist = Infinity;
-  let node;
-  while ((node = walker.nextNode())) {
-    const parent = node.parentElement;
-    if (!parent) continue;
-    const rect = parent.getBoundingClientRect();
-    const cx = Math.max(rect.left, Math.min(x, rect.right));
-    const cy = Math.max(rect.top, Math.min(y, rect.bottom));
-    const dist = Math.hypot(x - cx, y - cy);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestTextNode = node;
-    }
-  }
-
-  if (bestTextNode) {
-    const len = bestTextNode.textContent?.length ?? 0;
-    if (len <= 1) return { node: bestTextNode, offset: len };
-
-    const parentRect = bestTextNode.parentElement?.getBoundingClientRect();
-    let offset = 0;
-    if (parentRect && parentRect.width > 0) {
-      const ratio = Math.max(0, Math.min(1, (x - parentRect.left) / parentRect.width));
-      offset = Math.round(ratio * len);
-    }
-    return { node: bestTextNode, offset: Math.max(0, Math.min(len, offset)) };
-  }
-
-  return null;
+  return nearestTextPoint(document, msgEl, x, y);
 }
 
 function isWordChar(ch) {

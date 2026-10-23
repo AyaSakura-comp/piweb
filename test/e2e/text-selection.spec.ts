@@ -141,3 +141,47 @@ test('swipe selection keeps the anchor block when the finger is dragged back', a
   await touch('touchEnd');
   expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
 });
+
+test('a caret lookup that returns block whitespace still lands on the line under the finger', async ({
+  page,
+}) => {
+  await page.goto('/fixtures/text-selection.html');
+  const result = await page.evaluate(async () => {
+    const { findTextPoint } = await import('/text-selection.js');
+    // Markdown output keeps "\n" between blocks, as LobeHub renders it.
+    const body = document.querySelector('.msg-text')!;
+    body.insertAdjacentHTML(
+      'beforeend',
+      '<ul>\n<li>第一項：短</li>\n<li>第二項：這一行比較長，手指在它右邊的空白處。</li>\n</ul>',
+    );
+    const list = body.querySelector('ul')!;
+    const gap = list.firstChild!;
+    const item = list.querySelectorAll('li')[1];
+    const line = item.getBoundingClientRect();
+    // WebKit answers some points beside a list item with that whitespace,
+    // whose DOM position is before the whole list.
+    const original = document.caretPositionFromPoint?.bind(document);
+    (document as any).caretPositionFromPoint = () => ({ offsetNode: gap, offset: 1 });
+    (document as any).caretRangeFromPoint = () => {
+      const range = document.createRange();
+      range.setStart(gap, 1);
+      return range;
+    };
+    const x = line.left + 40;
+    const y = line.top + line.height / 2;
+    const point = findTextPoint(document, x, y, document.getElementById('messages'));
+    if (original) (document as any).caretPositionFromPoint = original;
+    const caret = document.createRange();
+    caret.setStart(point!.node, point!.offset);
+    caret.setEnd(point!.node, Math.min(point!.node.textContent!.length, point!.offset + 1));
+    const rect = caret.getBoundingClientRect();
+    return {
+      inItem: item.contains(point!.node),
+      onLine: rect.top < y && rect.bottom > y,
+      dx: Math.abs(rect.left - x),
+    };
+  });
+  expect(result.inItem).toBe(true);
+  expect(result.onLine).toBe(true);
+  expect(result.dx).toBeLessThan(20);
+});
