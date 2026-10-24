@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CLAUDE_CLIENT_ID,
   CLAUDE_REDIRECT_URI,
+  claudeCodeSignedIn,
   claudeSubscriptionRuntime,
   createClaudeAuthorization,
   exchangeClaudeCode,
@@ -186,6 +187,51 @@ describe('Claude sign-in', () => {
         prompt: async () => `good#${state}`,
       }),
     ).resolves.toMatchObject({ type: 'oauth' });
+  });
+});
+
+describe('Claude status through the host Claude Code', () => {
+  const pi = (check: unknown) => ({
+    refresh: vi.fn(async () => undefined),
+    logout: vi.fn(async () => undefined),
+    checkAuth: vi.fn(async () => check),
+  });
+  const cliSignedIn = async () => ({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r' } });
+  const cliMissing = async () => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+  it('counts a signed-in Claude Code CLI as connected when pi has no Claude credential', async () => {
+    expect(await claudeSubscriptionRuntime(pi(undefined), { readClaudeCodeAuth: cliSignedIn }).checkAuth('anthropic')).toEqual({
+      type: 'oauth',
+      via: 'claude-code',
+    });
+    expect(await claudeSubscriptionRuntime(pi(undefined), { readClaudeCodeAuth: cliMissing }).checkAuth('anthropic')).toBeUndefined();
+    // An API key is not a subscription, and Claude Code logged in with one has no OAuth block.
+    expect(
+      await claudeSubscriptionRuntime(pi({ type: 'api_key' }), {
+        readClaudeCodeAuth: async () => ({ primaryApiKey: 'k' }),
+      }).checkAuth('anthropic'),
+    ).toEqual({ type: 'api_key' });
+    expect(await claudeCodeSignedIn(async () => 'not json')).toBe(false);
+  });
+
+  it("pi's own sign-in still answers first", async () => {
+    const readClaudeCodeAuth = vi.fn(cliSignedIn);
+    expect(
+      await claudeSubscriptionRuntime(pi({ type: 'oauth' }), { readClaudeCodeAuth }).checkAuth('anthropic'),
+    ).toEqual({ type: 'oauth' });
+    expect(readClaudeCodeAuth).not.toHaveBeenCalled();
+  });
+
+  it('Disconnect never signs the host Claude Code out', async () => {
+    const onlyCli = pi(undefined);
+    await expect(
+      claudeSubscriptionRuntime(onlyCli, { readClaudeCodeAuth: cliSignedIn }).logout('anthropic'),
+    ).rejects.toThrow(/Signed in through the host's Claude Code/);
+    expect(onlyCli.logout).not.toHaveBeenCalled();
+
+    const piOwn = pi({ type: 'oauth' });
+    await claudeSubscriptionRuntime(piOwn, { readClaudeCodeAuth: cliSignedIn }).logout('anthropic');
+    expect(piOwn.logout).toHaveBeenCalledWith('anthropic', undefined);
   });
 });
 

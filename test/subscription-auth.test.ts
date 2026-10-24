@@ -4,11 +4,14 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const originalDbPath = process.env.DB_PATH;
+const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 let tempDir = '';
 
 beforeEach(async () => {
   tempDir = mkdtempSync(resolve(tmpdir(), 'piweb-subscription-'));
   process.env.DB_PATH = resolve(tempDir, 'gateway.db');
+  // Never read the host's own Claude Code sign-in.
+  process.env.CLAUDE_CONFIG_DIR = resolve(tempDir, 'claude');
   vi.resetModules();
   const db = await import('../src/db.js');
   db.initDb();
@@ -20,6 +23,8 @@ afterEach(async () => {
   vi.resetModules();
   if (originalDbPath === undefined) delete process.env.DB_PATH;
   else process.env.DB_PATH = originalDbPath;
+  if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   rmSync(tempDir, { recursive: true, force: true });
 });
 

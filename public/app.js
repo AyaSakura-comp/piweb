@@ -803,6 +803,8 @@ function renderSubscriptionStatus(provider, status) {
   action.disabled = false;
   action.textContent = connected ? 'Disconnect' : active ? 'Cancel' : 'Connect';
   const failed = job?.status === 'failed' && job.error !== 'Cancelled';
+  // A refused Disconnect leaves the card connected; say why it stayed.
+  const refusedLogout = connected && failed && job.action === 'logout';
   const statusText = $(card.status);
   statusText.textContent = subscriptionStalled(job)
     ? 'The host worker is not answering — check that piweb-worker is running'
@@ -811,7 +813,9 @@ function renderSubscriptionStatus(provider, status) {
         ? 'Disconnecting…'
         : 'Waiting for sign-in'
       : connected
-        ? card.connectedLabel
+        ? refusedLogout
+          ? job.error || card.connectedLabel
+          : card.connectedLabel
         : failed
           ? job.error || 'Sign-in failed'
           : 'Not connected';

@@ -11,6 +11,9 @@
  * copy — and stores the tokens in pi's auth.json exactly as pi's login would.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { Credential } from '@earendil-works/pi-ai';
 import {
   cleanPastedCode,
@@ -54,6 +57,8 @@ export interface ClaudeLoginDependencies {
   fetchImpl: typeof fetch;
   now: () => number;
   saveCredential: (credential: Credential) => Promise<void>;
+  /** The host Claude Code CLI's credentials file, parsed. */
+  readClaudeCodeAuth: () => Promise<unknown>;
 }
 
 interface PiAuthStorage {
@@ -84,7 +89,35 @@ const DEFAULT_DEPENDENCIES: ClaudeLoginDependencies = {
   fetchImpl: fetch,
   now: Date.now,
   saveCredential: savePiCredential,
+  readClaudeCodeAuth: async () =>
+    JSON.parse(
+      await readFile(
+        join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), '.credentials.json'),
+        'utf8',
+      ),
+    ),
 };
+
+/**
+ * Whether the host's Claude Code CLI is signed in to a subscription. Piweb's
+ * `claude-code/*` sessions run that CLI, so this sign-in is a working Claude
+ * connection even when pi's own `anthropic` credential is absent. Only the
+ * presence of a refresh token is checked; nothing is copied out of the file.
+ */
+export async function claudeCodeSignedIn(
+  readAuth: ClaudeLoginDependencies['readClaudeCodeAuth'] = DEFAULT_DEPENDENCIES.readClaudeCodeAuth,
+): Promise<boolean> {
+  try {
+    const oauth = ((await readAuth()) as { claudeAiOauth?: { refreshToken?: unknown } } | null)
+      ?.claudeAiOauth;
+    return typeof oauth?.refreshToken === 'string' && oauth.refreshToken.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const isOauth = (check: unknown) =>
+  Boolean(check && typeof check === 'object' && (check as { type?: unknown }).type === 'oauth');
 
 const base64url = (bytes: Buffer) => bytes.toString('base64url');
 
@@ -224,6 +257,7 @@ export function claudeSubscriptionRuntime(
   pi: PiCredentialRuntime,
   overrides: Partial<ClaudeLoginDependencies> = {},
 ) {
+  const readClaudeCodeAuth = overrides.readClaudeCodeAuth ?? DEFAULT_DEPENDENCIES.readClaudeCodeAuth;
   return {
     async login(_provider: string, _type: 'oauth', interaction: CodeLoginInteraction): Promise<Credential> {
       const authorization = createClaudeAuthorization();
@@ -241,7 +275,21 @@ export function claudeSubscriptionRuntime(
         );
       return credential;
     },
-    logout: (provider: string, options?: { signal?: AbortSignal }) => pi.logout(provider, options),
-    checkAuth: (provider: string, options?: { signal?: AbortSignal }) => pi.checkAuth(provider, options),
+    async logout(provider: string, options?: { signal?: AbortSignal }): Promise<void> {
+      // Signing the host's Claude Code out would end every Claude Code session
+      // on it, including the ones Piweb runs; that is not Settings' call.
+      const piSignedIn = isOauth(await pi.checkAuth(provider, options));
+      if (!piSignedIn && (await claudeCodeSignedIn(readClaudeCodeAuth))) {
+        throw new PublicLoginError(
+          "Signed in through the host's Claude Code; sign out there to disconnect.",
+        );
+      }
+      await pi.logout(provider, options);
+    },
+    async checkAuth(provider: string, options?: { signal?: AbortSignal }): Promise<unknown> {
+      const check = await pi.checkAuth(provider, options);
+      if (isOauth(check)) return check;
+      return (await claudeCodeSignedIn(readClaudeCodeAuth)) ? { type: 'oauth', via: 'claude-code' } : check;
+    },
   };
 }
