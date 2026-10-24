@@ -270,14 +270,14 @@ test('thirds of the pane under the pointer pick the split, no edge band needed',
   expect(errors).toEqual([]);
 });
 
-test('a mouse selection in a pane offers 引用, which quotes it into that pane', async ({ page }, info) => {
+test('a mouse selection in a pane quotes itself there, and 引用 focuses that card', async ({ page }, info) => {
   const lines = Array.from({ length: 40 }, (_, i) => `Log line ${i + 1}: selectable text`).join('\n\n');
   const errors = await setup(page, {
     [BROWSER]: [{ id: 1, kind: 'message', role: 'assistant', content: lines, files: [], createdAt: '2026-10-21T01:00:00Z' }],
   });
   const pane = page.locator(`.dashboard-pane[data-jid="${BROWSER}"]`);
-  const scroller = pane.locator('.dashboard-pane-messages');
   await expect(pane.locator('.msg-text p').first()).toBeVisible();
+  await expect(pane).not.toHaveClass(/composer-active/);
   await page.waitForTimeout(800);
   const line = await pane.evaluate((p) => {
     const sc = p.querySelector('.dashboard-pane-messages')!.getBoundingClientRect();
@@ -287,24 +287,31 @@ test('a mouse selection in a pane offers 引用, which quotes it into that pane'
     }
     throw new Error('no visible line');
   });
-  const top = await scroller.evaluate((e) => e.scrollTop);
   await page.mouse.move(line.x + 2, line.y);
   await page.mouse.down();
   await page.mouse.move(line.x + 80, line.y, { steps: 8 });
   await page.mouse.up();
   const actions = page.locator('#selection-actions');
   await expect(actions).toBeVisible();
-  // The click ending the drag does not bring the card, which would scroll the
-  // selection away; the pill sits just under the selected line.
+  // As in the chat: the quote is there at once, in the card that came to this
+  // pane, without focusing it.
+  await expect(pane).toHaveClass(/composer-active/);
+  await expect(pane.locator('.pane-quote-preview .quote-preview-text')).toContainText(line.text.slice(0, 4));
+  await expect(pane.locator('textarea')).not.toBeFocused();
+  // The transcript scrolled by what the card took; the selection (and its pill)
+  // moved with it and stays above the card.
   await page.waitForTimeout(500);
-  expect(await scroller.evaluate((e) => e.scrollTop)).toBe(top);
-  const pill = (await actions.boundingBox())!;
-  expect(pill.y).toBeGreaterThan(line.y);
-  expect(pill.y).toBeLessThan(line.y + 60);
-  expect(await pane.locator('.pane-quote-preview').isVisible()).toBe(false);
+  const geo = await page.evaluate(() => {
+    const r = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
+    const pill = document.getElementById('selection-actions')!.getBoundingClientRect();
+    const card = document.querySelector('.dashboard-pane.composer-active .dashboard-pane-dock')!.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, pillTop: pill.top, cardTop: card.top };
+  });
+  expect(geo.pillTop - geo.bottom).toBeGreaterThan(0);
+  expect(geo.pillTop - geo.bottom).toBeLessThan(20);
+  expect(geo.bottom).toBeLessThan(geo.cardTop);
   await page.screenshot({ path: info.outputPath('30-pane-selection.png') });
   await page.locator('#selection-quote').click();
-  await expect(pane.locator('.pane-quote-preview')).toBeVisible();
   await expect(pane.locator('.pane-quote-preview .quote-preview-text')).toContainText(line.text.slice(0, 4));
   await expect(pane.locator('textarea')).toBeFocused();
   expect(errors).toEqual([]);

@@ -397,16 +397,17 @@ let selectionTargetPaneJid = null;
 function showSelectionActions(text, rect, paneJid = null) {
   selectedText = text;
   selectionTargetPaneJid = paneJid;
-  // A pane's quote waits for 引用 (#selection-quote): set on selection, its
-  // quote bar grew the card, the pane kept to the bottom and scrolled the
-  // selection out from under the pill, and a pane not holding the card got a
-  // quote nobody saw.
   const inPane = Boolean(paneJid && typeof sessionDashboard !== 'undefined' && sessionDashboard.active);
-  if (!inPane && !state.previewingDeleted && text) {
-    state.pendingQuote = text;
-    // The first selection opens the quote bar, which scrolls the transcript up
-    // by its height (renderQuotePreview); the selection moved with it.
-    const shift = renderQuotePreview();
+  if (text && (inPane || !state.previewingDeleted)) {
+    // The first selection opens the quote bar (in a pane, with the card), which
+    // scrolls the transcript up by its height; the selection moved with it.
+    let shift;
+    if (inPane) {
+      shift = sessionDashboard.quoteSelection(paneJid, text, rect);
+    } else {
+      state.pendingQuote = text;
+      shift = renderQuotePreview();
+    }
     if (shift) {
       rect = { left: rect.left, width: rect.width, top: rect.top - shift, bottom: rect.bottom - shift };
     }

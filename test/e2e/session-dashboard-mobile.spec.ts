@@ -545,17 +545,33 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     const quoteOf = (i: number) => panes.nth(i).locator('.pane-quote-preview .quote-preview-text');
     const selected = () => page.evaluate(() =>
       [...((CSS as any).highlights.get('piweb-selection') ?? [])].map((r: Range) => r.toString()).join(''));
+    const jid1 = await panes.nth(1).getAttribute('data-jid');
+    await expect(panes.nth(1)).not.toHaveClass(/composer-active/);
     await longPress(1);
     await expect(page.locator('#selection-actions')).toBeVisible();
-    // Selecting alone quotes nothing; 引用 does.
-    await expect(quoteOf(1)).toBeEmpty();
+    // Selecting quotes at once, as in the chat: the card comes to this pane
+    // with the quote, without focusing it (no keyboard).
     const picked = await selected();
     expect(picked.length).toBeGreaterThan(0);
-    const jid1 = await panes.nth(1).getAttribute('data-jid');
+    await expect(quoteOf(1)).toContainText(picked.slice(0, 4));
+    await expect(panes.nth(1)).toHaveClass(/composer-active/);
+    await expect(page.locator(`.dashboard-pane[data-jid="${jid1}"] textarea`)).not.toBeFocused();
+    // The selection is still where the pill is: right above or below it, and
+    // above the card that now holds the quote.
+    await page.waitForTimeout(100);
+    const geo = await page.evaluate(() => {
+      const r = [...((CSS as any).highlights.get('piweb-selection') ?? [])][0].getBoundingClientRect();
+      const pill = document.getElementById('selection-actions')!.getBoundingClientRect();
+      const card = document.querySelector('.dashboard-pane.composer-active .dashboard-pane-dock')!.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, pillTop: pill.top, pillBottom: pill.bottom, cardTop: card.top };
+    });
+    expect(geo.bottom).toBeLessThanOrEqual(geo.cardTop);
+    expect(Math.min(Math.abs(geo.pillTop - geo.bottom), Math.abs(geo.top - geo.pillBottom))).toBeLessThan(20);
+    await page.screenshot({ path: info.outputPath('01e-pane-selection-quoted.png') });
+    // 引用 then only puts the cursor in that card.
     await page.locator('#selection-quote').tap();
     await expect(page.locator('#selection-actions')).toBeHidden();
     await expect(page.locator(`.dashboard-pane[data-jid="${jid1}"] textarea`)).toBeFocused();
-    await expect(page.locator(`.dashboard-pane[data-jid="${jid1}"] .pane-quote-preview`)).toBeVisible();
     await expect(quoteOf(1)).toContainText(picked.slice(0, 4));
     await page.screenshot({ path: info.outputPath('01f-pane-quote.png') });
     await page.locator(`.dashboard-pane[data-jid="${jid1}"] .pane-quote-remove`).tap();
@@ -584,7 +600,8 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
     await page.screenshot({ path: info.outputPath('01g-pane-selection.png') });
     await page.locator('#sel-backdrop').tap();
     await expect(page.locator('#selection-actions')).toBeHidden();
-    await expect(quoteOf(0)).toBeEmpty();
+    // Ending the selection keeps its quote, as in the chat.
+    await expect(quoteOf(0)).toContainText((await selected()).slice(0, 2) || before.slice(0, 2));
     await page.waitForTimeout(800); // a control tapped right after ending a selection is swallowed (700ms)
   };
   await expectPaneQuote();

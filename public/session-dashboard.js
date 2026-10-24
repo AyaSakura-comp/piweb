@@ -149,7 +149,7 @@ export function createSessionDashboard({
       ? new ResizeObserver((entries) => {
           for (const entry of entries) {
             const pane = panes.get(entry.target.closest('.dashboard-pane')?.dataset.jid);
-            if (pane && !pane.disposed && !pane.userScrolledUp) {
+            if (pane && !pane.disposed && !pane.userScrolledUp && !pane.holdScroll) {
               entry.target.scrollTop = entry.target.scrollHeight;
             }
           }
@@ -3957,6 +3957,36 @@ export function createSessionDashboard({
     removePane,
     applyPreset,
     equalizeWeights,
+    /** A selection in `jid`'s pane quotes itself, as in the chat: the card
+     *  comes to that pane (no hop, no focus, so no keyboard) carrying the quote.
+     *  The text stays where it is unless the card now covers it; then the
+     *  transcript scrolls just enough to lift it above the card, never past the
+     *  pane's top. Returns that scroll (px) for the pill to follow. */
+    quoteSelection(jid, text, rect) {
+      const pane = panes.get(jid);
+      if (!pane) return 0;
+      const scroller = pane.messagesEl;
+      const from = scroller.scrollTop;
+      // Not the keep-at-bottom jump either (selectComposerPane, the observer):
+      // it scrolled a selection near the top out of the pane.
+      pane.holdScroll = true;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          pane.holdScroll = false;
+        }),
+      );
+      selectComposerPane(jid, { animate: false });
+      pane.pendingQuote = (text || '').trim();
+      pane.renderQuote?.();
+      scroller.scrollTop = from;
+      if (rect) {
+        const view = scroller.getBoundingClientRect();
+        const over = rect.bottom - (view.bottom - 8);
+        const room = rect.top - (view.top + 8);
+        if (over > 0 && room > 0) scroller.scrollTop = from + Math.min(over, room);
+      }
+      return scroller.scrollTop - from;
+    },
     setPaneQuote(jid, text, focusInput = false) {
       const pane = panes.get(jid);
       if (!pane) return;

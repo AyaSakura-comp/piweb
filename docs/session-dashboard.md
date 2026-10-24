@@ -116,15 +116,18 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
     lets only the instance holding the selection drag the handles, and one starting a selection
     ends the other's.
 
-  In a pane the quote is set by `引用`, not by the selection itself (the chat's quote bar
-  follows the selection). A pane's quote bar grew the card, the pane kept to its bottom and
-  scrolled the selection out from under the pill, and a pane not holding the card got a quote
-  nobody saw. `引用` brings the card to the pane (`setPaneQuote(jid, text, true)` →
-  `selectComposerPane`) and focuses it. The click that ends a mouse drag-select does not move
-  the card either, for the same scrolling reason. The pill is placed against the window bottom
+  As in the chat, the selection quotes itself (2026-10-24; the first version waited for `引用`,
+  which the user did not want). `showSelectionActions` calls `sessionDashboard.quoteSelection(jid,
+  text, rect)`: the card comes to that pane without the hop or focus (so no keyboard) carrying the
+  quote. The quote bar grows the card; `pane.holdScroll` keeps the keep-at-bottom observer and
+  `selectComposerPane` from scrolling for two frames, the old `scrollTop` is restored, and the
+  transcript scrolls only as far as needed to lift the selection above the card, never more than
+  the room above the selection (scrolling by the card's full height pushed a selection near the top
+  out of the pane). The return value moves the pill with the text. `引用` then only focuses that
+  card (`setPaneQuote(jid, text, true)`). The pill is placed against the window bottom
   when the pane's composer is hidden (an all-zero rect used to flip it over the pane header).
   Tests: `session-dashboard-mobile.spec.ts` (long-press, 引用, handle drag in a second pane) and
-  `session-dashboard-split.spec.ts` (mouse selection, pill under the line, no scroll).
+  `session-dashboard-split.spec.ts` (mouse selection quotes at once, pill under the line, text above the card).
 - **Multimedia Attachment Pipeline (`.pane-attachments`)**:
   - Supports image (PNG, JPEG, WebP, GIF), audio, and video attachments.
   - Thumbnail preview strip with file size tags and individual remove buttons.
