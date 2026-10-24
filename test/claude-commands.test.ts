@@ -243,6 +243,62 @@ checks: empty-conversation</event>
     expect(failNotification[0].exitCode).toBe(1);
   });
 
+  it('a task Claude stops itself ends without a notification', () => {
+    // 2026-10-24: a TaskStop'd pytest run stayed "running" forever, so the
+    // turn never completed and the session spun until stopped by hand.
+    const tracker = createClaudeCommandTracker(`test-stop-${Date.now()}`);
+    const start = (id: string, task: string) => {
+      tracker.observe({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'pytest', run_in_background: true } }],
+        },
+      });
+      tracker.observe({
+        type: 'user',
+        toolUseResult: { backgroundTaskId: task },
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: id, content: `Command running in background with ID: ${task}` }],
+        },
+      });
+    };
+    const stop = (id: string, input: Record<string, string>, isError = false) => {
+      tracker.observe({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id, name: input.shell_id ? 'KillShell' : 'TaskStop', input }] },
+      });
+      return tracker.observe({
+        type: 'user',
+        toolUseResult: { task_id: input.task_id ?? input.shell_id },
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: id,
+              content: isError ? 'No task found' : `{"message":"Successfully stopped task: ${input.task_id ?? input.shell_id}"}`,
+              ...(isError ? { is_error: true } : {}),
+            },
+          ],
+        },
+      });
+    };
+
+    start('t1', 'bjpeem6yi');
+    start('t2', 'b3t0mr4ci');
+    start('t3', 'bkill');
+    expect(stop('s0', { task_id: 'b3t0mr4ci' }, true)).toEqual([]);
+    expect(stop('s1', { task_id: 'bjpeem6yi' })).toEqual([
+      expect.objectContaining({ id: 'bjpeem6yi', state: 'cancelled' }),
+    ]);
+    stop('s2', { shell_id: 'bkill' });
+    const states = Object.fromEntries(tracker.getCommands().map((c) => [c.id, c.state]));
+    // A failed stop leaves the task running; it still ends by its notification.
+    expect(states).toEqual({ bjpeem6yi: 'cancelled', b3t0mr4ci: 'running', bkill: 'cancelled' });
+  });
+
   it('marks running tasks as unknown when finished / shut down', () => {
     const sessionId = `test-finish-${Date.now()}`;
     const tracker = createClaudeCommandTracker(sessionId);

@@ -146,6 +146,27 @@ export function createClaudeCommandTracker(sessionId: string, options?: { cwd?: 
             result.taskId ||
             /Monitor started \(task\s*([A-Za-z0-9_-]+)/i.exec(content)?.[1];
 
+          // Claude stopping its own task (TaskStop, or KillShell in older
+          // builds) sends no <task-notification>; its tool result is the end.
+          if (
+            (call?.name === 'TaskStop' || call?.name === 'KillShell') &&
+            part.is_error !== true
+          ) {
+            const stoppedId = String(
+              call.input?.task_id || call.input?.shell_id || result.task_id || '',
+            );
+            const stopped = commands.get(stoppedId);
+            if (stopped?.state === 'running') {
+              const tail = stopped.outputFile ? readOutputTail(stopped.outputFile) : '';
+              stopped.state = 'cancelled';
+              stopped.output = tail || stopped.output || 'Cancelled';
+              stopped.agent = 'output-received';
+              stopped.updatedAt = now;
+              updates.push({ ...stopped });
+            }
+            continue;
+          }
+
           const taskId = bgTaskId || monitorTaskId;
           if (taskId) {
             const commandText =
