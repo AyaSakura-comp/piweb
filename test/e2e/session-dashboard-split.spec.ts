@@ -309,3 +309,43 @@ test('a mouse selection in a pane offers 引用, which quotes it into that pane'
   await expect(pane.locator('textarea')).toBeFocused();
   expect(errors).toEqual([]);
 });
+
+test('a pane too narrow for its icons keeps ⋯, whose menu carries what dropped out', async ({ page }, info) => {
+  const errors = await setup(page);
+  const notes = page.locator(`.dashboard-pane[data-jid="${NOTES}"]`);
+  // Wide: the icons are in the header, so the menu does not repeat them.
+  await notes.locator('.pane-more-btn').click();
+  for (const action of ['model', 'thinking', 'close'])
+    await expect(notes.locator(`.pane-more-menu [data-action="${action}"]`)).toBeHidden();
+  await notes.locator('.pane-more-btn').click();
+  await expect(notes.locator('.pane-more-menu')).toBeHidden();
+
+  for (const width of [700, 480]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.waitForTimeout(300);
+    for (const jid of [NOTES, PIWEB, HAY]) {
+      const pane = page.locator(`.dashboard-pane[data-jid="${jid}"]`);
+      const header = (await pane.locator('.dashboard-pane-header').boundingBox())!;
+      const more = (await pane.locator('.pane-more-btn').boundingBox())!;
+      // One row, ⋯ fully inside it (it once wrapped under the header's clip).
+      expect(header.height).toBeLessThanOrEqual(45);
+      expect(more.x + more.width).toBeLessThanOrEqual(header.x + header.width + 0.5);
+      expect(more.y + more.height).toBeLessThanOrEqual(header.y + header.height + 0.5);
+      expect((await pane.locator('.pane-session-name').boundingBox())!.width).toBeGreaterThan(20);
+    }
+    await page.screenshot({ path: info.outputPath(`narrow-${width}.png`) });
+  }
+  await notes.locator('.pane-more-btn').click();
+  for (const action of ['model', 'thinking', 'close'])
+    await expect(notes.locator(`.pane-more-menu [data-action="${action}"]`)).toBeVisible();
+  await page.waitForTimeout(250); // menu-in
+  const menu = (await notes.locator('.pane-more-menu').boundingBox())!;
+  const paneBox = (await notes.boundingBox())!;
+  expect(menu.x).toBeGreaterThanOrEqual(paneBox.x);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(paneBox.x + paneBox.width);
+  await page.screenshot({ path: info.outputPath('narrow-menu.png') });
+  await notes.locator('.pane-more-menu [data-action="close"]').click();
+  await expect(page.locator('.dashboard-pane')).toHaveCount(3);
+  await expect(page.locator(`.dashboard-pane[data-jid="${NOTES}"]`)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

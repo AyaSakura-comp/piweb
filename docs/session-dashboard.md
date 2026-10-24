@@ -331,8 +331,17 @@ There is no phone-only stacked-card or pager implementation. Only single-row too
 safe-area clearance and overlay drawer presentation adapt to the smaller screen.
 Dragging from the overlay drawer closes it once drag begins to expose drop targets.
 
-Shared narrow-pane header rules also apply to small desktop panes: titles get a
-separate row and actions can scroll horizontally rather than overlap the title.
+Shared narrow-pane header rules also apply to small desktop panes (2026-10-24).
+The header stays one 44px row: the title ellipsizes, and icons fold into `⋯`
+by pane width — at ≤460px Status / Usage / split / expand, at ≤300px also Model
+and Thinking, at ≤220px the provider badge, at ≤170px ×. `⋯` (and Stop while
+running) never leaves, and its menu shows Status, Usage, Model, Thinking level
+and 關閉視窗 exactly when their icons are hidden (`getComputedStyle` at open).
+The menu shrinks to fit the pane (`min-width: min(232px, 100% - 12px)`; command
+hints hidden ≤300px), since the pane clips its overflow. The earlier version
+wrapped the actions to a second row, which the fixed-height header clipped, so
+a narrow pane showed no icons at all (iPad recording 2026-10-24).
+`test/e2e/session-dashboard-split.spec.ts` "a pane too narrow for its icons…".
 
 Regression coverage: `test/e2e/session-dashboard-mobile.spec.ts` checks two panes
 remain side by side, four panes stay within the grid with three visible splitters,

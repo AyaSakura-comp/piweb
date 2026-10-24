@@ -761,7 +761,7 @@
     .dashboard-pane-actions .pane-status-btn,
     .dashboard-pane-actions .pane-usage-btn,
     .dashboard-pane-actions .pane-split-dir-btn,
-    .dashboard-pane-actions .pane-focus-btn {
+    .dashboard-pane-actions .pane-expand-btn {
       display: none;
     }
   }
@@ -815,6 +815,22 @@
     z-index: 45;
     max-height: calc(100% - 54px);
     overflow-y: auto;
+    /* The pane clips its overflow: a narrow pane's menu fits inside it. */
+    min-width: min(232px, calc(100% - 12px));
+    max-width: calc(100% - 12px);
+  }
+
+  @container pane (max-width: 300px) {
+    .pane-more-menu .mi-cmd {
+      display: none;
+    }
+
+    .pane-more-menu .mi-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   /* Per-pane BTW mode rules (matching .app.btw-active) */
@@ -1223,10 +1239,27 @@
 }
 
 /* Shared narrow-pane sizing, including desktop panes resized to phone widths.
-   Keep every action accessible, without letting buttons paint over the title. */
-.dashboard-grid .dashboard-pane-header { flex-wrap: wrap; height: auto; min-height: 44px; }
+   The header stays one row: the title gives way (ellipsis) and the icons drop
+   into the ⋯ menu, which itself never leaves, so every action stays reachable.
+   (Wrapping them to a second row put them under the 44px header's clip.) */
+.dashboard-grid .dashboard-pane-header { min-height: 44px; }
+.dashboard-pane-actions { flex: none; }
+.pane-session-name { min-width: 0; }
 @container (max-width: 300px) {
-  .dashboard-pane-title { flex: 1 0 100%; min-height: 28px; overflow: hidden; }
-  .pane-session-name { flex: 1; min-width: 0; }
-  .dashboard-pane-actions { flex: 0 0 auto; max-width: 100%; overflow-x: auto; touch-action: pan-x; }
+  .dashboard-pane-actions .pane-model-btn,
+  .dashboard-pane-actions .pane-thinking-btn,
+  .dashboard-pane-actions .pane-split-dir-btn,
+  .dashboard-pane-actions .pane-expand-btn {
+    display: none;
+  }
+}
+@container (max-width: 220px) {
+  .dashboard-pane-title .provider-badge {
+    display: none;
+  }
+}
+@container (max-width: 170px) {
+  .dashboard-pane-actions .pane-close-btn {
+    display: none;
+  }
 }

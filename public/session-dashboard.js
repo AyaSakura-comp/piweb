@@ -776,6 +776,14 @@ export function createSessionDashboard({
         <span class="mi-label">Usage</span>
         <span class="mi-cmd">/gpt-usage</span>
       </button>
+      <button type="button" class="menu-item" data-action="model" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" /></svg>
+        <span class="mi-label">Model</span>
+      </button>
+      <button type="button" class="menu-item" data-action="thinking" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z" /></svg>
+        <span class="mi-label">Thinking level</span>
+      </button>
       <button type="button" class="menu-item" data-action="btw" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z" /></svg>
         <span class="mi-label">BTW 側聊</span>
@@ -796,6 +804,10 @@ export function createSessionDashboard({
       <button type="button" class="menu-item" data-action="expand" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
         <span class="mi-label">單獨放大檢視</span>
+      </button>
+      <button type="button" class="menu-item" data-action="close" role="menuitem" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        <span class="mi-label">關閉視窗</span>
       </button>
       <button type="button" class="menu-item danger" data-action="delete" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
@@ -1322,6 +1334,16 @@ export function createSessionDashboard({
       const usageItem = moreMenu.querySelector('[data-action="usage"]');
       statusItem.hidden = getComputedStyle(statusBtn).display !== 'none';
       usageItem.hidden = getComputedStyle(usageBtn).display !== 'none';
+      // Narrower still, the header keeps only ⋯ (and Stop while running); the
+      // menu takes over Model, Thinking, Expand and Close.
+      for (const [action, btn] of [
+        ['model', modelBtn],
+        ['thinking', thinkingBtn],
+        ['close', closeBtn],
+      ]) {
+        moreMenu.querySelector(`[data-action="${action}"]`).hidden =
+          getComputedStyle(btn).display !== 'none';
+      }
       usageItem.querySelector('.mi-cmd').textContent = `/${usageCommandForSession(jid)}`;
       moreMenu.hidden = false;
       menuScrim.hidden = false;
@@ -1384,6 +1406,12 @@ export function createSessionDashboard({
         onOpenSubagents(jid);
       } else if (action === 'media') {
         onOpenMediaSheet(jid);
+      } else if (action === 'model') {
+        onOpenModelSheet(jid);
+      } else if (action === 'thinking') {
+        onOpenThinkingSheet(jid);
+      } else if (action === 'close') {
+        removePane(jid);
       } else if (action === 'split-dir') {
         togglePaneAxis(jid);
       } else if (action === 'expand') {

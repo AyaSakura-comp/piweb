@@ -381,9 +381,10 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await touchDrag(`.dashboard-pane[data-jid="${leftJid}"] .pane-session-name`, rightJid!, 201);
   await expect.poll(paneOrder).toEqual([rightJid, leftJid]);
   await expect(page.locator('.pane-name-edit:visible')).toHaveCount(0);
-  await touchDrag(`.dashboard-pane[data-jid="${leftJid}"] .pane-model-btn`, rightJid!, 202);
+  // ⋯ is the header button a phone-width pane always shows (the rest fold into it).
+  await touchDrag(`.dashboard-pane[data-jid="${leftJid}"] .pane-more-btn`, rightJid!, 202);
   await expect.poll(paneOrder).toEqual([leftJid, rightJid]);
-  await expect(page.locator('#model-sheet')).toBeHidden();
+  await expect(page.locator('.pane-more-menu:visible')).toHaveCount(0);
   // A still finger on the name is still a tap: it opens rename.
   await page.evaluate((jid) => {
     const name = document.querySelector(`.dashboard-pane[data-jid="${jid}"] .pane-session-name`)!;
