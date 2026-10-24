@@ -686,6 +686,59 @@
     cursor: grabbing;
   }
 
+  /* A running session spins next to its name (before it, so a narrow title
+     cannot ellipsize it away) and runs a light bar along the header's foot. */
+  .dashboard-pane-title .work-spinner {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--text-2) 25%, transparent);
+    border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+
+  .dashboard-pane-title .work-spinner[hidden] {
+    display: none;
+  }
+
+  .dashboard-pane.pane-busy .dashboard-pane-header {
+    position: relative;
+  }
+
+  .dashboard-pane.pane-busy .dashboard-pane-header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+    background-size: 40% 100%;
+    animation: pane-busy-bar 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pane-busy-bar {
+    from {
+      background-position: -60% 0;
+    }
+    to {
+      background-position: 160% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dashboard-pane-title .work-spinner {
+      animation-duration: 2.4s;
+    }
+
+    .dashboard-pane.pane-busy .dashboard-pane-header::after {
+      animation: none;
+      background: var(--accent);
+    }
+  }
+
   .dashboard-pane-title {
     flex: 1;
     min-width: 0;

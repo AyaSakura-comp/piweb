@@ -310,6 +310,41 @@ test('a mouse selection in a pane offers 引用, which quotes it into that pane'
   expect(errors).toEqual([]);
 });
 
+test('a running session is marked in its pane header, an idle one is not', async ({ page }, info) => {
+  const running = sessions.find((s) => s.jid === PIWEB)!;
+  running.busy = true;
+  try {
+    const errors = await setup(page);
+    const busyPane = page.locator(`.dashboard-pane[data-jid="${PIWEB}"]`);
+    const idlePane = page.locator(`.dashboard-pane[data-jid="${NOTES}"]`);
+    await expect(busyPane).toHaveClass(/pane-busy/);
+    await expect(idlePane).not.toHaveClass(/pane-busy/);
+    await expect(idlePane.locator('.work-spinner')).toBeHidden();
+
+    // The spinner is drawn (it once had no CSS in panes and took no space) and
+    // sits before the name, so an ellipsized title cannot push it out of view.
+    const spinner = busyPane.locator('.work-spinner');
+    await expect(spinner).toBeVisible();
+    const s = (await spinner.boundingBox())!;
+    const name = (await busyPane.locator('.pane-session-name').boundingBox())!;
+    // It rotates, so its box swells with the angle: compare its center.
+    expect(s.width).toBeGreaterThanOrEqual(12);
+    expect(s.x + s.width / 2).toBeLessThan(name.x);
+    const bar = await busyPane
+      .locator('.dashboard-pane-header')
+      .evaluate((h) => getComputedStyle(h, '::after').animationName);
+    expect(bar).toBe('pane-busy-bar');
+    await page
+      .locator('.dashboard-pane-header')
+      .first()
+      .screenshot({ path: info.outputPath('idle-header.png') });
+    await busyPane.locator('.dashboard-pane-header').screenshot({ path: info.outputPath('busy-header.png') });
+    expect(errors).toEqual([]);
+  } finally {
+    running.busy = false;
+  }
+});
+
 test('a pane too narrow for its icons keeps ⋯, whose menu carries what dropped out', async ({ page }, info) => {
   const errors = await setup(page);
   const notes = page.locator(`.dashboard-pane[data-jid="${NOTES}"]`);

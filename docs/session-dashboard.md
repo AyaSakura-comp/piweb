@@ -69,6 +69,7 @@ Every pane in the multi-session grid provides 100% feature parity with the prima
 
 ### Top Header Bar (`.dashboard-pane-header`)
 - **Inline Title Editing (`.dashboard-pane-title`)**: Tap/click to rename session inline; automatically commits on Enter or blur.
+- **Running marker (2026-10-24)**: while the session works, a 13px spinning ring (`.work-spinner`) sits before the name, so an ellipsized title cannot push it out, and the pane gets `.pane-busy`, which runs a 2px `--accent` light bar along the header's foot (`::after` at `bottom: 0`, inside the header's `overflow: hidden`; reduced motion: a still bar). The spinner had styles only under `.session-item`, so in a pane it took no space and nothing showed which pane was running.
 - **Model Badge (`.pane-badge`)**: Displays current model tag (e.g., `Claude 3.7 Sonnet`, `Opus 4.6`, `GPT-5o`).
 - **Status Modal Trigger (`ℹ️`, `.btn-pane-status`)**: Opens session diagnostics, connection state, and token usage summary.
 - **Usage Diagnostics (`📊`, `.btn-pane-usage`)**: Displays cumulative token consumption, prompt caching ratios, and estimated turn costs.

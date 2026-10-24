@@ -660,7 +660,7 @@ export function createSessionDashboard({
     badgeEl.hidden = true;
     const spinnerEl = el('span', 'work-spinner');
     spinnerEl.hidden = true;
-    titleWrap.append(hash, nameEl, nameInput, badgeEl, spinnerEl);
+    titleWrap.append(hash, spinnerEl, nameEl, nameInput, badgeEl);
 
     // Topbar right actions (Stop, Status, Usage, Model, Thinking, More ⋯, Close ×)
     const actions = el('div', 'dashboard-pane-actions');
@@ -2203,6 +2203,7 @@ export function createSessionDashboard({
     pane.usageBtn.setAttribute('aria-label', `Show ${uLabel} usage`);
 
     const busy = Boolean(pane.busy || session?.busy);
+    pane.el.classList.toggle('pane-busy', busy);
     pane.spinnerEl.hidden = !busy;
     pane.stopBtn.hidden = !busy;
     pane.typingEl.hidden = !busy || pane.btwTarget === 'btw';
