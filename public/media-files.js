@@ -26,6 +26,43 @@ export function downloadNameFromMediaUrl(url) {
   return name.replace(/^[0-9a-f]{8}-/i, '') || 'video';
 }
 
+/** Audio the stream player can play, by file extension (query/hash ignored). */
+export const AUDIO_FILE_RE = /\.(?:wav|mp3|ogg|oga|opus|m4a|aac|flac)(?:[?#]|$)/i;
+
+/** A same-origin path (`/media/…`): the only media the stream player plays. */
+export function isSameOriginMediaPath(url) {
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//');
+}
+
+/**
+ * A tappable track row for an audio file; playback happens in the stream
+ * player. The caller wires the tap (app.js attachments) or adds
+ * `.stream-open` for the document-level handler (Markdown in replies).
+ */
+export function createAudioTrack(url, doc = document) {
+  const name = downloadNameFromMediaUrl(url);
+  const track = doc.createElement('button');
+  track.className = 'audio-track';
+  track.type = 'button';
+  track.dataset.streamUrl = url;
+  track.dataset.streamType = 'audio';
+  track.setAttribute('aria-label', `Play audio ${name}`);
+  const glyph = doc.createElement('span');
+  glyph.className = 'audio-track-glyph';
+  glyph.setAttribute('aria-hidden', 'true');
+  const label = doc.createElement('span');
+  label.className = 'audio-track-text';
+  const title = doc.createElement('span');
+  title.className = 'audio-track-name';
+  title.textContent = name;
+  const kind = doc.createElement('span');
+  kind.className = 'audio-track-kind';
+  kind.textContent = '音訊 · 串流播放';
+  label.append(title, kind);
+  track.append(glyph, label);
+  return track;
+}
+
 function isIosHomeScreenApp(runtime) {
   return runtime.navigator?.standalone === true;
 }

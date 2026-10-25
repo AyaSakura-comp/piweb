@@ -80,9 +80,13 @@ async function setup(page: Page, extraHistory: ReturnType<typeof event>[] = []) 
 const audioEl = (page: Page) => page.locator('.stream-player .sp-audio');
 const videoEl = (page: Page) => page.locator('.stream-player .sp-video');
 const time = (page: Page, which: 'audio' | 'video') =>
-  (which === 'audio' ? audioEl(page) : videoEl(page)).evaluate((m: HTMLMediaElement) => m.currentTime);
+  (which === 'audio' ? audioEl(page) : videoEl(page)).evaluate(
+    (m: HTMLMediaElement) => m.currentTime,
+  );
 
-test('transcript media opens embedded in place and docks when it leaves', async ({ page }, info) => {
+test('transcript media opens embedded in place and docks when it leaves', async ({
+  page,
+}, info) => {
   const { errors, ranges } = await setup(page);
   const dock = page.getByRole('region', { name: 'Media player' });
   await expect(dock).toBeHidden();
@@ -109,7 +113,9 @@ test('transcript media opens embedded in place and docks when it leaves', async 
   // Streamed by byte range, not fetched whole.
   expect(ranges.some((r) => r.startsWith(`${TONE} bytes=`))).toBe(true);
   // Lock screen / headset metadata.
-  expect(await page.evaluate(() => navigator.mediaSession?.metadata?.title)).toBe('stream-tone.mp3');
+  expect(await page.evaluate(() => navigator.mediaSession?.metadata?.title)).toBe(
+    'stream-tone.mp3',
+  );
   await page.screenshot({ path: info.outputPath('01-audio-docked.png') });
 
   // Seek to the middle with the range input.
@@ -207,7 +213,9 @@ test('Media sheet audio keeps the sheet open, video closes it to play', async ({
   expect(errors).toEqual([]);
 });
 
-test('an embedded player zooms in from its poster and closes back into it', async ({ page }, info) => {
+test('an embedded player zooms in from its poster and closes back into it', async ({
+  page,
+}, info) => {
   const { errors } = await setup(page);
   const dock = page.getByRole('region', { name: 'Media player' });
   const poster = page.getByRole('button', { name: 'Play video stream-clip.webm' });
@@ -271,5 +279,45 @@ test('Dashboard panes play attached and inline videos in place', async ({ page }
   await expect(videoEl(page)).toBeVisible();
   await expect.poll(() => time(page, 'video')).toBeGreaterThan(0.3);
   await page.screenshot({ path: info.outputPath('02-pane-inline-video.png') });
+  expect(errors).toEqual([]);
+});
+
+test('audio files a reply links inline play in the chat and in Dashboard panes', async ({
+  page,
+}, info) => {
+  // iPad report 2026-10-26: `[[file: …mp3]]` in a reply showed only a file
+  // link, in the chat and in Dashboard panes, so the audio could not be played.
+  const SONG = '/media/web_stream/c81a0c90-venus-news-reply.mp3';
+  await page.route(`**${SONG}`, (route) =>
+    route.fulfill({ path: 'test/e2e/fixtures/media/stream-tone.mp3', contentType: 'audio/mpeg' }),
+  );
+  const { errors } = await setup(page, [
+    event(4, `念出來的摘要：\n\n[[file: ${SONG}]]\n\n可以直接播。`),
+  ]);
+  const dock = page.getByRole('region', { name: 'Media player' });
+
+  const chatTrack = page
+    .locator('#messages')
+    .getByRole('button', { name: 'Play audio venus-news-reply.mp3' });
+  await chatTrack.scrollIntoViewIfNeeded();
+  await expect(chatTrack).toContainText('音訊 · 串流播放');
+  await expect(page.locator('#messages a.file-link')).toHaveCount(0);
+  await chatTrack.tap();
+  await expect(dock.locator('.sp-title')).toHaveText('venus-news-reply.mp3');
+  await expect(dock).toHaveAttribute('data-type', 'audio');
+  await expect.poll(() => time(page, 'audio')).toBeGreaterThan(0.3);
+  await page.screenshot({ path: info.outputPath('01-chat-inline-audio.png') });
+  await dock.getByRole('button', { name: 'Close player' }).tap();
+
+  await page.locator('#btn-topbar-dashboard').click();
+  const pane = page.locator('.dashboard-pane').first();
+  const paneTrack = pane.getByRole('button', { name: 'Play audio venus-news-reply.mp3' });
+  await paneTrack.scrollIntoViewIfNeeded();
+  await paneTrack.tap();
+  await expect(pane.locator('.stream-player')).toHaveCount(1);
+  await expect(dock.locator('.sp-title')).toHaveText('venus-news-reply.mp3');
+  await expect.poll(() => time(page, 'audio')).toBeGreaterThan(0.3);
+  await expect(dock).toHaveAttribute('data-state', 'playing');
+  await page.screenshot({ path: info.outputPath('02-pane-inline-audio.png') });
   expect(errors).toEqual([]);
 });

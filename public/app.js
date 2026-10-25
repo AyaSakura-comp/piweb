@@ -20,7 +20,7 @@ import { createBtwWorkspace } from './btw-workspace.js';
 import { createSubagentsView } from './subagents.js';
 import { createSettingsMotion } from './settings-motion.js';
 import { createCommandsRunningView } from './commands-running.js';
-import { createVideoAttachment, downloadNameFromMediaUrl } from './media-files.js';
+import { createAudioTrack, createVideoAttachment } from './media-files.js';
 import { createStreamPlayer } from './stream-player.js';
 import {
   IMAGE_COMPRESSION_KEY,
@@ -32,7 +32,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=drawer-slide-1';
+import { createSessionDashboard } from './session-dashboard.js?v=inline-audio-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -3302,16 +3302,8 @@ function markStreamable(node, url, type) {
 }
 
 /** A tappable track row; playback happens in the stream player dock. */
-function createAudioTrack(url) {
-  const name = downloadNameFromMediaUrl(url);
-  const track = el('button', 'audio-track');
-  track.type = 'button';
-  track.setAttribute('aria-label', `Play audio ${name}`);
-  const glyph = el('span', 'audio-track-glyph');
-  glyph.setAttribute('aria-hidden', 'true');
-  const label = el('span', 'audio-track-text');
-  label.append(el('span', 'audio-track-name', name), el('span', 'audio-track-kind', '音訊 · 串流播放'));
-  track.append(glyph, label);
+function createAttachedAudioTrack(url) {
+  const track = createAudioTrack(url, document);
   track.addEventListener('click', () => playFromTranscript(url, 'audio', track));
   markStreamable(track, url, 'audio');
   return track;
@@ -3376,7 +3368,7 @@ function renderFiles(container, files, content = '') {
       markStreamable(card, url, 'video');
       wrap.append(card);
     } else if (STREAM_AUDIO_RE.test(lower)) {
-      wrap.append(createAudioTrack(url));
+      wrap.append(createAttachedAudioTrack(url));
     } else {
       const rawName = decodeURIComponent(url.split('/').pop() || 'file');
       const displayName = rawName.replace(/^[0-9a-f]{8}-/, '');

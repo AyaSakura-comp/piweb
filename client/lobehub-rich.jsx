@@ -18,7 +18,11 @@ import rehypeKatex from 'rehype-katex';
 import { bindInlineYouTube, getYouTubeVideoId, renderCode } from './markdown.js';
 import { remarkOutboxMedia } from './outbox-media.js';
 import { continuesSource, tokenizeOutbox } from '../public/outbox-stream.js';
-import { downloadNameFromMediaUrl } from '../public/media-files.js';
+import {
+  AUDIO_FILE_RE,
+  downloadNameFromMediaUrl,
+  isSameOriginMediaPath,
+} from '../public/media-files.js';
 import {
   documentDefinitions,
   normalizeDisplayMath,
@@ -79,6 +83,30 @@ function Table({ children, node: _node, ...props }) {
 }
 function Image({ src, alt, node: _node, ...props }) {
   if (!src) return null;
+  if (
+    props['data-piweb-media'] === 'audio' ||
+    (AUDIO_FILE_RE.test(src) && isSameOriginMediaPath(src))
+  ) {
+    // A track row (createAudioTrack's markup); app.js plays `.stream-open`.
+    const name = downloadNameFromMediaUrl(src);
+    return (
+      <span className="msg-inline-media">
+        <button
+          type="button"
+          className="audio-track stream-open"
+          data-stream-url={src}
+          data-stream-type="audio"
+          aria-label={`Play audio ${name}`}
+        >
+          <span className="audio-track-glyph" aria-hidden="true" />
+          <span className="audio-track-text">
+            <span className="audio-track-name">{name}</span>
+            <span className="audio-track-kind">音訊 · 串流播放</span>
+          </span>
+        </button>
+      </span>
+    );
+  }
   if (props['data-piweb-media'] === 'video' || /\.(?:mp4|webm|mov|m4v)(?:[?#]|$)/i.test(src)) {
     // Poster only; app.js plays `.stream-open` in the stream player dock.
     const { 'data-piweb-media': _kind, ...videoProps } = props;

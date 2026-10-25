@@ -249,4 +249,26 @@ describe('markdown rendering', () => {
     expect(elements.fileHref).toBe('/media/12345678-report.pdf');
     expect(elements.fileText).toBe('report.pdf');
   });
+
+  it('renders our own audio files as stream-player tracks', async () => {
+    const md = `兩段音檔：\n\n[[file: /media/web_x/c81a0c90-venus-news-reply.mp3]]\n\n[[file: https://example.test/song.mp3]]`;
+    await render(md);
+    const elements = await page.evaluate(() => {
+      const track = document.querySelector('#c button.audio-track.stream-open');
+      return {
+        streamUrl: track?.getAttribute('data-stream-url'),
+        streamType: track?.getAttribute('data-stream-type'),
+        label: track?.getAttribute('aria-label'),
+        name: track?.querySelector('.audio-track-name')?.textContent,
+        remote: document.querySelector('#c a.file-link')?.getAttribute('href'),
+      };
+    });
+    expect(elements).toEqual({
+      streamUrl: '/media/web_x/c81a0c90-venus-news-reply.mp3',
+      streamType: 'audio',
+      label: 'Play audio venus-news-reply.mp3',
+      name: 'venus-news-reply.mp3',
+      remote: 'https://example.test/song.mp3',
+    });
+  });
 });

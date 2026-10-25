@@ -25,6 +25,17 @@ Chat and gallery video/audio play in one persistent **stream player**
   embedded in place. The poster keeps its separate download row.
 - **Chat audio** attachments are track rows (`音訊 · 串流播放`) instead of native
   `<audio>` controls; tapping one opens it embedded in place.
+- **Inline reply audio** (2026-10-26): an audio file a reply links inline —
+  `[[file: /media/…/x.mp3]]` (how agents publish audio), `[[image: …]]` or
+  `![](…)` with an audio extension (`wav mp3 ogg oga opus m4a aac flac`) — is the
+  same track row, in the Markdown renderer (`renderMediaElement`) and the LobeHub
+  one (`remarkOutboxMedia` marks it `data-piweb-media="audio"`, `Image` renders
+  it). Both build `createAudioTrack()` (`media-files.js`) markup with
+  `.stream-open`, played by the document-level handler, so it works in the chat
+  and in every Dashboard pane and joins that transcript's playlist. Only
+  same-origin paths become tracks (the player plays nothing else); a remote
+  `https://…/song.mp3` stays a file link. Before this, inline audio showed as a
+  plain file link that could not be played.
 - **⋯ → Media**: an audio tile plays in the dock and leaves the sheet open, so
   you can keep browsing; a video tile closes the sheet to show the video.
 - Tapping the item that is already loaded toggles play/pause instead of
@@ -61,14 +72,16 @@ is a `src/web/server.ts` change and needs a web image rebuild (ask first).
 ## Verification
 
 ```bash
-npx vitest run test/stream-player.test.ts test/markdown-lists.test.ts
+npx vitest run test/stream-player.test.ts test/markdown-lists.test.ts \
+  test/outbox-media-markdown.test.ts
 npx playwright test test/e2e/stream-player.spec.ts test/e2e/lightbox-album.spec.ts
 ```
 
 The E2E fixture server serves byte ranges like production. The specs assert
 Range requests, playback progress, seek, next/auto-advance, video↔audio
 element handoff, Media Session metadata, playback continuing across a session
-switch, Media sheet behavior, and no horizontal overflow at 390×844, with
+switch, Media sheet behavior, inline reply audio playing in the chat and in a
+Dashboard pane, and no horizontal overflow at 390×844, with
 screenshots in dark and light themes. They run in mobile Chromium, not a
 physical iPhone: background-audio and lock-screen behavior on iOS are not
 proven by them.

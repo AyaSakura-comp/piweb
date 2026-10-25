@@ -54,6 +54,18 @@ describe('published outbox Markdown extension', () => {
     expect(links.map((n) => n.children[0].value)).toEqual(['report.pdf', '報告.pdf', 'bad%ZZ.pdf']);
     expect(links.every((n) => n.data.hProperties.className.includes('file-link'))).toBe(true);
   });
+  it('turns our own audio files into stream-player tracks, remote audio stays a link', () => {
+    const tree = parse(
+      '[[file: /media/web_x/c81a0c90-venus-news-reply.mp3]]\n\n[[file: /media/voice.WAV?download=1]]\n\n[[file: https://example.test/song.mp3]]',
+    );
+    const images = nodes(tree, 'image');
+    expect(images.map((n) => [n.url, n.data.hProperties['data-piweb-media']])).toEqual([
+      ['/media/web_x/c81a0c90-venus-news-reply.mp3', 'audio'],
+      ['/media/voice.WAV?download=1', 'audio'],
+    ]);
+    expect(images[0].alt).toBe('venus-news-reply.mp3');
+    expect(nodes(tree, 'link').map((n) => n.url)).toEqual(['https://example.test/song.mp3']);
+  });
   it('retains explicit video kinds and recognizes video file extensions', () => {
     const tree = parse('[[video: /media/clip]]\n\n[[file: /media/clip.mp4?download=1]]');
     expect(nodes(tree, 'image').map((n) => n.data.hProperties['data-piweb-media'])).toEqual([

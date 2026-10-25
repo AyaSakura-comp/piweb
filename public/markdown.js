@@ -12,6 +12,8 @@
  * via placeholders.
  */
 
+import { AUDIO_FILE_RE, createAudioTrack, isSameOriginMediaPath } from './media-files.js';
+
 // U+0000 cannot appear in the text we render, so it is a safe sentinel.
 const PLACEHOLDER = '\u0000';
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -964,6 +966,13 @@ export function renderMediaElement(type, rawUrl, alt = '') {
     open.setAttribute('aria-label', `Play video ${name.replace(/^[0-9a-f]{8}-/i, '')}`);
     wrap.append(video, open);
     return wrap;
+  }
+
+  if (AUDIO_FILE_RE.test(lower) && isSameOriginMediaPath(url)) {
+    // A track row; app.js plays `.stream-open` in the stream player.
+    const track = createAudioTrack(url, document);
+    track.classList.add('stream-open');
+    return track;
   }
 
   if (kind === 'file' && !/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lower)) {

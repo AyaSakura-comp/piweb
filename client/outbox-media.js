@@ -1,4 +1,8 @@
-import { downloadNameFromMediaUrl } from '../public/media-files.js';
+import {
+  AUDIO_FILE_RE,
+  downloadNameFromMediaUrl,
+  isSameOriginMediaPath,
+} from '../public/media-files.js';
 
 // Piweb's published outbox syntax is an extension, not standard Markdown.
 // Transform parsed text only: code, math, HTML and link destinations stay intact.
@@ -12,6 +16,14 @@ export function remarkOutboxMedia({ media = [] } = {}) {
 function mediaNode(kind, url) {
   const path = url.split(/[?#]/, 1)[0];
   const video = kind === 'video' || /\.(?:mp4|webm|mov)$/i.test(path);
+  // Our own audio files play in the stream player (a track row, see Image).
+  if (!video && AUDIO_FILE_RE.test(path) && isSameOriginMediaPath(url))
+    return {
+      type: 'image',
+      url,
+      alt: downloadNameFromMediaUrl(url),
+      data: { hProperties: { 'data-piweb-media': 'audio' } },
+    };
   if (kind === 'file' && !video && !/\.(?:png|jpe?g|gif|webp|bmp|svg)$/i.test(path))
     return {
       type: 'link',
