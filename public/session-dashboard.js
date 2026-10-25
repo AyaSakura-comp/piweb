@@ -44,6 +44,11 @@ const MIME_EXT_MAP = {
   'text/csv': 'csv',
 };
 
+const ZOOM_IN_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+const ZOOM_OUT_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>';
+
 function formatPasteToast(files) {
   const hasImg = files.some((f) => f.type?.startsWith('image/'));
   const hasAud = files.some((f) => f.type?.startsWith('audio/'));
@@ -141,6 +146,7 @@ export function createSessionDashboard({
     // Storage blocked: start on the first pane.
   }
   let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
+  let zoomedJid = null; // the pane blown up to the whole stage, still in the Dashboard
 
   /** A transcript that shrinks (the card arrives, the card grows, a splitter
    *  moves) keeps a reader who was following the newest message at the bottom. */
@@ -721,10 +727,10 @@ export function createSessionDashboard({
 
     const focusBtn = el('button', 'icon-btn pane-expand-btn');
     focusBtn.type = 'button';
-    focusBtn.title = '單獨放大檢視此 Session';
+    focusBtn.title = '放大此視窗';
     focusBtn.setAttribute('aria-label', `Expand ${session?.name || jid}`);
-    focusBtn.innerHTML =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+    focusBtn.setAttribute('aria-pressed', 'false');
+    focusBtn.innerHTML = ZOOM_IN_ICON;
 
     const closeBtn = el('button', 'icon-btn pane-close-btn');
     closeBtn.type = 'button';
@@ -803,7 +809,7 @@ export function createSessionDashboard({
       </button>
       <button type="button" class="menu-item" data-action="expand" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-        <span class="mi-label">單獨放大檢視</span>
+        <span class="mi-label">放大此視窗</span>
       </button>
       <button type="button" class="menu-item" data-action="close" role="menuitem" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -1315,6 +1321,25 @@ export function createSessionDashboard({
       };
     });
 
+    // A double click / double tap on the header's bare space zooms the pane,
+    // like a window's title bar. The name renames on its first tap, and a
+    // press that moved was a drag.
+    let lastHeaderTap = null;
+    header.addEventListener('pointerup', (e) => {
+      if (e.button !== 0 || e.target.closest('button, input, .pane-session-name')) return;
+      if (pointerDrag?.started) {
+        lastHeaderTap = null;
+        return;
+      }
+      const now = performance.now();
+      const prev = lastHeaderTap;
+      lastHeaderTap = { at: now, x: e.clientX, y: e.clientY };
+      if (prev && now - prev.at < 350 && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 24) {
+        lastHeaderTap = null;
+        setZoom(zoomedJid === jid ? null : jid);
+      }
+    });
+
     // ── Topbar Buttons & Overflow Menu (⋯) ───────────────────────────────────
     const closePaneMenu = () => {
       moreMenu.hidden = true;
@@ -1376,8 +1401,7 @@ export function createSessionDashboard({
       togglePaneAxis(jid);
     });
     focusBtn.addEventListener('click', () => {
-      setActive(false);
-      onSelectSingleSession(jid);
+      setZoom(zoomedJid === jid ? null : jid);
     });
     closeBtn.addEventListener('click', () => {
       removePane(jid);
@@ -1415,8 +1439,7 @@ export function createSessionDashboard({
       } else if (action === 'split-dir') {
         togglePaneAxis(jid);
       } else if (action === 'expand') {
-        setActive(false);
-        onSelectSingleSession(jid);
+        setZoom(zoomedJid === jid ? null : jid);
       } else if (action === 'delete') {
         const s = getSessions().find((cand) => cand.jid === jid) || {
           jid,
@@ -2652,6 +2675,8 @@ export function createSessionDashboard({
   }
 
   function animatePaneLayoutTransition(mutateLayoutFn) {
+    // Moving, adding or re-tiling panes is about the tiles: show them all.
+    if (zoomedJid) setZoom(null, { instant: true });
     if (!active || prefersReducedMotion() || gridEl.hidden) {
       mutateLayoutFn();
       return;
@@ -3116,6 +3141,7 @@ export function createSessionDashboard({
         });
       };
       applyWeights(groups, gridEl);
+      applyZoom();
       return;
     }
 
@@ -3207,6 +3233,7 @@ export function createSessionDashboard({
       container.replaceChildren(...children);
     };
     renderSplit(groups, 0, gridEl);
+    applyZoom();
 
     if (prevFocusedEl && gridEl.contains(prevFocusedEl)) {
       prevFocusedEl.focus({ preventScroll: true });
@@ -3392,6 +3419,7 @@ export function createSessionDashboard({
         void hydratePane(pane);
       }
     } else {
+      if (zoomedJid) setZoom(null, { instant: true });
       for (const pane of panes.values()) {
         if (pane.source) {
           pane.source.close();
@@ -3438,6 +3466,132 @@ export function createSessionDashboard({
         onRenderSessionListDecorations();
       }
     });
+  }
+
+  /** A session-list tap while the Dashboard is open: the session joins the
+   *  tiles (or keeps its place if it is already there), takes the input card,
+   *  and its pane flashes so the eye finds it. No keyboard on touch; a mouse
+   *  can type straight away. */
+  function revealSession(jid) {
+    if (!jid || jid === 'web:life') return;
+    if (!allJids().includes(jid)) addPane(jid);
+    else if (zoomedJid && zoomedJid !== jid) setZoom(null);
+    const pane = panes.get(jid);
+    if (!pane) return;
+    selectComposerPane(jid);
+    if (window.matchMedia?.('(pointer: fine)')?.matches) {
+      pane.textarea?.focus({ preventScroll: true });
+    }
+    pane.el.classList.remove('pane-locating');
+    void pane.el.offsetWidth; // a second tap replays the flash
+    pane.el.classList.add('pane-locating');
+    clearTimeout(pane.locateTimer);
+    pane.locateTimer = setTimeout(() => pane.el.classList.remove('pane-locating'), 1200);
+  }
+
+  function markZoomPath(jid) {
+    for (const node of gridEl.querySelectorAll('.zoom-path')) node.classList.remove('zoom-path');
+    const pane = jid ? panes.get(jid) : null;
+    if (!pane || !gridEl.contains(pane.el)) return;
+    for (let node = pane.el; node && node !== gridEl; node = node.parentElement) {
+      node.classList.add('zoom-path');
+    }
+  }
+
+  /** Re-applies the zoom after the grid is rebuilt (new group elements). */
+  function applyZoom() {
+    const pane = zoomedJid ? panes.get(zoomedJid) : null;
+    if (zoomedJid && !(pane && gridEl.contains(pane.el))) zoomedJid = null;
+    gridEl.classList.toggle('has-zoom', Boolean(zoomedJid));
+    // A zoomed pane has the stage to itself: full-size header and text.
+    const count = allJids().length;
+    gridEl.classList.toggle('density-compact', !zoomedJid && count >= 6);
+    gridEl.classList.toggle('density-ultra', !zoomedJid && count >= 9);
+    if (!gridEl.classList.contains('zoom-moving')) markZoomPath(zoomedJid);
+    for (const p of panes.values()) {
+      const on = p.jid === zoomedJid;
+      p.el.classList.toggle('pane-zoomed', on);
+      p.focusBtn.innerHTML = on ? ZOOM_OUT_ICON : ZOOM_IN_ICON;
+      p.focusBtn.title = on ? '縮回並排' : '放大此視窗';
+      p.focusBtn.setAttribute('aria-pressed', String(on));
+      const label = p.moreMenu.querySelector('[data-action="expand"] .mi-label');
+      if (label) label.textContent = on ? '縮回並排' : '放大此視窗';
+    }
+  }
+
+  /** Zoom one pane to the whole stage without leaving the Dashboard (jid), or
+   *  back to its tile (null). The other panes step aside, not away: their
+   *  streams keep running and their places are kept. The pane grows from its
+   *  tile, or shrinks back into it, on a spring that overshoots a little and
+   *  settles, by transform alone so the compositor runs it. */
+  function setZoom(jid, { instant = false } = {}) {
+    if (jid && !panes.has(jid)) return;
+    if (jid === zoomedJid) return;
+    if (jid && allJids().length < 2) return; // a lone pane already fills the stage
+    const moving = panes.get(jid || zoomedJid);
+    const animate = !instant && active && !gridEl.hidden && !prefersReducedMotion() && moving;
+    const first = animate ? moving.el.getBoundingClientRect() : null;
+
+    if (jid) {
+      for (const p of panes.values()) {
+        p.zoomRestore = { top: p.messagesEl.scrollTop, bottom: isNearBottom(p.messagesEl) };
+      }
+    }
+    for (const p of panes.values()) p.el.getAnimations?.().forEach((a) => a.cancel());
+    // The tap that zoomed also sent the card here; land it now, not on the
+    // tile rect it was flying to.
+    dockGhost?.el.getAnimations().forEach((a) => a.cancel());
+    moving?.dock.getAnimations().forEach((a) => a.cancel());
+    gridEl.classList.remove('zoom-moving');
+    zoomedJid = jid;
+    applyZoom();
+    if (!jid) {
+      // Hidden panes lost their scroll; give each back its place (or the end).
+      for (const p of panes.values()) {
+        const at = p.zoomRestore;
+        if (!at || p === moving) continue;
+        p.messagesEl.scrollTop = at.bottom ? p.messagesEl.scrollHeight : at.top;
+        p.zoomRestore = null;
+      }
+    } else {
+      selectComposerPane(jid, { animate: false });
+    }
+    if (moving && isNearBottom(moving.messagesEl)) {
+      moving.messagesEl.scrollTop = moving.messagesEl.scrollHeight;
+    }
+    syncKeyboardLift({ instant: true });
+    if (!animate) return;
+
+    const last = moving.el.getBoundingClientRect();
+    if (!first.width || !last.width || !last.height) return;
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    const sx = first.width / last.width;
+    const sy = first.height / last.height;
+    const keyframes = [];
+    const steps = 40;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const p = solveSpringProgress(t, 0.6, 16);
+      const rest = 1 - p;
+      keyframes.push({
+        transform: `translate3d(${(dx * rest).toFixed(2)}px, ${(dy * rest).toFixed(2)}px, 0) scale(${(1 + (sx - 1) * rest).toFixed(4)}, ${(1 + (sy - 1) * rest).toFixed(4)})`,
+        offset: t,
+      });
+    }
+    // While it moves, the pane is drawn over its neighbours and its groups
+    // stop clipping it: shrinking back it starts larger than its tile.
+    markZoomPath(moving.jid);
+    gridEl.classList.add('zoom-moving');
+    moving.el.style.transformOrigin = '0 0';
+    const anim = moving.el.animate(keyframes, { duration: 620, easing: 'linear' });
+    const settle = () => {
+      if (moving.el.style.transformOrigin === '0 0') moving.el.style.transformOrigin = '';
+      gridEl.classList.remove('zoom-moving');
+      markZoomPath(zoomedJid);
+    };
+    anim.onfinish = settle;
+    anim.oncancel = settle;
   }
 
   function removePane(jid) {
@@ -3889,6 +4043,83 @@ export function createSessionDashboard({
   window.addEventListener('pointerup', (e) => finishPointerDrag(e, true));
   window.addEventListener('pointercancel', (e) => finishPointerDrag(e, false));
 
+  // Two fingers anywhere on a pane drag it, as its header does: the pair's
+  // midpoint carries the ghost and picks the drop zone. Touch events, not
+  // pointer events, because only a cancelled touchmove keeps iOS from turning
+  // two fingers into a scroll or a pinch (which cancels the pointers).
+  let twoFinger = null;
+  const midpoint = (touches) => ({
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  });
+  const endTwoFinger = (commit) => {
+    const drag = twoFinger;
+    twoFinger = null;
+    if (!drag?.started) return;
+    const target = currentDropTarget;
+    document.body.classList.remove('dashboard-pointer-dragging');
+    drag.paneEl.classList.remove('dragging-pane');
+    drag.ghost?.remove();
+    hideDropPreview();
+    dragSourceJid = null;
+    if (commit && (target?.mode === 'pane' || target?.mode === 'edge')) addPane(drag.jid, target);
+  };
+  gridEl.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 2) {
+        if (e.touches.length > 2) endTwoFinger(false);
+        return;
+      }
+      if (pointerDrag?.started || zoomedJid || allJids().length < 2) return;
+      const paneEl = e.touches[0].target.closest?.('.dashboard-pane');
+      if (!paneEl || paneEl !== e.touches[1].target.closest?.('.dashboard-pane')) return;
+      // The first finger may have armed a header drag; two fingers own it now.
+      pointerDrag = null;
+      const at = midpoint(e.touches);
+      twoFinger = {
+        jid: paneEl.dataset.jid,
+        name: panes.get(paneEl.dataset.jid)?.nameEl.textContent || paneEl.dataset.jid,
+        paneEl,
+        startX: at.x,
+        startY: at.y,
+        started: false,
+        ghost: null,
+      };
+    },
+    { passive: true },
+  );
+  gridEl.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!twoFinger || e.touches.length !== 2) return;
+      // A one-finger scroll already under way cannot be taken over.
+      if (!e.cancelable) {
+        endTwoFinger(false);
+        return;
+      }
+      e.preventDefault();
+      const at = midpoint(e.touches);
+      if (!twoFinger.started) {
+        if (Math.hypot(at.x - twoFinger.startX, at.y - twoFinger.startY) < 10) return;
+        twoFinger.started = true;
+        dragSourceJid = twoFinger.jid;
+        document.body.classList.add('dashboard-pointer-dragging');
+        twoFinger.paneEl.classList.add('dragging-pane');
+        window.getSelection()?.removeAllRanges();
+        twoFinger.ghost = el('div', 'dashboard-drag-ghost', `# ${twoFinger.name}`);
+        document.body.append(twoFinger.ghost);
+      }
+      twoFinger.ghost.style.transform = `translate3d(${at.x + 12}px, ${at.y - 18}px, 0)`;
+      showDropPreview(computeDropTarget(at.x, at.y));
+    },
+    { passive: false },
+  );
+  gridEl.addEventListener('touchend', (e) => {
+    if (twoFinger && e.touches.length < 2) endTwoFinger(true);
+  });
+  gridEl.addEventListener('touchcancel', () => endTwoFinger(false));
+
   // ── Controls & Listeners ───────────────────────────────────────────────────
   navEntry.addEventListener('click', () => {
     setActive(!active);
@@ -3954,6 +4185,7 @@ export function createSessionDashboard({
     },
     setActive,
     addPane,
+    revealSession,
     removePane,
     applyPreset,
     equalizeWeights,

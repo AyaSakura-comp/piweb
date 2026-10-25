@@ -328,6 +328,22 @@ keyboard; a finger scroll moves nothing.
     reply preview bar (with `❝` quote buttons on every message and text-selection quote),
     image/multimedia attachment thumbnail preview strip with lightbox + image editor (`✎`),
     image compression toggle (`壓縮圖片`), and `createHotKeywords` quick-input chip bar.
+- **Session list while tiled**: a tap on a session row does not leave the Dashboard. The
+  session joins the tiles (or keeps its place if already there), takes the input card
+  (focused for a mouse, no keyboard on touch), and its pane flashes (`pane-locating`: an
+  `--accent` wash and inset ring that pulse twice over 1.1s; reduced motion shows the
+  frame only). Life still opens on its own.
+- **Zoom inside the Dashboard**: the pane's expand button (`.pane-expand-btn`, or 放大此視窗
+  in its `⋯` menu) or a double click / double tap on the header's bare space (not the name,
+  which renames, nor a button) blows the pane up to the whole stage; the same again, or
+  any re-tiling, adding or moving of panes, puts it back. The other panes are hidden, not
+  closed: their streams keep running and their scroll comes back. Both directions are a
+  FLIP transform on a spring (`solveSpringProgress(t, 0.6, 16)`, 620ms) that overshoots a
+  little and settles; mid-flight the pane is drawn above its neighbours with a shadow.
+  The button swaps to a collapse icon (`aria-pressed="true"`, 縮回並排) while zoomed.
+- **Two-finger pane drag (touch)**: two fingers anywhere on a pane drag it like its header,
+  with the same ghost and 5-way drop zones, from the pair's midpoint. It uses touch events
+  with a cancelled `touchmove` so iOS does not turn the gesture into a scroll or a pinch.
 - **Drag-and-swap & directional drop zones**: dragging a session from the sidebar or
   dragging any pane header over another pane highlights a 5-way drop target:
   dropping in the center (`20%..80%`) swaps the two panes in-place (`⇄ 交換視窗順序` for existing panes,

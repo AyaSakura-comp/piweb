@@ -32,7 +32,7 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=pane-usage-1';
+import { createSessionDashboard } from './session-dashboard.js?v=pane-zoom-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1519,6 +1519,12 @@ function renderSessions(force = false) {
     item.addEventListener('click', (e) => {
       if (state.selectionPending || e.defaultPrevented || state.renamingJid === session.jid) return;
       if (typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
+        // In the Dashboard a tap tiles the session and shows where it is.
+        if (session.kind !== 'life') {
+          sessionDashboard.revealSession(session.jid);
+          closeDrawer();
+          return;
+        }
         sessionDashboard.setActive(false);
       }
       openStandardSession(session.jid);
