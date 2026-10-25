@@ -23,7 +23,8 @@ const events = Object.fromEntries(
       id: i + 1,
       kind: 'message',
       role: i % 2 ? 'assistant' : 'user',
-      content: `${s.name} message ${i + 1}: ${'lorem ipsum dolor sit amet '.repeat(3)}`,
+      // Piweb's run long enough to scroll, so a reader can be part way up.
+      content: `${s.name} message ${i + 1}: ${'lorem ipsum dolor sit amet '.repeat(s.name === 'Piweb' ? 14 : 3)}`,
       files: [],
       createdAt: '2026-10-21T01:00:00Z',
     })),
@@ -212,7 +213,7 @@ test('a double click on the pane header zooms and restores it', async ({ page })
   expect(errors).toEqual([]);
 });
 
-test('a side-to-side splitter drag keeps each transcript at its width until the splitter settles', async ({
+test('a side-to-side splitter drag keeps each transcript at its width, then flows the text into the new one', async ({
   page,
 }) => {
   const errors = await setup(page);
@@ -220,6 +221,34 @@ test('a side-to-side splitter drag keeps each transcript at its width until the 
   const widthBefore = await messages.evaluate((el) => el.offsetWidth);
   const box = (await page.locator('#dashboard-grid > .dashboard-splitter').first().boundingBox())!;
   const y = box.y + box.height / 2;
+
+  // The pane that grows has been scrolled up; the line at the top of its view
+  // is where the reader is.
+  const grower = pane(page, PIWEB).locator('.dashboard-pane-messages');
+  // Where the reader is: the message, and the character, at the top line of
+  // its view.
+  const readingAt = () =>
+    grower.evaluate((scroller) => {
+      const box = scroller.getBoundingClientRect();
+      let caret: Range | null = null;
+      for (let dy = 4; dy < 120; dy += 4) {
+        caret = document.caretRangeFromPoint(box.left + 40, box.top + dy);
+        if (caret?.startContainer.nodeType === Node.TEXT_NODE) {
+          if (caret.startContainer.parentElement!.closest('.msg-text')) break;
+        }
+      }
+      const msg = caret!.startContainer.parentElement!.closest('.msg')!;
+      const range = document.createRange();
+      range.setStart(msg, 0);
+      range.setEnd(caret.startContainer, caret.startOffset);
+      return { text: msg.textContent!.slice(0, 40), at: range.toString().length };
+    });
+  await grower.evaluate((el) => {
+    el.scrollTop = (el.scrollHeight - el.clientHeight) / 2;
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -1 }));
+  });
+  expect(await grower.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(200);
+  const before = await readingAt();
 
   await page.mouse.move(box.x + box.width / 2, y);
   await page.mouse.down();
@@ -231,14 +260,39 @@ test('a side-to-side splitter drag keeps each transcript at its width until the 
   expect(
     await page.locator('.dashboard-grid').evaluate((el) => getComputedStyle(el, '::after').content),
   ).not.toBe('none');
+  // Released, the text flows into its new width over a few frames.
+  await messages.evaluate((el) => {
+    const w = window as unknown as { __widths?: number[]; __widthsDone?: boolean };
+    w.__widths = [];
+    window.addEventListener(
+      'pointerup',
+      () => {
+        const end = performance.now() + 700;
+        const tick = () => {
+          w.__widths!.push(el.offsetWidth);
+          if (performance.now() < end) requestAnimationFrame(tick);
+          else w.__widthsDone = true;
+        };
+        requestAnimationFrame(tick);
+      },
+      { once: true, capture: true },
+    );
+  });
   await page.mouse.up();
-
-  // After the release bounce the transcript fills its narrower pane again.
+  await page.waitForFunction(() => (window as unknown as { __widthsDone?: boolean }).__widthsDone);
+  const seen = await page.evaluate(() => (window as unknown as { __widths: number[] }).__widths);
   await expect.poll(() => messages.evaluate((el) => el.style.width), { timeout: 2000 }).toBe('');
   const settled = await rect(page, NOTES);
-  expect(Math.abs((await messages.evaluate((el) => el.offsetWidth)) - settled.width)).toBeLessThan(
-    2,
-  );
+  const final = await messages.evaluate((el) => el.offsetWidth);
+  expect(Math.abs(final - settled.width)).toBeLessThan(2);
+  const between = new Set(seen.filter((w) => w < widthBefore - 2 && w > final + 2));
+  expect(between.size).toBeGreaterThanOrEqual(3);
+  for (let i = 1; i < seen.length; i++) expect(seen[i]).toBeLessThanOrEqual(seen[i - 1]);
+
+  // The grown pane rewrapped to fewer lines, and its reader is on the same line.
+  const after = await readingAt();
+  expect(after.text).toBe(before.text);
+  expect(Math.abs(after.at - before.at)).toBeLessThan(60);
   expect(errors).toEqual([]);
 });
 

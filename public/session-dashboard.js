@@ -196,6 +196,9 @@ export function createSessionDashboard({
    *  is what kept a side-to-side drag under 120fps in WebKit. They rewrap
    *  once, at the new width, when the splitter has settled. */
   function freezeTranscriptWidths() {
+    // A drag that grabs the splitter mid-reflow freezes the widths it reached.
+    cancelAnimationFrame(reflowRaf);
+    reflowRaf = 0;
     const scrollers = [...panes.values()]
       .flatMap((p) => [p.messagesEl, p.btwMessagesEl])
       .filter((node) => node && !node.hidden);
@@ -206,9 +209,97 @@ export function createSessionDashboard({
   }
 
   function thawTranscriptWidths() {
+    cancelAnimationFrame(reflowRaf);
+    reflowRaf = 0;
     for (const p of panes.values()) {
       for (const node of [p.messagesEl, p.btwMessagesEl]) if (node) node.style.width = '';
     }
+  }
+
+  /** The block nearest the top edge of a transcript's view (a paragraph, a
+   *  list item, a code block…), and how far into it the view starts. */
+  function readingPoint(scroller) {
+    const top = scroller.getBoundingClientRect().top;
+    let node = scroller;
+    for (let depth = 0; depth < 8; depth++) {
+      let hit = null;
+      for (const child of node.children) {
+        const r = child.getBoundingClientRect();
+        if (r.height > 0 && r.bottom > top) {
+          hit = { child, r };
+          break;
+        }
+      }
+      if (!hit) break;
+      node = hit.child;
+      if (hit.r.top >= top) break; // starts below the edge: hold its top
+    }
+    if (node === scroller) return null;
+    const r = node.getBoundingClientRect();
+    return { el: node, frac: Math.min(1, Math.max(0, (top - r.top) / r.height)) };
+  }
+
+  let reflowRaf = 0;
+
+  /** After a side-to-side drag, each frozen transcript eases from the width
+   *  it kept to its pane's, rewrapping as it goes, so the text flows into its
+   *  new lines instead of jumping to them. A reader following the bottom stays
+   *  at the bottom; one scrolled up keeps the line they were reading at the
+   *  same height, the transcript scrolling under it as the text rewraps. */
+  function reflowTranscripts(duration) {
+    cancelAnimationFrame(reflowRaf);
+    reflowRaf = 0;
+    if (prefersReducedMotion() || duration <= 0) {
+      thawTranscriptWidths();
+      return;
+    }
+    const moving = [];
+    for (const p of panes.values()) {
+      for (const node of [p.messagesEl, p.btwMessagesEl]) {
+        if (!node?.style.width) continue;
+        const from = parseFloat(node.style.width);
+        // The transcript stretches across its column (no margins).
+        const to = node.parentElement?.clientWidth ?? from;
+        if (!node.isConnected || Math.abs(to - from) < 1) {
+          node.style.width = '';
+          continue;
+        }
+        const bottom = isNearBottom(node);
+        moving.push({ node, from, to, bottom, point: bottom ? null : readingPoint(node) });
+      }
+    }
+    if (!moving.length) return;
+    for (const m of moving) m.lastTop = m.node.scrollTop;
+    const start = performance.now();
+    const step = (now) => {
+      // A frame's timestamp can predate `start`.
+      const t = Math.min(1, Math.max(0, (now - start) / duration));
+      const ease = 1 - Math.pow(1 - t, 3);
+      for (const m of moving) {
+        // A finger on the transcript takes its scrolling back.
+        if (Math.abs(m.node.scrollTop - m.lastTop) > 1) m.bottom = m.point = null;
+        m.node.style.width = t < 1 ? `${(m.from + (m.to - m.from) * ease).toFixed(1)}px` : '';
+      }
+      // Write every width, then read every position (one layout), then scroll.
+      const shifts = moving.map((m) => {
+        if (!m.point?.el.isConnected) return 0;
+        const r = m.point.el.getBoundingClientRect();
+        return r.top + m.point.frac * r.height - m.node.getBoundingClientRect().top;
+      });
+      moving.forEach((m, i) => {
+        if (m.bottom) m.node.scrollTop = m.node.scrollHeight;
+        else if (m.point) m.node.scrollTop += shifts[i] - m.offset;
+        m.lastTop = m.node.scrollTop;
+      });
+      reflowRaf = t < 1 ? requestAnimationFrame(step) : 0;
+    };
+    // The offset each reading point starts at, before any width moves.
+    for (const m of moving) {
+      if (!m.point) continue;
+      const r = m.point.el.getBoundingClientRect();
+      m.offset = r.top + m.point.frac * r.height - m.node.getBoundingClientRect().top;
+    }
+    reflowRaf = requestAnimationFrame(step);
   }
 
   const isNearBottom = (scroller) =>
@@ -3121,6 +3212,8 @@ export function createSessionDashboard({
           splitter.getAnimations?.().forEach((a) => a.cancel());
 
           const duration = 440;
+          // The text flows into its new width while the splitter settles.
+          if (isHorizontalDrag) reflowTranscripts(duration);
           const animSplitter = splitter.animate(splitterKeyframes, { duration, easing: 'linear' });
           const animFirst = firstEl.animate(firstKeyframes, { duration, easing: 'linear' });
           const animSecond = secondEl.animate(secondKeyframes, { duration, easing: 'linear' });
@@ -3135,20 +3228,17 @@ export function createSessionDashboard({
             secondEl.style.transformOrigin = '';
             applySizes(restSizes);
             saveState();
-            if (isHorizontalDrag) thawTranscriptWidths();
             activeSpringCleanup = null;
           };
           activeSpringCleanup = cleanup;
           animSplitter.onfinish = cleanup;
-          // A rebuild that drops these elements cancels the bounce silently;
-          // never leave the transcripts frozen.
+          // A rebuild that drops these elements cancels the bounce silently.
           setTimeout(() => {
             if (activeSpringCleanup === cleanup) cleanup();
           }, duration + 200);
-          // The bounce is transforms over frozen text; the rewrap waits for it.
           return;
         }
-        if (isHorizontalDrag) thawTranscriptWidths();
+        if (isHorizontalDrag) reflowTranscripts(320);
       };
 
       window.addEventListener('pointermove', onMove);

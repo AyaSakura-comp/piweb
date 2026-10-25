@@ -305,10 +305,27 @@ the drag starting and ending:
 - **Transcripts keep their width while a splitter changes widths.** `freezeTranscriptWidths()`
   pins every transcript scroller to its current width at pointerdown on a side-to-side splitter
   (all widths read, then written); a shrinking pane clips it, a growing one shows room to spare.
-  Nothing in a transcript is rewrapped per step. `thawTranscriptWidths()` runs after the release
-  bounce (which is transforms over the frozen text), or at once without a bounce, plus a
-  fallback timer in case a rebuild cancels the bounce: one rewrap at the new width, while nothing
-  moves. Up-down splitters never rewrap text (1ms a step) and are not frozen.
+  Nothing in a transcript is rewrapped per step. Up-down splitters never rewrap text (1ms a step)
+  and are not frozen.
+- **On release the text flows into its new width.** `reflowTranscripts(duration)` starts at
+  pointerup, alongside the release bounce (440ms; 320ms without a bounce, an immediate thaw under
+  reduced motion). Each frozen transcript eases (cubic ease-out, per rAF) from the width it kept
+  to its column's `clientWidth`, so its lines rewrap a few at a time instead of jumping; the last
+  frame clears the inline width. Per frame all widths are written, then every reading point read
+  (one layout), then the scrolls written:
+  - a transcript at the bottom stays at the bottom;
+  - one scrolled up keeps its reading point: `readingPoint()` descends to the block (paragraph,
+    list item, code block…) crossing the top of the view and the fraction of it above the edge,
+    and the scroller is shifted each frame so that point stays at the same height. WebKit has no
+    scroll anchoring, and without this the reader lands several lines away (≈300 characters in
+    the e2e fixture; ≈20 with it);
+  - a scroll by the reader mid-reflow (scrollTop moved by more than 1px since the last frame) hands
+    that transcript back to them;
+  - a splitter grabbed again mid-reflow cancels it and freezes the widths it reached.
+  The bounce is compositor transforms, so the per-frame rewrap (the 8–12ms of layout the frozen
+  widths took out of each drag step, for the panes that changed) lands only on the reflow frames.
+  A frame's rAF timestamp can predate `performance.now()` at the start, so progress is clamped at 0
+  (unclamped, the first frame stepped a few px the wrong way).
 - **One cover, not inherited properties.** `pointer-events: none` / `user-select: none` on the
   transcripts while dragging are inherited, so toggling them restyled ~10k nodes at the start and
   end of every drag. `.dashboard-grid.resizing-active::after` covers the grid instead (the
@@ -425,7 +442,7 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 
 13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
 14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
-15. **Side Splitter Freeze**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after the release bounce the transcript's inline width is cleared and it matches the pane again.
+15. **Side Splitter Freeze and Reflow**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after release the transcript's width, sampled per rAF for 700ms, falls monotonically through ≥3 intermediate widths, its inline width is then cleared and it matches the pane again; the growing pane, scrolled half way up beforehand, has the same message and a character within 60 of the one at its top line.
 
 Splitter-release overshoot in `session-dashboard.spec.ts` is sampled every frame inside the page
 (`releaseAndPeak`), not by polling `boundingBox` round trips, which missed the ~80ms peak whenever

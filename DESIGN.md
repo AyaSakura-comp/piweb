@@ -443,8 +443,11 @@ keyboard; a finger scroll moves nothing.
   content width, `.pane-w240` from the dock's), so styles change only when a step is
   crossed; a narrow pane's `⋯` menu gets `.is-narrow` when it opens. While a splitter
   changes widths every transcript keeps the width it had (clipped, or with room to
-  spare) and rewraps once at the new width after the release bounce, so a step is
-  2–3ms of layout in WebKit (1ms for heights). During the drag one cover over the grid
+  spare), so a step is 2–3ms of layout in WebKit (1ms for heights). On release each
+  transcript eases to its new width alongside the 440ms bounce (cubic ease-out), so the
+  text flows into its new lines instead of jumping; a transcript at the bottom stays
+  there, and one scrolled up keeps the line at the top of its view at the same height
+  while the text rewraps around it. Reduced motion rewraps at once. During the drag one cover over the grid
   (`.resizing-active::after`) keeps taps and selection off the panes; inherited
   `pointer-events`/`user-select` on the panes restyled every transcript node at the
   start and end of each drag (65ms / 80ms).
