@@ -326,6 +326,18 @@ the drag starting and ending:
   widths took out of each drag step, for the panes that changed) lands only on the reflow frames.
   A frame's rAF timestamp can predate `performance.now()` at the start, so progress is clamped at 0
   (unclamped, the first frame stepped a few px the wrong way).
+- **The docked session list slides, and the panes follow.** On a wide screen hiding or showing
+  the drawer (its own hide button, the Dashboard's `#btn-dashboard-drawer`, the topbar menu
+  button) goes through `setDrawerCollapsed()` (`session-ui.js`): the drawer's `margin-left`
+  animates between 0 and minus its width (WAAPI, 260ms `cubic-bezier(.2,.8,.2,1)`), so the main
+  view widens or narrows with it instead of jumping a frame later; `.drawer-collapsed` (which
+  hides it) is set when the slide ends. A toggle mid-slide picks the drawer up from its current
+  offset, with the duration scaled to the distance left. The slide is bracketed by
+  `drawermotionstart` / `drawermotionend` on `#app`: the Dashboard freezes transcript widths at the
+  start (every slide frame then only moves pane boxes, as in a splitter drag) and runs
+  `reflowTranscripts(360)` at the end. The Dashboard's toggle reads `#btn-menu`'s
+  `aria-expanded`, which is set at once, so a second tap mid-slide reverses it. Phone-width
+  overlay drawers and reduced motion toggle at once, as before.
 - **One cover, not inherited properties.** `pointer-events: none` / `user-select: none` on the
   transcripts while dragging are inherited, so toggling them restyled ~10k nodes at the start and
   end of every drag. `.dashboard-grid.resizing-active::after` covers the grid instead (the
@@ -443,6 +455,7 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
 14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
 15. **Side Splitter Freeze and Reflow**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after release the transcript's width, sampled per rAF for 700ms, falls monotonically through ≥3 intermediate widths, its inline width is then cleared and it matches the pane again; the growing pane, scrolled half way up beforehand, has the same message and a character within 60 of the one at its top line.
+16. **Drawer Slide**: tapping the drawer's hide button gives ≥3 intermediate drawer offsets and ≥3 frames with the first pane between its old and new widths while its transcript stays at the old width, then ≥3 intermediate transcript widths; the transcript ends matching the wider pane. `#btn-dashboard-drawer` brings it back the same way, and pane and transcript return to their first widths within 2px.
 
 Splitter-release overshoot in `session-dashboard.spec.ts` is sampled every frame inside the page
 (`releaseAndPeak`), not by polling `boundingBox` round trips, which missed the ~80ms peak whenever

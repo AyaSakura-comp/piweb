@@ -4599,9 +4599,20 @@ export function createSessionDashboard({
 
   preventTouchFocusSteal(btnDrawerToggle);
   btnDrawerToggle.addEventListener('click', () => {
-    if (wideQuery.matches) app.classList.toggle('drawer-collapsed');
-    else document.getElementById('btn-menu')?.click();
+    // The shell's own buttons, so the docked drawer slides (setDrawerCollapsed).
+    // aria-expanded is the state being headed for, even mid-slide.
+    const menu = document.getElementById('btn-menu');
+    const hide = wideQuery.matches && menu?.getAttribute('aria-expanded') === 'true';
+    (hide ? document.getElementById('btn-hide-drawer') : menu)?.click();
   });
+
+  // While the docked drawer slides, the panes widen or narrow with transcripts
+  // held at their width (as in a splitter drag), then the text flows into the
+  // new width.
+  app.addEventListener('drawermotionstart', () => {
+    if (active) freezeTranscriptWidths();
+  });
+  app.addEventListener('drawermotionend', () => reflowTranscripts(360));
 
   // Height follows the shared .app/.main viewport shell on every device.
   // Do not maintain a second cached visualViewport height for the dashboard.

@@ -296,6 +296,75 @@ test('a side-to-side splitter drag keeps each transcript at its width, then flow
   expect(errors).toEqual([]);
 });
 
+test('hiding and showing the docked session list slides it, the panes follow, then the text rewraps', async ({
+  page,
+}) => {
+  const errors = await setup(page);
+  const notes = pane(page, NOTES);
+  const messages = notes.locator('.dashboard-pane-messages');
+  const startWidth = (await rect(page, NOTES)).width;
+  const startText = await messages.evaluate((el) => el.offsetWidth);
+
+  // Per frame from the tap: the drawer's offset, the pane's width and its
+  // transcript's width.
+  const sample = (trigger: string) =>
+    page.evaluate(
+      (id) =>
+        new Promise<{ margin: number; pane: number; text: number }[]>((done) => {
+          const drawer = document.getElementById('drawer')!;
+          const paneEl = document.querySelector('.dashboard-pane')!;
+          const text = paneEl.querySelector<HTMLElement>('.dashboard-pane-messages')!;
+          const seen: { margin: number; pane: number; text: number }[] = [];
+          const end = performance.now() + 1000;
+          const tick = () => {
+            seen.push({
+              margin: parseFloat(getComputedStyle(drawer).marginLeft) || 0,
+              pane: paneEl.getBoundingClientRect().width,
+              text: text.offsetWidth,
+            });
+            if (performance.now() < end) requestAnimationFrame(tick);
+            else done(seen);
+          };
+          document.getElementById(id)!.click();
+          requestAnimationFrame(tick);
+        }),
+      trigger,
+    );
+
+  const hiding = await sample('btn-hide-drawer');
+  await expect(page.locator('#app')).toHaveClass(/drawer-collapsed/);
+  const wide = (await rect(page, NOTES)).width;
+  expect(wide).toBeGreaterThan(startWidth + 60);
+  // The drawer slid out and the pane grew over several frames, its text
+  // held at the old width meanwhile, then eased out to the new one.
+  expect(
+    new Set(hiding.map((f) => Math.round(f.margin)).filter((m) => m < -5 && m > -255)).size,
+  ).toBeGreaterThanOrEqual(3);
+  const growing = hiding.filter((f) => f.pane > startWidth + 5 && f.pane < wide - 5);
+  expect(growing.length).toBeGreaterThanOrEqual(3);
+  for (const f of growing) expect(f.text).toBe(startText);
+  expect(
+    new Set(hiding.map((f) => f.text).filter((w) => w > startText + 2 && w < wide - 10)).size,
+  ).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => messages.evaluate((el) => el.style.width)).toBe('');
+  expect(Math.abs((await messages.evaluate((el) => el.offsetWidth)) - wide)).toBeLessThan(2);
+
+  // The Dashboard's own button brings it back the same way.
+  await expect(page.locator('#btn-dashboard-drawer')).toBeVisible();
+  const showing = await sample('btn-dashboard-drawer');
+  await expect(page.locator('#app')).not.toHaveClass(/drawer-collapsed/);
+  expect(
+    new Set(showing.map((f) => Math.round(f.margin)).filter((m) => m < -5 && m > -255)).size,
+  ).toBeGreaterThanOrEqual(3);
+  expect(
+    showing.filter((f) => f.pane < wide - 5 && f.pane > startWidth + 5).length,
+  ).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => messages.evaluate((el) => el.style.width)).toBe('');
+  expect(Math.abs((await rect(page, NOTES)).width - startWidth)).toBeLessThan(2);
+  expect(Math.abs((await messages.evaluate((el) => el.offsetWidth)) - startText)).toBeLessThan(2);
+  expect(errors).toEqual([]);
+});
+
 test.describe('two-finger pane drag (touch)', () => {
   test.use({ hasTouch: true });
 

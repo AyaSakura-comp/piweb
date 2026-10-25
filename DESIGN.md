@@ -447,7 +447,10 @@ keyboard; a finger scroll moves nothing.
   transcript eases to its new width alongside the 440ms bounce (cubic ease-out), so the
   text flows into its new lines instead of jumping; a transcript at the bottom stays
   there, and one scrolled up keeps the line at the top of its view at the same height
-  while the text rewraps around it. Reduced motion rewraps at once. During the drag one cover over the grid
+  while the text rewraps around it. Reduced motion rewraps at once. Hiding or showing
+  the docked session list slides it out or in (260ms `cubic-bezier(.2,.8,.2,1)`, its
+  `margin-left`), the panes widening or narrowing with it; their text holds its width
+  during the slide and flows into the new one after (360ms), as after a splitter drag. During the drag one cover over the grid
   (`.resizing-active::after`) keeps taps and selection off the panes; inherited
   `pointer-events`/`user-select` on the panes restyled every transcript node at the
   start and end of each drag (65ms / 80ms).

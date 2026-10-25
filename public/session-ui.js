@@ -178,11 +178,47 @@ export function bindLongPress(target, callback, options = {}) {
   };
 }
 
-/** Keep the shell class and the topbar restore button's accessibility state aligned. */
+const DRAWER_SLIDE_MS = 260;
+
+/**
+ * Keep the shell class and the topbar restore button's accessibility state
+ * aligned. On a wide screen the docked drawer slides out (or in) by its own
+ * width while the main view widens (or narrows) with it, instead of the view
+ * jumping a frame later. `drawermotionstart` / `drawermotionend` on the app
+ * bracket the slide, so a view can hold its text still and rewrap after.
+ * An interrupting toggle picks the drawer up where it is.
+ */
 export function setDrawerCollapsed(app, menuButton, collapsed) {
-  app.classList.toggle('drawer-collapsed', collapsed);
   menuButton.setAttribute('aria-expanded', String(!collapsed));
   menuButton.setAttribute('aria-label', collapsed ? 'Show sessions' : 'Open sessions');
+  const drawer = app.querySelector?.('.drawer');
+  const moving = drawer?.motion;
+  const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  const docked = drawer && getComputedStyle(drawer).position !== 'fixed';
+  if (!drawer?.animate || reduced || (!moving && !docked)) {
+    moving?.cancel();
+    app.classList.toggle('drawer-collapsed', collapsed);
+    return;
+  }
+  if (!moving && app.classList.contains('drawer-collapsed') === collapsed) return;
+  // Where the drawer is now: mid-slide, or fully in.
+  const from = moving ? parseFloat(getComputedStyle(drawer).marginLeft) || 0 : null;
+  moving?.cancel();
+  app.classList.remove('drawer-collapsed');
+  const width = drawer.offsetWidth;
+  const start = from ?? (collapsed ? 0 : -width);
+  const end = collapsed ? -width : 0;
+  if (!moving) app.dispatchEvent(new CustomEvent('drawermotionstart'));
+  const motion = drawer.animate([{ marginLeft: `${start}px` }, { marginLeft: `${end}px` }], {
+    duration: DRAWER_SLIDE_MS * Math.min(1, Math.abs(end - start) / width),
+    easing: 'cubic-bezier(.2,.8,.2,1)',
+  });
+  drawer.motion = motion;
+  motion.onfinish = () => {
+    drawer.motion = null;
+    app.classList.toggle('drawer-collapsed', collapsed);
+    app.dispatchEvent(new CustomEvent('drawermotionend'));
+  };
 }
 
 /**
