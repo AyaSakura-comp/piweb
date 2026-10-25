@@ -435,16 +435,19 @@ keyboard; a finger scroll moves nothing.
   "before" weights are kept in memory, so pinching back restores them exactly until
   anything else resizes the layout. Header taps within 400ms of a two-finger gesture are
   its fingers lifting, not a double tap.
-- **Splitter drags stay light in WebKit**: a pane is `contain: size layout`, not a size
-  container. A size container makes WebKit restyle the whole pane, transcript included,
-  on every size change; with nine long panes a splitter step took 73ms and the drag froze
-  on the iPad (2026-10-25). The header and the dock are the (inline-size) containers; a
-  short pane is `.pane-short` from a `ResizeObserver`; a narrow pane's `⋯` menu gets
-  `.is-narrow` when it opens. Transcript rows carry `contain-intrinsic-size: auto 120px`
-  and, only while `.resizing-active`, `content-visibility: auto`: rows out of view keep
-  their remembered height and skip layout (10ms a step), and the reflow at the new width
-  happens once on release. Not permanently: Safari has no scroll anchoring, so estimated
-  rows would jump while reading history.
+- **Splitter drags stay light in WebKit (120fps side to side)**: nothing in a pane is a
+  CSS container. A container makes WebKit restyle its whole subtree on every size change;
+  with nine long panes a splitter step took 73ms and the drag froze on the iPad
+  (2026-10-25). The size steps are classes set by a `ResizeObserver` on each pane, its
+  header and its dock (`.pane-short`, `.pane-w460`/`300`/`220`/`170` from the header's
+  content width, `.pane-w240` from the dock's), so styles change only when a step is
+  crossed; a narrow pane's `⋯` menu gets `.is-narrow` when it opens. While a splitter
+  changes widths every transcript keeps the width it had (clipped, or with room to
+  spare) and rewraps once at the new width after the release bounce, so a step is
+  2–3ms of layout in WebKit (1ms for heights). During the drag one cover over the grid
+  (`.resizing-active::after`) keeps taps and selection off the panes; inherited
+  `pointer-events`/`user-select` on the panes restyled every transcript node at the
+  start and end of each drag (65ms / 80ms).
 - **Busy panes**: a running session shows a 13px spinner before its name and a 2px
   `--accent` light bar along the header's foot (`.pane-busy`; a still bar under reduced
   motion), so a busy pane is visible without opening the session list.

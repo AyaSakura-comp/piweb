@@ -282,21 +282,41 @@ Two stages up, two down, with the zoom above as the top stage. Levels: 0 tile, 1
   (`twoFingerQuietUntil`), and iOS's own `gesturestart` is cancelled while two fingers own a pane.
 
 ### Splitter Drags in WebKit (2026-10-25)
-An iPad recording with nine long panes showed a column splitter that moved once every 0.4–1.2s.
-Measured on a copy of that layout in Playwright's WebKit (the same engine), one width change cost
-73ms of style and layout per step (Chromium: under a frame). Bisected by switching parts off:
-- `container: pane / size` on every pane: WebKit restyles the container's whole subtree, transcript
-  included, whenever its size changes → 73 → 31ms without it. The pane is now `contain: size
-  layout`; the header and the dock were already `inline-size` containers for their width queries.
-  The two queries that needed the pane became classes: `.pane-short` (≤460px tall, from
-  `paneSizeObserver`) hides the card's chips when something is attached, and `.is-narrow` on the
-  `⋯` menu (pane ≤300px wide, measured when it opens) drops command hints.
-- Rows out of view still laid out → `content-visibility: auto` on transcript rows while
-  `.resizing-active`, with `contain-intrinsic-size: auto 120px` always on, so each row keeps its
-  last rendered height: 31 → 10ms a step, scroll heights and the reading position unchanged (checked
-  in both engines). The rows reflow at the new width once, on release. It stays off at rest
-  because Safari has no scroll anchoring: rows at estimated heights would jump while paging
-  history.
+An iPad recording with nine long panes showed a column splitter that moved once every 0.4–1.2s;
+after the first fix, side-to-side drags still missed 120fps. Measured on a copy of that layout in
+Playwright's WebKit (the same engine as iPad Safari), style + layout for one width step, and for
+the drag starting and ending:
+
+| change | width step | drag start / end |
+| --- | --- | --- |
+| before | 73ms | 65 / 80ms |
+| no `container: pane / size` | 31ms | |
+| no header/dock containers either, transcripts frozen | 2–3ms | |
+| one cover instead of inherited `pointer-events`/`user-select` | | 5 / 5ms |
+
+- **No containers in a pane.** A size or inline-size container makes WebKit restyle its whole
+  subtree whenever its size changes. The pane is `contain: size layout`. `paneSizeObserver` (a
+  `ResizeObserver` on each pane, header and dock) sets the size steps as classes on the pane:
+  `.pane-short` (≤460px tall: the card drops its chips when something is attached),
+  `.pane-w460`/`.pane-w300`/`.pane-w220`/`.pane-w170` from the header's content width (the icons
+  fold into `⋯`, as the container queries did), `.pane-w240` from the dock's (the paste button).
+  A class flips only when a step is crossed, so a drag restyles nothing in between. The `⋯` menu
+  gets `.is-narrow` (pane ≤300px) when it opens.
+- **Transcripts keep their width while a splitter changes widths.** `freezeTranscriptWidths()`
+  pins every transcript scroller to its current width at pointerdown on a side-to-side splitter
+  (all widths read, then written); a shrinking pane clips it, a growing one shows room to spare.
+  Nothing in a transcript is rewrapped per step. `thawTranscriptWidths()` runs after the release
+  bounce (which is transforms over the frozen text), or at once without a bounce, plus a
+  fallback timer in case a rebuild cancels the bounce: one rewrap at the new width, while nothing
+  moves. Up-down splitters never rewrap text (1ms a step) and are not frozen.
+- **One cover, not inherited properties.** `pointer-events: none` / `user-select: none` on the
+  transcripts while dragging are inherited, so toggling them restyled ~10k nodes at the start and
+  end of every drag. `.dashboard-grid.resizing-active::after` covers the grid instead (the
+  splitter holds the pointer). Not during the release bounce: the cover would sit over the
+  splitters, and one can be caught again mid-bounce.
+- A first version used `content-visibility: auto` on transcript rows during the drag (31 → 10ms);
+  frozen widths make it unnecessary, and switching it on and off cost ~30ms each way, so it is
+  gone.
 
 ### iOS Touch Drag Isolation & Session List Scroll Freeze
 On mobile Safari and iOS WebKit, dragging a session card previously suffered from an intermittent cancellation bug (where the ghost vanished) and accidental vertical scrolling of the session drawer while attempting to drag cards horizontally into the dashboard. This was diagnosed and resolved through a five-part isolation architecture:
@@ -405,6 +425,7 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 
 13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
 14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
+15. **Side Splitter Freeze**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after the release bounce the transcript's inline width is cleared and it matches the pane again.
 
 Splitter-release overshoot in `session-dashboard.spec.ts` is sampled every frame inside the page
 (`releaseAndPeak`), not by polling `boundingBox` round trips, which missed the ~80ms peak whenever

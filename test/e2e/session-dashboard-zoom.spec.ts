@@ -212,6 +212,36 @@ test('a double click on the pane header zooms and restores it', async ({ page })
   expect(errors).toEqual([]);
 });
 
+test('a side-to-side splitter drag keeps each transcript at its width until the splitter settles', async ({
+  page,
+}) => {
+  const errors = await setup(page);
+  const messages = pane(page, NOTES).locator('.dashboard-pane-messages');
+  const widthBefore = await messages.evaluate((el) => el.offsetWidth);
+  const box = (await page.locator('#dashboard-grid > .dashboard-splitter').first().boundingBox())!;
+  const y = box.y + box.height / 2;
+
+  await page.mouse.move(box.x + box.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 120, y, { steps: 12 });
+  // Mid-drag the pane is narrower, its transcript is not rewrapped, and a
+  // cover over the grid keeps taps and selection off the panes.
+  expect((await rect(page, NOTES)).width).toBeLessThan(widthBefore - 60);
+  expect(await messages.evaluate((el) => el.offsetWidth)).toBe(widthBefore);
+  expect(
+    await page.locator('.dashboard-grid').evaluate((el) => getComputedStyle(el, '::after').content),
+  ).not.toBe('none');
+  await page.mouse.up();
+
+  // After the release bounce the transcript fills its narrower pane again.
+  await expect.poll(() => messages.evaluate((el) => el.style.width), { timeout: 2000 }).toBe('');
+  const settled = await rect(page, NOTES);
+  expect(Math.abs((await messages.evaluate((el) => el.offsetWidth)) - settled.width)).toBeLessThan(
+    2,
+  );
+  expect(errors).toEqual([]);
+});
+
 test.describe('two-finger pane drag (touch)', () => {
   test.use({ hasTouch: true });
 

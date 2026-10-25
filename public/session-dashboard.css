@@ -470,6 +470,7 @@
 
   /* Tiled Grid, Groups & Panes (2D horizontal + vertical) */
   .dashboard-grid {
+    position: relative;
     flex: 1;
     min-width: 0;
     min-height: 0;
@@ -537,21 +538,9 @@
     /* Its size comes from the layout, never its content. Not a size
        container: WebKit then restyles the whole pane, transcript included, on
        every size change (73ms a splitter step with nine panes on the iPad;
-       31ms without). The header and the dock are the containers instead, and
-       height is a class (.pane-short, set by paneSizeObserver). */
+       31ms without). Nothing in a pane is a container: the size steps are
+       classes set by paneSizeObserver (.pane-short, .pane-w460 … .pane-w170). */
     contain: size layout;
-  }
-
-  /* Each transcript row remembers its rendered height; while a splitter moves,
-     rows out of view skip layout at that height (31ms → 9ms a step), and the
-     reflow at the new width happens once, on release. Only then: Safari has
-     no scroll anchoring, so estimated rows in normal scrolling would jump. */
-  .dashboard-pane-messages > * {
-    contain-intrinsic-size: auto 120px;
-  }
-
-  .dashboard-grid.resizing-active .dashboard-pane-messages > * {
-    content-visibility: auto;
   }
 
   /* Compact density adaptations for 6–12 concurrent session panes */
@@ -737,12 +726,18 @@
     transition: none !important;
   }
 
-  .dashboard-grid.resizing-active .dashboard-pane-messages,
-  .dashboard-grid.resizing-active .dashboard-pane-composer-wrap,
-  .dashboard-grid.spring-bouncing .dashboard-pane-messages,
-  .dashboard-grid.spring-bouncing .dashboard-pane-composer-wrap {
-    pointer-events: none;
-    user-select: none;
+  /* Nothing under a moving splitter takes taps or starts a selection: one
+     cover over the grid while the splitter holds the pointer, not
+     pointer-events / user-select on the panes, which are inherited and
+     restyled every transcript node (65ms in WebKit on nine panes) at the
+     start and end of each drag. Not during the release bounce: the cover
+     would sit over the splitters too, and a splitter can be caught again
+     mid-bounce. */
+  .dashboard-grid.resizing-active::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 50;
   }
 
   .dashboard-pane-header {
@@ -762,7 +757,6 @@
     -webkit-touch-callout: none;
     touch-action: none;
     flex: none;
-    container-type: inline-size;
   }
 
   .dashboard-pane-header:active {
@@ -893,13 +887,13 @@
 
   /* On narrower panes (< 460px), hide secondary direct buttons so Model / Thinking /
      ⋯ / × stay clear; the pane's ⋯ menu then shows Status and Usage in their place */
-  @container (max-width: 460px) {
-    .dashboard-pane-actions .pane-status-btn,
-    .dashboard-pane-actions .pane-usage-btn,
-    .dashboard-pane-actions .pane-split-dir-btn,
-    .dashboard-pane-actions .pane-expand-btn {
-      display: none;
-    }
+  /* Width steps are classes from paneSizeObserver (the header's content
+     width), not container queries: see the note on .dashboard-pane. */
+  .dashboard-pane.pane-w460 .dashboard-pane-actions .pane-status-btn,
+  .dashboard-pane.pane-w460 .dashboard-pane-actions .pane-usage-btn,
+  .dashboard-pane.pane-w460 .dashboard-pane-actions .pane-split-dir-btn,
+  .dashboard-pane.pane-w460 .dashboard-pane-actions .pane-expand-btn {
+    display: none;
   }
 
   /* Per-pane Thinking button level colors & indicator dot (matching #btn-thinking) */
@@ -1139,20 +1133,14 @@
 
   /* Narrow card: the text box gets the room (paste stays on long-press) and
      the placeholder stays on one line instead of wrapping into a squiggle. */
-  .dashboard-pane-dock {
-    container-type: inline-size;
-  }
-
   .dashboard-pane-composer textarea::placeholder {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  @container (max-width: 240px) {
-    .dashboard-pane-composer .pane-paste-btn {
-      display: none;
-    }
+  .dashboard-pane.pane-w240 .dashboard-pane-composer .pane-paste-btn {
+    display: none;
   }
 
   .dashboard-pane-composer {
@@ -1377,21 +1365,15 @@
 .dashboard-grid .dashboard-pane-header { min-height: 44px; }
 .dashboard-pane-actions { flex: none; }
 .pane-session-name { min-width: 0; }
-@container (max-width: 300px) {
-  .dashboard-pane-actions .pane-model-btn,
-  .dashboard-pane-actions .pane-thinking-btn,
-  .dashboard-pane-actions .pane-split-dir-btn,
-  .dashboard-pane-actions .pane-expand-btn {
-    display: none;
-  }
+.dashboard-pane.pane-w300 .dashboard-pane-actions .pane-model-btn,
+.dashboard-pane.pane-w300 .dashboard-pane-actions .pane-thinking-btn,
+.dashboard-pane.pane-w300 .dashboard-pane-actions .pane-split-dir-btn,
+.dashboard-pane.pane-w300 .dashboard-pane-actions .pane-expand-btn {
+  display: none;
 }
-@container (max-width: 220px) {
-  .dashboard-pane-title .provider-badge {
-    display: none;
-  }
+.dashboard-pane.pane-w220 .dashboard-pane-title .provider-badge {
+  display: none;
 }
-@container (max-width: 170px) {
-  .dashboard-pane-actions .pane-close-btn {
-    display: none;
-  }
+.dashboard-pane.pane-w170 .dashboard-pane-actions .pane-close-btn {
+  display: none;
 }

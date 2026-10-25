@@ -164,18 +164,52 @@ export function createSessionDashboard({
         })
       : null;
 
-  /** A short pane (460px or less) trims its input card (`.pane-short` in the
-   *  CSS). A class, not a size container query: a size container makes WebKit
-   *  restyle the whole pane, transcript included, on every size change, and
-   *  nine of them froze a splitter drag on the iPad (2026-10-25). */
+  /** The size steps a pane's layout folds at, as classes on the pane: short
+   *  (460px or less tall) trims its input card (`.pane-short`); the header's
+   *  content width folds its icons (`.pane-w460` … `.pane-w170`) and the dock's
+   *  the paste button (`.pane-w240`). Classes, not container queries: a
+   *  container makes WebKit restyle its whole subtree on every size change,
+   *  which on nine panes froze a splitter drag on the iPad (2026-10-25); a
+   *  class changes only when a step is crossed. */
+  const HEADER_WIDTH_STEPS = [460, 300, 220, 170];
+  const DOCK_WIDTH_STEPS = [240];
   const paneSizeObserver =
     typeof ResizeObserver === 'function'
       ? new ResizeObserver((entries) => {
-          for (const entry of entries) {
-            entry.target.classList.toggle('pane-short', entry.contentRect.height <= 460);
+          for (const { target, contentRect } of entries) {
+            const paneEl = target.closest('.dashboard-pane');
+            if (!paneEl) continue;
+            if (target === paneEl) {
+              paneEl.classList.toggle('pane-short', contentRect.height <= 460);
+              continue;
+            }
+            const steps = target.classList.contains('dashboard-pane-dock')
+              ? DOCK_WIDTH_STEPS
+              : HEADER_WIDTH_STEPS;
+            for (const px of steps) paneEl.classList.toggle(`pane-w${px}`, contentRect.width <= px);
           }
         })
       : null;
+
+  /** While a splitter changes widths, each transcript keeps the width it had,
+   *  clipped or with room to spare: rewrapping every transcript on every step
+   *  is what kept a side-to-side drag under 120fps in WebKit. They rewrap
+   *  once, at the new width, when the splitter has settled. */
+  function freezeTranscriptWidths() {
+    const scrollers = [...panes.values()]
+      .flatMap((p) => [p.messagesEl, p.btwMessagesEl])
+      .filter((node) => node && !node.hidden);
+    const widths = scrollers.map((node) => node.offsetWidth); // read all, then write
+    scrollers.forEach((node, i) => {
+      node.style.width = `${widths[i]}px`;
+    });
+  }
+
+  function thawTranscriptWidths() {
+    for (const p of panes.values()) {
+      for (const node of [p.messagesEl, p.btwMessagesEl]) if (node) node.style.width = '';
+    }
+  }
 
   const isNearBottom = (scroller) =>
     scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
@@ -1066,6 +1100,8 @@ export function createSessionDashboard({
     });
     transcriptObserver?.observe(messagesEl);
     paneSizeObserver?.observe(paneEl);
+    paneSizeObserver?.observe(header);
+    paneSizeObserver?.observe(dock);
 
     // Mount pinned prompt bar inside the pane right above messagesEl
     if (typeof createPromptPin === 'function') {
@@ -1387,7 +1423,7 @@ export function createSessionDashboard({
       }
       usageItem.querySelector('.mi-cmd').textContent = `/${usageCommandForSession(jid)}`;
       // A narrow pane's menu drops the command hints (measured here rather
-      // than by a container query on the pane, see paneSizeObserver).
+      // than by a container query, see paneSizeObserver).
       moreMenu.classList.toggle('is-narrow', paneEl.clientWidth <= 300);
       moreMenu.hidden = false;
       menuScrim.hidden = false;
@@ -2634,6 +2670,8 @@ export function createSessionDashboard({
     pane.disposed = true;
     transcriptObserver?.unobserve(pane.messagesEl);
     paneSizeObserver?.unobserve(pane.el);
+    paneSizeObserver?.unobserve(pane.el.querySelector('.dashboard-pane-header'));
+    paneSizeObserver?.unobserve(pane.el.querySelector('.dashboard-pane-dock'));
     if (dockGhost?.jid === jid) dockGhost.el.getAnimations().forEach((a) => a.cancel());
     if (pane.source) {
       pane.source.close();
@@ -2922,6 +2960,7 @@ export function createSessionDashboard({
       activeResizerCount++;
       splitter.classList.add('dragging');
       gridEl.classList.add('resizing-active');
+      if (isHorizontalDrag) freezeTranscriptWidths();
       try {
         splitter.setPointerCapture(e.pointerId);
       } catch {
@@ -3096,11 +3135,20 @@ export function createSessionDashboard({
             secondEl.style.transformOrigin = '';
             applySizes(restSizes);
             saveState();
+            if (isHorizontalDrag) thawTranscriptWidths();
             activeSpringCleanup = null;
           };
           activeSpringCleanup = cleanup;
           animSplitter.onfinish = cleanup;
+          // A rebuild that drops these elements cancels the bounce silently;
+          // never leave the transcripts frozen.
+          setTimeout(() => {
+            if (activeSpringCleanup === cleanup) cleanup();
+          }, duration + 200);
+          // The bounce is transforms over frozen text; the rewrap waits for it.
+          return;
         }
+        if (isHorizontalDrag) thawTranscriptWidths();
       };
 
       window.addEventListener('pointermove', onMove);
