@@ -186,6 +186,63 @@ Users can drag any existing pane header or drag a session card from the sidebar 
   rebuilds the model objects. `test/e2e/session-dashboard-split.spec.ts`.
 - Smooth animated reflows execute via a coordinated FLIP (First, Last, Invert, Play) spring animation.
 
+### Session List Taps While Tiled (2026-10-25)
+In the Dashboard a tap on a standard session row (`app.js` session-item click) no longer calls
+`setActive(false)`. It calls `sessionDashboard.revealSession(jid)` and closes the drawer:
+- not tiled yet → `addPane(jid)` (same placement as the row's tile button);
+- already tiled → stays where it is; if another pane is zoomed, the zoom is released first so the
+  pane can be seen;
+- either way `selectComposerPane(jid)` flies the input card there. The textarea is focused only
+  for `(pointer: fine)`, so a finger tap on the list never raises the keyboard;
+- the pane gets `.pane-locating` (restarted with a reflow so a second tap replays it, removed after
+  1200ms): an `--accent` wash plus an inset ring that pulse twice over 1.1s, drawn by the pane's
+  `::after`. Reduced motion shows the frame without the pulse.
+Life still leaves the Dashboard and opens on its own.
+
+### Zoom a Pane Inside the Dashboard (2026-10-25)
+Zoom is a view state (`zoomedJid`), not a layout change: the split tree, weights and saved layout
+are untouched, and the other panes stay mounted with their SSE streams and drafts.
+- **Entry points**: the header's expand button (`.pane-expand-btn`, title 放大此視窗, icon swaps to
+  `ZOOM_OUT_ICON` with `aria-pressed="true"` and title 縮回並排 while zoomed), the `⋯` menu item of
+  the same name (always present; the button folds into `⋯` in panes under 460px), or a double
+  click / double tap on the header's bare space — two `pointerup`s within 350ms and 24px, ignoring
+  buttons, inputs and `.pane-session-name` (double click there renames) and any release that ended
+  a header drag (`pointerDrag.started`).
+- **Exit**: the same controls again, any re-tiling (`animatePaneLayoutTransition` unzooms instantly
+  first: add, close, swap, presets, equalize), a list tap on another session, or leaving the
+  Dashboard. `setZoom` is a no-op with fewer than two panes.
+- **Why `display: none`, not an overlay**: every group has `transform: translateZ(0)` and
+  `overflow: hidden`, which makes it the containing block for `position: fixed` and clips anything
+  that escapes, so a zoomed pane cannot be lifted out of its group. Instead `markZoomPath(jid)` tags
+  the pane and every ancestor group up to the grid with `.zoom-path`; `.dashboard-grid.has-zoom`
+  hides every group, pane and splitter not on that path and forces the path to `flex: 1 1 0px`, so
+  the pane fills the stage through normal layout. Density classes are computed from the tiled
+  layout only, not while zoomed.
+- **Scroll**: on zoom-in every pane's distance from top and bottom is saved; on zoom-out each pane
+  goes back to it (a reader at the bottom stays at the bottom). The zoomed pane takes the input
+  card without the hop animation.
+- **Motion**: both directions are a FLIP: measure every pane, apply the zoom, measure again, then
+  animate `translate + scale` from the old rect (`transform-origin: 0 0`), 40 keyframes sampled from
+  `solveSpringProgress(t, 0.6, 16)` over 620ms, so the pane overshoots slightly and settles. While it
+  flies the grid has `.zoom-moving`: path groups stop clipping (`overflow: visible`, `z-index: 40`),
+  the moving pane keeps its own clip and gets a shadow. Starting a zoom cancels running pane
+  animations and the input card's flight (`dockGhost`), which otherwise showed the old pane's
+  "Message …" card mid-zoom. Reduced motion applies the zoom without the flight.
+
+### Two-Finger Pane Drag (touch, 2026-10-25)
+Two fingers anywhere on a pane — transcript included — drag it exactly like its header: same
+ghost (`.dashboard-drag-ghost`), same 5-way drop preview (`computeDropTarget`/`showDropPreview`),
+same `body.dashboard-pointer-dragging` isolation, and `addPane(jid, target)` on release for a pane
+or stage-edge target.
+- It is built on touch events, not pointers: iOS cancels pointers when two fingers start a scroll
+  or pinch. `touchstart` is passive; `touchmove` is non-passive and calls `preventDefault()`, and if
+  the browser marks the move non-cancelable (it has already claimed the gesture) the drag is
+  abandoned instead of fighting it.
+- Starts only when both fingers are on the same pane, at least two panes are tiled, no pane is
+  zoomed and no header drag is in progress (it clears a pending `pointerDrag`). The ghost appears
+  after 10px of movement of the fingers' midpoint, which is also the point the drop is judged from.
+- Lifting to fewer than two fingers drops; `touchcancel` abandons.
+
 ### iOS Touch Drag Isolation & Session List Scroll Freeze
 On mobile Safari and iOS WebKit, dragging a session card previously suffered from an intermittent cancellation bug (where the ghost vanished) and accidental vertical scrolling of the session drawer while attempting to drag cards horizontally into the dashboard. This was diagnosed and resolved through a five-part isolation architecture:
 1. **Suppression of Native Text Selection & Browser Pan (`touch-action: none`)**:
@@ -286,6 +343,14 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 6. **CDP 120Hz FPS Counter**: Connects Chrome DevTools Protocol session (`Overlay.setShowFPSCounter`) to verify 120Hz compositor smoothness without frame drops.
 7. **Cross-Pane Touch Drag & Drop Verification**: Simulates touch drag (`PointerEvent` pointerdown, pointermove, pointerup) of a session card from `#session-list` across Pane 1 and onto Pane 2. Asserts that the drag ghost (`.dashboard-drag-ghost`) and drop indicator (`.dashboard-drop-preview`) remain active throughout the gesture without premature cancellation, and verifies that the stage successfully integrates the new session adjacent to the target pane (pane count increases from 2 to 3).
 8. **Multi-Device Cloud Sync Verification**: Asserts that layout modifications are automatically persisted to `/api/dashboard-layout` in SQLite, and a new device opening the dashboard inherits the exact layout configuration.
+9. **Session-List Tap While Tiled** (`session-dashboard-zoom.spec.ts`): a tap on an untiled row adds a fifth pane, moves the card there and sets `.pane-locating` (cleared within 2s); a tap on a tiled row keeps the pane count, moves the card and flashes; the Dashboard stays visible throughout.
+10. **Zoom Spring Both Ways**: the expand button gives a non-identity transform 90ms in, then identity; the pane matches the stage size within 2px, its neighbours are hidden, `aria-pressed="true"`; collapsing is mid-flight at 90ms too, and every pane returns to its tile within 2px with no `zoom-moving`/`has-zoom` left on the grid.
+11. **Header Double Click**: zooms and restores from a point on the header's bare space (found with `elementFromPoint`, recomputed after each change); a list tap on another session while zoomed releases the zoom.
+12. **Two-Finger Drag**: two CDP touch points (`Input.dispatchTouchEvent`) carried from one pane's center to another's show the ghost and drop preview, and on lift the two panes swap places with the body drag class removed.
+
+```sh
+PIWEB_E2E_PORT=4193 npx playwright test test/e2e/session-dashboard-zoom.spec.ts
+```
 
 ### Visual & Video Artifacts
 - **E2E Video Verification**: `artifacts/playwright/test-results/session-dashboard-120fps.mp4` (120 FPS high-refresh recording).

@@ -117,6 +117,15 @@ without another text record, the last yielded text is retained as the result but
 the queue does not send that identical already-published reply again. This is
 per-turn duplicate suppression, not a crash-safe exactly-once guarantee.
 
+A tracked command ends on its `<task-notification>` (completed, failed, stopped), with
+one exception: when the model stops its own task with **TaskStop** (KillShell in older
+Claude Code builds), Claude Code sends no notification. A successful TaskStop/KillShell
+tool result therefore marks the task named by its `task_id`/`shell_id` cancelled, with
+the output file's tail as its output (`src/agent/claude-commands.ts`). Without that the
+task stayed "running" forever and the turn never completed: replies kept arriving as
+background replies while the session spun until stopped by hand (2026-10-24). A failed
+stop (`is_error`) leaves the task running.
+
 Use the existing **Stop** control to interrupt work or **⋯ → 背景命令**
 to inspect the tracked command view. This change adds no new slash command and
 does not turn Pi-only controls into Claude-native controls.
@@ -124,7 +133,8 @@ does not turn Pi-only controls into Claude-native controls.
 Regression commands:
 
 ```bash
-npx vitest run test/claude-tmux.test.ts test/queue-claude-routing.test.ts
+npx vitest run test/claude-tmux.test.ts test/queue-claude-routing.test.ts \
+  test/claude-commands.test.ts
 ```
 
 Fake transcript/queue tests cover monitor/background-command continuation,

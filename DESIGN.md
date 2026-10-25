@@ -111,6 +111,50 @@ exclusions preserve native scrolling, selection and tool-output interactions.
 
 The image lightbox exposes a pencil action for writable main conversations. It opens a native modal above the viewer: fullscreen on mobile, bounded to 1100px with 24px desktop margins. Header Cancel/Confirm, colour swatches, brush width, Undo and Clear have at least 44px targets. Actions reuse the image viewer’s transparent monochrome outline-icon buttons (no accent-filled Confirm or boxed text actions); brush width uses a dark capsule and colour selection uses a circular white ring. Icon actions retain accessible names and tooltips. The canvas fits inside the remaining space and owns pointer gestures; the viewer beneath stays inert. Single-pointer input draws; two fingers pinch from 1× to 8× and pan within image bounds. Switching to a pinch removes its unfinished initial stroke; drawing resumes only after all gesture fingers lift. Zoom is view-only: the PNG always contains the complete image, not just the visible crop. Confirm adds a flattened PNG to the existing composer, preserves the draft and never sends automatically. Annotating an image that is still a pending composer attachment replaces that attachment in place (same position, old object URL revoked), so re-editing never leaves the old copy behind; an image from the transcript is added as a new attachment. See [image annotation](docs/image-annotation.md) for limits and browser regression coverage.
 
+## Text selection and quoting
+
+A long press (300ms) on transcript text starts a custom selection
+(`public/text-selection.js`) with two drag handles and a quote/copy pill; the
+same rules hold in the chat and in a Dashboard pane.
+
+- **One bubble, not line boxes.** The selection is drawn as a single rounded,
+  translucent outline around the selected text (`public/selection-bubble.js`,
+  `.sel-bubble`): lines on one visual row merge, neighbouring lines fuse edge to
+  edge (paragraph gaps up to 48px stay in the same bubble, the next message gets
+  its own), 5px/2px padding, 11px radius. The outline follows the finger on a
+  slightly under-damped spring (stiffness 340, damping 25), so it flows and
+  settles instead of jumping box to box. Line rects come from the selected text
+  nodes only; Chrome's per-paragraph-break boxes drew stray tabs.
+- **Handles stay on the line under the finger.** A dragged handle resolves only
+  to drawn text; LobeHub's `"\n"` text nodes between blocks used to resolve
+  above the whole list and flip the selection upward. The fallback picks the
+  nearest line box and character, never the nearest parent element.
+- **The quote/copy pill** is a larger glass bubble that pops in. A finished
+  selection quotes itself, in the chat and in a Dashboard pane alike; the user
+  did not want to wait for 引用. In a pane the input card comes to that pane
+  carrying the quote, without focus (so no keyboard).
+- **Lifting a long press never presses what is under the finger.** The pill opens
+  while the finger is still down and can open right under it; the `touchend` that
+  finishes a long press cancels its default, so the lift is not a click on 引用.
+  A short tap still clicks.
+
+## On-screen keyboard (iOS)
+
+While a text field has focus and the keyboard covers the layout viewport, the
+shell is pinned to the visual viewport (`public/viewport-shell.js`,
+`html.keyboard-shell`; full rules in the Dashboard section below).
+
+- **Send stays under the finger.** Tapping Send blurs the box before iOS lowers
+  the keyboard. The shell keeps following the visual viewport for 650ms after
+  typing focus leaves, all the way down, so Send does not move between
+  `mousedown` and `mouseup` and the topbar does not shoot off the top.
+- **Whole-keyboard jumps ease.** When iOS reports the full keyboard move at once
+  it is still animating its pan; the shell eases along curves fitted to a
+  recording (opening 190ms `cubic-bezier(0.3, 0.2, 0.6, 0.95)`, closing 320ms
+  `cubic-bezier(0.25, 0.4, 0, 1)`) instead of showing a keyboard-tall blank band.
+- **Send mid-composition** commits the IME text before reading the box, so marked
+  text is sent rather than left behind.
+
 ## Render-first replies
 
 Live assistant/thinking replies use a reply-only React 19 island backed by
@@ -293,6 +337,26 @@ close/Escape exits, a held drag at 130px then release closing, a short drag
 settling back without toggling the row under the finger, vertical movement not
 moving the page, reduced motion and the desktop card fade.
 
+## Settings: subscriptions
+
+Settings → Subscriptions has one card each for ChatGPT Plus / Pro (device code),
+Claude Pro / Max and Antigravity (open a link, paste the code back). The card's
+single action reads Connect, Cancel or Disconnect; status sits on its first line
+and errors show under the code field in the error colour, never as a toast. The
+code or link panel scrolls into view when it opens.
+
+- Claude signs in through Anthropic's own code page, not pi's localhost redirect,
+  which never loads on a phone.
+- The Claude card reads Connected when the host's Claude Code is signed in, since
+  `claude-code/*` sessions run on it. Disconnect refuses to sign the host's Claude
+  Code out and says where to do it instead.
+- A mistyped or expired code, a pasted link, a declined consent, rate limits and
+  network failures keep the sign-in waiting with the reason under the field (at
+  most 5 tries); fatal problems end it with a specific, secret-free message.
+- A worker that never claims the job shows "The host worker is not answering".
+
+Flow, storage and error classes: [subscription sign-in](docs/subscription-sign-in.md).
+
 ## Multi-session tiling dashboard (tablet & desktop)
 
 On viewports `>= 768px`, the **Dashboard** workspace (`public/session-dashboard.js`,
@@ -341,9 +405,25 @@ keyboard; a finger scroll moves nothing.
   FLIP transform on a spring (`solveSpringProgress(t, 0.6, 16)`, 620ms) that overshoots a
   little and settles; mid-flight the pane is drawn above its neighbours with a shadow.
   The button swaps to a collapse icon (`aria-pressed="true"`, 縮回並排) while zoomed.
+  Two releases on the header within 350ms and 24px count as a double tap; a release
+  that ends a header drag never does. Zoom needs at least two panes. Leaving the
+  Dashboard unzooms instantly. Because groups clip their children (`overflow: hidden`,
+  `translateZ(0)`), zoom is not a fixed overlay: panes and groups off the zoomed pane's
+  path get `display: none` (`.has-zoom`, `.zoom-path`), and only during the flight do
+  the path's groups stop clipping (`.zoom-moving`). In a pane under 460px wide the
+  expand button folds into `⋯`, so a double tap is the quick way there.
 - **Two-finger pane drag (touch)**: two fingers anywhere on a pane drag it like its header,
   with the same ghost and 5-way drop zones, from the pair's midpoint. It uses touch events
   with a cancelled `touchmove` so iOS does not turn the gesture into a scroll or a pinch.
+  Both fingers must land on the same pane; the drag starts after 10px; it is off while a
+  pane is zoomed or only one pane is tiled. Lifting a finger drops; `touchcancel`, or a
+  `touchmove` the browser will not let us cancel, abandons the drag.
+- **Busy panes**: a running session shows a 13px spinner before its name and a 2px
+  `--accent` light bar along the header's foot (`.pane-busy`; a still bar under reduced
+  motion), so a busy pane is visible without opening the session list.
+- **Selecting text in a pane** quotes it at once, as in the chat (see "Text selection
+  and quoting"); a narrow pane keeps `⋯` in its header and folds Status, Usage, split and
+  expand into that menu (at ≤460px; at ≤300px Model too).
 - **Drag-and-swap & directional drop zones**: dragging a session from the sidebar or
   dragging any pane header over another pane highlights a 5-way drop target:
   dropping in the center (`20%..80%`) swaps the two panes in-place (`⇄ 交換視窗順序` for existing panes,
@@ -384,8 +464,20 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/subagents.spec.ts \
   test/e2e/subagents-reconnect.spec.ts \
   test/e2e/subagents-ux.spec.ts \
-  test/e2e/session-dashboard.spec.ts
+  test/e2e/session-dashboard.spec.ts \
+  test/e2e/session-dashboard-split.spec.ts \
+  test/e2e/session-dashboard-mobile.spec.ts \
+  test/e2e/session-dashboard-zoom.spec.ts \
+  test/e2e/text-selection.spec.ts \
+  test/e2e/keyboard-send.spec.ts \
+  test/e2e/iphone-viewport-shell.spec.ts \
+  test/e2e/settings-motion.spec.ts
 ```
+
+`session-dashboard-zoom.spec.ts` covers the session-list tap (tile + flash, staying in
+the Dashboard), the zoom spring both ways (a mid-flight transform, stage size, hidden
+neighbours, `aria-pressed`, the tile restored), header double click, unzoom on a list
+tap, and a two-finger drag swap sent as real CDP touch points.
 
 The main regression uses CDP touch input, verifies live translation while held
 (including an 800ms hold), touchcancel snap-back and both right-swipe return levels,
