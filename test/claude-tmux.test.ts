@@ -36,6 +36,7 @@ describe('Claude tmux model catalog', () => {
       'claude-code/haiku',
       'claude-code/sonnet',
       'claude-code/opus',
+      'claude-code/fable',
     ]);
     const haiku = models.find((m) => m.id === 'haiku');
     const sonnet = models.find((m) => m.id === 'sonnet');
@@ -46,6 +47,9 @@ describe('Claude tmux model catalog', () => {
     expect(sonnet?.supportedThinkingLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(opus?.reasoning).toBe(true);
     expect(opus?.supportedThinkingLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    const fable = models.find((m) => m.id === 'fable');
+    expect(fable?.name).toBe('Claude Fable (Claude Code)');
+    expect(fable?.supportedThinkingLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   });
 
   it('recognises only claude-code refs and strips their provider', () => {

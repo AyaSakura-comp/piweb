@@ -27,13 +27,17 @@ test('real Claude bridge mobile tools, stop, continuation, resume and reload', a
 }, info) => {
   test.skip(process.env.PIWEB_CLAUDE_E2E_LIVE !== '1', 'Opt-in real Claude inference');
   const model = process.env.PIWEB_CLAUDE_E2E_MODEL || 'haiku';
-  expect(['haiku', 'sonnet', 'opus']).toContain(model);
+  expect(['haiku', 'sonnet', 'opus', 'fable']).toContain(model);
   const modelRef = `claude-code/${model}`;
   const turnTimeout = model === 'haiku' ? 60000 : 120000;
   test.setTimeout(turnTimeout * 4 + 60000);
   const root = mkdtempSync(join(tmpdir(), 'piweb-claude-e2e-'));
   const cwd = join(root, 'workspace');
   mkdirSync(cwd);
+  // The shared hot-keyword list a deployment publishes; without it the page
+  // logs a 404 for it on every load.
+  mkdirSync(join(root, 'media', 'piweb-shared'), { recursive: true });
+  writeFileSync(join(root, 'media', 'piweb-shared', 'hot-keywords.json'), '{"items":[]}\n');
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const port = (probe.address() as { port: number }).port;
@@ -83,6 +87,10 @@ test('real Claude bridge mobile tools, stop, continuation, resume and reload', a
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  // Which resource a "Failed to load resource" console error was.
+  page.on('response', (response) => {
+    if (response.status() >= 400) consoleErrors.push(`${response.status()} ${response.url()}`);
   });
   const metrics: Record<string, unknown> = {
     viewport: { width: 390, height: 844 },

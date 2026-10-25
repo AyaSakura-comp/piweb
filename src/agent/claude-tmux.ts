@@ -62,6 +62,15 @@ const CLAUDE_MODELS: AvailableModelInfo[] = [
     supportsXhigh: true,
     supportedThinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
   },
+  {
+    ref: `${CLAUDE_TMUX_PROVIDER}/fable`,
+    provider: CLAUDE_TMUX_PROVIDER,
+    id: 'fable',
+    name: 'Claude Fable (Claude Code)',
+    reasoning: true,
+    supportsXhigh: true,
+    supportedThinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
 ];
 
 export function listClaudeTmuxModels(enabled: boolean): AvailableModelInfo[] {

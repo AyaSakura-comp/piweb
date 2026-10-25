@@ -1,7 +1,7 @@
 # Claude Code tmux bridge
 
-Opt-in worker adapter for `claude-code/haiku`, `claude-code/sonnet`, and
-`claude-code/opus`. It drives an interactive Claude Code TUI in a persistent tmux
+Opt-in worker adapter for `claude-code/haiku`, `claude-code/sonnet`,
+`claude-code/opus` and `claude-code/fable`. It drives an interactive Claude Code TUI in a persistent tmux
 session. The web container still never launches an agent; queue, uploads, SQLite
 web events and SSE use the existing transport.
 
@@ -164,7 +164,11 @@ npx playwright test test/e2e/claude-tmux.spec.ts
 PIWEB_CLAUDE_LIVE=1 npx vitest run test/claude-tmux-live.test.ts
 # Real browser → web API → queues → Claude → SSE, recorded continuously:
 PIWEB_CLAUDE_E2E_LIVE=1 npx playwright test test/e2e/claude-tmux-live.spec.ts
-# Select a real model (haiku default; sonnet/opus use medium effort):
+# Select a real model (haiku default; sonnet/opus/fable use medium effort).
+# The test's tmux runs `claude` from PATH unless CLAUDE_TMUX_BIN says where it is:
+PATH=$HOME/.local/bin:$PATH CLAUDE_TMUX_BIN=$HOME/.local/bin/claude \
+  PIWEB_CLAUDE_E2E_LIVE=1 PIWEB_CLAUDE_E2E_MODEL=fable \
+  npx playwright test test/e2e/claude-tmux-live.spec.ts
 PIWEB_CLAUDE_E2E_LIVE=1 PIWEB_CLAUDE_E2E_MODEL=opus \
   npx playwright test test/e2e/claude-tmux-live.spec.ts
 ```
@@ -184,7 +188,7 @@ tmux session/server and removes temporary test state. This is a real integration
 test, not a production Docker/Tailscale deployment test.
 
 The deterministic 390×844 production-shell E2E covers dark/light themes, model and effort pickers,
-HAIKU/SONNET/OPUS badges, streamed tools/final reply, pointer-reachable Send/Stop,
+HAIKU/SONNET/OPUS/FABLE badges, streamed tools/final reply, pointer-reachable Send/Stop,
 Stop completion, session drawer containment and horizontal overflow. Screenshots
 and native video land in `artifacts/playwright/test-results/`; the focused review
 bundle is `artifacts/claude-bridge-video-20260922/` (separate `live/` and `fixture/`
@@ -197,3 +201,14 @@ asserts the actual assistant model identifiers in Claude's transcript and saves
 them in `metrics.json`, rather than trusting only the UI badge. The Opus run
 requested `claude-code/opus` with medium effort and reported `claude-opus-5`;
 its evidence is under `artifacts/claude-opus-video-20260922/`.
+
+**Fable (2026-10-26).** `claude-code/fable` passes Claude Code's `fable` alias,
+which resolves to `claude-fable-5-1` (Claude Code 2.1.310; `--effort low` and
+`max` both accepted). The real-browser live test passed with it at medium
+effort: 3 tool calls, the file verified, Stop, memory after Stop, the same
+session resumed after the pane restart, and reload; the transcript reported
+`claude-fable-5-1`. The badge reads FABLE. The live test now seeds an empty
+`media/piweb-shared/hot-keywords.json` in its disposable media directory (a
+deployment publishes one; without it every load logged a 404 and the
+no-console-errors check failed for every model), and records the status and
+URL of any failed response next to the console errors.

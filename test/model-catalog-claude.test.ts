@@ -25,6 +25,7 @@ describe('model catalog Claude tmux merge', () => {
     vi.resetModules();
     const enabled = await import('../src/agent/model-catalog.js');
     expect(enabled.listAvailableModels({ forceRefresh: true }).map((model) => model.ref)).toEqual([
+      'claude-code/fable',
       'claude-code/haiku',
       'claude-code/opus',
       'claude-code/sonnet',
