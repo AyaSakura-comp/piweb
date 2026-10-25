@@ -1,4 +1,34 @@
-import { expect, test } from 'playwright/test';
+import { expect, test, type Locator, type Page } from 'playwright/test';
+
+/**
+ * Release the mouse and return the largest `dim` the element reaches in the
+ * 300ms after the release, sampled every frame inside the page. The bounce
+ * peaks ~80ms after release; polling it through round trips missed the peak
+ * whenever the machine was busy.
+ */
+async function releaseAndPeak(page: Page, target: Locator, dim: 'width' | 'height') {
+  await target.evaluate((el, d) => {
+    const w = window as unknown as { __peak?: number; __peakDone?: boolean };
+    w.__peak = el.getBoundingClientRect()[d];
+    w.__peakDone = false;
+    window.addEventListener(
+      'pointerup',
+      () => {
+        const end = performance.now() + 300;
+        const tick = () => {
+          w.__peak = Math.max(w.__peak!, el.getBoundingClientRect()[d]);
+          if (performance.now() < end) requestAnimationFrame(tick);
+          else w.__peakDone = true;
+        };
+        requestAnimationFrame(tick);
+      },
+      { once: true, capture: true },
+    );
+  }, dim);
+  await page.mouse.up();
+  await page.waitForFunction(() => (window as unknown as { __peakDone?: boolean }).__peakDone);
+  return page.evaluate(() => (window as unknown as { __peak: number }).__peak);
+}
 
 const sessionDefinitions = [
   { id: '01', name: '前端架構重構', badge: { label: 'OPUS', kind: 'claude' }, busy: false, msg: '請幫我檢查 Dashboard 1–12 視窗並排 RWD' },
@@ -496,15 +526,9 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           steps: 18,
         });
         const wAtRelease4 = (await col1.boundingBox())!.width;
-        await page.mouse.up();
-        let maxW4 = wAtRelease4;
-        for (let s = 0; s < 6; s++) {
-          await page.waitForTimeout(20);
-          const w = (await col1.boundingBox())!.width;
-          if (w > maxW4) maxW4 = w;
-        }
+        const maxW4 = await releaseAndPeak(page, col1, 'width');
         expect(maxW4).toBeGreaterThan(wAtRelease4 + 10);
-        await page.waitForTimeout(480);
+        await page.waitForTimeout(200);
 
         const hSplit4 = page.locator('.dashboard-splitter.splitter-horizontal').first();
         const hBox4 = (await hSplit4.boundingBox())!;
@@ -514,15 +538,9 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
           steps: 18,
         });
         const hAtRelease4 = (await pane1InCol1.boundingBox())!.height;
-        await page.mouse.up();
-        let maxH4 = hAtRelease4;
-        for (let s = 0; s < 6; s++) {
-          await page.waitForTimeout(20);
-          const h = (await pane1InCol1.boundingBox())!.height;
-          if (h > maxH4) maxH4 = h;
-        }
+        const maxH4 = await releaseAndPeak(page, pane1InCol1, 'height');
         expect(maxH4).toBeGreaterThan(hAtRelease4 + 10);
-        await page.waitForTimeout(480);
+        await page.waitForTimeout(200);
       }
 
       // Capture milestone screenshots across 1..12
@@ -550,18 +568,11 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
     await page.mouse.move(vBox.x + vBox.width / 2 + 80, vBox.y + vBox.height / 2, { steps: 24 });
     const widthAtRelease = (await firstColEl.boundingBox())!.width;
-    await page.mouse.up();
+    // Column 1's width over the first 300ms after release shows a visible inertial overshoot.
+    const maxOvershootWidth = await releaseAndPeak(page, firstColEl, 'width');
     await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
-
-    // Sample column 1 width over the first 120ms after release to prove visible inertial overshoot (> 15px beyond release point)
-    let maxOvershootWidth = widthAtRelease;
-    for (let s = 0; s < 6; s++) {
-      await page.waitForTimeout(20);
-      const w = (await firstColEl.boundingBox())!.width;
-      if (w > maxOvershootWidth) maxOvershootWidth = w;
-    }
     expect(maxOvershootWidth).toBeGreaterThan(widthAtRelease + 6);
-    await page.waitForTimeout(520);
+    await page.waitForTimeout(240);
 
     const hSplit = page.locator('.dashboard-splitter.splitter-horizontal').first();
     const hBox = (await hSplit.boundingBox())!;
@@ -570,16 +581,9 @@ test.describe('desktop & tablet multi-session dashboard (1 to 12 sessions)', () 
     await expect(page.locator('#dashboard-grid')).toHaveClass(/resizing-active/);
     await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2 + 52, { steps: 24 });
     const heightAtRelease = (await firstPaneInCol1.boundingBox())!.height;
-    await page.mouse.up();
+    // Row 1's height over the first 300ms after release shows the vertical overshoot.
+    const maxOvershootHeight = await releaseAndPeak(page, firstPaneInCol1, 'height');
     await expect(page.locator('#dashboard-grid')).not.toHaveClass(/resizing-active/);
-
-    // Sample row 1 height over the first 120ms after release to prove visible vertical inertial overshoot (> 15px beyond release point)
-    let maxOvershootHeight = heightAtRelease;
-    for (let s = 0; s < 6; s++) {
-      await page.waitForTimeout(20);
-      const h = (await firstPaneInCol1.boundingBox())!.height;
-      if (h > maxOvershootHeight) maxOvershootHeight = h;
-    }
     expect(maxOvershootHeight).toBeGreaterThan(heightAtRelease + 6);
 
     // Wait for inertial spring bounce settle (~600ms) and verify resized dimensions remain locked

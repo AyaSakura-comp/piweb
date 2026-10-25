@@ -257,4 +257,115 @@ test.describe('two-finger pane drag (touch)', () => {
     ).toBe(false);
     expect(errors).toEqual([]);
   });
+
+  /** Two fingers on one horizontal line around (x, y), `gap` px apart, moved
+   *  from `from` to `to` apart in steps; `hold` runs before the fingers lift. */
+  async function pinch(
+    page: Page,
+    x: number,
+    y: number,
+    from: number,
+    to: number,
+    hold?: (gap: number) => Promise<void>,
+  ) {
+    const client = await page.context().newCDPSession(page);
+    const points = (gap: number) => [
+      { x: x - gap / 2, y, id: 1 },
+      { x: x + gap / 2, y, id: 2 },
+    ];
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: points(from),
+    });
+    for (let i = 1; i <= 10; i++) {
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: points(from + ((to - from) * i) / 10),
+      });
+    }
+    await hold?.(to);
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(750);
+    await client.detach();
+  }
+  const center = (r: { left: number; top: number; width: number; height: number }) => ({
+    x: r.left + r.width / 2,
+    y: r.top + r.height / 2,
+  });
+
+  test('spreading two fingers makes a pane a little bigger, then fills the stage, and pinching steps back', async ({
+    page,
+  }, info) => {
+    const errors = await setup(page);
+    const tile = await rect(page, NOTES);
+    const stage = await gridRect(page);
+    const label = page.locator('#dashboard-drop-label');
+
+    // Stage one: a little bigger, still tiled with its neighbours.
+    let c = center(tile);
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(page.locator('.dashboard-drop-preview.pinch-target')).toBeVisible();
+      await expect(label).toHaveText('放大一點');
+      expect(await transformOf(page, NOTES)).not.toBe('none');
+      await page.screenshot({ path: info.outputPath('pinch-grow.png') });
+    });
+    await expect(page.locator('.dashboard-drop-preview')).toBeHidden();
+    const bigger = await rect(page, NOTES);
+    expect(bigger.width).toBeGreaterThan(tile.width * 1.4);
+    expect(bigger.width).toBeLessThan(stage.width * 0.7);
+    await expect(pane(page, NOTES)).not.toHaveClass(/pane-zoomed/);
+    for (const other of [PIWEB, HAY, BROWSER]) await expect(pane(page, other)).toBeVisible();
+    await page.screenshot({ path: info.outputPath('pinch-bigger.png') });
+
+    // Spreading again gives it the whole stage.
+    c = center(bigger);
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(label).toHaveText('放到最大');
+    });
+    await expect(pane(page, NOTES)).toHaveClass(/pane-zoomed/);
+    const zoomed = await rect(page, NOTES);
+    expect(Math.abs(zoomed.width - stage.width)).toBeLessThan(2);
+    for (const other of [PIWEB, HAY, BROWSER]) await expect(pane(page, other)).toBeHidden();
+
+    // Pinching steps back: first to the bigger tile, then to the old one.
+    c = center(zoomed);
+    await pinch(page, c.x, c.y, 200, 150, async () => {
+      await expect(label).toHaveText('縮回並排');
+    });
+    await expect(pane(page, NOTES)).not.toHaveClass(/pane-zoomed/);
+    const back = await rect(page, NOTES);
+    expect(Math.abs(back.width - bigger.width)).toBeLessThan(2);
+
+    c = center(back);
+    await pinch(page, c.x, c.y, 200, 150, async () => {
+      await expect(label).toHaveText('縮回原本大小');
+    });
+    const original = await rect(page, NOTES);
+    expect(Math.abs(original.width - tile.width)).toBeLessThan(2);
+    expect(Math.abs(original.left - tile.left)).toBeLessThan(2);
+    await expect(page.locator('.dashboard-grid')).not.toHaveClass(/zoom-moving|has-zoom/);
+    expect(errors).toEqual([]);
+  });
+
+  test('one wide spread goes straight to the whole stage; a small one springs back', async ({
+    page,
+  }) => {
+    const errors = await setup(page);
+    const tile = await rect(page, PIWEB);
+    const c = center(tile);
+
+    await pinch(page, c.x, c.y, 100, 108);
+    const same = await rect(page, PIWEB);
+    expect(Math.abs(same.width - tile.width)).toBeLessThan(2);
+    expect(await transformOf(page, PIWEB)).toBe('matrix(1, 0, 0, 1, 0, 0)');
+
+    await pinch(page, c.x, c.y, 100, 190, async () => {
+      await expect(page.locator('#dashboard-drop-label')).toHaveText('放到最大');
+    });
+    await expect(pane(page, PIWEB)).toHaveClass(/pane-zoomed/);
+    // The fingers lifting on the header are not a double tap.
+    await page.waitForTimeout(400);
+    await expect(pane(page, PIWEB)).toHaveClass(/pane-zoomed/);
+    expect(errors).toEqual([]);
+  });
 });

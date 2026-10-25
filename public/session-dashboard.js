@@ -147,6 +147,8 @@ export function createSessionDashboard({
   }
   let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
   let zoomedJid = null; // the pane blown up to the whole stage, still in the Dashboard
+  let enlarged = null; // { jid, key, restore }: the pane a pinch made a little bigger, and the weights before
+  let twoFingerQuietUntil = 0; // header taps this soon after a two-finger gesture are its fingers lifting
 
   /** A transcript that shrinks (the card arrives, the card grows, a splitter
    *  moves) keeps a reader who was following the newest message at the bottom. */
@@ -158,6 +160,19 @@ export function createSessionDashboard({
             if (pane && !pane.disposed && !pane.userScrolledUp && !pane.holdScroll) {
               entry.target.scrollTop = entry.target.scrollHeight;
             }
+          }
+        })
+      : null;
+
+  /** A short pane (460px or less) trims its input card (`.pane-short` in the
+   *  CSS). A class, not a size container query: a size container makes WebKit
+   *  restyle the whole pane, transcript included, on every size change, and
+   *  nine of them froze a splitter drag on the iPad (2026-10-25). */
+  const paneSizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            entry.target.classList.toggle('pane-short', entry.contentRect.height <= 460);
           }
         })
       : null;
@@ -1050,6 +1065,7 @@ export function createSessionDashboard({
       if (e.target.matches('textarea, input')) selectComposerPane(jid);
     });
     transcriptObserver?.observe(messagesEl);
+    paneSizeObserver?.observe(paneEl);
 
     // Mount pinned prompt bar inside the pane right above messagesEl
     if (typeof createPromptPin === 'function') {
@@ -1327,7 +1343,7 @@ export function createSessionDashboard({
     let lastHeaderTap = null;
     header.addEventListener('pointerup', (e) => {
       if (e.button !== 0 || e.target.closest('button, input, .pane-session-name')) return;
-      if (pointerDrag?.started) {
+      if (pointerDrag?.started || performance.now() < twoFingerQuietUntil) {
         lastHeaderTap = null;
         return;
       }
@@ -1370,6 +1386,9 @@ export function createSessionDashboard({
           getComputedStyle(btn).display !== 'none';
       }
       usageItem.querySelector('.mi-cmd').textContent = `/${usageCommandForSession(jid)}`;
+      // A narrow pane's menu drops the command hints (measured here rather
+      // than by a container query on the pane, see paneSizeObserver).
+      moreMenu.classList.toggle('is-narrow', paneEl.clientWidth <= 300);
       moreMenu.hidden = false;
       menuScrim.hidden = false;
       moreBtn.setAttribute('aria-expanded', 'true');
@@ -2614,6 +2633,7 @@ export function createSessionDashboard({
     if (!pane) return;
     pane.disposed = true;
     transcriptObserver?.unobserve(pane.messagesEl);
+    paneSizeObserver?.unobserve(pane.el);
     if (dockGhost?.jid === jid) dockGhost.el.getAnimations().forEach((a) => a.cancel());
     if (pane.source) {
       pane.source.close();
@@ -2674,11 +2694,21 @@ export function createSessionDashboard({
     }
   }
 
-  function animatePaneLayoutTransition(mutateLayoutFn) {
+  /** `lift` names a pane that starts from `from` (where a pinch left it, larger
+   *  than its tile) and is drawn over its neighbours, unclipped, until it lands. */
+  function animatePaneLayoutTransition(mutateLayoutFn, { lift = null, from = null } = {}) {
     // Moving, adding or re-tiling panes is about the tiles: show them all.
     if (zoomedJid) setZoom(null, { instant: true });
+    const lifted = lift ? panes.get(lift) : null;
+    const land = () => {
+      if (!lifted) return;
+      gridEl.classList.remove('zoom-moving');
+      markZoomPath(zoomedJid);
+      lifted.el.style.transformOrigin = '';
+    };
     if (!active || prefersReducedMotion() || gridEl.hidden) {
       mutateLayoutFn();
+      land();
       return;
     }
 
@@ -2693,8 +2723,14 @@ export function createSessionDashboard({
       }
     }
 
+    if (lifted && from) firstRects.set(lift, from);
+
     // 2. Execute layout mutation & DOM update
     mutateLayoutFn();
+    if (lifted) {
+      markZoomPath(lift);
+      gridEl.classList.add('zoom-moving');
+    }
 
     // 3. LAST + INVERT + PLAY with pronounced analytical 120Hz inertial spring bounce
     for (const [jid, pane] of panes.entries()) {
@@ -2752,6 +2788,7 @@ export function createSessionDashboard({
           anim.onfinish = () => {
             pane.el.style.transformOrigin = '';
           };
+          if (pane === lifted) anim.oncancel = anim.onfinish = land;
         } else {
           // Newly added pane: pop in with spring collision bounce
           const popKeyframes = [];
@@ -2776,6 +2813,7 @@ export function createSessionDashboard({
         // Ignore animation errors in headless/unsupported environments
       }
     }
+    if (lifted && !lifted.el.getAnimations?.().length) land();
   }
 
   function createAxisSplitter({
@@ -3524,13 +3562,13 @@ export function createSessionDashboard({
    *  streams keep running and their places are kept. The pane grows from its
    *  tile, or shrinks back into it, on a spring that overshoots a little and
    *  settles, by transform alone so the compositor runs it. */
-  function setZoom(jid, { instant = false } = {}) {
+  function setZoom(jid, { instant = false, from = null } = {}) {
     if (jid && !panes.has(jid)) return;
     if (jid === zoomedJid) return;
     if (jid && allJids().length < 2) return; // a lone pane already fills the stage
     const moving = panes.get(jid || zoomedJid);
     const animate = !instant && active && !gridEl.hidden && !prefersReducedMotion() && moving;
-    const first = animate ? moving.el.getBoundingClientRect() : null;
+    const first = animate ? from || moving.el.getBoundingClientRect() : null;
 
     if (jid) {
       for (const p of panes.values()) {
@@ -3592,6 +3630,234 @@ export function createSessionDashboard({
     };
     anim.onfinish = settle;
     anim.oncancel = settle;
+  }
+
+  // ── Pinch: spread two fingers to make a pane a little bigger, further to
+  // give it the whole stage; pinch to step back down ────────────────────────
+  // Stage one gives the pane this part of what its neighbours have, at every
+  // level of the split tree it sits in, so it grows on both axes in a grid.
+  const ENLARGE_GAIN = 0.3;
+  const ENLARGE_MAX_SHARE = 0.8;
+  const cloneLayout = (layout) => layout.map(serializeNode);
+  const layoutKey = (layout) => JSON.stringify(cloneLayout(layout));
+  const holdsJid = (node, jid) => node.jid === jid || Boolean(node.items?.some((n) => holdsJid(n, jid)));
+
+  /** Where a pane would sit (client px) under `layout`; splitters are left
+   *  out, which is close enough for a preview outline. */
+  function predictPaneRect(jid, layout = groups) {
+    const g = gridEl.getBoundingClientRect();
+    const walk = (nodes, depth, box) => {
+      const row = axisAt(depth) === 'row';
+      const weightOf = (n) => (nodes.length === 1 ? 1 : n.weight);
+      const total = nodes.reduce((sum, n) => sum + weightOf(n), 0) || 1;
+      let at = row ? box.left : box.top;
+      for (const n of nodes) {
+        const size = ((row ? box.width : box.height) * weightOf(n)) / total;
+        const r = row
+          ? { left: at, top: box.top, width: size, height: box.height }
+          : { left: box.left, top: at, width: box.width, height: size };
+        at += size;
+        if (n.jid === jid) return r;
+        const inner = n.items && walk(n.items, depth + 1, r);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    return walk(layout, 0, g);
+  }
+
+  /** The layout with `jid` a step bigger, or null when it cannot grow (already
+   *  large, or the neighbours are at their minimum size). */
+  function enlargedLayout(jid) {
+    const layout = cloneLayout(groups);
+    const g = gridEl.getBoundingClientRect();
+    let grew = false;
+    const walk = (nodes, depth, width, height) => {
+      const i = nodes.findIndex((n) => holdsJid(n, jid));
+      if (i < 0) return;
+      const row = axisAt(depth) === 'row';
+      const total = nodes.reduce((sum, n) => sum + n.weight, 0) || 1;
+      let share = nodes.length === 1 ? 1 : nodes[i].weight / total;
+      if (nodes.length > 1) {
+        const minPx = row ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
+        const room = 1 - ((nodes.length - 1) * minPx) / Math.max(1, row ? width : height);
+        const next = Math.min(share + (1 - share) * ENLARGE_GAIN, ENLARGE_MAX_SHARE, room);
+        if (next > share + 0.02) {
+          const rest = (1 - next) / (1 - share);
+          nodes.forEach((n, j) => {
+            n.weight = Number((j === i ? next * total : n.weight * rest).toFixed(4));
+          });
+          share = next;
+          grew = true;
+        }
+      }
+      if (nodes[i].items) {
+        walk(nodes[i].items, depth + 1, row ? width * share : width, row ? height : height * share);
+      }
+    };
+    walk(layout, 0, g.width, g.height);
+    return grew ? layout : null;
+  }
+
+  /** 0 in its tile, 1 made bigger by a pinch (and not resized since), 2 zoomed. */
+  function pinchLevel(jid) {
+    if (zoomedJid === jid) return 2;
+    return enlarged?.jid === jid && enlarged.key === layoutKey(groups) ? 1 : 0;
+  }
+
+  // Pinch ratios (finger distance now / at the start) that pick the next level.
+  const PINCH_GROW = 1.18;
+  const PINCH_FULL = 1.6;
+  const PINCH_SHRINK = 0.85;
+  const PINCH_TILE = 0.6;
+
+  /** The level a pinch at ratio `r` lands on, from where it started. */
+  function pinchTarget(pinch, r) {
+    if (r >= PINCH_GROW) {
+      if (pinch.level === 0 && r < PINCH_FULL && pinch.bigger) return 1;
+      return 2;
+    }
+    if (r <= PINCH_SHRINK) {
+      if (pinch.level === 2 && pinch.enlarged && r > PINCH_TILE) return 1;
+      return 0;
+    }
+    return pinch.level;
+  }
+
+  function pinchPreview(pinch, to) {
+    if (to === pinch.level) return null;
+    if (to === 2) return { rect: gridEl.getBoundingClientRect(), label: '放到最大' };
+    if (to === 1 && pinch.level === 0) {
+      return { rect: predictPaneRect(pinch.jid, pinch.bigger), label: '放大一點' };
+    }
+    const layout = to === 0 && pinch.enlarged ? enlarged.restore : groups;
+    return {
+      rect: predictPaneRect(pinch.jid, layout),
+      label: pinch.level === 2 ? '縮回並排' : '縮回原本大小',
+    };
+  }
+
+  function showPinchPreview(preview) {
+    if (!preview?.rect) {
+      dropPreviewEl.hidden = true;
+      dropPreviewEl.classList.remove('pinch-target');
+      return;
+    }
+    const stage = stageEl.getBoundingClientRect();
+    dropPreviewEl.classList.add('pinch-target');
+    dropPreviewEl.hidden = false;
+    dropPreviewEl.style.left = `${Math.round(preview.rect.left - stage.left + 4)}px`;
+    dropPreviewEl.style.top = `${Math.round(preview.rect.top - stage.top + 4)}px`;
+    dropPreviewEl.style.width = `${Math.round(preview.rect.width - 8)}px`;
+    dropPreviewEl.style.height = `${Math.round(preview.rect.height - 8)}px`;
+    dropLabelEl.textContent = preview.label;
+  }
+
+  /** The pane under the fingers: lifted over its neighbours, unclipped. */
+  function beginPinch(pinch) {
+    const pane = panes.get(pinch.jid);
+    pane.el.getAnimations?.().forEach((a) => a.cancel());
+    const rect = pane.el.getBoundingClientRect();
+    const grid = gridEl.getBoundingClientRect();
+    pinch.pane = pane;
+    pinch.fill = Math.max(grid.width / rect.width, grid.height / rect.height);
+    pane.el.style.transformOrigin = `${pinch.startX - rect.left}px ${pinch.startY - rect.top}px`;
+    markZoomPath(pinch.jid);
+    gridEl.classList.add('zoom-moving');
+    pane.el.classList.add('pane-pinching');
+    window.getSelection()?.removeAllRanges();
+  }
+
+  /** Follow the fingers: the pane scales with their spread and moves with
+   *  their midpoint, and gives way like rubber past what the stage can hold. */
+  function trackPinch(pinch, at, distance) {
+    const r = distance / pinch.startDistance;
+    const max = pinch.fill * 1.05;
+    const min = pinch.level === 0 ? 0.92 : 0.5;
+    let scale = r;
+    if (scale > max) scale = max + (scale - max) * 0.2;
+    if (scale < min) scale = min - (min - scale) * 0.2;
+    pinch.dx = at.x - pinch.startX;
+    pinch.dy = at.y - pinch.startY;
+    pinch.scale = scale;
+    pinch.to = pinchTarget(pinch, r);
+    pinch.pane.el.style.transform = `translate3d(${pinch.dx.toFixed(1)}px, ${pinch.dy.toFixed(1)}px, 0) scale(${scale.toFixed(4)})`;
+    showPinchPreview(pinchPreview(pinch, pinch.to));
+  }
+
+  function endPinchLift(pinch) {
+    pinch.pane.el.classList.remove('pane-pinching');
+    pinch.pane.el.style.transformOrigin = '';
+    gridEl.classList.remove('zoom-moving');
+    markZoomPath(zoomedJid);
+  }
+
+  /** Back to where the pinch started, on the zoom spring. */
+  function springPinchBack(pinch) {
+    const { el: paneEl } = pinch.pane;
+    const { dx = 0, dy = 0, scale = 1 } = pinch;
+    paneEl.style.transform = '';
+    if (prefersReducedMotion() || (Math.hypot(dx, dy) < 1 && Math.abs(scale - 1) < 0.005)) {
+      endPinchLift(pinch);
+      return;
+    }
+    const keyframes = [];
+    for (let i = 0; i <= 40; i++) {
+      const t = i / 40;
+      const rest = 1 - solveSpringProgress(t, 0.6, 16);
+      keyframes.push({
+        transform: `translate3d(${(dx * rest).toFixed(2)}px, ${(dy * rest).toFixed(2)}px, 0) scale(${(1 + (scale - 1) * rest).toFixed(4)})`,
+        offset: t,
+      });
+    }
+    const anim = paneEl.animate(keyframes, { duration: 460, easing: 'linear' });
+    anim.onfinish = anim.oncancel = () => endPinchLift(pinch);
+  }
+
+  /** Land a released pinch on its level, springing from where the fingers
+   *  left the pane rather than from its tile. */
+  function settlePinch(pinch) {
+    const to = pinch.to ?? pinch.level;
+    if (to === pinch.level || !panes.has(pinch.jid)) {
+      springPinchBack(pinch);
+      return;
+    }
+    const paneEl = pinch.pane.el;
+    const from = paneEl.getBoundingClientRect();
+    paneEl.style.transform = '';
+    endPinchLift(pinch);
+    if (to === 2) {
+      setZoom(pinch.jid, { from });
+      return;
+    }
+    if (pinch.level === 2) {
+      if (to === 0 && pinch.enlarged) {
+        // Hidden behind the zoom, the tiles go back to their old sizes first.
+        groups = cloneLayout(enlarged.restore);
+        enlarged = null;
+        saveState();
+        rebuildGrid();
+      }
+      setZoom(null, { from });
+      return;
+    }
+    animatePaneLayoutTransition(
+      () => {
+        if (to === 1) {
+          const restore = cloneLayout(groups);
+          groups = cloneLayout(pinch.bigger);
+          saveState();
+          rebuildGrid();
+          enlarged = { jid: pinch.jid, key: layoutKey(groups), restore };
+        } else {
+          groups = cloneLayout(enlarged.restore);
+          enlarged = null;
+          saveState();
+          rebuildGrid();
+        }
+      },
+      { lift: pinch.jid, from },
+    );
   }
 
   function removePane(jid) {
@@ -4043,26 +4309,37 @@ export function createSessionDashboard({
   window.addEventListener('pointerup', (e) => finishPointerDrag(e, true));
   window.addEventListener('pointercancel', (e) => finishPointerDrag(e, false));
 
-  // Two fingers anywhere on a pane drag it, as its header does: the pair's
-  // midpoint carries the ghost and picks the drop zone. Touch events, not
-  // pointer events, because only a cancelled touchmove keeps iOS from turning
-  // two fingers into a scroll or a pinch (which cancels the pointers).
+  // Two fingers anywhere on a pane either drag it, as its header does (the
+  // pair's midpoint carries the ghost and picks the drop zone), or pinch it
+  // (spread: a little bigger, then the whole stage; pinch: back down). The
+  // first clear movement decides which. Touch events, not pointer events,
+  // because only a cancelled touchmove keeps iOS from turning two fingers into
+  // a scroll or a page pinch (which cancels the pointers).
   let twoFinger = null;
   const midpoint = (touches) => ({
     x: (touches[0].clientX + touches[1].clientX) / 2,
     y: (touches[0].clientY + touches[1].clientY) / 2,
   });
+  const spread = (touches) =>
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
   const endTwoFinger = (commit) => {
-    const drag = twoFinger;
+    const gesture = twoFinger;
     twoFinger = null;
-    if (!drag?.started) return;
+    if (!gesture?.mode) return;
+    twoFingerQuietUntil = performance.now() + 400;
+    if (gesture.mode === 'pinch') {
+      showPinchPreview(null);
+      if (commit) settlePinch(gesture);
+      else springPinchBack(gesture);
+      return;
+    }
     const target = currentDropTarget;
     document.body.classList.remove('dashboard-pointer-dragging');
-    drag.paneEl.classList.remove('dragging-pane');
-    drag.ghost?.remove();
+    gesture.paneEl.classList.remove('dragging-pane');
+    gesture.ghost?.remove();
     hideDropPreview();
     dragSourceJid = null;
-    if (commit && (target?.mode === 'pane' || target?.mode === 'edge')) addPane(drag.jid, target);
+    if (commit && (target?.mode === 'pane' || target?.mode === 'edge')) addPane(gesture.jid, target);
   };
   gridEl.addEventListener(
     'touchstart',
@@ -4071,19 +4348,29 @@ export function createSessionDashboard({
         if (e.touches.length > 2) endTwoFinger(false);
         return;
       }
-      if (pointerDrag?.started || zoomedJid || allJids().length < 2) return;
+      if (twoFinger || pointerDrag?.started || allJids().length < 2) return;
       const paneEl = e.touches[0].target.closest?.('.dashboard-pane');
       if (!paneEl || paneEl !== e.touches[1].target.closest?.('.dashboard-pane')) return;
+      const jid = paneEl.dataset.jid;
+      // Zoomed, only the zoomed pane is on screen, and it can only be pinched.
+      if (zoomedJid && jid !== zoomedJid) return;
       // The first finger may have armed a header drag; two fingers own it now.
       pointerDrag = null;
       const at = midpoint(e.touches);
+      const level = pinchLevel(jid);
       twoFinger = {
-        jid: paneEl.dataset.jid,
-        name: panes.get(paneEl.dataset.jid)?.nameEl.textContent || paneEl.dataset.jid,
+        jid,
+        name: panes.get(jid)?.nameEl.textContent || jid,
         paneEl,
         startX: at.x,
         startY: at.y,
-        started: false,
+        startDistance: Math.max(1, spread(e.touches)),
+        mode: null,
+        level,
+        // The pinch made it bigger earlier and nothing resized it since (a
+        // zoom keeps the weights, so this holds while zoomed too).
+        enlarged: enlarged?.jid === jid && enlarged.key === layoutKey(groups),
+        bigger: level === 0 ? enlargedLayout(jid) : null,
         ghost: null,
       };
     },
@@ -4100,15 +4387,28 @@ export function createSessionDashboard({
       }
       e.preventDefault();
       const at = midpoint(e.touches);
-      if (!twoFinger.started) {
-        if (Math.hypot(at.x - twoFinger.startX, at.y - twoFinger.startY) < 10) return;
-        twoFinger.started = true;
-        dragSourceJid = twoFinger.jid;
-        document.body.classList.add('dashboard-pointer-dragging');
-        twoFinger.paneEl.classList.add('dragging-pane');
-        window.getSelection()?.removeAllRanges();
-        twoFinger.ghost = el('div', 'dashboard-drag-ghost', `# ${twoFinger.name}`);
-        document.body.append(twoFinger.ghost);
+      const distance = spread(e.touches);
+      if (!twoFinger.mode) {
+        const moved = Math.hypot(at.x - twoFinger.startX, at.y - twoFinger.startY);
+        const stretched = Math.abs(distance - twoFinger.startDistance);
+        if (stretched >= 14 && stretched > moved) {
+          twoFinger.mode = 'pinch';
+          beginPinch(twoFinger);
+        } else if (moved >= 10 && moved >= stretched && !zoomedJid) {
+          twoFinger.mode = 'drag';
+          dragSourceJid = twoFinger.jid;
+          document.body.classList.add('dashboard-pointer-dragging');
+          twoFinger.paneEl.classList.add('dragging-pane');
+          window.getSelection()?.removeAllRanges();
+          twoFinger.ghost = el('div', 'dashboard-drag-ghost', `# ${twoFinger.name}`);
+          document.body.append(twoFinger.ghost);
+        } else {
+          return;
+        }
+      }
+      if (twoFinger.mode === 'pinch') {
+        trackPinch(twoFinger, at, distance);
+        return;
       }
       twoFinger.ghost.style.transform = `translate3d(${at.x + 12}px, ${at.y - 18}px, 0)`;
       showDropPreview(computeDropTarget(at.x, at.y));
@@ -4119,6 +4419,10 @@ export function createSessionDashboard({
     if (twoFinger && e.touches.length < 2) endTwoFinger(true);
   });
   gridEl.addEventListener('touchcancel', () => endTwoFinger(false));
+  // iOS Safari's own pinch gesture events: the pane's pinch owns two fingers.
+  gridEl.addEventListener('gesturestart', (e) => {
+    if (twoFinger) e.preventDefault();
+  });
 
   // ── Controls & Listeners ───────────────────────────────────────────────────
   navEntry.addEventListener('click', () => {

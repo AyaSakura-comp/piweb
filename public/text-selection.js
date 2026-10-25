@@ -452,7 +452,14 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
 
   // ── Touch on text messages (long press to trigger) ────────────────────────
   function onTouchStart(event) {
-    if (event.touches.length !== 1) return;
+    if (event.touches.length !== 1) {
+      // A second finger makes it a pinch or a two-finger drag, not a long press.
+      if (pendingGesture && !pendingGesture.active) {
+        if (pendingGesture.timer) window.clearTimeout(pendingGesture.timer);
+        pendingGesture = null;
+      }
+      return;
+    }
     const target = event.target;
 
     if (target.closest('.sel-handle, #selection-actions, .selection-actions')) return;

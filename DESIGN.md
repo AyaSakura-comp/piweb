@@ -415,9 +415,36 @@ keyboard; a finger scroll moves nothing.
 - **Two-finger pane drag (touch)**: two fingers anywhere on a pane drag it like its header,
   with the same ghost and 5-way drop zones, from the pair's midpoint. It uses touch events
   with a cancelled `touchmove` so iOS does not turn the gesture into a scroll or a pinch.
-  Both fingers must land on the same pane; the drag starts after 10px; it is off while a
-  pane is zoomed or only one pane is tiled. Lifting a finger drops; `touchcancel`, or a
-  `touchmove` the browser will not let us cancel, abandons the drag.
+  Both fingers must land on the same pane and at least two panes must be tiled. The first
+  clear movement decides: the midpoint moving 10px (more than the fingers' spread changed)
+  is a drag, the spread changing 14px (more than the midpoint moved) is a pinch. Lifting a
+  finger drops; `touchcancel`, or a `touchmove` the browser will not let us cancel,
+  abandons it. A second finger also cancels a pending long-press selection.
+- **Pinch a pane (touch)**: spreading two fingers grows the pane in two stages. Past 1.18×
+  the start spread it becomes **a little bigger** in place: at every level of the split
+  tree it takes 30% of its neighbours' share (at most 80%, neighbours kept at their
+  minimum size), so in a grid it grows on both axes and the others stay visible. Past
+  1.6×, or spreading again from that size, it **fills the stage** (the same zoom as the
+  expand button). Pinching (below 0.85×) steps back down: zoom → the bigger tile → its
+  old size (below 0.6× from the zoom, straight to the old size). While the fingers are
+  down the pane follows them (scale with the spread, move with the midpoint, rubber past
+  the stage size), drawn over its neighbours, and a dashed outline without the drop wash
+  shows where it lands with a label (放大一點 / 放到最大 / 縮回並排 / 縮回原本大小). On
+  release it springs from where the fingers left it to that place; a spread too small to
+  change anything springs back. The bigger size is saved like a splitter change; its
+  "before" weights are kept in memory, so pinching back restores them exactly until
+  anything else resizes the layout. Header taps within 400ms of a two-finger gesture are
+  its fingers lifting, not a double tap.
+- **Splitter drags stay light in WebKit**: a pane is `contain: size layout`, not a size
+  container. A size container makes WebKit restyle the whole pane, transcript included,
+  on every size change; with nine long panes a splitter step took 73ms and the drag froze
+  on the iPad (2026-10-25). The header and the dock are the (inline-size) containers; a
+  short pane is `.pane-short` from a `ResizeObserver`; a narrow pane's `⋯` menu gets
+  `.is-narrow` when it opens. Transcript rows carry `contain-intrinsic-size: auto 120px`
+  and, only while `.resizing-active`, `content-visibility: auto`: rows out of view keep
+  their remembered height and skip layout (10ms a step), and the reflow at the new width
+  happens once on release. Not permanently: Safari has no scroll anchoring, so estimated
+  rows would jump while reading history.
 - **Busy panes**: a running session shows a 13px spinner before its name and a 2px
   `--accent` light bar along the header's foot (`.pane-busy`; a still bar under reduced
   motion), so a busy pane is visible without opening the session list.

@@ -534,9 +534,24 @@
     will-change: transform;
     transform: translateZ(0);
     backface-visibility: hidden;
-    /* Its size comes from the layout, never its content: a height query
-       lets a short pane trim the card instead of the transcript. */
-    container: pane / size;
+    /* Its size comes from the layout, never its content. Not a size
+       container: WebKit then restyles the whole pane, transcript included, on
+       every size change (73ms a splitter step with nine panes on the iPad;
+       31ms without). The header and the dock are the containers instead, and
+       height is a class (.pane-short, set by paneSizeObserver). */
+    contain: size layout;
+  }
+
+  /* Each transcript row remembers its rendered height; while a splitter moves,
+     rows out of view skip layout at that height (31ms → 9ms a step), and the
+     reflow at the new width happens once, on release. Only then: Safari has
+     no scroll anchoring, so estimated rows in normal scrolling would jump. */
+  .dashboard-pane-messages > * {
+    contain-intrinsic-size: auto 120px;
+  }
+
+  .dashboard-grid.resizing-active .dashboard-pane-messages > * {
+    content-visibility: auto;
   }
 
   /* Compact density adaptations for 6–12 concurrent session panes */
@@ -683,6 +698,13 @@
   .dashboard-grid.zoom-moving .dashboard-pane.zoom-path {
     overflow: hidden;
     box-shadow: 0 18px 48px rgb(0 0 0 / 0.35);
+  }
+
+  /* Pinching: the outline shows where the pane lands on release, without the
+     drop wash and blur, so the pane under it stays sharp. */
+  .dashboard-drop-preview.pinch-target {
+    background: transparent;
+    backdrop-filter: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -934,17 +956,15 @@
     max-width: calc(100% - 12px);
   }
 
-  @container pane (max-width: 300px) {
-    .pane-more-menu .mi-cmd {
-      display: none;
-    }
+  .pane-more-menu.is-narrow .mi-cmd {
+    display: none;
+  }
 
-    .pane-more-menu .mi-label {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+  .pane-more-menu.is-narrow .mi-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Per-pane BTW mode rules (matching .app.btw-active) */
@@ -1023,11 +1043,9 @@
 
   /* Only with something attached: an empty card keeps its shortcut chips in a
      short pane (they went missing from every stacked pane, 2026-10-22). */
-  @container pane (max-height: 460px) {
-    .dashboard-pane-dock:has(.pane-attachments .chip) .pane-hot-keywords,
-    .pane-compression-hint {
-      display: none;
-    }
+  .dashboard-pane.pane-short .dashboard-pane-dock:has(.pane-attachments .chip) .pane-hot-keywords,
+  .dashboard-pane.pane-short .pane-compression-hint {
+    display: none;
   }
 
   .pane-jump-live,

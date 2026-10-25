@@ -242,6 +242,61 @@ or stage-edge target.
   zoomed and no header drag is in progress (it clears a pending `pointerDrag`). The ghost appears
   after 10px of movement of the fingers' midpoint, which is also the point the drop is judged from.
 - Lifting to fewer than two fingers drops; `touchcancel` abandons.
+- The same two fingers can pinch instead: the first clear movement decides (midpoint moved 10px
+  and more than the spread changed → drag; spread changed 14px and more than the midpoint moved →
+  pinch). While a pane is zoomed only the zoomed pane can be pinched, and it cannot be dragged.
+
+### Pinch a Pane (touch, 2026-10-25)
+Two stages up, two down, with the zoom above as the top stage. Levels: 0 tile, 1 a little bigger,
+2 the whole stage (`pinchLevel(jid)`).
+- **Stage one is a layout change, not an overlay.** `enlargedLayout(jid)` walks the pane's path
+  through the split tree and, at every level with siblings, raises its share by 30% of what the
+  siblings hold (`ENLARGE_GAIN`), capped at 80% and at what leaves each sibling its minimum size
+  (`MIN_PANE_WIDTH_PX`/`MIN_PANE_HEIGHT_PX`), scaling the siblings down proportionally. A pane in a
+  2×2 grid goes from 1/4 to about 0.42 of the stage; the others stay visible and usable. If nothing
+  can grow (already large), stage one is skipped and a spread goes straight to the zoom.
+- **Back down exactly.** Committing stage one saves the layout (like a splitter) and keeps
+  `enlarged = { jid, key, restore }`: `restore` is the layout before, `key` the layout after.
+  Level 1 holds only while the live layout still equals `key`; any splitter move, preset, swap or
+  pane change makes it a plain tile again (level 0), and a later spread enlarges from there. The
+  zoom keeps the weights, so the enlargement survives a zoom in and out. `restore` lives in memory;
+  after a reload the bigger pane is a level-0 tile.
+- **Thresholds** on the ratio of finger distance to its start: ≥1.18 one step up, ≥1.6 straight to
+  the zoom (from level 1 any step up is the zoom); ≤0.85 one step down, ≤0.6 from the zoom straight
+  to level 0. From level 0 a pinch has nowhere to go and springs back.
+- **While the fingers are down** (`beginPinch`/`trackPinch`) the pane gets the zoom's lift
+  (`.zoom-path` + `.zoom-moving`: above its neighbours, not clipped by its groups) and
+  `transform: translate(midpoint delta) scale(ratio)` about the start midpoint, clamped like rubber
+  (×0.2) beyond 1.05× the scale that fills the stage and below 0.92× (0.5× when it can shrink). The
+  drop preview element doubles as the landing outline (`.pinch-target`: no wash, no blur, so the
+  pane under it stays sharp), sized from `predictPaneRect(jid, layout)` — the target layout's
+  weights applied to the grid rect, splitters ignored — and labelled 放大一點 / 放到最大 / 縮回並排 /
+  縮回原本大小.
+- **On release** (`settlePinch`) the pane is measured where the fingers left it, the transform is
+  dropped, and it springs from that rect: to the zoom via `setZoom(jid, { from })`, out of it via
+  `setZoom(null, { from })` (restoring the old weights first, behind the zoom, when going to level
+  0), and between levels 0 and 1 via `animatePaneLayoutTransition(mutate, { lift, from })`, which
+  keeps the pinched pane lifted until it lands while its neighbours FLIP to their new tiles. No
+  change → `springPinchBack` (the zoom spring, 460ms, from the current transform to none).
+- `touchcancel` springs back. Header `pointerup`s within 400ms of a two-finger gesture are ignored
+  (`twoFingerQuietUntil`), and iOS's own `gesturestart` is cancelled while two fingers own a pane.
+
+### Splitter Drags in WebKit (2026-10-25)
+An iPad recording with nine long panes showed a column splitter that moved once every 0.4–1.2s.
+Measured on a copy of that layout in Playwright's WebKit (the same engine), one width change cost
+73ms of style and layout per step (Chromium: under a frame). Bisected by switching parts off:
+- `container: pane / size` on every pane: WebKit restyles the container's whole subtree, transcript
+  included, whenever its size changes → 73 → 31ms without it. The pane is now `contain: size
+  layout`; the header and the dock were already `inline-size` containers for their width queries.
+  The two queries that needed the pane became classes: `.pane-short` (≤460px tall, from
+  `paneSizeObserver`) hides the card's chips when something is attached, and `.is-narrow` on the
+  `⋯` menu (pane ≤300px wide, measured when it opens) drops command hints.
+- Rows out of view still laid out → `content-visibility: auto` on transcript rows while
+  `.resizing-active`, with `contain-intrinsic-size: auto 120px` always on, so each row keeps its
+  last rendered height: 31 → 10ms a step, scroll heights and the reading position unchanged (checked
+  in both engines). The rows reflow at the new width once, on release. It stays off at rest
+  because Safari has no scroll anchoring: rows at estimated heights would jump while paging
+  history.
 
 ### iOS Touch Drag Isolation & Session List Scroll Freeze
 On mobile Safari and iOS WebKit, dragging a session card previously suffered from an intermittent cancellation bug (where the ghost vanished) and accidental vertical scrolling of the session drawer while attempting to drag cards horizontally into the dashboard. This was diagnosed and resolved through a five-part isolation architecture:
@@ -347,6 +402,13 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 10. **Zoom Spring Both Ways**: the expand button gives a non-identity transform 90ms in, then identity; the pane matches the stage size within 2px, its neighbours are hidden, `aria-pressed="true"`; collapsing is mid-flight at 90ms too, and every pane returns to its tile within 2px with no `zoom-moving`/`has-zoom` left on the grid.
 11. **Header Double Click**: zooms and restores from a point on the header's bare space (found with `elementFromPoint`, recomputed after each change); a list tap on another session while zoomed releases the zoom.
 12. **Two-Finger Drag**: two CDP touch points (`Input.dispatchTouchEvent`) carried from one pane's center to another's show the ghost and drop preview, and on lift the two panes swap places with the body drag class removed.
+
+13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
+14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
+
+Splitter-release overshoot in `session-dashboard.spec.ts` is sampled every frame inside the page
+(`releaseAndPeak`), not by polling `boundingBox` round trips, which missed the ~80ms peak whenever
+the machine was busy (6 of 6 runs failed under load on the old sampler, 0 of 6 now).
 
 ```sh
 PIWEB_E2E_PORT=4193 npx playwright test test/e2e/session-dashboard-zoom.spec.ts
