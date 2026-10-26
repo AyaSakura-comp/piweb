@@ -19,6 +19,21 @@ Komorebi directly.
   model rewrites the *whole* draft (fillers out, punctuation, "不對，改成四點"
   applied to earlier sentences), as in the Komorebi IME, so the box is replaced
   each time, never appended to.
+- **Before and after the clean-up** (2026-10-26, after the Komorebi IME page,
+  `demo/voice-ime`): a sentence still being heard is dim and underlined, with a
+  blinking caret while it is spoken and breathing while it waits for the rewrite
+  (the page's `.preedit.listening` / `.refining`). When the rewritten draft lands,
+  the page flashes the whole draft (`.fresh`); piweb diffs what was on screen (old
+  draft + sentences as heard) against the new draft (`diffRuns`: common
+  prefix/suffix, then a character LCS) and marks only the changes: what the
+  clean-up put in is highlighted in `--accent` and fades over 1.2 s, what it took
+  out stays struck through in `--danger`, fades and folds its width away; after
+  1.4 s the marks go. A textarea cannot style parts of its text, so while there is
+  something to show the same text is drawn in `.voice-mirror`, an absolutely
+  positioned layer exactly over the box (its font, padding and size copied from
+  the box, scrolled with it), and the box's own text goes transparent but keeps
+  its caret. With nothing to show the layer is hidden and the box is a plain
+  textarea again. Reduced motion keeps the marks steady until they go.
 - **No on-screen keyboard while on.** Every registered composer gets
   `inputmode="none"`, and starting voice input blurs a focused composer, so the
   iPhone/iPad keyboard goes away and does not come back on taps. The box still
@@ -43,6 +58,12 @@ One `Dictation` serves the visible composer (`resolveTarget` in `app.js`): the
 Dashboard's composer-card pane when the Dashboard is open, else the chat's
 `#input`. `retarget()` runs when the Dashboard opens or closes and when the card
 moves to another pane; the new box's text becomes the draft.
+
+Typing while a sentence is still being rewritten: that rewrite was made from
+the draft before the typing, so when it lands the typed text wins and is sent to
+the server again (`staleItems`); typing also syncs the draft at once instead of
+after the SDK's 300 ms, so a sentence ending in between starts from it. (Found
+by the e2e test: the rewrite used to overwrite what had just been typed.)
 
 Places that write a box themselves either fire `input` (paste, hot keywords —
 handled like typing) or call `voiceIme.sync(textarea)` (autocomplete, a failed
@@ -100,10 +121,14 @@ PIWEB_E2E_KOMOREBI=1 PIWEB_E2E_PORT=4193 npx playwright test test/e2e/voice-ime-
 
 `voice-ime.spec.ts` fakes the Komorebi server on the WebSocket route (partial →
 completed → `komorebi.draft.updated`) with Chromium's fake microphone: button
-size and place, `inputmode`, ring without a height change, the session's model
+size and place, `inputmode`, ring without a height change, the heard sentence
+as preedit then the clean-up's insertion (`。`) and removal (`嗯`) marked and gone
+after the fade, the layer on the box's pixels and font, the session's model
 and refine, typing into the draft, Send sending the draft and keeping the mic on,
 resume after reload on a tap, off; Settings' custom API reaching the session; a
 Dashboard pane receiving the text and sending it. The live spec (2026-10-26)
-heard 明天早上要跟 PM 開一個 meeting。我明天要出去玩。 and sent exactly that. Real
+heard 明天早上要跟 PM 開一個 meeting。我明天要出去玩。 and sent exactly that; a
+second run captured the real clean-up's changes in the box (spaces put in around
+PM and meeting). Real
 iPhone/iPad behaviour (keyboard suppression, mic permission, WebKit audio) is
 not covered by these Chromium runs.

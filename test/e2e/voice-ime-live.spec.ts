@@ -56,6 +56,15 @@ test('speech from the microphone becomes the sent message, via the real Komorebi
   const input = page.locator('#input');
   await page.locator('#composer .voice-ime-btn').click();
   await expect(page.locator('#composer')).toHaveClass(/voice-listening/, { timeout: 15_000 });
+  // A real rewrite lands: what the clean-up changed shows in the box.
+  await page
+    .locator('#composer .voice-mirror .voice-fresh, #composer .voice-mirror .voice-gone')
+    .first()
+    .waitFor({ timeout: 60_000 });
+  const changes = await page.locator('#composer .voice-mirror').evaluate((el) =>
+    [...el.querySelectorAll('.voice-fresh, .voice-gone')].map((n) => `${n.className.includes('gone') ? '-' : '+'}${n.textContent}`),
+  );
+  await page.screenshot({ path: info.outputPath('voice-live-changes.png') });
   // The recording loops; wait for both sentences to be heard and rewritten.
   await expect.poll(() => events.filter((t) => t === 'komorebi.draft.updated').length, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
   const shown = await input.inputValue();
@@ -66,5 +75,5 @@ test('speech from the microphone becomes the sent message, via the real Komorebi
   await expect.poll(() => sent.length, { timeout: 20_000 }).toBe(1);
   expect(sent[0].text).toMatch(/[一-鿿]/);
   await page.waitForTimeout(6000);
-  console.log('shown:', shown, '\nsent:', sent[0].text, '\nafter:', await input.inputValue(), '\nevents:', [...new Set(events)].join(' '));
+  console.log('changes:', changes.join(' '), '\nshown:', shown, '\nsent:', sent[0].text, '\nafter:', await input.inputValue(), '\nevents:', [...new Set(events)].join(' '));
 });

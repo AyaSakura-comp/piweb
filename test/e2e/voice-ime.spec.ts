@@ -20,12 +20,25 @@ type FakeServer = {
   sockets: number;
   /** How many sentences may be heard so far; the test raises it. */
   allowed: number;
+  /** Rewrites wait here while true, until `flush()`. */
+  holdRewrites: boolean;
+  flush: () => void;
 };
 
 /** Hears the sentences in order, over a few audio chunks each, but no further
- *  than `server.allowed`, so a slow test cannot miss a state in between. */
-async function fakeKomorebi(page: Page, sentences: string[]) {
-  const server: FakeServer = { sessions: [], drafts: [], commits: 0, sockets: 0, allowed: 1 };
+ *  than `server.allowed`, so a slow test cannot miss a state in between. A
+ *  sentence is what was heard, or [heard, what the clean-up makes of it]. */
+async function fakeKomorebi(page: Page, sentences: Array<string | [string, string]>) {
+  const held: Array<() => void> = [];
+  const server: FakeServer = {
+    sessions: [],
+    drafts: [],
+    commits: 0,
+    sockets: 0,
+    allowed: 1,
+    holdRewrites: false,
+    flush: () => held.splice(0).forEach((rewrite) => rewrite()),
+  };
   await page.routeWebSocket(KOMOREBI, (ws: WebSocketRoute) => {
     server.sockets++;
     let draft = '';
@@ -33,19 +46,21 @@ async function fakeKomorebi(page: Page, sentences: string[]) {
     let item = 0;
     let heard = 0;
     let open: string | null = null;
-    const queue = [...sentences];
+    const queue = sentences.map((s) => (typeof s === 'string' ? [s, s] : s));
     const send = (event: object) => ws.send(JSON.stringify(event));
     const complete = () => {
       if (!open) return;
       const id = open;
-      const text = queue.shift() ?? '';
+      const [heardText, cleaned] = queue.shift() ?? ['', ''];
       open = null;
       send({ type: 'input_audio_buffer.committed', item_id: id });
-      send({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: text, komorebi: {} });
-      setTimeout(() => {
-        draft += text;
+      send({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: heardText, komorebi: {} });
+      const rewrite = () => {
+        draft += cleaned;
         send({ type: 'komorebi.draft.updated', item_id: id, item_ids: [id], draft });
-      }, 250);
+      };
+      if (server.holdRewrites) held.push(rewrite);
+      else setTimeout(rewrite, 250);
     };
     ws.onMessage((raw) => {
       const event = JSON.parse(String(raw));
@@ -64,7 +79,7 @@ async function fakeKomorebi(page: Page, sentences: string[]) {
           heard++;
           open = `item_${++item}`;
           send({ type: 'input_audio_buffer.speech_started', item_id: open });
-          send({ type: 'komorebi.input_audio_transcription.partial', item_id: open, text: queue[0].slice(0, 4) });
+          send({ type: 'komorebi.input_audio_transcription.partial', item_id: open, text: queue[0][0].slice(0, 4) });
         } else if (open && chunks % 12 === 0) {
           complete();
         }
@@ -125,6 +140,15 @@ test('the mic button streams speech into the chat composer, keeps the keyboard a
   expect(box.height).toBeGreaterThanOrEqual(44);
   expect(await mic.evaluate((el) => el.nextElementSibling?.id)).toBe('btn-send');
   const height = (await composer.boundingBox())!.height;
+  // The fake microphone beeps about once a second; keep the brightest level
+  // the ring is given, since a poll can fall between beeps.
+  await composer.evaluate((el) => {
+    (window as any).__voiceLevelMax = 0;
+    new MutationObserver(() => {
+      const level = Number(el.style.getPropertyValue('--voice-level') || 0);
+      (window as any).__voiceLevelMax = Math.max((window as any).__voiceLevelMax, level);
+    }).observe(el, { attributes: true, attributeFilter: ['style'] });
+  });
 
   await mic.click();
   await expect(mic).toHaveAttribute('aria-pressed', 'true');
@@ -148,11 +172,11 @@ test('the mic button streams speech into the chat composer, keeps the keyboard a
   await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'));
   await expect(input).toHaveValue('今天下午三點開會。', { timeout: 5000 });
   // The tone the fake microphone plays lights the ring.
-  await expect
-    .poll(() => composer.evaluate((el) => Number(el.style.getPropertyValue('--voice-level') || 0)))
-    .toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__voiceLevelMax)).toBeGreaterThan(0);
 
-  // Typing (a hardware keyboard) edits the draft the next rewrite starts from.
+  // Typing (a hardware keyboard) edits the draft the next rewrite starts from,
+  // even while the rewrite of the sentence just heard is still on its way:
+  // that rewrite was made from the old draft, and the typed text wins.
   await input.evaluate((el: HTMLTextAreaElement) => {
     el.value = '明天下午三點開會。';
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -185,6 +209,66 @@ test('the mic button streams speech into the chat composer, keeps the keyboard a
   await expect(input).not.toHaveAttribute('inputmode', /.*/);
   await expect(composer).not.toHaveClass(/voice-listening/);
   await expect(input).toHaveAttribute('placeholder', 'Message pi…');
+  expect(errors).toEqual([]);
+});
+
+test('the box shows the sentence as heard, then what the clean-up changed', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const server = await fakeKomorebi(page, [['嗯今天下午三點開會', '今天下午三點開會。']]);
+  server.holdRewrites = true;
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  const mirror = page.locator('#composer .voice-mirror');
+  await page.locator('#composer .voice-ime-btn').click();
+
+  // Being said: dim and underlined with a caret, drawn over the box.
+  const preedit = mirror.locator('.voice-preedit');
+  await expect(preedit).toHaveText('嗯今天下', { timeout: 5000 });
+  await expect(preedit).toHaveClass(/listening/);
+  await expect(input).toHaveClass(/voice-mirrored/);
+  expect(await input.evaluate((el) => getComputedStyle(el).color)).toBe('rgba(0, 0, 0, 0)');
+  // The layer sits on the box's pixels, in its font.
+  const geometry = await page.evaluate(() => {
+    const box = document.querySelector('#input')!;
+    const layer = document.querySelector('#composer .voice-mirror')!;
+    const a = box.getBoundingClientRect();
+    const b = layer.getBoundingClientRect();
+    const fa = getComputedStyle(box);
+    const fb = getComputedStyle(layer);
+    return {
+      offset: Math.max(Math.abs(a.left - b.left), Math.abs(a.top - b.top), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),
+      font: [fa.font, fa.paddingLeft, fa.paddingTop].join() === [fb.font, fb.paddingLeft, fb.paddingTop].join(),
+    };
+  });
+  expect(geometry.offset).toBeLessThan(0.5);
+  expect(geometry.font).toBe(true);
+
+  // Heard in full, waiting for the clean-up: it breathes.
+  await expect(preedit).toHaveText('嗯今天下午三點開會');
+  await expect(preedit).toHaveClass(/refining/);
+  await page.screenshot({ path: info.outputPath('voice-before-dark.png') });
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'light'));
+  await page.screenshot({ path: info.outputPath('voice-before-light.png') });
+
+  // The rewrite lands: what the clean-up put in is highlighted, then fades.
+  server.flush();
+  await expect(input).toHaveValue('今天下午三點開會。');
+  await expect(mirror.locator('.voice-fresh')).toHaveText(['。']);
+  // What it took out stays a moment, struck through, then folds away.
+  await expect(mirror.locator('.voice-gone')).toHaveText(['嗯']);
+  await expect(mirror.locator('.voice-preedit')).toHaveCount(0);
+  await page.waitForTimeout(150);
+  await page.screenshot({ path: info.outputPath('voice-after-light.png') });
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'));
+  await page.screenshot({ path: info.outputPath('voice-after-dark.png') });
+  // Then the box shows its own text again.
+  await expect(mirror).toBeHidden({ timeout: 3000 });
+  await expect(input).not.toHaveClass(/voice-mirrored/);
+  await expect(input).toHaveValue('今天下午三點開會。');
   expect(errors).toEqual([]);
 });
 

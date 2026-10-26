@@ -2308,9 +2308,117 @@ html.keyboard-shell .life-edge-hint {
   --voice-ring: color-mix(in srgb, var(--accent) calc(70% + var(--voice-level, 0) * 30%), transparent);
 }
 
+/* Before and after the clean-up (as on the Komorebi IME page): the box's text
+   is drawn again in .voice-mirror, exactly over it, while a sentence is being
+   heard or a rewrite has just landed; the box's own text goes transparent but
+   keeps its caret. A sentence being heard is dim and underlined (a blinking
+   caret while spoken, breathing while it waits for the rewrite); what the
+   rewrite put in is highlighted and fades out, what it took out is struck
+   through in --danger, fades and folds away. */
+.voice-ime-frame {
+  position: relative;
+}
+
+.voice-mirror {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  overflow: hidden;
+  border-style: solid;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-bright);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+textarea.voice-mirrored {
+  color: transparent;
+  caret-color: var(--text-bright);
+}
+
+.voice-mirror .voice-fresh {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: inherit;
+  transition: background 1.2s ease;
+}
+
+.voice-mirror .voice-fresh.settled {
+  background: transparent;
+}
+
+.voice-mirror .voice-gone {
+  color: color-mix(in srgb, var(--danger) 80%, transparent);
+  text-decoration: line-through 1.5px;
+  font-size: 1em;
+  opacity: 1;
+  transition:
+    opacity 1.2s ease,
+    font-size 0.5s ease 0.7s;
+}
+
+/* Fades, then folds its width away so the kept text closes up smoothly. */
+.voice-mirror .voice-gone.settled {
+  font-size: 0;
+  opacity: 0;
+}
+
+.voice-preedit {
+  color: var(--text-dim);
+  text-decoration: underline 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
+  text-underline-offset: 4px;
+}
+
+.voice-preedit.listening::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: voice-caret 1s steps(2) infinite;
+}
+
+.voice-preedit.refining {
+  animation: voice-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes voice-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes voice-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .composer.voice-listening {
+  .composer.voice-listening,
+  .voice-mirror .voice-fresh {
     transition: none;
+  }
+
+  .voice-preedit.listening::after,
+  .voice-preedit.refining {
+    animation: none;
+  }
+
+  /* No fade: the changes stay marked until they are taken away. */
+  .voice-mirror .voice-fresh.settled {
+    background: color-mix(in srgb, var(--accent) 34%, transparent);
+  }
+
+  .voice-mirror .voice-gone,
+  .voice-mirror .voice-gone.settled {
+    transition: none;
+    font-size: 1em;
+    opacity: 1;
   }
 }
 

@@ -33,7 +33,7 @@ import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js';
-import { createSessionDashboard } from './session-dashboard.js?v=voice-ime-1';
+import { createSessionDashboard } from './session-dashboard.js?v=voice-diff-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {

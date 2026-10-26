@@ -165,7 +165,13 @@ into the visible composer as the cleaned-up draft plus the sentence being heard,
 and the composer shows a listening ring: an inset 1–2px `--accent` ring and an
 inner glow following the microphone level, brighter while a sentence is heard.
 It is a `box-shadow` inside the box, so it takes no space; reduced motion drops
-its 120ms easing. Status goes in the placeholder (說話即可輸入… / 點一下畫面開始收音…
+its 120ms easing. The clean-up shows as on the Komorebi IME page: a sentence
+being heard is `--text-dim` with a 1.5px accent underline (blinking accent caret
+while spoken, breathing while it waits); when the rewrite lands, inserted
+characters get a 34% `--accent` highlight that fades over 1.2s and removed ones
+stay struck through in `--danger`, then fade and fold away. This is drawn in a
+layer over the textarea (its text transparent, caret kept), only while there is
+something to show. Status goes in the placeholder (說話即可輸入… / 點一下畫面開始收音…
 / 語音輸入：<error>), never a toast. Settings → 語音輸入（Komorebi） uses stacked
 rows (label above a full-width 16px input, `.settings-field`) for the server and
 clean-up API URLs. See [voice input](docs/voice-input.md).
