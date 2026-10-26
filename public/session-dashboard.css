@@ -1117,6 +1117,16 @@
   .dashboard-pane-dock.is-floating {
     translate: 0 calc(-1 * var(--kb-lift, 0px));
     transition: translate 0.22s cubic-bezier(0.25, 0.8, 0.3, 1);
+    /* Its own layer, always above the transcript. The transcript scroller is
+       a compositor layer (translateZ); iOS gave the card a layer only while
+       the lift animated, then painted it back into the pane, under the
+       transcript: with the keyboard up the card shrank to a sliver of its
+       edge, and a selection's auto-scroll drew text over the chips (iPhone
+       recording 2026-10-27). */
+    position: relative;
+    z-index: 1;
+    will-change: transform;
+    transform: translateZ(0);
   }
 
   .dashboard-pane.kb-lifted,
