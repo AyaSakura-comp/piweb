@@ -11,6 +11,8 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { CachedMarkdown, Streamdown, preprocessLaTeX } from '@lobehub/streamdown';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
 import rehypeKatex from 'rehype-katex';
@@ -37,7 +39,17 @@ const normalize = (value) =>
   String(value ?? '')
     .replace(/\r\n?/g, '\n')
     .trimStart();
-const remarkPlugins = [remarkGfm, remarkMath, remarkOutboxMedia, remarkBreaks];
+// CommonMark will not close `**材料：**bf16`: a run after full-width
+// punctuation and before a letter is not right-flanking. The CJK-friendly
+// rules let Chinese replies bold labels the way they are written.
+const remarkPlugins = [
+  remarkGfm,
+  remarkCjkFriendly,
+  remarkCjkFriendlyGfmStrikethrough,
+  remarkMath,
+  remarkOutboxMedia,
+  remarkBreaks,
+];
 const rehypePlugins = [[rehypeKatex, { throwOnError: false, strict: 'ignore', trust: false }]];
 const remend = { htmlTags: false };
 

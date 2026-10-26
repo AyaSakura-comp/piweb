@@ -1328,6 +1328,42 @@ test('LobeHub keeps NT$ currency tables as tables in history and streaming', asy
   expect(errors).toEqual([]);
 });
 
+test('LobeHub bolds Chinese labels that end in full-width punctuation', async ({ page }, info) => {
+  // CommonMark leaves `**decode：**bf16` literal: the closing run sits between
+  // full-width punctuation and a letter, so it is not right-flanking.
+  const source = [
+    '- **decode：**bf16 是 18 tok/s；int8 在 12K context 內約 30 tok/s。',
+    '- **品質：**perplexity 從 bf16 的 102.06 變成 int8 的 103.40，差 1.3%。',
+    '- **和之前的版本比：**我之前自己寫的 HF 版是 361/715 ms。',
+    '- 刪除線：~~舊數字：~~新數字，**English bold** stays bold.',
+    '',
+    'End of CJK emphasis fixture.',
+  ].join('\n');
+  const { errors } = await setup(page, [event(70, source)]);
+  const check = async (body: ReturnType<Page['locator']>) => {
+    await expect(body.locator('strong')).toHaveText([
+      'decode：',
+      '品質：',
+      '和之前的版本比：',
+      'English bold',
+    ]);
+    await expect(body.locator('del')).toHaveText(['舊數字：']);
+    await expect(body).not.toContainText('**');
+    await expect(body).not.toContainText('~~');
+  };
+  const history = page
+    .locator('.msg-text:not(#partial-msg .msg-text)')
+    .filter({ hasText: 'End of CJK emphasis fixture.' });
+  await check(history);
+  await partial(page, source);
+  const live = page.locator('#partial-msg .msg-text');
+  await expect(live).toContainText('End of CJK emphasis fixture.', { timeout: 15000 });
+  await check(live);
+  await history.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('cjk-emphasis.png') });
+  expect(errors).toEqual([]);
+});
+
 test('LobeHub keeps streaming text after an image marker and inserts the image without replay', async ({
   page,
 }, info) => {

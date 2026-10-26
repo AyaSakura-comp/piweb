@@ -163,6 +163,9 @@ smoothing, character reveal and 180ms fade without a piweb animation overlay.
 There are no piweb Highlight ranges, geometric masks, duplicate surfaces or
 custom pacing. The package owns CommonMark parsing and incomplete-tail repair;
 `remark-gfm`, `remark-math` and `rehype-katex` provide tables/tasks/math.
+`remark-cjk-friendly` (plus its GFM strikethrough twin) relaxes the flanking
+rule so `**品質：**perplexity` bolds the label: plain CommonMark leaves `**`
+literal when the closer sits between full-width punctuation and a letter.
 Existing highlighting, Mermaid controls, media/lightbox delegation and palette
 remain leaf integrations. Fading controls are inert until their upstream fades
 finish; selection excludes still-fading character spans, not readable prefixes.

@@ -1,11 +1,18 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import remarkMath from 'remark-math';
 
 // Match the renderer's syntax extensions. This parser only supplies document
 // context; CachedMarkdown still owns rendering, URL sanitation and animation.
-const documentParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
+const documentParser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkCjkFriendly)
+  .use(remarkCjkFriendlyGfmStrikethrough)
+  .use(remarkMath);
 function walk(node, visit) {
   visit(node);
   for (const child of node.children || []) walk(child, visit);
