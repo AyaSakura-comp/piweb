@@ -50,7 +50,15 @@ Komorebi directly.
   the composer's size never changes (the e2e test checks the height).
 - **The placeholder says what is happening**: 說話即可輸入… while listening,
   點一下畫面開始收音… while waiting for a tap, 語音輸入：<error> after a failure.
-  No toasts.
+  No toasts. The placeholder stays on one line (`white-space: nowrap`, the full
+  error is in the mic button's title), and the box measures itself again when
+  the status changes: an empty textarea's `scrollHeight` counts its
+  placeholder, so iOS's long microphone refusal grew the box to three lines,
+  which stayed after voice input was turned off (iPhone screenshot 2026-10-27;
+  220px instead of 40 in the e2e control run).
+- **After a failure** the first tap on the mic retries and the next turns voice
+  input off. Before 2026-10-27 every tap retried, so a refusal that failed at
+  once on each retry left no way to turn it off.
 - **Send** ends the sentence being spoken and waits for it and its clean-up at
   most 1.2 s (`take()`, `TAKE_TIMEOUT_MS`); what is not back by then is sent as
   heard. Those sentences' later events are dropped (`sentItems`) and their late

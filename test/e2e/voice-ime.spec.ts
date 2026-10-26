@@ -311,6 +311,43 @@ test('send does not wait on a slow clean-up: the sentence goes as heard and its 
   expect(errors).toEqual([]);
 });
 
+test('a long voice status keeps the empty box one line, before and after it goes', async ({ page }, info) => {
+  // iOS's refusal, word for word: an empty box's scrollHeight counts its
+  // placeholder, and this status grew the box to three lines that stayed after
+  // voice input was turned off (iPhone screenshot, 2026-10-27).
+  await page.addInitScript(() => {
+    localStorage.setItem('piweb.mode', 'sessions');
+    navigator.mediaDevices.getUserMedia = () =>
+      Promise.reject(
+        new DOMException(
+          'The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.',
+          'NotAllowedError',
+        ),
+      );
+  });
+  await fakeKomorebi(page, []);
+  await mockApi(page);
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  const height = () => input.evaluate((el) => Math.round(el.getBoundingClientRect().height));
+  const oneLine = await height();
+
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveAttribute('placeholder', /^語音輸入：The request is not allowed/);
+  // The box measures itself while the status shows (typing then deleting, a
+  // hot-keyword chip, a voice render all run autoGrow).
+  await input.dispatchEvent('input');
+  expect(await height()).toBe(oneLine);
+  await page.screenshot({ path: info.outputPath('voice-error-status.png') });
+
+  // Off: the box's own placeholder comes back, still one line.
+  await page.locator('#composer .voice-ime-btn').click();
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveAttribute('placeholder', 'Message pi…');
+  expect(await height()).toBe(oneLine);
+});
+
 test('Settings sets the clean-up API, applied to the next sentence', async ({ page }) => {
   const server = await fakeKomorebi(page, ['一句話。']);
   await mockApi(page);

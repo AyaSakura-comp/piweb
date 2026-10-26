@@ -209,6 +209,7 @@ export function createVoiceIme({
   let shown = { text: '', live: '', value: '' }; // what render() last wrote into target
   let starting = null;
   let error = '';
+  let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
   let armed = false;
 
@@ -254,6 +255,7 @@ export function createVoiceIme({
       // Dashboard rewrites for renames and BTW) comes back afterwards.
       const status =
         on && mine ? (error ? `語音輸入：${error}` : listening ? '說話即可輸入…' : '點一下畫面開始收音…') : null;
+      const before = textarea.placeholder;
       if (status) {
         if (!entry.overridden) entry.placeholder = textarea.placeholder;
         entry.overridden = true;
@@ -262,6 +264,9 @@ export function createVoiceIme({
         entry.overridden = false;
         textarea.placeholder = entry.placeholder;
       }
+      // An empty box is as tall as its placeholder: measure it again, or the
+      // height a long status gave it stays after the status goes.
+      if (textarea.placeholder !== before && !textarea.value) entry.onRender?.(textarea);
       entry.frame.classList.toggle('voice-listening', on && mine && listening);
       entry.frame.classList.toggle('voice-hearing', on && mine && listening && Boolean(shown.live));
       if (!(on && mine && listening)) entry.frame.style.removeProperty('--voice-level');
@@ -438,6 +443,7 @@ export function createVoiceIme({
       // Without the keyboard there is nothing to type into: drop it now.
       if (doc?.activeElement && composers.has(doc.activeElement)) doc.activeElement.blur();
       await d.start();
+      retried = false;
     })()
       .catch((err) => {
         error = err?.message || '無法開始收音';
@@ -484,12 +490,16 @@ export function createVoiceIme({
   }
 
   function toggle() {
-    if (on && error && !dictation?.listening) {
-      // The first tap after an error retries.
+    if (on && error && !dictation?.listening && !retried) {
+      // The first tap after an error retries; if that fails too, the next
+      // turns voice input off (a refused microphone failed every retry at
+      // once, so voice input could not be turned off at all).
+      retried = true;
       error = '';
       void start();
       return;
     }
+    retried = false;
     on = !on;
     persist();
     error = '';
