@@ -628,11 +628,12 @@ export function createVoiceIme({
       }
       d.model = options.model;
       d.setRefine(options.refine);
-      if (d.voice.processing !== options.processing) {
-        // The microphone is opened again with the new processing.
-        d.voice.set({ processing: options.processing });
-        if (d.listening) void d.stop().then(() => d.start()).catch(() => {});
-      }
+      // A running microphone reopens with the new processing.
+      d.setProcessing(options.processing).catch((err) => {
+        error = err?.message || '無法開始收音';
+        sync();
+        armGesture();
+      });
     },
     /** Called once at boot: voice input that was left on resumes on the next tap. */
     resume() {
