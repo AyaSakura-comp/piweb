@@ -2348,6 +2348,21 @@ textarea.voice-mirrored {
   caret-color: var(--text-bright);
 }
 
+/* Voice input on (no keyboard): a sideways stroke on the box circles words
+   (the lasso in voice-ime.js), so only vertical panning is the browser's. */
+.voice-ime-frame textarea[inputmode='none'] {
+  touch-action: pan-y;
+}
+
+/* The circle is the quote selection's bubble (.sel-bubble), over the box and
+   under its 刪除/取消 pill (.selection-actions, z-index 42). */
+.voice-lasso-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  pointer-events: none;
+}
+
 .voice-mirror .voice-fresh {
   border-radius: 3px;
   background: color-mix(in srgb, var(--accent) 34%, transparent);

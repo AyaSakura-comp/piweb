@@ -16,6 +16,8 @@ test.use({
 type FakeServer = {
   sessions: any[];
   drafts: string[];
+  /** komorebi.selection.set as sent (null: none). */
+  selections: any[];
   commits: number;
   sockets: number;
   /** How many sentences may be heard so far; the test raises it. */
@@ -33,6 +35,7 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
   const server: FakeServer = {
     sessions: [],
     drafts: [],
+    selections: [],
     commits: 0,
     sockets: 0,
     allowed: 1,
@@ -46,6 +49,7 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
     let item = 0;
     let heard = 0;
     let open: string | null = null;
+    let selection: { before: string; text: string; after: string } | null = null;
     const queue = sentences.map((s) => (typeof s === 'string' ? [s, s] : s));
     const send = (event: object) => ws.send(JSON.stringify(event));
     const complete = () => {
@@ -55,17 +59,28 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
       open = null;
       send({ type: 'input_audio_buffer.committed', item_id: id });
       send({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: heardText, komorebi: {} });
-      const rewrite = () => {
-        draft += cleaned;
-        send({ type: 'komorebi.draft.updated', item_id: id, item_ids: [id], draft });
-      };
+      const circled = selection;
+      selection = null;
+      const rewrite = circled
+        ? () => {
+            // A circled span: the sentence says what it becomes.
+            draft = circled.before + cleaned + circled.after;
+            send({ type: 'komorebi.selection.replaced', item_id: id, replacement: cleaned, draft });
+          }
+        : () => {
+            draft += cleaned;
+            send({ type: 'komorebi.draft.updated', item_id: id, item_ids: [id], draft });
+          };
       if (server.holdRewrites) held.push(rewrite);
       else setTimeout(rewrite, 250);
     };
     ws.onMessage((raw) => {
       const event = JSON.parse(String(raw));
       if (event.type === 'session.update') server.sessions.push(event.session);
-      else if (event.type === 'komorebi.draft.set') {
+      else if (event.type === 'komorebi.selection.set') {
+        selection = event.selection;
+        server.selections.push(event.selection);
+      } else if (event.type === 'komorebi.draft.set') {
         draft = event.draft;
         server.drafts.push(event.draft);
       } else if (event.type === 'input_audio_buffer.commit') {
@@ -346,6 +361,119 @@ test('a long voice status keeps the empty box one line, before and after it goes
   await page.locator('#composer .voice-ime-btn').click();
   await expect(input).toHaveAttribute('placeholder', 'Message pi…');
   expect(await height()).toBe(oneLine);
+});
+
+/** Where character `index` of the one-line box's text is drawn (its middle). */
+async function charPoint(page: Page, index: number) {
+  return page.locator('#input').evaluate((box: HTMLTextAreaElement, at) => {
+    const style = getComputedStyle(box);
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const rect = box.getBoundingClientRect();
+    const left = rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const x = left + ctx.measureText(box.value.slice(0, at)).width + ctx.measureText(box.value[at]).width / 2;
+    const y = rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop) + parseFloat(style.lineHeight) / 2;
+    return { x, y };
+  }, index);
+}
+
+/** A finger stroke from one point to another (touch events, so pointer events too). */
+async function stroke(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type: string, p?: { x: number; y: number }) =>
+    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: p ? [{ x: p.x, y: p.y }] : [] });
+  await touch('touchStart', from);
+  for (let i = 1; i <= 8; i++) {
+    await touch('touchMove', { x: from.x + ((to.x - from.x) * i) / 8, y: from.y + ((to.y - from.y) * i) / 8 });
+  }
+  await touch('touchEnd');
+  await cdp.detach();
+}
+
+test('a sideways stroke circles words in the box; the next sentence replaces them', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const server = await fakeKomorebi(page, ['明天下午三點開會。', '四點']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('明天下午三點開會。');
+  // Rewritten (no sentence pending): only then can words be circled.
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+
+  // Up and down does not circle.
+  const three = await charPoint(page, 4);
+  await stroke(page, three, { x: three.x + 2, y: three.y - 30 });
+  await page.waitForTimeout(200);
+  await expect(page.locator('.voice-lasso-actions')).toBeHidden();
+
+  // Sideways from 三 to 點: the words, the bubble and the pill.
+  await stroke(page, three, await charPoint(page, 5));
+  await expect.poll(() => server.selections.at(-1)).toEqual({ before: '明天下午', text: '三點', after: '開會。' });
+  const actions = page.locator('.voice-lasso-actions');
+  await expect(actions).toBeVisible();
+  await expect(actions.getByRole('button')).toHaveText(['刪除', '取消']);
+  await expect(page.locator('.voice-lasso-layer .sel-bubble')).toHaveCount(1);
+  await page.waitForTimeout(700); // the pop and the bubble settle
+  for (const button of await actions.getByRole('button').all()) {
+    const box = (await button.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+  // The pill sits above the words, on screen.
+  const pill = (await actions.boundingBox())!;
+  expect(pill.y + pill.height).toBeLessThanOrEqual(three.y);
+  expect(pill.x).toBeGreaterThanOrEqual(0);
+  expect(pill.x + pill.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: info.outputPath('voice-lasso.png') });
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'light'));
+  await page.waitForTimeout(400); // the buttons' colour transition
+  await page.screenshot({ path: info.outputPath('voice-lasso-light.png') });
+
+  // Speak: the circled words become what was said.
+  server.allowed = 2;
+  await expect(input).toHaveValue('明天下午四點開會。', { timeout: 10_000 });
+  await expect(actions).toBeHidden();
+  await expect(page.locator('.voice-lasso-layer .sel-bubble-layer')).toHaveCount(0, { timeout: 2000 });
+  await expect(page.locator('#composer .voice-mirror .voice-fresh')).toHaveText('四');
+  expect(server.selections.at(-1)).toEqual({ before: '明天下午', text: '三點', after: '開會。' });
+  expect(errors).toEqual([]);
+});
+
+test('刪除 takes the circled words out; 取消 and a tap put the circle away', async ({ page }) => {
+  const server = await fakeKomorebi(page, ['明天下午三點開會。']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('明天下午三點開會。');
+  // Rewritten (no sentence pending): only then can words be circled.
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+  const actions = page.locator('.voice-lasso-actions');
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect(actions).toBeVisible();
+  await actions.getByRole('button', { name: '取消' }).click();
+  await expect(actions).toBeHidden();
+  await expect.poll(() => server.selections.at(-1)).toBeNull();
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect.poll(() => server.selections.at(-1)?.text).toBe('下午');
+  await page.locator('#messages').tap();
+  await expect(actions).toBeHidden();
+  await expect.poll(() => server.selections.at(-1)).toBeNull();
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect(actions).toBeVisible();
+  await actions.getByRole('button', { name: '刪除' }).click();
+  await expect(input).toHaveValue('明天三點開會。');
+  await expect(actions).toBeHidden();
+  await expect.poll(() => server.drafts.at(-1)).toBe('明天三點開會。');
+  await expect(input).toBeFocused({ timeout: 100 }).catch(() => {}); // focus is not required
 });
 
 test('Settings sets the clean-up API, applied to the next sentence', async ({ page }) => {

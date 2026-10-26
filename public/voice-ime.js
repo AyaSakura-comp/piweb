@@ -18,9 +18,15 @@
  *   text goes transparent, keeping its caret.
  * Send waits for the last sentence (take()) and sends the cleaned-up text.
  *
+ * A finger stroked sideways across the box's text circles those words (as on
+ * the Komorebi IME page, in the quote selection's bubble): the next sentence
+ * spoken replaces them, or 刪除 takes them out. Up and down still scrolls.
+ *
  * The SDK is the third_party/komorebi-voice submodule, copied to
  * public/komorebi/ by `npm run build:client`, and loaded on first use.
  */
+
+import { createSelectionBubble } from './selection-bubble.js';
 
 const MODE_KEY = 'piweb.voiceIme';
 const SETTINGS_KEY = 'piweb.voiceIme.settings';
@@ -218,6 +224,12 @@ export function createVoiceIme({
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
   let armed = false;
+  // The lasso over the box's text: { start, end, text, item } in shown.text;
+  // `item` is the sentence that is replacing it.
+  let lasso = null;
+  let stroke = null; // a finger on the box that may become a lasso
+  let lassoUi = null; // the bubble and the 刪除/取消 pill, made on first use
+  const segmenter = globalThis.Intl?.Segmenter ? new Intl.Segmenter('zh-Hant', { granularity: 'word' }) : null;
 
   try {
     on = storage.getItem(MODE_KEY) === 'on';
@@ -302,6 +314,12 @@ export function createVoiceIme({
       shown = { text, live, value: text + live };
     }
     target.value = shown.value;
+    if (lasso && shown.text.slice(lasso.start, lasso.end) !== lasso.text) {
+      lasso = null;
+      if (dictation?.selection) dictation.select(null);
+      lassoUi?.bubble.clear();
+      if (lassoUi) lassoUi.actions.hidden = true;
+    }
     entry?.onRender?.(target);
     sync();
     decorate();
@@ -340,9 +358,11 @@ export function createVoiceIme({
   function decorate() {
     for (const [textarea, entry] of composers) {
       const pending = textarea === target && dictation ? [...dictation.pending] : [];
-      const runs = textarea === target && fresh.text === shown.text ? fresh.runs : [];
+      // While circling, the layer holds the text as one node to measure.
+      const runs = textarea === target && fresh.text === shown.text && !lasso ? fresh.runs : [];
       const live = pending.some(([, heard]) => heard);
-      const show = textarea === target && on && (live || runs.length > 0) && textarea.value === shown.value;
+      const show =
+        textarea === target && on && (live || runs.length > 0 || Boolean(lasso)) && textarea.value === shown.value;
       textarea.classList.toggle('voice-mirrored', show);
       entry.mirror.hidden = !show;
       if (!show) {
@@ -381,6 +401,7 @@ export function createVoiceIme({
       nodes.push(doc.createTextNode('\u200b'));
       entry.mirror.replaceChildren(...nodes);
       entry.mirror.scrollTop = textarea.scrollTop;
+      entry.text = nodes[0]?.nodeType === 3 ? nodes[0] : null;
       if (runs.length) {
         // Painted as changed first, then eased out (the transitions in app.css).
         const marks = entry.mirror.querySelectorAll('.voice-fresh:not(.settled), .voice-gone:not(.settled)');
@@ -389,11 +410,222 @@ export function createVoiceIme({
         );
       }
     }
+    if (lasso) renderLasso();
+  }
+
+  // ---- lasso: stroke across words to circle them, then say what they become ----
+
+  function lassoParts() {
+    if (lassoUi || !doc?.body) return lassoUi;
+    const layer = doc.createElement('div');
+    layer.className = 'voice-lasso-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    const actions = doc.createElement('div');
+    actions.className = 'selection-actions voice-lasso-actions';
+    actions.setAttribute('role', 'toolbar');
+    actions.setAttribute('aria-label', '圈選的字：說話就換掉');
+    actions.hidden = true;
+    actions.innerHTML =
+      '<button type="button" data-act="delete">刪除</button><button type="button" data-act="cancel">取消</button>';
+    // Keep the box's focus (no keyboard) and the circle while a button is pressed.
+    actions.addEventListener('pointerdown', (event) => event.preventDefault());
+    actions.addEventListener('click', (event) => {
+      const act = event.target.closest?.('[data-act]')?.dataset.act;
+      if (act === 'delete') deleteLasso();
+      else if (act === 'cancel') dropLasso();
+    });
+    doc.body.append(layer, actions);
+    const bubble = createSelectionBubble(layer, {
+      window: doc.defaultView,
+      scroller: { get scrollTop() { return target?.scrollTop ?? 0; } },
+    });
+    lassoUi = { layer, actions, bubble };
+    return lassoUi;
+  }
+
+  /** The text node the layer draws shown.text in, while circling. */
+  function lassoText() {
+    const node = target && composers.get(target)?.text;
+    return node?.isConnected && node.data === shown.text ? node : null;
+  }
+
+  /** The character of shown.text under (x, y): on the line under the finger,
+   *  the nearest one; null without text. */
+  function charAtPoint(x, y) {
+    const node = lassoText();
+    if (!node) return null;
+    const range = doc.createRange();
+    let best = null;
+    let bestScore = Infinity;
+    for (let i = 0; i < node.data.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const rect = range.getBoundingClientRect();
+      if (!rect.width) continue;
+      const dy = Math.max(rect.top - y, y - rect.bottom, 0);
+      const dx = Math.max(rect.left - x, x - rect.right, 0);
+      const score = dy * 1000 + dx;
+      if (score < bestScore) {
+        bestScore = score;
+        best = i;
+        if (!score) break;
+      }
+    }
+    return best;
+  }
+
+  /** Whole words, so a quick stroke does not have to land on character edges. */
+  function wordAt(text, index) {
+    const segment = segmenter?.segment(text).containing(index);
+    return segment ? [segment.index, segment.index + segment.segment.length] : [index, index + 1];
+  }
+
+  function setLasso(anchor, focus) {
+    const [a0, a1] = wordAt(shown.text, anchor);
+    const [f0, f1] = wordAt(shown.text, focus);
+    const start = Math.min(a0, f0);
+    const end = Math.max(a1, f1);
+    if (lasso?.start === start && lasso?.end === end) return;
+    lasso = { start, end, text: shown.text.slice(start, end), item: null };
+    renderLasso();
+  }
+
+  function renderLasso() {
+    const ui = lassoParts();
+    const node = lassoText();
+    if (!ui || !lasso || !node || lasso.end > node.data.length) return;
+    const range = doc.createRange();
+    range.setStart(node, lasso.start);
+    range.setEnd(node, lasso.end);
+    ui.bubble.set(Array.from(range.getClientRects()));
+    // No pill while the finger is still circling, nor while the sentence that
+    // replaces the words is spoken.
+    ui.actions.hidden = Boolean(stroke || lasso.item);
+    if (ui.actions.hidden) return;
+    const box = range.getBoundingClientRect();
+    const view = doc.defaultView;
+    const half = ui.actions.offsetWidth / 2 + 8;
+    ui.actions.style.left = `${Math.min(view.innerWidth - half, Math.max(half, box.left + box.width / 2))}px`;
+    // Above the words: the box sits at the bottom of the screen.
+    const above = box.top - ui.actions.offsetHeight - 12;
+    ui.actions.style.top = `${above > 56 ? above : box.bottom + 12}px`;
+  }
+
+  function finishLasso() {
+    const ui = lassoParts();
+    if (!lasso || !dictation || !ui) return;
+    ui.actions.hidden = false;
+    ui.actions.style.animation = 'none';
+    void ui.actions.offsetWidth; // the pop again for every new circle
+    ui.actions.style.animation = '';
+    renderLasso();
+    dictation.select(lasso.start, lasso.end);
+    if (!dictation.listening) void start();
+  }
+
+  /** Put the circle away; the server forgets it too. */
+  function dropLasso() {
+    if (!lasso && !stroke) return;
+    lasso = null;
+    stroke = null;
+    if (dictation?.selection) dictation.select(null);
+    if (lassoUi) {
+      lassoUi.bubble.clear();
+      lassoUi.actions.hidden = true;
+    }
+    decorate();
+  }
+
+  function deleteLasso() {
+    if (!lasso || !target || !dictation) return;
+    const before = shown.text;
+    const text = before.slice(0, lasso.start) + before.slice(lasso.end);
+    dropLasso();
+    shown = { text, live: shown.live, value: text + shown.live };
+    target.value = shown.value;
+    dictation.setText(text);
+    dictation.syncDraft();
+    showFresh(text, diffRuns(before, text));
+    composers.get(target)?.onRender?.(target);
+    sync();
+    decorate();
+  }
+
+  function lassoEvent(event) {
+    if (!lasso) return;
+    if (event.type === 'input_audio_buffer.speech_started' && dictation?.selection && !lasso.item) {
+      lasso.item = event.item_id;
+      renderLasso();
+    } else if (event.item_id && event.item_id === lasso.item) {
+      const heardNothing =
+        event.type === 'conversation.item.input_audio_transcription.failed' ||
+        (event.type === 'conversation.item.input_audio_transcription.completed' && !event.transcript);
+      if (event.type === 'komorebi.selection.replaced') dropLasso();
+      else if (heardNothing) {
+        // Nothing was said: the words stay circled for the next sentence.
+        lasso.item = null;
+        renderLasso();
+      }
+    }
+  }
+
+  function strokeMove(event) {
+    if (!stroke || event.pointerId !== stroke.id) return;
+    if (stroke.anchor == null) {
+      const dx = event.clientX - stroke.x;
+      const dy = event.clientY - stroke.y;
+      if (Math.hypot(dx, dy) < 8) return;
+      // Up and down scrolls; only a sideways stroke circles, and not while a
+      // sentence is still being heard or rewritten (its offsets would move).
+      if (Math.abs(dx) <= Math.abs(dy) || dictation?.pending.size || lasso?.item || !shown.text) {
+        stroke = null;
+        return;
+      }
+      if (lasso) dropLasso();
+      lasso = { start: 0, end: 0, text: '', item: null }; // draws the layer to measure
+      decorate();
+      const anchor = charAtPoint(stroke.x, stroke.y);
+      if (anchor == null) {
+        dropLasso();
+        return;
+      }
+      stroke.anchor = anchor;
+      lasso = null;
+      globalThis.navigator?.vibrate?.(10);
+    }
+    setLasso(stroke.anchor, charAtPoint(event.clientX, event.clientY) ?? stroke.anchor);
+  }
+
+  function strokeEnd(event) {
+    if (!stroke || event.pointerId !== stroke.id) return;
+    const drew = stroke.anchor != null;
+    stroke = null;
+    if (drew) finishLasso();
+    else if (lasso && !lasso.item && event.type === 'pointerup') dropLasso(); // a tap puts it away
+  }
+
+  if (doc?.addEventListener) {
+    doc.addEventListener('pointermove', strokeMove);
+    doc.addEventListener('pointerup', strokeEnd);
+    doc.addEventListener('pointercancel', strokeEnd);
+    // A tap anywhere but the box and the pill puts the circle away.
+    doc.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (!lasso || lasso.item || stroke) return;
+        const at = event.target;
+        if (at === target || lassoUi?.actions.contains(at)) return;
+        dropLasso();
+      },
+      true,
+    );
+    doc.defaultView?.addEventListener?.('resize', () => lasso && renderLasso());
   }
 
   function retarget() {
     const next = resolveTarget?.() || null;
     if (next === target) return;
+    dropLasso();
     target = next;
     shown = { text: target?.value ?? '', live: '', value: target?.value ?? '' };
     if (dictation && target) dictation.setText(target.value);
@@ -429,6 +661,7 @@ export function createVoiceIme({
         return; // a sentence that already went out with the last send
       }
       handle(event);
+      lassoEvent(event);
     };
     return dictation;
   }
@@ -507,6 +740,7 @@ export function createVoiceIme({
     }
     retried = false;
     on = !on;
+    if (!on) dropLasso();
     persist();
     error = '';
     if (on) void start();
@@ -547,7 +781,35 @@ export function createVoiceIme({
       frame.classList.add('voice-ime-frame');
       frame.append(mirror);
       composers.set(textarea, { frame, button, mirror, onRender, placeholder: textarea.placeholder, overridden: false });
+      // A finger on the box may stroke sideways and circle words (see lasso).
+      textarea.addEventListener('pointerdown', (event) => {
+        if (!on || textarea !== target || event.pointerType === 'mouse' || !event.isPrimary) return;
+        stroke = { id: event.pointerId, x: event.clientX, y: event.clientY, anchor: null };
+      });
+      // iOS would still pan the page or move the caret with a circling stroke.
+      textarea.addEventListener(
+        'touchmove',
+        (event) => {
+          if (stroke?.anchor != null && event.cancelable) event.preventDefault();
+        },
+        { passive: false },
+      );
+      // A mouse selects in the box as usual; letting go circles the selection.
+      textarea.addEventListener('mouseup', () =>
+        setTimeout(() => {
+          const { selectionStart: start, selectionEnd: end } = textarea;
+          if (!on || !dictation || textarea !== target || start >= end || dictation.pending.size) return;
+          if (end > shown.text.length || lasso?.item) return;
+          dropLasso();
+          lasso = { start, end, text: shown.text.slice(start, end), item: null };
+          textarea.setSelectionRange(end, end);
+          decorate();
+          finishLasso();
+        }),
+      );
+      textarea.addEventListener('scroll', () => lasso && renderLasso(), { passive: true });
       textarea.addEventListener('input', () => {
+        if (textarea === target) dropLasso();
         if (!dictation || textarea !== target) return;
         const typed = typedText(textarea.value, shown.live);
         shown = { text: typed, live: shown.live, value: textarea.value };
@@ -590,6 +852,7 @@ export function createVoiceIme({
       const d = dictation;
       if (!d || textarea !== target) return null;
       if (!d.listening && !d.busy && !d.text) return null;
+      dropLasso();
       // End the sentence being spoken, and give it and the clean-up a moment.
       if (d.voice.listening && d.voice.finishUtterance()) d.awaitingCommit = true;
       if (d.busy && d.voice.connected) {

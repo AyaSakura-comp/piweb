@@ -67,6 +67,36 @@ Komorebi directly.
   notifies, or the sentence still on screen would read as typed text. The mic
   keeps listening for the next message.
 
+## Circling words (lasso, 2026-10-27)
+
+As on the Komorebi IME page: while voice input is on, a finger stroked
+**sideways** across the box's text circles the words it crosses (whole words,
+`Intl.Segmenter`), with no long press. Up and down still scrolls the box
+(`touch-action: pan-y` on the box while it has no keyboard). The circle is the
+quote selection's bubble (`selection-bubble.js`, in a fixed `.voice-lasso-layer`
+over the box) and a 刪除／取消 pill (`.selection-actions`, above the words).
+
+- Letting go sends the span (`Dictation.select(start, end)` →
+  `komorebi.selection.set`). The **next sentence replaces it**: with 整理草稿 on
+  Gemma rewrites only that span from what was said (a new word replaces it,
+  「刪掉」「正式一點」 do that); off, what was said goes in as heard. The
+  server answers `komorebi.selection.replaced`; the box shows what changed as
+  for any rewrite, and the circle goes. While that sentence is spoken the pill
+  hides and the circle cannot be dismissed; a sentence that heard nothing leaves
+  the words circled.
+- **刪除** takes the words out at once (the draft is synced, the removal shows
+  struck through and folds away); **取消**, a tap on the box or anywhere else,
+  typing, Send, switching composers or turning voice off put the circle away and
+  clear the server's selection.
+- No circling while a sentence is still being heard or rewritten: its rewrite
+  would move the offsets.
+- A mouse selects in the box as usual; letting go circles the selection.
+- Measuring: the box is a textarea, so while circling its text is drawn in the
+  `.voice-mirror` layer as one text node and characters are hit-tested there
+  (`charAtPoint`).
+- The sentence being spoken still shows at the end of the box, not after the
+  circled words as on the IME page.
+
 ## Where the text goes
 
 One `Dictation` serves the visible composer (`resolveTarget` in `app.js`): the

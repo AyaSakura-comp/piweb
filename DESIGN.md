@@ -185,7 +185,12 @@ rows (label above a full-width 16px input, `.settings-field`) for the server and
 clean-up API URLs. A 整理草稿 switch (the standard `.settings-toggle`, on by default)
 turns the clean-up off; while off the clean-up API rows are disabled at 45%
 opacity. A 通話模式收音 switch (same toggle, on by default) turns the browser's
-call-style mic processing off. See [voice input](docs/voice-input.md).
+call-style mic processing off. While voice input is on, a sideways finger
+stroke on the box circles whole words without a long press: the quote
+selection's bubble (`.sel-bubble`, same spring and colours) drawn over the box,
+and the quote pill's glass (`.selection-actions`) above the words with 刪除 and
+取消 (44px). The next sentence spoken replaces the circled words; a tap
+elsewhere puts the circle away; vertical strokes still scroll. See [voice input](docs/voice-input.md).
 
 ## Render-first replies
 
