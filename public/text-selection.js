@@ -439,15 +439,52 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   }
 
   // ── Dismiss on backdrop tap ──────────────────────────────────────────────
+  // A tap on a composer card under the backdrop also reaches the card: a
+  // selection quotes itself into that card, and its × (remove the quote), Send
+  // and the box must not first cost a tap that only dismisses the selection.
+  // The chat's card stacks above the backdrop anyway; a Dashboard pane's card
+  // cannot rise out of its pane, so the backdrop covered it (iPhone, 2026-10-26:
+  // × on a pane's quote opened the keyboard and kept the quote).
+  function composerCardTarget(x, y) {
+    const hit = withOverlayTransparent(document, () => document.elementFromPoint(x, y));
+    return hit?.closest?.('.composer-wrap') ? hit : null;
+  }
+
+  // The press began on the backdrop, so the browser's own click would not reach
+  // the card (a click goes to what press and release have in common): the
+  // backdrop passes it on itself. Focus runs inside touchend so iOS still raises
+  // the keyboard for the box.
+  function passToCard(card) {
+    const control = card.closest('button, [role="button"], a, label');
+    if (control) control.click();
+    else if (card.matches('textarea, input')) card.focus({ preventScroll: true });
+  }
+  let cardTap = null; // { card, x, y } while a finger that landed on a card is down
+
   backdrop?.addEventListener('touchstart', (e) => {
     e.stopPropagation();
     if (e.cancelable) e.preventDefault();
+    const touch = e.touches[0];
+    const card = touch && composerCardTarget(touch.clientX, touch.clientY);
+    cardTap = card ? { card, x: touch.clientX, y: touch.clientY } : null;
     clearSelection();
+  }, { passive: false });
+
+  // Still delivered here after clearSelection() hid it: a touch keeps its target.
+  backdrop?.addEventListener('touchend', (e) => {
+    const tap = cardTap;
+    cardTap = null;
+    const touch = e.changedTouches[0];
+    if (!tap || !touch || Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y) > 10) return;
+    if (e.cancelable) e.preventDefault();
+    if (tap.card.isConnected) passToCard(tap.card);
   }, { passive: false });
 
   backdrop?.addEventListener('click', (e) => {
     e.stopPropagation();
+    const card = composerCardTarget(e.clientX, e.clientY);
     clearSelection();
+    if (card) passToCard(card);
   });
 
   // ── Touch on text messages (long press to trigger) ────────────────────────
