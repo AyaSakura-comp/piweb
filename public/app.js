@@ -33,7 +33,7 @@ import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js';
-import { createSessionDashboard } from './session-dashboard.js?v=voice-diff-1';
+import { createSessionDashboard } from './session-dashboard.js?v=voice-tidy-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -3715,6 +3715,18 @@ voiceIme.resume();
   };
   const saved = readVoiceSettings();
   for (const [key, field] of Object.entries(fields)) field.value = saved[key];
+  let tidy = saved.tidy;
+  const tidyToggle = $('btn-voice-tidy');
+  const renderTidy = () => {
+    tidyToggle.setAttribute('aria-checked', String(tidy));
+    tidyToggle.setAttribute('aria-label', `整理草稿，${tidy ? '開啟' : '關閉'}`);
+    tidyToggle.querySelector('.settings-toggle').dataset.state = tidy ? 'on' : 'off';
+    // The clean-up API only matters while the clean-up is on.
+    for (const key of ['refineUrl', 'refineModel', 'refineKey']) {
+      fields[key].disabled = !tidy;
+      fields[key].closest('.settings-field').classList.toggle('is-off', !tidy);
+    }
+  };
   // The default server shows as the placeholder, not as a value to edit.
   if (fields.url.value === fields.url.placeholder) fields.url.value = '';
   const showRefineFields = () => {
@@ -3724,16 +3736,22 @@ voiceIme.resume();
   };
   showRefineFields();
   fields.refineUrl.addEventListener('input', showRefineFields);
-  for (const field of Object.values(fields)) {
-    field.addEventListener('change', () => {
-      const next = Object.fromEntries(
-        Object.entries(fields).map(([key, f]) => [key, f.value.trim()]),
-      );
-      if (!next.url) delete next.url;
-      saveVoiceSettings(next);
-      voiceIme.reconfigure();
-    });
-  }
+  const save = () => {
+    const next = Object.fromEntries(
+      Object.entries(fields).map(([key, f]) => [key, f.value.trim()]),
+    );
+    if (!next.url) delete next.url;
+    saveVoiceSettings({ ...next, tidy });
+    voiceIme.reconfigure();
+  };
+  for (const field of Object.values(fields)) field.addEventListener('change', save);
+  // On or off applies from the next sentence (the SDK's setRefine).
+  tidyToggle.addEventListener('click', () => {
+    tidy = !tidy;
+    renderTidy();
+    save();
+  });
+  renderTidy();
 }
 const COMPOSER_LAYOUT_GUARD_MS = 600;
 const COMPOSER_VIEWPORT_SETTLE_MS = 180;

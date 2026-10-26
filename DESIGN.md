@@ -182,7 +182,9 @@ layer over the textarea (its text transparent, caret kept), only while there is
 something to show. Status goes in the placeholder (說話即可輸入… / 點一下畫面開始收音…
 / 語音輸入：<error>), never a toast. Settings → 語音輸入（Komorebi） uses stacked
 rows (label above a full-width 16px input, `.settings-field`) for the server and
-clean-up API URLs. See [voice input](docs/voice-input.md).
+clean-up API URLs. A 整理草稿 switch (the standard `.settings-toggle`, on by default)
+turns the clean-up off; while off the clean-up API rows are disabled at 45%
+opacity. See [voice input](docs/voice-input.md).
 
 ## Render-first replies
 

@@ -87,11 +87,12 @@ stop so iOS does not ask for permission again.
 
 ## Settings → 語音輸入（Komorebi）
 
-Per browser (`localStorage` `piweb.voiceIme.settings`):
+Per browser (`localStorage` `piweb.voiceIme.settings`; `tidy` added 2026-10-26):
 
 | field | default | meaning |
 |---|---|---|
 | 語音伺服器 | `wss://komorebi.crayfish-monitor.ts.net/v1/realtime` | the Komorebi realtime endpoint |
+| 整理草稿 (switch) | on | off = the SDK's `refine: false` (the Komorebi IME page's 整理全文 switch): sentences go in as heard, nothing is rewritten, fastest and unaffected by a busy host; the clean-up API fields grey out. `setRefine` applies it from the next sentence |
 | 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the CPU** (`model: komorebi-smart-cpu-e2b`, `refine: 'cpu-e2b'`); a URL = any OpenAI-compatible API (`refine: {provider: 'openai', base_url, model, api_key}`) |
 | 模型 / API key | — | shown only with a custom URL |
 
@@ -134,7 +135,9 @@ after the fade, the layer on the box's pixels and font, the session's model
 and refine, typing into the draft, Send sending the draft and keeping the mic on,
 resume after reload on a tap, off; Settings' custom API reaching the session; a
 Dashboard pane receiving the text and sending it. The live spec (2026-10-26)
-heard 明天早上要跟 PM 開一個 meeting。我明天要出去玩。 and sent exactly that; a
+heard 明天早上要跟 PM 開一個 meeting。我明天要出去玩。 and sent exactly that (with
+`PIWEB_E2E_KOMOREBI_TIDY=off` the same recording came back as heard:
+明天早上要跟PM開一個meeting。我明天呃要出去玩。); a
 second run captured the real clean-up's changes in the box (spaces put in around
 PM and meeting). Real
 iPhone/iPad behaviour (keyboard suppression, mic permission, WebKit audio) is

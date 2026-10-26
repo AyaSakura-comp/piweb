@@ -3308,6 +3308,12 @@ textarea.voice-mirrored {
   max-width: 170px;
 }
 
+/* A setting that only applies while another is on (the clean-up API while
+   整理草稿 is off): dimmed and not editable. */
+.settings-row.settings-field.is-off {
+  opacity: 0.45;
+}
+
 /* A text setting too long for the row's end (URLs): label above, full width. */
 .settings-row.settings-field {
   flex-direction: column;

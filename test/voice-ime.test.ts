@@ -45,6 +45,20 @@ describe('voice input settings', () => {
     });
   });
 
+  it('with the clean-up off, sentences go in as heard (refine: false)', () => {
+    const storage = memoryStorage();
+    saveVoiceSettings({ ...DEFAULT_VOICE_SETTINGS, tidy: false }, storage);
+    const settings = readVoiceSettings(storage);
+    expect(settings.tidy).toBe(false);
+    expect(dictationOptions(settings)).toMatchObject({ model: 'komorebi-smart-cpu-e2b', refine: false });
+    // Off wins over a custom clean-up API too; on by default.
+    expect(
+      dictationOptions({ ...settings, refineUrl: 'https://api.example/v1' }).refine,
+    ).toBe(false);
+    expect(readVoiceSettings(memoryStorage()).tidy).toBe(true);
+    expect(readVoiceSettings(memoryStorage({ 'piweb.voiceIme.settings': '{"tidy":"no"}' })).tidy).toBe(true);
+  });
+
   it('leaves the key out when there is none and survives broken storage', () => {
     expect(
       dictationOptions({ ...DEFAULT_VOICE_SETTINGS, refineUrl: 'https://api.example/v1' }).refine,

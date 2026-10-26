@@ -44,6 +44,9 @@ const MIRROR_STYLE = [
 
 export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   url: 'wss://komorebi.crayfish-monitor.ts.net/v1/realtime',
+  // Clean the draft up after each sentence; off, sentences go in as heard
+  // (the SDK's refine: false, the Komorebi IME page's 整理全文 switch).
+  tidy: true,
   // Empty: Komorebi's own Gemma 4 E2B on the CPU cleans the draft up.
   refineUrl: '',
   refineModel: '',
@@ -58,7 +61,9 @@ export function readVoiceSettings(storage = globalThis.localStorage) {
     const saved = JSON.parse(storage.getItem(SETTINGS_KEY) || '{}');
     const settings = { ...DEFAULT_VOICE_SETTINGS };
     for (const key of Object.keys(settings)) {
-      if (typeof saved[key] === 'string') settings[key] = saved[key].trim();
+      if (typeof settings[key] === 'boolean') {
+        if (typeof saved[key] === 'boolean') settings[key] = saved[key];
+      } else if (typeof saved[key] === 'string') settings[key] = saved[key].trim();
     }
     return settings;
   } catch {
@@ -77,6 +82,9 @@ export function saveVoiceSettings(settings, storage = globalThis.localStorage) {
 /** The Dictation model and refine options for these settings. */
 export function dictationOptions(settings) {
   const url = settings.url || DEFAULT_VOICE_SETTINGS.url;
+  if (settings.tidy === false) {
+    return { url, model: settings.refineUrl ? 'komorebi-smart' : 'komorebi-smart-cpu-e2b', refine: false };
+  }
   if (!settings.refineUrl) return { url, model: 'komorebi-smart-cpu-e2b', refine: 'cpu-e2b' };
   return {
     url,

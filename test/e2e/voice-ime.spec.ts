@@ -335,6 +335,24 @@ test('Settings sets the clean-up API, applied to the next sentence', async ({ pa
     await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.voiceIme.settings') || '{}')),
   ).toMatchObject({ refineUrl: 'https://api.example.test/v1', refineModel: 'tidy-model' });
   await page.screenshot({ path: test.info().outputPath('voice-settings.png') });
+
+  // 整理草稿 off: the SDK's refine: false, the API fields greyed; on again: the API.
+  const tidy = page.locator('#btn-voice-tidy');
+  await expect(tidy).toHaveAttribute('aria-checked', 'true');
+  await tidy.click();
+  await expect(tidy).toHaveAttribute('aria-checked', 'false');
+  await expect.poll(() => server.sessions.at(-1)?.komorebi?.refine).toBe(false);
+  await expect(url).toBeDisabled();
+  await page.waitForTimeout(400); // the switch's own transition
+  await page.screenshot({ path: test.info().outputPath('voice-settings-tidy-off.png') });
+  expect(
+    await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.voiceIme.settings') || '{}').tidy),
+  ).toBe(false);
+  await tidy.click();
+  await expect(url).toBeEnabled();
+  await expect
+    .poll(() => server.sessions.at(-1)?.komorebi?.refine)
+    .toEqual({ provider: 'openai', base_url: 'https://api.example.test/v1', model: 'tidy-model' });
 });
 
 test.describe('Dashboard', () => {

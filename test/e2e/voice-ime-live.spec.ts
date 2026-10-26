@@ -46,10 +46,18 @@ test('speech from the microphone becomes the sent message, via the real Komorebi
       return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
     return route.fulfill({ json: { commands: [], models: [], sessions: [], items: [] } });
   });
-  await page.addInitScript((url) => {
-    localStorage.setItem('piweb.mode', 'sessions');
-    if (url.startsWith('wss://')) localStorage.setItem('piweb.voiceIme.settings', JSON.stringify({ url }));
-  }, live!);
+  // PIWEB_E2E_KOMOREBI_TIDY=off runs it with 整理草稿 off (refine: false).
+  const tidy = process.env.PIWEB_E2E_KOMOREBI_TIDY !== 'off';
+  await page.addInitScript(
+    ([url, tidy]) => {
+      localStorage.setItem('piweb.mode', 'sessions');
+      localStorage.setItem(
+        'piweb.voiceIme.settings',
+        JSON.stringify({ ...(String(url).startsWith('wss://') ? { url } : {}), tidy }),
+      );
+    },
+    [live!, tidy] as const,
+  );
   await page.goto('/');
   await expect(page.locator('#session-name')).toHaveText('Voice');
 
@@ -57,10 +65,12 @@ test('speech from the microphone becomes the sent message, via the real Komorebi
   await page.locator('#composer .voice-ime-btn').click();
   await expect(page.locator('#composer')).toHaveClass(/voice-listening/, { timeout: 15_000 });
   // A real rewrite lands: what the clean-up changed shows in the box.
-  await page
-    .locator('#composer .voice-mirror .voice-fresh, #composer .voice-mirror .voice-gone')
-    .first()
-    .waitFor({ timeout: 60_000 });
+  if (tidy) {
+    await page
+      .locator('#composer .voice-mirror .voice-fresh, #composer .voice-mirror .voice-gone')
+      .first()
+      .waitFor({ timeout: 60_000 });
+  }
   const changes = await page.locator('#composer .voice-mirror').evaluate((el) =>
     [...el.querySelectorAll('.voice-fresh, .voice-gone')].map((n) => `${n.className.includes('gone') ? '-' : '+'}${n.textContent}`),
   );

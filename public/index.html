@@ -46,7 +46,7 @@
     <link rel="stylesheet" href="/camera-composer.css" />
     <link rel="stylesheet" href="/image-annotator.css" />
     <link rel="stylesheet" href="/commands-running.css">
-    <link rel="stylesheet" href="/session-dashboard.css?v=voice-diff-1" />
+    <link rel="stylesheet" href="/session-dashboard.css?v=voice-tidy-1" />
 </head>
   <body>
     <!-- Login gate -->
@@ -701,6 +701,10 @@
                 <span class="settings-row-label">語音伺服器</span>
                 <input class="settings-input" id="voice-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="wss://komorebi.crayfish-monitor.ts.net/v1/realtime">
               </label>
+              <button class="settings-row" id="btn-voice-tidy" type="button" role="switch" aria-checked="true" aria-label="整理草稿，開啟" aria-describedby="voice-help">
+                <span class="settings-row-label">整理草稿</span>
+                <span class="settings-toggle" data-state="on" aria-hidden="true"></span>
+              </button>
               <label class="settings-row settings-field" for="voice-refine-url">
                 <span class="settings-row-label">整理草稿用的 API URL</span>
                 <input class="settings-input" id="voice-refine-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="留空：Gemma 4 E2B（CPU）" aria-describedby="voice-help">
@@ -714,7 +718,7 @@
                 <input class="settings-input" id="voice-refine-key" type="password" autocomplete="off" placeholder="不需要就留空">
               </label>
             </div>
-            <p class="settings-footnote" id="voice-help">按輸入框旁的麥克風開啟語音輸入，會一直收音到再按一次為止；開著時不跳出螢幕鍵盤，送出時用整理好的全文。整理草稿預設用 Komorebi 主機上的 Gemma 4 E2B（CPU）；要換就填公開的 https OpenAI 相容網址（例如 https://api.openai.com/v1）。設定只存在這個瀏覽器，API key 經由語音伺服器轉送。</p>
+            <p class="settings-footnote" id="voice-help">按輸入框旁的麥克風開啟語音輸入，會一直收音到再按一次為止；開著時不跳出螢幕鍵盤。整理草稿開著時，每講完一句就重寫整份草稿（去贅字、補標點、套用改口），預設用 Komorebi 主機上的 Gemma 4 E2B（CPU）；要換就填公開的 https OpenAI 相容網址（例如 https://api.openai.com/v1）。關掉就照聽到的直接放進輸入框，最快，主機忙時也不受影響。設定只存在這個瀏覽器，API key 經由語音伺服器轉送。</p>
           </section>
 
           <section class="settings-section" aria-labelledby="settings-account-title">
@@ -767,6 +771,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=voice-diff-1" type="module"></script>
+    <script src="/app.js?v=voice-tidy-1" type="module"></script>
   </body>
 </html>
