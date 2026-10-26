@@ -3716,7 +3716,14 @@ voiceIme.resume();
   const saved = readVoiceSettings();
   for (const [key, field] of Object.entries(fields)) field.value = saved[key];
   let tidy = saved.tidy;
+  let callAudio = saved.callAudio;
   const tidyToggle = $('btn-voice-tidy');
+  const callAudioToggle = $('btn-voice-call-audio');
+  const renderCallAudio = () => {
+    callAudioToggle.setAttribute('aria-checked', String(callAudio));
+    callAudioToggle.setAttribute('aria-label', `通話模式收音，${callAudio ? '開啟' : '關閉'}`);
+    callAudioToggle.querySelector('.settings-toggle').dataset.state = callAudio ? 'on' : 'off';
+  };
   const renderTidy = () => {
     tidyToggle.setAttribute('aria-checked', String(tidy));
     tidyToggle.setAttribute('aria-label', `整理草稿，${tidy ? '開啟' : '關閉'}`);
@@ -3741,7 +3748,7 @@ voiceIme.resume();
       Object.entries(fields).map(([key, f]) => [key, f.value.trim()]),
     );
     if (!next.url) delete next.url;
-    saveVoiceSettings({ ...next, tidy });
+    saveVoiceSettings({ ...next, tidy, callAudio });
     voiceIme.reconfigure();
   };
   for (const field of Object.values(fields)) field.addEventListener('change', save);
@@ -3751,7 +3758,14 @@ voiceIme.resume();
     renderTidy();
     save();
   });
+  // Reopens the microphone with or without the browser's processing.
+  callAudioToggle.addEventListener('click', () => {
+    callAudio = !callAudio;
+    renderCallAudio();
+    save();
+  });
   renderTidy();
+  renderCallAudio();
 }
 const COMPOSER_LAYOUT_GUARD_MS = 600;
 const COMPOSER_VIEWPORT_SETTLE_MS = 180;

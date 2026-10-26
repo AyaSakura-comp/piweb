@@ -25,6 +25,7 @@ describe('voice input settings', () => {
     expect(settings).toEqual(DEFAULT_VOICE_SETTINGS);
     expect(dictationOptions(settings)).toEqual({
       url: 'wss://komorebi.crayfish-monitor.ts.net/v1/realtime',
+      processing: true,
       model: 'komorebi-smart-cpu-e2b',
       refine: 'cpu-e2b',
     });
@@ -40,6 +41,7 @@ describe('voice input settings', () => {
     expect(settings.refineUrl).toBe('https://api.example/v1');
     expect(dictationOptions(settings)).toEqual({
       url: 'wss://voice.example/v1/realtime',
+      processing: true,
       model: 'komorebi-smart',
       refine: { provider: 'openai', base_url: 'https://api.example/v1', model: 'tidy', api_key: 'k' },
     });
@@ -57,6 +59,16 @@ describe('voice input settings', () => {
     ).toBe(false);
     expect(readVoiceSettings(memoryStorage()).tidy).toBe(true);
     expect(readVoiceSettings(memoryStorage({ 'piweb.voiceIme.settings': '{"tidy":"no"}' })).tidy).toBe(true);
+  });
+
+  it('通話模式收音 off records without the browser processing (processing: false)', () => {
+    const storage = memoryStorage();
+    saveVoiceSettings({ ...DEFAULT_VOICE_SETTINGS, callAudio: false }, storage);
+    const settings = readVoiceSettings(storage);
+    expect(settings.callAudio).toBe(false);
+    expect(dictationOptions(settings).processing).toBe(false);
+    expect(dictationOptions({ ...settings, tidy: false }).processing).toBe(false);
+    expect(readVoiceSettings(memoryStorage()).callAudio).toBe(true);
   });
 
   it('leaves the key out when there is none and survives broken storage', () => {

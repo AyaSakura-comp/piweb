@@ -392,6 +392,39 @@ test('Settings sets the clean-up API, applied to the next sentence', async ({ pa
     .toEqual({ provider: 'openai', base_url: 'https://api.example.test/v1', model: 'tidy-model' });
 });
 
+test('通話模式收音 off reopens the microphone without the browser processing', async ({ page }) => {
+  await fakeKomorebi(page, []);
+  await mockApi(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('piweb.mode', 'sessions');
+    const asked: unknown[] = ((window as any).micAsks = []);
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (constraints) => {
+      asked.push(constraints);
+      return original(constraints);
+    };
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(page.locator('#composer')).toHaveClass(/voice-listening/);
+  const asks = () => page.evaluate(() => (window as any).micAsks.map((c: any) => c.audio.echoCancellation));
+  expect(await asks()).toEqual([true]);
+
+  await page.evaluate(() => (document.getElementById('settings-dialog') as HTMLDialogElement).showModal());
+  const callAudio = page.locator('#btn-voice-call-audio');
+  await expect(callAudio).toHaveAttribute('aria-checked', 'true');
+  await callAudio.click();
+  await expect(callAudio).toHaveAttribute('aria-checked', 'false');
+  await expect.poll(asks).toEqual([true, false]);
+  await expect(page.locator('#composer')).toHaveClass(/voice-listening/);
+  expect(
+    await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.voiceIme.settings') || '{}').callAudio),
+  ).toBe(false);
+  await page.waitForTimeout(400); // the switch's own transition
+  await page.screenshot({ path: test.info().outputPath('voice-settings-call-audio-off.png') });
+});
+
 test.describe('Dashboard', () => {
   test.use({ viewport: { width: 1376, height: 1032 }, isMobile: false, hasTouch: false });
 

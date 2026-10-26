@@ -95,12 +95,13 @@ stop so iOS does not ask for permission again.
 
 ## Settings → 語音輸入（Komorebi）
 
-Per browser (`localStorage` `piweb.voiceIme.settings`; `tidy` added 2026-10-26):
+Per browser (`localStorage` `piweb.voiceIme.settings`; `tidy` added 2026-10-26, `callAudio` 2026-10-27):
 
 | field | default | meaning |
 |---|---|---|
 | 語音伺服器 | `wss://komorebi.crayfish-monitor.ts.net/v1/realtime` | the Komorebi realtime endpoint |
 | 整理草稿 (switch) | on | off = the SDK's `refine: false` (the Komorebi IME page's 整理全文 switch): sentences go in as heard, nothing is rewritten, fastest and unaffected by a busy host; the clean-up API fields grey out. `setRefine` applies it from the next sentence |
+| 通話模式收音 (switch) | on | the SDK's `processing`: the browser's echo cancellation, noise suppression and auto gain (`getUserMedia`). On an iPhone that is the voice processing used for calls; off records the microphone as is and leaves the cleaning to Komorebi's DeepFilterNet 3. A change reopens the microphone |
 | 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the CPU** (`model: komorebi-smart-cpu-e2b`, `refine: 'cpu-e2b'`); a URL = any OpenAI-compatible API (`refine: {provider: 'openai', base_url, model, api_key}`) |
 | 模型 / API key | — | shown only with a custom URL |
 

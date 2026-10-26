@@ -184,7 +184,8 @@ something to show. Status goes in the placeholder (說話即可輸入… / 點�
 rows (label above a full-width 16px input, `.settings-field`) for the server and
 clean-up API URLs. A 整理草稿 switch (the standard `.settings-toggle`, on by default)
 turns the clean-up off; while off the clean-up API rows are disabled at 45%
-opacity. See [voice input](docs/voice-input.md).
+opacity. A 通話模式收音 switch (same toggle, on by default) turns the browser's
+call-style mic processing off. See [voice input](docs/voice-input.md).
 
 ## Render-first replies
 

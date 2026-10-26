@@ -47,6 +47,10 @@ export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   // Clean the draft up after each sentence; off, sentences go in as heard
   // (the SDK's refine: false, the Komorebi IME page's 整理全文 switch).
   tidy: true,
+  // The browser's echo cancellation, noise suppression and gain control
+  // (getUserMedia). On an iPhone they record like a phone call; off, the mic
+  // records as is and Komorebi's own denoiser does the cleaning.
+  callAudio: true,
   // Empty: Komorebi's own Gemma 4 E2B on the CPU cleans the draft up.
   refineUrl: '',
   refineModel: '',
@@ -82,12 +86,14 @@ export function saveVoiceSettings(settings, storage = globalThis.localStorage) {
 /** The Dictation model and refine options for these settings. */
 export function dictationOptions(settings) {
   const url = settings.url || DEFAULT_VOICE_SETTINGS.url;
+  const processing = settings.callAudio !== false;
   if (settings.tidy === false) {
-    return { url, model: settings.refineUrl ? 'komorebi-smart' : 'komorebi-smart-cpu-e2b', refine: false };
+    return { url, processing, model: settings.refineUrl ? 'komorebi-smart' : 'komorebi-smart-cpu-e2b', refine: false };
   }
-  if (!settings.refineUrl) return { url, model: 'komorebi-smart-cpu-e2b', refine: 'cpu-e2b' };
+  if (!settings.refineUrl) return { url, processing, model: 'komorebi-smart-cpu-e2b', refine: 'cpu-e2b' };
   return {
     url,
+    processing,
     model: 'komorebi-smart',
     refine: {
       provider: 'openai',
@@ -609,7 +615,7 @@ export function createVoiceIme({
       return text;
     },
     /** The settings changed: a new server reconnects, a new clean-up model
-     *  applies from the next sentence. */
+     *  applies from the next sentence, new mic processing reopens the mic. */
     reconfigure() {
       const d = dictation;
       if (!d) return;
@@ -622,6 +628,11 @@ export function createVoiceIme({
       }
       d.model = options.model;
       d.setRefine(options.refine);
+      if (d.voice.processing !== options.processing) {
+        // The microphone is opened again with the new processing.
+        d.voice.set({ processing: options.processing });
+        if (d.listening) void d.stop().then(() => d.start()).catch(() => {});
+      }
     },
     /** Called once at boot: voice input that was left on resumes on the next tap. */
     resume() {
