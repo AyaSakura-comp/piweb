@@ -6,7 +6,10 @@
  * with independent draggable vertical AND horizontal resize splitters.
  */
 
+import { shouldLoadOlderHistory } from './session-ui.js';
+
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
+const PANE_PAGE_SIZE = 50;
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
@@ -1293,6 +1296,11 @@ export function createSessionDashboard({
       sendBtn,
       form,
       cursor: 0,
+      // Older history, paged in as the reader scrolls up (see loadPaneOlder).
+      oldest: 0,
+      hasMoreOlder: false,
+      loadingOlder: false,
+      historyGeneration: 0,
       busy: false,
       source: null,
       reconnectTimer: null,
@@ -1386,6 +1394,7 @@ export function createSessionDashboard({
         if (scrollRafId) return;
         scrollRafId = requestAnimationFrame(() => {
           scrollRafId = 0;
+          if (shouldLoadOlderHistory(messagesEl)) void loadPaneOlder(pane);
           const near = isNearBottom();
           if (near) pane.userScrolledUp = false;
           const showJump = !near && pane.btwTarget === 'main';
@@ -1643,7 +1652,7 @@ export function createSessionDashboard({
                 return;
               }
               try {
-                const { events } = await api(
+                const { events, hasMore } = await api(
                   `/api/sessions/${encodeURIComponent(jid)}/events?around=${hit.id}&limit=50`,
                 );
                 if (pane.disposed) return;
@@ -1651,6 +1660,7 @@ export function createSessionDashboard({
                 for (const ev of events || []) {
                   appendPaneEvent(pane, ev, false);
                 }
+                resetPaneHistory(pane, events, hasMore);
                 const target = messagesEl.querySelector(`[data-event-id="${hit.id}"]`);
                 if (target) {
                   target.scrollIntoView({ block: 'center' });
@@ -2565,10 +2575,92 @@ export function createSessionDashboard({
     });
   }
 
+  /** The transcript was replaced by `events`: page older history from its
+   *  first event, behind a top row that says whether there is more. */
+  function resetPaneHistory(pane, events, hasMore) {
+    pane.historyGeneration++;
+    pane.loadingOlder = false;
+    pane.oldest = events?.[0]?.id || 0;
+    pane.hasMoreOlder = Boolean(hasMore && pane.oldest);
+    let sentinel = pane.messagesEl.querySelector(':scope > .top-sentinel');
+    if (!sentinel) {
+      sentinel = el('div', 'top-sentinel');
+      sentinel.addEventListener('click', () => void loadPaneOlder(pane));
+      pane.messagesEl.prepend(sentinel);
+    }
+    setPaneSentinel(pane, pane.hasMoreOlder ? 'more' : 'start');
+  }
+
+  function setPaneSentinel(pane, mode) {
+    const sentinel = pane.messagesEl.querySelector(':scope > .top-sentinel');
+    if (!sentinel) return;
+    sentinel.textContent =
+      mode === 'loading'
+        ? 'Loading older messages…'
+        : mode === 'more'
+          ? 'Load older messages'
+          : 'Beginning of this session';
+    sentinel.className = `top-sentinel${mode === 'start' ? ' start' : ''}`;
+  }
+
+  /** Prepend one page of older events, keeping the text under the reader's
+   *  eyes where it was (as the single-session view does). */
+  async function loadPaneOlder(pane) {
+    if (pane.disposed || pane.loadingOlder || !pane.hasMoreOlder || !pane.oldest) return;
+    const generation = pane.historyGeneration;
+    const current = () => !pane.disposed && pane.historyGeneration === generation;
+    pane.loadingOlder = true;
+    setPaneSentinel(pane, 'loading');
+    try {
+      const { events = [], hasMore } = await api(
+        `/api/sessions/${encodeURIComponent(pane.jid)}/events?before=${pane.oldest}&limit=${PANE_PAGE_SIZE}`,
+      );
+      if (!current()) return;
+      const messages = pane.messagesEl;
+      const sentinel = messages.querySelector(':scope > .top-sentinel');
+      const viewportTop = messages.getBoundingClientRect().top;
+      const anchor = Array.from(messages.children).find(
+        (node) => node !== sentinel && node.getBoundingClientRect().bottom > viewportTop + 1,
+      );
+      const anchorTop = anchor?.getBoundingClientRect().top;
+      const heightBefore = messages.scrollHeight;
+      const topBefore = messages.scrollTop;
+      // The prepend is compensated below; native scroll anchoring would add a
+      // second correction mid-momentum.
+      const overflowAnchor = messages.style.overflowAnchor;
+      messages.style.overflowAnchor = 'none';
+      requestAnimationFrame(() => {
+        messages.style.overflowAnchor = overflowAnchor;
+      });
+      const frag = document.createDocumentFragment();
+      for (const event of events) {
+        if (event.id && messages.querySelector(`[data-event-id="${event.id}"]`)) continue;
+        const node = buildEventNode(event, { liveRich: false });
+        node.dataset.eventId = String(event.id);
+        frag.append(node);
+      }
+      messages.insertBefore(frag, sentinel ? sentinel.nextSibling : messages.firstChild);
+      if (events.length) pane.oldest = events[0].id;
+      pane.hasMoreOlder = Boolean(hasMore) && events.length > 0;
+      if (anchor?.isConnected && anchorTop != null) {
+        messages.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+      } else {
+        messages.scrollTop = topBefore + (messages.scrollHeight - heightBefore);
+      }
+    } catch {
+      // Leave the row tappable for another try.
+    } finally {
+      if (current()) {
+        pane.loadingOlder = false;
+        setPaneSentinel(pane, pane.hasMoreOlder ? 'more' : 'start');
+      }
+    }
+  }
+
   async function hydratePane(pane) {
     try {
-      const { events, busy, partial, session } = await api(
-        `/api/sessions/${encodeURIComponent(pane.jid)}/events?limit=50`,
+      const { events, busy, partial, session, hasMore } = await api(
+        `/api/sessions/${encodeURIComponent(pane.jid)}/events?limit=${PANE_PAGE_SIZE}`,
       );
       if (pane.disposed) return;
       pane.messagesEl.replaceChildren();
@@ -2578,6 +2670,7 @@ export function createSessionDashboard({
       for (const ev of events || []) {
         appendPaneEvent(pane, ev, false);
       }
+      resetPaneHistory(pane, events, hasMore);
       pane.busy = Boolean(busy);
       if (session?.name && pane.nameInput.hidden) pane.nameEl.textContent = session.name;
       syncPaneHeader(pane);
