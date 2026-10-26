@@ -1006,7 +1006,7 @@
   }
 
   .dashboard-pane-messages {
-    flex: 1;
+    flex: 1 1 0px;
     min-width: 0;
     min-height: 0;
     padding: 10px 4px 6px;
@@ -1017,12 +1017,18 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Anchor the floating button to the transcript, not a guessed composer height. */
+  /* Anchor the floating button to the transcript, not a guessed composer height.
+     The basis is 0px, never `flex: 1`'s 0%: when iOS WebKit relaid a pane out
+     and took its height as indefinite, a 0% basis fell back to the content (a
+     long transcript, thousands of px) and the shrink, shared by basis, crushed
+     the input card to a ~20px sliver of its bottom edge (iPhone recordings
+     2026-10-27, after a pane hop and with the keyboard up; the same sliver
+     reproduces in WebKit with flex-basis: auto). */
   .dashboard-pane-transcript {
     position: relative;
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 1 1 0px;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -1117,16 +1123,6 @@
   .dashboard-pane-dock.is-floating {
     translate: 0 calc(-1 * var(--kb-lift, 0px));
     transition: translate 0.22s cubic-bezier(0.25, 0.8, 0.3, 1);
-    /* Its own layer, always above the transcript. The transcript scroller is
-       a compositor layer (translateZ); iOS gave the card a layer only while
-       the lift animated, then painted it back into the pane, under the
-       transcript: with the keyboard up the card shrank to a sliver of its
-       edge, and a selection's auto-scroll drew text over the chips (iPhone
-       recording 2026-10-27). */
-    position: relative;
-    z-index: 1;
-    will-change: transform;
-    transform: translateZ(0);
   }
 
   .dashboard-pane.kb-lifted,
