@@ -2311,8 +2311,9 @@ html.keyboard-shell .life-edge-hint {
 /* Before and after the clean-up (as on the Komorebi IME page): the box's text
    is drawn again in .voice-mirror, exactly over it, while a sentence is being
    heard or a rewrite has just landed; the box's own text goes transparent but
-   keeps its caret. A sentence being heard is dim and underlined (a blinking
-   caret while spoken, breathing while it waits for the rewrite); what the
+   keeps its caret. A sentence being spoken is dim and underlined with a
+   blinking caret; heard, it reads as text with a dotted underline until the
+   rewrite lands; what the
    rewrite put in is highlighted and fades out, what it took out is struck
    through in --danger, fades and folds away. */
 .voice-ime-frame {
@@ -2382,19 +2383,17 @@ textarea.voice-mirrored {
   animation: voice-caret 1s steps(2) infinite;
 }
 
+/* Heard, waiting for the clean-up: it already reads as text (the clean-up
+   can take seconds on a busy host), only a dotted underline says it may still
+   change. */
 .voice-preedit.refining {
-  animation: voice-breathe 1.4s ease-in-out infinite;
+  color: inherit;
+  text-decoration: underline dotted 1.5px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 @keyframes voice-caret {
   50% {
     opacity: 0;
-  }
-}
-
-@keyframes voice-breathe {
-  50% {
-    opacity: 0.45;
   }
 }
 
@@ -2404,8 +2403,7 @@ textarea.voice-mirrored {
     transition: none;
   }
 
-  .voice-preedit.listening::after,
-  .voice-preedit.refining {
+  .voice-preedit.listening::after {
     animation: none;
   }
 

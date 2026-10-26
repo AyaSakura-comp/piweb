@@ -133,6 +133,12 @@ same rules hold in the chat and in a Dashboard pane.
   selection quotes itself, in the chat and in a Dashboard pane alike; the user
   did not want to wait for 引用. In a pane the input card comes to that pane
   carrying the quote, without focus (so no keyboard).
+- **A tap on a composer card goes through the selection backdrop.** The
+  full-screen backdrop that dismisses a selection would also swallow the first
+  tap on the card the selection just quoted itself into. The chat's card stacks
+  above it, a Dashboard pane's cannot, so the backdrop passes a tap that lands on
+  a `.composer-wrap` on to it (×, Send, chips, the box; a still finger, focus from
+  `touchend` so iOS raises the keyboard). Elsewhere a tap only dismisses.
 - **Lifting a long press never presses what is under the finger.** The pill opens
   while the finger is still down and can open right under it; the `touchend` that
   finishes a long press cancels its default, so the lift is not a click on 引用.
@@ -166,8 +172,10 @@ and the composer shows a listening ring: an inset 1–2px `--accent` ring and an
 inner glow following the microphone level, brighter while a sentence is heard.
 It is a `box-shadow` inside the box, so it takes no space; reduced motion drops
 its 120ms easing. The clean-up shows as on the Komorebi IME page: a sentence
-being heard is `--text-dim` with a 1.5px accent underline (blinking accent caret
-while spoken, breathing while it waits); when the rewrite lands, inserted
+being spoken is `--text-dim` with a 1.5px accent underline and a blinking accent
+caret; once heard it is normal text with a dotted accent underline until its
+rewrite lands (no breathing: the clean-up can take seconds, and send never waits
+more than 1.2s for it); when the rewrite lands, inserted
 characters get a 34% `--accent` highlight that fades over 1.2s and removed ones
 stay struck through in `--danger`, then fade and fold away. This is drawn in a
 layer over the textarea (its text transparent, caret kept), only while there is

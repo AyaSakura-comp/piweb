@@ -272,6 +272,45 @@ test('the box shows the sentence as heard, then what the clean-up changed', asyn
   expect(errors).toEqual([]);
 });
 
+test('send does not wait on a slow clean-up: the sentence goes as heard and its late rewrite stays out', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const server = await fakeKomorebi(page, [['測試語音輸入法', '測試語音輸入法。']]);
+  server.holdRewrites = true; // a clean-up that takes forever (a busy host)
+  const sent = await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+
+  // Heard and waiting for the clean-up: it already reads as text.
+  const preedit = page.locator('#composer .voice-mirror .voice-preedit');
+  await expect(preedit).toHaveText('測試語音輸入法', { timeout: 5000 });
+  await expect(preedit).toHaveClass(/refining/);
+  const colors = await page.evaluate(() => ({
+    preedit: getComputedStyle(document.querySelector('#composer .voice-preedit')!).color,
+    text: getComputedStyle(document.querySelector('#composer .voice-mirror')!).color,
+  }));
+  expect(colors.preedit).toBe(colors.text);
+
+  const pressed = Date.now();
+  await page.locator('#btn-send').click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(Date.now() - pressed).toBeLessThan(2500);
+  expect(sent[0].text).toBe('測試語音輸入法');
+  await expect(input).toHaveValue('');
+
+  // The rewrite arrives late: it belongs to the message already sent.
+  server.flush();
+  await page.waitForTimeout(500);
+  await expect(input).toHaveValue('');
+  await expect.poll(() => server.drafts.at(-1)).toBe('');
+  expect(errors).toEqual([]);
+});
+
 test('Settings sets the clean-up API, applied to the next sentence', async ({ page }) => {
   const server = await fakeKomorebi(page, ['一句話。']);
   await mockApi(page);

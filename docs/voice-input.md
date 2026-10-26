@@ -20,9 +20,12 @@ Komorebi directly.
   applied to earlier sentences), as in the Komorebi IME, so the box is replaced
   each time, never appended to.
 - **Before and after the clean-up** (2026-10-26, after the Komorebi IME page,
-  `demo/voice-ime`): a sentence still being heard is dim and underlined, with a
-  blinking caret while it is spoken and breathing while it waits for the rewrite
-  (the page's `.preedit.listening` / `.refining`). When the rewritten draft lands,
+  `demo/voice-ime`): a sentence being spoken is dim and underlined with a
+  blinking caret (the page's `.preedit.listening`). Once heard it reads as normal
+  text with only a dotted accent underline while it waits for the rewrite (the
+  page breathes it, `.refining`; on 2026-10-26 the CPU Gemma took 13 s per
+  sentence on a saturated host and a breathing grey sentence that long read as
+  stuck). When the rewritten draft lands,
   the page flashes the whole draft (`.fresh`); piweb diffs what was on screen (old
   draft + sentences as heard) against the new draft (`diffRuns`: common
   prefix/suffix, then a character LCS) and marks only the changes: what the
@@ -48,9 +51,13 @@ Komorebi directly.
 - **The placeholder says what is happening**: 說話即可輸入… while listening,
   點一下畫面開始收音… while waiting for a tap, 語音輸入：<error> after a failure.
   No toasts.
-- **Send** waits for the sentence being spoken and its clean-up (`take()`, at
-  most 5 s), sends that text and clears the draft; the mic keeps listening for
-  the next message.
+- **Send** ends the sentence being spoken and waits for it and its clean-up at
+  most 1.2 s (`take()`, `TAKE_TIMEOUT_MS`); what is not back by then is sent as
+  heard. Those sentences' later events are dropped (`sentItems`) and their late
+  rewrite, made of a draft already sent, is replaced by the current draft, so it
+  never reappears in the next message. `take()` empties the box itself before it
+  notifies, or the sentence still on screen would read as typed text. The mic
+  keeps listening for the next message.
 
 ## Where the text goes
 

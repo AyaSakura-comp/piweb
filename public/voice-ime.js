@@ -24,7 +24,11 @@
 
 const MODE_KEY = 'piweb.voiceIme';
 const SETTINGS_KEY = 'piweb.voiceIme.settings';
-const TAKE_TIMEOUT_MS = 5000;
+// Send waits this long for the sentence just spoken and its clean-up; what
+// is not back by then goes as heard. The clean-up model can be slow when the
+// host is busy (13s for a sentence on 2026-10-26 with the CPU saturated), and a
+// send must not wait on it.
+const TAKE_TIMEOUT_MS = 1200;
 const IDLE_CLOSE_MS = 8000;
 // The highlight on what the clean-up changed fades over 1.2s (app.css), then goes.
 const FRESH_MS = 1400;
@@ -186,6 +190,9 @@ export function createVoiceIme({
   // Sentences still being rewritten when the user typed: their rewrite was made
   // from the draft before the typing, so when it lands the typed text wins.
   const staleItems = new Set();
+  // Sentences already sent as heard because their clean-up was late: their
+  // events no longer belong to the box, and their rewrite is of a sent draft.
+  const sentItems = new Set();
   let keepTyped = false;
   let fresh = { text: '', runs: [], timer: 0 }; // how the last rewrite changed the text, while it shows
   let on = false;
@@ -394,8 +401,13 @@ export function createVoiceIme({
       trackStage(event);
       if (event.type === 'komorebi.draft.updated') {
         const items = event.item_ids || [event.item_id];
-        if (items.some((item) => staleItems.has(item))) keepTyped = true;
-        for (const item of items) staleItems.delete(item);
+        if (items.some((item) => staleItems.has(item) || sentItems.has(item))) keepTyped = true;
+        for (const item of items) {
+          staleItems.delete(item);
+          sentItems.delete(item);
+        }
+      } else if (event.item_id && sentItems.has(event.item_id)) {
+        return; // a sentence that already went out with the last send
       }
       handle(event);
     };
@@ -551,10 +563,31 @@ export function createVoiceIme({
      * when voice input is not writing this box.
      */
     async take(textarea) {
-      if (!dictation || textarea !== target) return null;
-      if (!dictation.listening && !dictation.busy && !dictation.text) return null;
-      const text = await dictation.take({ timeout: TAKE_TIMEOUT_MS });
+      const d = dictation;
+      if (!d || textarea !== target) return null;
+      if (!d.listening && !d.busy && !d.text) return null;
+      // End the sentence being spoken, and give it and the clean-up a moment.
+      if (d.voice.listening && d.voice.finishUtterance()) d.awaitingCommit = true;
+      if (d.busy && d.voice.connected) {
+        await new Promise((resolve) => {
+          d.waiters.push(resolve);
+          setTimeout(resolve, TAKE_TIMEOUT_MS);
+        });
+      }
+      // Whatever is not cleaned up yet goes as heard; its late rewrite is dropped.
+      const text = d.text + d.live;
+      for (const item of d.pending.keys()) sentItems.add(item);
+      d.pending.clear();
+      d.awaitingCommit = false;
+      d.selection = null;
+      d.text = '';
+      d.syncDraft();
+      // Empty the box too before telling anyone: a box still showing the
+      // sentence would read as text typed behind voice input's back, and
+      // render() would put it back into the draft. The caller sends `text`.
+      textarea.value = '';
       shown = { text: '', live: '', value: '' };
+      d.emit();
       return text;
     },
     /** The settings changed: a new server reconnects, a new clean-up model
