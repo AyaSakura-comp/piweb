@@ -155,6 +155,21 @@ shell is pinned to the visual viewport (`public/viewport-shell.js`,
 - **Send mid-composition** commits the IME text before reading the box, so marked
   text is sent rather than left behind.
 
+## Voice input (Komorebi)
+
+A borderless mic button sits before Send in the chat composer and in each
+Dashboard pane composer (44px target on touch; accent when on, `--danger` after
+an error). It is one app-wide switch that stays on until turned off. While on,
+the composers set `inputmode="none"` (no iPhone/iPad keyboard), speech streams
+into the visible composer as the cleaned-up draft plus the sentence being heard,
+and the composer shows a listening ring: an inset 1–2px `--accent` ring and an
+inner glow following the microphone level, brighter while a sentence is heard.
+It is a `box-shadow` inside the box, so it takes no space; reduced motion drops
+its 120ms easing. Status goes in the placeholder (說話即可輸入… / 點一下畫面開始收音…
+/ 語音輸入：<error>), never a toast. Settings → 語音輸入（Komorebi） uses stacked
+rows (label above a full-width 16px input, `.settings-field`) for the server and
+clean-up API URLs. See [voice input](docs/voice-input.md).
+
 ## Render-first replies
 
 Live assistant/thinking replies use a reply-only React 19 island backed by

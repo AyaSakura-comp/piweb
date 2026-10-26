@@ -17,3 +17,5 @@ artifacts/
 public/lobehub-rich.js
 public/lobehub-rich.js.LEGAL.txt
 public/lobehub-rich.LICENSE.txt
+# Komorebi voice SDK, copied from the third_party/komorebi-voice submodule.
+public/komorebi/

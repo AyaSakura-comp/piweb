@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,3 +57,15 @@ for (const path of [...packages].sort()) {
 }
 await writeFile(resolve(root, 'public/lobehub-rich.LICENSE.txt'), notices);
 console.log(`Built LobeHub reply island and ${packages.size} dependency license notices.`);
+
+// Komorebi voice input SDK (git submodule). Served as plain files, not bundled:
+// the SDK loads its audio worklet and worker by URLs relative to itself.
+const sdk = resolve(root, 'third_party/komorebi-voice/sdk/js');
+const sdkFiles = (await readdir(sdk).catch(() => {
+  throw new Error('Komorebi SDK missing: run `git submodule update --init third_party/komorebi-voice`');
+})).filter((file) => file.endsWith('.js'));
+const sdkOut = resolve(root, 'public/komorebi');
+await rm(sdkOut, { recursive: true, force: true });
+await mkdir(sdkOut, { recursive: true });
+for (const file of sdkFiles) await copyFile(resolve(sdk, file), resolve(sdkOut, file));
+console.log(`Copied ${sdkFiles.length} Komorebi voice SDK modules.`);

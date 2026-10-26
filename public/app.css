@@ -2277,6 +2277,43 @@ html.keyboard-shell .life-edge-hint {
   line-height: 1.4;
 }
 
+/* Komorebi voice input (voice-ime.js). The mic sits before Send; on, it is
+   accent. While listening the composer itself shows what the microphone hears:
+   an inset ring and glow that follow the level (--voice-level, 0–1), drawn
+   inside the box so they take no space and survive overflow: hidden. */
+.voice-ime-btn.voice-on {
+  color: var(--accent);
+}
+
+.voice-ime-btn.voice-error {
+  color: var(--danger);
+}
+
+@media (pointer: coarse) {
+  .voice-ime-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.composer.voice-listening {
+  --voice-ring: color-mix(in srgb, var(--accent) calc(35% + var(--voice-level, 0) * 65%), transparent);
+  box-shadow:
+    inset 0 0 0 calc(1px + var(--voice-level, 0) * 1px) var(--voice-ring),
+    inset 0 0 calc(var(--voice-level, 0) * 18px) color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: box-shadow 120ms linear;
+}
+
+.composer.voice-listening.voice-hearing {
+  --voice-ring: color-mix(in srgb, var(--accent) calc(70% + var(--voice-level, 0) * 30%), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer.voice-listening {
+    transition: none;
+  }
+}
+
 /* Life quick tags: one tap prefixes the next message with a 【label】 card. */
 .life-tags {
   display: none;
@@ -3163,6 +3200,31 @@ html.keyboard-shell .life-edge-hint {
   outline: none;
   cursor: pointer;
   max-width: 170px;
+}
+
+/* A text setting too long for the row's end (URLs): label above, full width. */
+.settings-row.settings-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.settings-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.settings-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .settings-select:focus-visible {

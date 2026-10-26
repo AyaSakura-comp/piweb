@@ -22,6 +22,7 @@ COPY tsconfig.json LICENSE ./
 COPY src ./src
 COPY client ./client
 COPY scripts/build-client.mjs ./scripts/build-client.mjs
+COPY third_party/komorebi-voice/sdk/js ./third_party/komorebi-voice/sdk/js
 COPY public ./public
 RUN npm run build
 
@@ -38,6 +39,7 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY public ./public
 COPY --from=build /app/public/lobehub-rich* ./public/
+COPY --from=build /app/public/komorebi ./public/komorebi
 
 # Least privilege: the web tier only ever needs to read/write the shared data
 # directory, which is bind-mounted with matching ownership.

@@ -32,7 +32,8 @@ import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createSessionDashboard } from './session-dashboard.js?v=pinch-ladder-1';
+import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js';
+import { createSessionDashboard } from './session-dashboard.js?v=voice-ime-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -2265,8 +2266,15 @@ const commandsRunningView = createCommandsRunningView({
       : null;
   },
 });
+// Komorebi voice input. Panes register while the Dashboard is being built, so
+// the target resolves through a reference set once it exists.
+let dashboardForVoice = null;
+const voiceIme = createVoiceIme({
+  resolveTarget: () => (dashboardForVoice?.active && dashboardForVoice.composerTextarea()) || $('input'),
+});
 const sessionDashboard = createSessionDashboard({
   app: $('app'),
+  voiceIme,
   drawer: $('drawer'),
   sessionList: $('session-list'),
   main: document.querySelector('.main'),
@@ -2320,6 +2328,7 @@ const sessionDashboard = createSessionDashboard({
   attachmentLimitProblem: (attachments, options) =>
     attachmentLimitProblem(attachments, uploadLimits, options),
 });
+dashboardForVoice = sessionDashboard;
 // The same long-press selection in every Dashboard pane: on touch the panes'
 // transcripts are user-select:none like the chat's, so without it a pane's
 // text could not be selected and quoted at all.
@@ -3692,6 +3701,40 @@ function scrollToBottom(instant) {
 // ── composer ─────────────────────────────────────────────────────────────
 
 const input = $('input');
+voiceIme.register(input, { frame: $('composer'), before: $('btn-send'), onRender: () => autoGrow() });
+// Left on last time: the next tap anywhere starts listening again.
+voiceIme.resume();
+
+// Settings → 語音輸入: per-browser, applied to the running dictation at once.
+{
+  const fields = {
+    url: $('voice-url'),
+    refineUrl: $('voice-refine-url'),
+    refineModel: $('voice-refine-model'),
+    refineKey: $('voice-refine-key'),
+  };
+  const saved = readVoiceSettings();
+  for (const [key, field] of Object.entries(fields)) field.value = saved[key];
+  // The default server shows as the placeholder, not as a value to edit.
+  if (fields.url.value === fields.url.placeholder) fields.url.value = '';
+  const showRefineFields = () => {
+    const custom = Boolean(fields.refineUrl.value.trim());
+    $('voice-refine-model-row').hidden = !custom;
+    $('voice-refine-key-row').hidden = !custom;
+  };
+  showRefineFields();
+  fields.refineUrl.addEventListener('input', showRefineFields);
+  for (const field of Object.values(fields)) {
+    field.addEventListener('change', () => {
+      const next = Object.fromEntries(
+        Object.entries(fields).map(([key, f]) => [key, f.value.trim()]),
+      );
+      if (!next.url) delete next.url;
+      saveVoiceSettings(next);
+      voiceIme.reconfigure();
+    });
+  }
+}
 const COMPOSER_LAYOUT_GUARD_MS = 600;
 const COMPOSER_VIEWPORT_SETTLE_MS = 180;
 let composerBottomLocked = false;
@@ -4210,6 +4253,12 @@ $('composer').addEventListener('submit', async (e) => {
     alert('Create or pick a session first.');
     return;
   }
+  // Voice input: the last sentence and its clean-up land before the box is read.
+  const voiced = await voiceIme.take(input);
+  if (voiced != null) {
+    input.value = voiced;
+    autoGrow();
+  }
   // Navigation may change while FileReader converts attachments. The send
   // belongs to the transcript visible when submit started, never whichever
   // session happens to be active after that asynchronous work finishes.
@@ -4326,7 +4375,7 @@ $('composer').addEventListener('submit', async (e) => {
   } catch (err) {
     promptTurnScroll.cancel(promptTicket);
     if (submittedAttachments.some(a => a.isCamera) && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {
-      if (!input.value) { input.value = rawDraft; autoGrow(); }
+      if (!input.value) { input.value = rawDraft; autoGrow(); voiceIme.sync(input); }
       if (!state.pendingQuote) { state.pendingQuote = quote; renderQuotePreview(); }
     }
     if (err.status === 401) showLogin();
@@ -4528,6 +4577,7 @@ function applyAutocomplete(item) {
     if (item.arg) updateAutocomplete();
     else hideAutocomplete();
   }
+  voiceIme.sync(input);
 
   input.focus();
   autoGrow();

@@ -46,7 +46,7 @@
     <link rel="stylesheet" href="/camera-composer.css" />
     <link rel="stylesheet" href="/image-annotator.css" />
     <link rel="stylesheet" href="/commands-running.css">
-    <link rel="stylesheet" href="/session-dashboard.css?v=pinch-ladder-1" />
+    <link rel="stylesheet" href="/session-dashboard.css?v=voice-ime-1" />
 </head>
   <body>
     <!-- Login gate -->
@@ -694,6 +694,29 @@
             <p class="settings-footnote">Credentials are stored on the host — by Pi, and by the agy CLI for Antigravity. Piweb only displays the temporary device code or sign-in link, and passes the pasted code straight on.</p>
           </section>
 
+          <section class="settings-section" aria-labelledby="settings-voice-title">
+            <h3 id="settings-voice-title">語音輸入（Komorebi）</h3>
+            <div class="settings-group">
+              <label class="settings-row settings-field" for="voice-url">
+                <span class="settings-row-label">語音伺服器</span>
+                <input class="settings-input" id="voice-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="wss://komorebi.crayfish-monitor.ts.net/v1/realtime">
+              </label>
+              <label class="settings-row settings-field" for="voice-refine-url">
+                <span class="settings-row-label">整理草稿用的 API URL</span>
+                <input class="settings-input" id="voice-refine-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="留空：Gemma 4 E2B（CPU）" aria-describedby="voice-help">
+              </label>
+              <label class="settings-row settings-field" for="voice-refine-model" id="voice-refine-model-row" hidden>
+                <span class="settings-row-label">模型</span>
+                <input class="settings-input" id="voice-refine-model" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="例如 gpt-4.1-mini">
+              </label>
+              <label class="settings-row settings-field" for="voice-refine-key" id="voice-refine-key-row" hidden>
+                <span class="settings-row-label">API key</span>
+                <input class="settings-input" id="voice-refine-key" type="password" autocomplete="off" placeholder="不需要就留空">
+              </label>
+            </div>
+            <p class="settings-footnote" id="voice-help">按輸入框旁的麥克風開啟語音輸入，會一直收音到再按一次為止；開著時不跳出螢幕鍵盤，送出時用整理好的全文。整理草稿預設用 Komorebi 主機上的 Gemma 4 E2B（CPU）；要換就填公開的 https OpenAI 相容網址（例如 https://api.openai.com/v1）。設定只存在這個瀏覽器，API key 經由語音伺服器轉送。</p>
+          </section>
+
           <section class="settings-section" aria-labelledby="settings-account-title">
             <h3 id="settings-account-title">Account</h3>
             <div class="settings-group">
@@ -744,6 +767,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=pinch-ladder-1" type="module"></script>
+    <script src="/app.js?v=voice-ime-1" type="module"></script>
   </body>
 </html>

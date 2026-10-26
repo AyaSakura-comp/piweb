@@ -138,6 +138,8 @@ export function createSessionDashboard({
   isAutoScrollEnabled = () => false,
   // Returns '' when the attachments fit the server's upload limits, else why not.
   attachmentLimitProblem = () => '',
+  // Komorebi voice input (voice-ime.js): a mic button in every pane composer.
+  voiceIme = null,
 }) {
   const wideQuery = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
   let active = false;
@@ -2126,6 +2128,7 @@ export function createSessionDashboard({
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(140, textarea.scrollHeight)}px`;
     };
+    voiceIme?.register(textarea, { frame: form, before: sendBtn, onRender: autoGrow });
     textarea.addEventListener('input', () => {
       autoGrow();
       updatePaneAutocomplete();
@@ -2179,6 +2182,9 @@ export function createSessionDashboard({
       if (pane.uploading) return;
       const keepKeyboardOpen = hadFocusBeforeSend || document.activeElement === textarea;
       hadFocusBeforeSend = false;
+      // Voice input: the last sentence and its clean-up land first.
+      const voiced = await voiceIme?.take(textarea);
+      if (voiced != null) textarea.value = voiced;
 
       // BTW Side Conversation Submit
       if (pane.btwTarget === 'btw') {
@@ -2729,6 +2735,7 @@ export function createSessionDashboard({
       p.dock.classList.toggle('is-floating', on);
     }
     composerJid = jid;
+    voiceIme?.retarget();
     try {
       localStorage.setItem(COMPOSER_PANE_KEY, jid);
     } catch {
@@ -2852,6 +2859,7 @@ export function createSessionDashboard({
     const pane = panes.get(jid);
     if (!pane) return;
     pane.disposed = true;
+    voiceIme?.unregister(pane.textarea);
     transcriptObserver?.unobserve(pane.messagesEl);
     paneSizeObserver?.unobserve(pane.el);
     paneSizeObserver?.unobserve(pane.el.querySelector('.dashboard-pane-header'));
@@ -3700,6 +3708,7 @@ export function createSessionDashboard({
     if (active && !wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
     syncKeyboardLift();
     onRenderSessionListDecorations();
+    voiceIme?.retarget();
   }
 
   function buildBalancedGridGroups(jids) {
@@ -4760,6 +4769,10 @@ export function createSessionDashboard({
   return {
     get active() {
       return active;
+    },
+    /** The textarea of the pane that shows the composer card. */
+    composerTextarea() {
+      return panes.get(composerJid)?.textarea ?? null;
     },
     setActive,
     addPane,
