@@ -54,7 +54,8 @@ test('usage button follows Claude Code model/account without mixing AGY or GPT q
     await expect.poll(() => received.length).toBe(before + 1);
     expect(received.at(-1)).toBe(command);
   }
-  await page.setViewportSize({ width: 800, height: 844 });
+  // Wide enough that the chat column beside the pinned drawer is over 600px.
+  await page.setViewportSize({ width: 900, height: 844 });
   await expect(page.locator('#btn-gpt-usage')).toBeVisible();
   await expect(page.locator('#btn-status')).toBeVisible();
   await page.screenshot({ path: info.outputPath('claude-usage-button.png') });
