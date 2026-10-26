@@ -150,7 +150,7 @@ export function createSessionDashboard({
   }
   let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
   let zoomedJid = null; // the pane blown up to the whole stage, still in the Dashboard
-  let enlarged = null; // { jid, key, restore }: the pane a pinch made a little bigger, and the weights before
+  let pinchSteps = null; // { jid, base, step, key }: the pane a pinch resized, its step from `base`, and the layout it made
   let twoFingerQuietUntil = 0; // header taps this soon after a two-finger gesture are its fingers lifting
 
   /** A transcript that shrinks (the card arrives, the card grows, a splitter
@@ -3863,12 +3863,16 @@ export function createSessionDashboard({
     anim.oncancel = settle;
   }
 
-  // ── Pinch: spread two fingers to make a pane a little bigger, further to
-  // give it the whole stage; pinch to step back down ────────────────────────
-  // Stage one gives the pane this part of what its neighbours have, at every
-  // level of the split tree it sits in, so it grows on both axes in a grid.
-  const ENLARGE_GAIN = 0.3;
-  const ENLARGE_MAX_SHARE = 0.8;
+  // ── Pinch: spread two fingers to make a pane a step bigger, and on until
+  // the next step would nearly fill the stage, which is then the zoom; pinch
+  // to step back down, one step below its own tile at most ───────────────────
+  // A step multiplies the pane's area, shared out over every level of the
+  // split tree where it has neighbours, so it grows on both axes in a grid.
+  const PINCH_STEP_AREA = 1.7;
+  // A step up that would cover this much of the stage is the zoom instead.
+  const PINCH_FULL_AREA = 0.6;
+  const PINCH_MIN_STEP = -1;
+  const STEP_MAX_SHARE = 0.8;
   const cloneLayout = (layout) => layout.map(serializeNode);
   const layoutKey = (layout) => JSON.stringify(cloneLayout(layout));
   const holdsJid = (node, jid) => node.jid === jid || Boolean(node.items?.some((n) => holdsJid(n, jid)));
@@ -3897,12 +3901,22 @@ export function createSessionDashboard({
     return walk(layout, 0, g);
   }
 
-  /** The layout with `jid` a step bigger, or null when it cannot grow (already
-   *  large, or the neighbours are at their minimum size). */
-  function enlargedLayout(jid) {
-    const layout = cloneLayout(groups);
+  /** `base` with `jid` `step` steps bigger (or smaller, below 0), each
+   *  share kept between the pane's minimum size and what leaves every
+   *  neighbour its own; null when the pane has no neighbours to trade with. */
+  function stepLayout(base, jid, step) {
+    const layout = cloneLayout(base);
+    let levels = 0;
+    const count = (nodes) => {
+      const node = nodes.find((n) => holdsJid(n, jid));
+      if (!node) return;
+      if (nodes.length > 1) levels++;
+      if (node.items) count(node.items);
+    };
+    count(layout);
+    if (!levels) return null;
+    const gain = PINCH_STEP_AREA ** (step / levels);
     const g = gridEl.getBoundingClientRect();
-    let grew = false;
     const walk = (nodes, depth, width, height) => {
       const i = nodes.findIndex((n) => holdsJid(n, jid));
       if (i < 0) return;
@@ -3910,16 +3924,16 @@ export function createSessionDashboard({
       const total = nodes.reduce((sum, n) => sum + n.weight, 0) || 1;
       let share = nodes.length === 1 ? 1 : nodes[i].weight / total;
       if (nodes.length > 1) {
+        const size = Math.max(1, row ? width : height);
         const minPx = row ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
-        const room = 1 - ((nodes.length - 1) * minPx) / Math.max(1, row ? width : height);
-        const next = Math.min(share + (1 - share) * ENLARGE_GAIN, ENLARGE_MAX_SHARE, room);
-        if (next > share + 0.02) {
+        const most = Math.min(STEP_MAX_SHARE, 1 - ((nodes.length - 1) * minPx) / size);
+        const next = Math.max(minPx / size, Math.min(most, share * gain));
+        if (Math.abs(next - share) > 0.005) {
           const rest = (1 - next) / (1 - share);
           nodes.forEach((n, j) => {
             n.weight = Number((j === i ? next * total : n.weight * rest).toFixed(4));
           });
           share = next;
-          grew = true;
         }
       }
       if (nodes[i].items) {
@@ -3927,13 +3941,38 @@ export function createSessionDashboard({
       }
     };
     walk(layout, 0, g.width, g.height);
-    return grew ? layout : null;
+    return layout;
   }
 
-  /** 0 in its tile, 1 made bigger by a pinch (and not resized since), 2 zoomed. */
-  function pinchLevel(jid) {
-    if (zoomedJid === jid) return 2;
-    return enlarged?.jid === jid && enlarged.key === layoutKey(groups) ? 1 : 0;
+  /** What a pinch on `jid` can reach from here: its step (and the layout it
+   *  steps from), the tile one step up (null: the step up is the zoom) and one
+   *  step down (null: nowhere to go). A step holds only while the layout is the
+   *  one it made; any splitter move, preset, swap or pane change makes the
+   *  current layout step 0 again. The zoom keeps the weights, so the step
+   *  survives a zoom in and out. */
+  function pinchLadder(jid) {
+    const held = pinchSteps?.jid === jid && pinchSteps.key === layoutKey(groups);
+    const base = held ? pinchSteps.base : cloneLayout(groups);
+    const step = held ? pinchSteps.step : 0;
+    const g = gridEl.getBoundingClientRect();
+    const area = (layout) => {
+      const r = layout && predictPaneRect(jid, layout);
+      return r && g.width && g.height ? (r.width * r.height) / (g.width * g.height) : 0;
+    };
+    const at = (k) => (k === step ? groups : k === 0 ? base : stepLayout(base, jid, k));
+    const now = area(groups);
+    const upLayout = at(step + 1);
+    const up = area(upLayout) < PINCH_FULL_AREA && area(upLayout) > now * 1.1 ? upLayout : null;
+    const downLayout = step - 1 >= PINCH_MIN_STEP ? at(step - 1) : null;
+    const down = downLayout && area(downLayout) < now / 1.1 ? downLayout : null;
+    return {
+      base,
+      step,
+      zoomed: zoomedJid === jid,
+      up,
+      down,
+      layouts: { [step + 1]: up, [step - 1]: down, 0: base, [step]: groups },
+    };
   }
 
   // Pinch ratios (finger distance now / at the start) that pick the next level.
@@ -3947,30 +3986,36 @@ export function createSessionDashboard({
   // 40px spread is a ratio of 1.8 but only a small gesture.
   const PINCH_MIN_SPAN = 100;
 
-  /** The level a pinch at ratio `r` lands on, from where it started. */
+  /** Where a pinch at ratio `r` lands: `{ zoom: true }`, `{ step }`, or null
+   *  for where it started. One step either way, or further for a wide spread
+   *  (the zoom) or a hard pinch (the pane's own tile, from above it). */
   function pinchTarget(pinch, r) {
-    if (r >= PINCH_GROW) {
-      if (pinch.level === 0 && r < PINCH_FULL && pinch.bigger) return 1;
-      return 2;
+    const { step } = pinch;
+    if (pinch.zoomed) {
+      if (r > PINCH_SHRINK) return null;
+      return { step: r <= PINCH_TILE && step > 0 ? 0 : step };
     }
+    if (r >= PINCH_GROW) return r < PINCH_FULL && pinch.up ? { step: step + 1 } : { zoom: true };
     if (r <= PINCH_SHRINK) {
-      if (pinch.level === 2 && pinch.enlarged && r > PINCH_TILE) return 1;
-      return 0;
+      if (r <= PINCH_TILE && step > 0) return { step: 0 };
+      if (pinch.down) return { step: step - 1 };
     }
-    return pinch.level;
+    return null;
   }
 
   function pinchPreview(pinch, to) {
-    if (to === pinch.level) return null;
-    if (to === 2) return { rect: gridEl.getBoundingClientRect(), label: '放到最大' };
-    if (to === 1 && pinch.level === 0) {
-      return { rect: predictPaneRect(pinch.jid, pinch.bigger), label: '放大一點' };
-    }
-    const layout = to === 0 && pinch.enlarged ? enlarged.restore : groups;
-    return {
-      rect: predictPaneRect(pinch.jid, layout),
-      label: pinch.level === 2 ? '縮回並排' : '縮回原本大小',
-    };
+    if (!to) return null;
+    if (to.zoom) return { rect: gridEl.getBoundingClientRect(), label: '放到最大' };
+    const label = pinch.zoomed
+      ? '縮回並排'
+      : to.step === 0
+        ? pinch.step > 0
+          ? '縮回原本大小'
+          : '放回原本大小'
+        : to.step > pinch.step
+          ? '放大一點'
+          : '縮小一點';
+    return { rect: predictPaneRect(pinch.jid, pinch.layouts[to.step]), label };
   }
 
   function showPinchPreview(preview) {
@@ -4009,7 +4054,7 @@ export function createSessionDashboard({
   function trackPinch(pinch, at, distance) {
     const r = distance / pinch.startDistance;
     const max = pinch.fill * 1.05;
-    const min = pinch.level === 0 ? 0.92 : 0.5;
+    const min = pinch.zoomed || pinch.down ? 0.5 : 0.92;
     let scale = r;
     if (scale > max) scale = max + (scale - max) * 0.2;
     if (scale < min) scale = min - (min - scale) * 0.2;
@@ -4054,8 +4099,8 @@ export function createSessionDashboard({
   /** Land a released pinch on its level, springing from where the fingers
    *  left the pane rather than from its tile. */
   function settlePinch(pinch) {
-    const to = pinch.to ?? pinch.level;
-    if (to === pinch.level || !panes.has(pinch.jid)) {
+    const to = pinch.to;
+    if (!to || !panes.has(pinch.jid)) {
       springPinchBack(pinch);
       return;
     }
@@ -4063,38 +4108,24 @@ export function createSessionDashboard({
     const from = paneEl.getBoundingClientRect();
     paneEl.style.transform = '';
     endPinchLift(pinch);
-    if (to === 2) {
+    if (to.zoom) {
       setZoom(pinch.jid, { from });
       return;
     }
-    if (pinch.level === 2) {
-      if (to === 0 && pinch.enlarged) {
-        // Hidden behind the zoom, the tiles go back to their old sizes first.
-        groups = cloneLayout(enlarged.restore);
-        enlarged = null;
-        saveState();
-        rebuildGrid();
-      }
+    const land = () => {
+      groups = cloneLayout(pinch.layouts[to.step]);
+      saveState();
+      rebuildGrid();
+      pinchSteps =
+        to.step === 0 ? null : { jid: pinch.jid, base: pinch.base, step: to.step, key: layoutKey(groups) };
+    };
+    if (pinch.zoomed) {
+      // Hidden behind the zoom, the tiles take their new sizes first.
+      if (to.step !== pinch.step) land();
       setZoom(null, { from });
       return;
     }
-    animatePaneLayoutTransition(
-      () => {
-        if (to === 1) {
-          const restore = cloneLayout(groups);
-          groups = cloneLayout(pinch.bigger);
-          saveState();
-          rebuildGrid();
-          enlarged = { jid: pinch.jid, key: layoutKey(groups), restore };
-        } else {
-          groups = cloneLayout(enlarged.restore);
-          enlarged = null;
-          saveState();
-          rebuildGrid();
-        }
-      },
-      { lift: pinch.jid, from },
-    );
+    animatePaneLayoutTransition(land, { lift: pinch.jid, from });
   }
 
   function removePane(jid) {
@@ -4594,7 +4625,6 @@ export function createSessionDashboard({
       // The first finger may have armed a header drag; two fingers own it now.
       pointerDrag = null;
       const at = midpoint(e.touches);
-      const level = pinchLevel(jid);
       twoFinger = {
         jid,
         name: panes.get(jid)?.nameEl.textContent || jid,
@@ -4603,11 +4633,7 @@ export function createSessionDashboard({
         startY: at.y,
         startDistance: Math.max(1, spread(e.touches)),
         mode: null,
-        level,
-        // The pinch made it bigger earlier and nothing resized it since (a
-        // zoom keeps the weights, so this holds while zoomed too).
-        enlarged: enlarged?.jid === jid && enlarged.key === layoutKey(groups),
-        bigger: level === 0 ? enlargedLayout(jid) : null,
+        ...pinchLadder(jid),
         ghost: null,
       };
     },

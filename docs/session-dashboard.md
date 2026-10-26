@@ -247,26 +247,31 @@ or stage-edge target.
   and more than the spread changed → drag; spread changed 14px and more than the midpoint moved →
   pinch). While a pane is zoomed only the zoomed pane can be pinched, and it cannot be dragged.
 
-### Pinch a Pane (touch, 2026-10-25)
-Two stages up, two down, with the zoom above as the top stage. Levels: 0 tile, 1 a little bigger,
-2 the whole stage (`pinchLevel(jid)`).
-- **Stage one is a layout change, not an overlay.** `enlargedLayout(jid)` walks the pane's path
-  through the split tree and, at every level with siblings, raises its share by 30% of what the
-  siblings hold (`ENLARGE_GAIN`), capped at 80% and at what leaves each sibling its minimum size
-  (`MIN_PANE_WIDTH_PX`/`MIN_PANE_HEIGHT_PX`), scaling the siblings down proportionally. A pane in a
-  2×2 grid goes from 1/4 to about 0.42 of the stage; the others stay visible and usable. If nothing
-  can grow (already large), stage one is skipped and a spread goes straight to the zoom.
-- **Back down exactly.** Committing stage one saves the layout (like a splitter) and keeps
-  `enlarged = { jid, key, restore }`: `restore` is the layout before, `key` the layout after.
-  Level 1 holds only while the live layout still equals `key`; any splitter move, preset, swap or
-  pane change makes it a plain tile again (level 0), and a later spread enlarges from there. The
-  zoom keeps the weights, so the enlargement survives a zoom in and out. `restore` lives in memory;
-  after a reload the bigger pane is a level-0 tile.
+### Pinch a Pane (touch, 2026-10-25; steps computed 2026-10-26)
+A ladder of sizes, one step per gesture, with the zoom above as the top step.
+- **A step multiplies the pane's area** by `PINCH_STEP_AREA` (1.7). `stepLayout(base, jid, step)`
+  walks the pane's path through the split tree and, at every level with siblings, multiplies its
+  share by `1.7^(step / levels)`, kept between its own minimum (`MIN_PANE_WIDTH_PX`/
+  `MIN_PANE_HEIGHT_PX`) and what leaves each sibling its minimum, at most 80% (`STEP_MAX_SHARE`),
+  scaling the siblings proportionally. Steps are taken from the layout the pinching started from
+  (`base`), not from the previous step, so stepping back lands exactly.
+- **How many steps is computed, not fixed** (`pinchLadder(jid)`). Going up, the next step is a
+  tile only if its predicted area (`predictPaneRect`) is under 60% of the stage
+  (`PINCH_FULL_AREA`) and actually larger; otherwise the step up is the zoom. Going down, there is
+  one step below the pane's own tile (`PINCH_MIN_STEP = -1`), if the minimum sizes leave room. A
+  2×2 grid on the iPad therefore has four sizes (−1, tile, +1, zoom), a three-column pane the same,
+  two side-by-side panes only −1, tile and zoom, and a nine-pane grid one more step up. Asked for
+  on 2026-10-26: a step below the tile, and no hard-coded number of stages.
+- **A step holds only while the layout is the one it made.** Committing a step saves the layout
+  (like a splitter) and keeps `pinchSteps = { jid, base, step, key }`, `key` being the layout
+  after. Any splitter move, preset, swap or pane change makes the current layout step 0 of a new
+  ladder. The zoom keeps the weights, so the step survives a zoom in and out. `pinchSteps` lives in
+  memory; after a reload the resized pane is step 0.
 - **Thresholds** on the ratio of finger distance to its start: ≥1.18 one step up, ≥2.1 straight to
-  the zoom (from level 1 any step up is the zoom); ≤0.85 one step down, ≤0.6 from the zoom straight
-  to level 0. From level 0 a pinch has nowhere to go and springs back. The zoom threshold was 1.6
-  until 2026-10-26: an ordinary spread on the iPad went through stage one to the whole stage in one
-  go. The ratio counts from at least 100px (`PINCH_MIN_SPAN`): fingers set down 50px apart and
+  the zoom; ≤0.85 one step down, ≤0.6 from above the tile (or from the zoom) straight back to the
+  tile (step 0). From the zoom a pinch returns to the step it zoomed from. The zoom threshold was
+  1.6 until 2026-10-26: an ordinary spread on the iPad went through stage one to the whole stage in
+  one go. The ratio counts from at least 100px (`PINCH_MIN_SPAN`): fingers set down 50px apart and
   spread by 40px are a 1.4 gesture, not 1.8. The pane itself still scales with the raw ratio.
 - **While the fingers are down** (`beginPinch`/`trackPinch`) the pane gets the zoom's lift
   (`.zoom-path` + `.zoom-moving`: above its neighbours, not clipped by its groups) and
@@ -274,12 +279,12 @@ Two stages up, two down, with the zoom above as the top stage. Levels: 0 tile, 1
   (×0.2) beyond 1.05× the scale that fills the stage and below 0.92× (0.5× when it can shrink). The
   drop preview element doubles as the landing outline (`.pinch-target`: no wash, no blur, so the
   pane under it stays sharp), sized from `predictPaneRect(jid, layout)` — the target layout's
-  weights applied to the grid rect, splitters ignored — and labelled 放大一點 / 放到最大 / 縮回並排 /
-  縮回原本大小.
+  weights applied to the grid rect, splitters ignored — and labelled 放大一點 / 縮小一點 / 放到最大 /
+  縮回並排 / 縮回原本大小 / 放回原本大小.
 - **On release** (`settlePinch`) the pane is measured where the fingers left it, the transform is
   dropped, and it springs from that rect: to the zoom via `setZoom(jid, { from })`, out of it via
-  `setZoom(null, { from })` (restoring the old weights first, behind the zoom, when going to level
-  0), and between levels 0 and 1 via `animatePaneLayoutTransition(mutate, { lift, from })`, which
+  `setZoom(null, { from })` (applying the target step's weights first, behind the zoom, when it
+  differs), and between tile steps via `animatePaneLayoutTransition(mutate, { lift, from })`, which
   keeps the pinched pane lifted until it lands while its neighbours FLIP to their new tiles. No
   change → `springPinchBack` (the zoom spring, 460ms, from the current transform to none).
 - `touchcancel` springs back. Header `pointerup`s within 400ms of a two-finger gesture are ignored
@@ -456,7 +461,7 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 11. **Header Double Click**: zooms and restores from a point on the header's bare space (found with `elementFromPoint`, recomputed after each change); a list tap on another session while zoomed releases the zoom.
 12. **Two-Finger Drag**: two CDP touch points (`Input.dispatchTouchEvent`) carried from one pane's center to another's show the ghost and drop preview, and on lift the two panes swap places with the body drag class removed.
 
-13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
+13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px; from the tile 200→150 shows 縮小一點 and lands >140px but <80% of the tile width with the others visible, another 200→150 changes nothing, and 100→135 shows 放回原本大小 and returns to the tile. In a 2×2 grid a spread shows 放大一點 (taller and wider by >15%, under 60% of the stage) and a second one 放到最大; with two side-by-side panes the first spread is already 放到最大.
 14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 and 50→90 stay on 放大一點 and land on a bigger tile, 100→230 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
 15. **Side Splitter Freeze and Reflow**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after release the transcript's width, sampled per rAF for 700ms, falls monotonically through ≥3 intermediate widths, its inline width is then cleared and it matches the pane again; the growing pane, scrolled half way up beforehand, has the same message and a character within 60 of the one at its top line.
 16. **Drawer Slide**: tapping the drawer's hide button gives ≥3 intermediate drawer offsets and ≥3 frames with the first pane between its old and new widths while its transcript stays at the old width, then ≥3 intermediate transcript widths; the transcript ends matching the wider pane. `#btn-dashboard-drawer` brings it back the same way, and pane and transcript return to their first widths within 2px.

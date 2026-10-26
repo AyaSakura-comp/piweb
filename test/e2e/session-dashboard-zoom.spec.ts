@@ -34,7 +34,19 @@ const events = Object.fromEntries(
 // Wide enough that a pane shows its own expand button (it folds into ⋯ below 460px).
 test.use({ viewport: { width: 1920, height: 1000 }, isMobile: false, hasTouch: false });
 
-async function setup(page: Page) {
+const THREE_COLUMNS = [
+  { weight: 1, items: [{ jid: NOTES, weight: 1 }] },
+  { weight: 1, items: [{ jid: PIWEB, weight: 1 }] },
+  {
+    weight: 1,
+    items: [
+      { jid: HAY, weight: 1 },
+      { jid: BROWSER, weight: 1 },
+    ],
+  },
+];
+
+async function setup(page: Page, groups: unknown[] = THREE_COLUMNS) {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.addInitScript(
@@ -45,23 +57,7 @@ async function setup(page: Page) {
         localStorage.setItem('piweb.dashboard', JSON.stringify(layout));
       }
     },
-    [
-      {
-        direction: 'row',
-        updatedAt: Date.now(),
-        groups: [
-          { weight: 1, items: [{ jid: NOTES, weight: 1 }] },
-          { weight: 1, items: [{ jid: PIWEB, weight: 1 }] },
-          {
-            weight: 1,
-            items: [
-              { jid: HAY, weight: 1 },
-              { jid: BROWSER, weight: 1 },
-            ],
-          },
-        ],
-      },
-    ],
+    [{ direction: 'row', updatedAt: Date.now(), groups }],
   );
   await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
     route.fulfill({ json: { items: [] } }),
@@ -85,7 +81,9 @@ async function setup(page: Page) {
   });
   await page.goto('/');
   await page.locator('#btn-dashboard-home').click();
-  await expect(page.locator('.dashboard-pane')).toHaveCount(4);
+  await expect(page.locator('.dashboard-pane')).toHaveCount(
+    JSON.stringify(groups).match(/"jid"/g)!.length,
+  );
   return errors;
 }
 
@@ -496,6 +494,27 @@ test.describe('two-finger pane drag (touch)', () => {
     const original = await rect(page, NOTES);
     expect(Math.abs(original.width - tile.width)).toBeLessThan(2);
     expect(Math.abs(original.left - tile.left)).toBeLessThan(2);
+
+    // One step below its own tile, and no further.
+    c = center(original);
+    await pinch(page, c.x, c.y, 200, 150, async () => {
+      await expect(label).toHaveText('縮小一點');
+    });
+    const smaller = await rect(page, NOTES);
+    expect(smaller.width).toBeLessThan(tile.width * 0.8);
+    expect(smaller.width).toBeGreaterThan(140);
+    for (const other of [PIWEB, HAY, BROWSER]) await expect(pane(page, other)).toBeVisible();
+    await page.screenshot({ path: info.outputPath('pinch-smaller.png') });
+    c = center(smaller);
+    await pinch(page, c.x, c.y, 200, 150);
+    expect(Math.abs((await rect(page, NOTES)).width - smaller.width)).toBeLessThan(2);
+
+    // Spreading brings it back to its own size.
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(label).toHaveText('放回原本大小');
+    });
+    const restored = await rect(page, NOTES);
+    expect(Math.abs(restored.width - tile.width)).toBeLessThan(2);
     await expect(page.locator('.dashboard-grid')).not.toHaveClass(/zoom-moving|has-zoom/);
     expect(errors).toEqual([]);
   });
@@ -535,6 +554,57 @@ test.describe('two-finger pane drag (touch)', () => {
     // The fingers lifting on the header are not a double tap.
     await page.waitForTimeout(400);
     await expect(pane(page, PIWEB)).toHaveClass(/pane-zoomed/);
+    expect(errors).toEqual([]);
+  });
+
+  test('the steps up stop where the next one would nearly fill the stage', async ({ page }) => {
+    // A 2×2 grid: a step below, its tile, a step bigger, the whole stage.
+    const errors = await setup(page, [
+      {
+        weight: 1,
+        items: [
+          { jid: NOTES, weight: 1 },
+          { jid: HAY, weight: 1 },
+        ],
+      },
+      {
+        weight: 1,
+        items: [
+          { jid: PIWEB, weight: 1 },
+          { jid: BROWSER, weight: 1 },
+        ],
+      },
+    ]);
+    const label = page.locator('#dashboard-drop-label');
+    const stage = await gridRect(page);
+    const tile = await rect(page, NOTES);
+    let c = center(tile);
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(label).toHaveText('放大一點');
+    });
+    const bigger = await rect(page, NOTES);
+    // Bigger on both axes, under the stage share that counts as full.
+    expect(bigger.width).toBeGreaterThan(tile.width * 1.15);
+    expect(bigger.height).toBeGreaterThan(tile.height * 1.15);
+    expect((bigger.width * bigger.height) / (stage.width * stage.height)).toBeLessThan(0.6);
+    c = center(bigger);
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(label).toHaveText('放到最大');
+    });
+    await expect(pane(page, NOTES)).toHaveClass(/pane-zoomed/);
+    expect(errors).toEqual([]);
+  });
+
+  test('with two panes side by side the step up is the whole stage', async ({ page }) => {
+    const errors = await setup(page, [
+      { weight: 1, items: [{ jid: NOTES, weight: 1 }] },
+      { weight: 1, items: [{ jid: PIWEB, weight: 1 }] },
+    ]);
+    const c = center(await rect(page, NOTES));
+    await pinch(page, c.x, c.y, 100, 135, async () => {
+      await expect(page.locator('#dashboard-drop-label')).toHaveText('放到最大');
+    });
+    await expect(pane(page, NOTES)).toHaveClass(/pane-zoomed/);
     expect(errors).toEqual([]);
   });
 });

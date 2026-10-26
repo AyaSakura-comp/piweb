@@ -423,21 +423,25 @@ keyboard; a finger scroll moves nothing.
   is a drag, the spread changing 14px (more than the midpoint moved) is a pinch. Lifting a
   finger drops; `touchcancel`, or a `touchmove` the browser will not let us cancel,
   abandons it. A second finger also cancels a pending long-press selection.
-- **Pinch a pane (touch)**: spreading two fingers grows the pane in two stages. Past 1.18×
-  the start spread it becomes **a little bigger** in place: at every level of the split
-  tree it takes 30% of its neighbours' share (at most 80%, neighbours kept at their
-  minimum size), so in a grid it grows on both axes and the others stay visible. Past
-  1.6×, or spreading again from that size, it **fills the stage** (the same zoom as the
-  expand button). Pinching (below 0.85×) steps back down: zoom → the bigger tile → its
-  old size (below 0.6× from the zoom, straight to the old size). While the fingers are
-  down the pane follows them (scale with the spread, move with the midpoint, rubber past
-  the stage size), drawn over its neighbours, and a dashed outline without the drop wash
-  shows where it lands with a label (放大一點 / 放到最大 / 縮回並排 / 縮回原本大小). On
-  release it springs from where the fingers left it to that place; a spread too small to
-  change anything springs back. The bigger size is saved like a splitter change; its
-  "before" weights are kept in memory, so pinching back restores them exactly until
-  anything else resizes the layout. Header taps within 400ms of a two-finger gesture are
-  its fingers lifting, not a double tap.
+- **Pinch a pane (touch)**: the pane moves along a ladder of sizes, one step per gesture.
+  A step multiplies its area by 1.7, shared out over every level of the split tree where it
+  has neighbours (so in a grid it grows on both axes), each share kept between its own
+  minimum size and what leaves every neighbour its minimum, at most 80%. The steps are not
+  a fixed count: going up, a step that would cover 60% or more of the stage is the zoom
+  instead (**fills the stage**, as the expand button), so a 2×2 grid has a step below,
+  the tile, a step bigger and the whole stage, while two side-by-side panes go from the tile
+  straight to the whole stage. Going down there is one step below the pane's own tile.
+  Spreading past 1.18× the start spread goes a step up, past 2.1× straight to the zoom;
+  pinching below 0.85× goes a step down, below 0.6× from above the tile straight back to it.
+  The ratio counts from at least 100px, so fingers set down close together need a real
+  spread. While the fingers are down the pane follows them (scale with the spread, move with
+  the midpoint, rubber past the stage size), drawn over its neighbours, and a dashed outline
+  without the drop wash shows where it lands with a label (放大一點 / 縮小一點 / 放到最大 /
+  縮回並排 / 縮回原本大小 / 放回原本大小). On release it springs from where the fingers left it
+  to that place; a spread too small to change anything springs back. A step is saved like a
+  splitter change; the layout it steps from is kept in memory, so stepping back to the tile
+  restores those weights exactly until anything else resizes the layout. Header taps within
+  400ms of a two-finger gesture are its fingers lifting, not a double tap.
 - **Splitter drags stay light in WebKit (120fps side to side)**: nothing in a pane is a
   CSS container. A container makes WebKit restyle its whole subtree on every size change;
   with nine long panes a splitter step took 73ms and the drag froze on the iPad
