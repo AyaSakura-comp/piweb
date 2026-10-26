@@ -512,7 +512,23 @@ test.describe('two-finger pane drag (touch)', () => {
     expect(Math.abs(same.width - tile.width)).toBeLessThan(2);
     expect(await transformOf(page, PIWEB)).toBe('matrix(1, 0, 0, 1, 0, 0)');
 
-    await pinch(page, c.x, c.y, 100, 190, async () => {
+    // Nearly twice the spread is still stage one; so is a spread from fingers
+    // set down close together, which counts from 100px.
+    for (const [from, to] of [
+      [100, 190],
+      [50, 90],
+    ]) {
+      await pinch(page, c.x, c.y, from, to, async () => {
+        await expect(page.locator('#dashboard-drop-label')).toHaveText('放大一點');
+      });
+      await expect(pane(page, PIWEB)).not.toHaveClass(/pane-zoomed/);
+      expect((await rect(page, PIWEB)).width).toBeGreaterThan(tile.width * 1.2);
+      // Back to the old tile for the next try.
+      await pinch(page, c.x, c.y, 200, 150);
+      await expect.poll(async () => Math.abs((await rect(page, PIWEB)).width - tile.width)).toBeLessThan(2);
+    }
+
+    await pinch(page, c.x, c.y, 100, 230, async () => {
       await expect(page.locator('#dashboard-drop-label')).toHaveText('放到最大');
     });
     await expect(pane(page, PIWEB)).toHaveClass(/pane-zoomed/);

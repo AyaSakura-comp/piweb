@@ -3937,10 +3937,15 @@ export function createSessionDashboard({
   }
 
   // Pinch ratios (finger distance now / at the start) that pick the next level.
+  // Stage one gets a wide band: at 1.6 an ordinary spread went past it to the
+  // zoom in one go (iPad, 2026-10-26).
   const PINCH_GROW = 1.18;
-  const PINCH_FULL = 1.6;
+  const PINCH_FULL = 2.1;
   const PINCH_SHRINK = 0.85;
   const PINCH_TILE = 0.6;
+  // Fingers set down close together count from this span: from 50px apart, a
+  // 40px spread is a ratio of 1.8 but only a small gesture.
+  const PINCH_MIN_SPAN = 100;
 
   /** The level a pinch at ratio `r` lands on, from where it started. */
   function pinchTarget(pinch, r) {
@@ -4011,7 +4016,8 @@ export function createSessionDashboard({
     pinch.dx = at.x - pinch.startX;
     pinch.dy = at.y - pinch.startY;
     pinch.scale = scale;
-    pinch.to = pinchTarget(pinch, r);
+    const reach = 1 + (distance - pinch.startDistance) / Math.max(pinch.startDistance, PINCH_MIN_SPAN);
+    pinch.to = pinchTarget(pinch, reach);
     pinch.pane.el.style.transform = `translate3d(${pinch.dx.toFixed(1)}px, ${pinch.dy.toFixed(1)}px, 0) scale(${scale.toFixed(4)})`;
     showPinchPreview(pinchPreview(pinch, pinch.to));
   }

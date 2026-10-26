@@ -262,9 +262,12 @@ Two stages up, two down, with the zoom above as the top stage. Levels: 0 tile, 1
   pane change makes it a plain tile again (level 0), and a later spread enlarges from there. The
   zoom keeps the weights, so the enlargement survives a zoom in and out. `restore` lives in memory;
   after a reload the bigger pane is a level-0 tile.
-- **Thresholds** on the ratio of finger distance to its start: ≥1.18 one step up, ≥1.6 straight to
+- **Thresholds** on the ratio of finger distance to its start: ≥1.18 one step up, ≥2.1 straight to
   the zoom (from level 1 any step up is the zoom); ≤0.85 one step down, ≤0.6 from the zoom straight
-  to level 0. From level 0 a pinch has nowhere to go and springs back.
+  to level 0. From level 0 a pinch has nowhere to go and springs back. The zoom threshold was 1.6
+  until 2026-10-26: an ordinary spread on the iPad went through stage one to the whole stage in one
+  go. The ratio counts from at least 100px (`PINCH_MIN_SPAN`): fingers set down 50px apart and
+  spread by 40px are a 1.4 gesture, not 1.8. The pane itself still scales with the raw ratio.
 - **While the fingers are down** (`beginPinch`/`trackPinch`) the pane gets the zoom's lift
   (`.zoom-path` + `.zoom-moving`: above its neighbours, not clipped by its groups) and
   `transform: translate(midpoint delta) scale(ratio)` about the start midpoint, clamped like rubber
@@ -454,7 +457,7 @@ PIWEB_E2E_PORT=4191 npx playwright test test/e2e/session-dashboard.spec.ts
 12. **Two-Finger Drag**: two CDP touch points (`Input.dispatchTouchEvent`) carried from one pane's center to another's show the ghost and drop preview, and on lift the two panes swap places with the body drag class removed.
 
 13. **Pinch Stages**: a 100→135px spread shows 放大一點 mid-gesture (pane transformed, outline visible), lands on a tile >1.4× wider but <70% of the stage with the others visible; a second spread shows 放到最大 and zooms; pinching 200→150 shows 縮回並排 and returns to the bigger tile, again shows 縮回原本大小 and returns to the original tile within 2px.
-14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
+14. **Wide Spread / Small Spread**: 100→108 springs back to an identity transform with the size unchanged; 100→190 and 50→90 stay on 放大一點 and land on a bigger tile, 100→230 shows 放到最大 and zooms; the lifted fingers are not taken as a header double tap.
 15. **Side Splitter Freeze and Reflow**: mid-drag the pane is >60px narrower while its transcript keeps its old width and the grid cover is present; after release the transcript's width, sampled per rAF for 700ms, falls monotonically through ≥3 intermediate widths, its inline width is then cleared and it matches the pane again; the growing pane, scrolled half way up beforehand, has the same message and a character within 60 of the one at its top line.
 16. **Drawer Slide**: tapping the drawer's hide button gives ≥3 intermediate drawer offsets and ≥3 frames with the first pane between its old and new widths while its transcript stays at the old width, then ≥3 intermediate transcript widths; the transcript ends matching the wider pane. `#btn-dashboard-drawer` brings it back the same way, and pane and transcript return to their first widths within 2px.
 17. **Older History in a Pane** (`session-dashboard-history.spec.ts`): a 180-event session opens on events 131–180 with `Load older messages`; 200px up from the bottom asks for nothing; near the top the next page loads and the row being read keeps its offset; at the top all 180 rows are present once and in order with `Beginning of this session`, after exactly the `before=131, 81, 31` page requests (the prompt pin's `limit=200` lookups are counted apart); a one-page neighbour pane never asks.
