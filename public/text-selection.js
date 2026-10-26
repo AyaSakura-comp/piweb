@@ -464,7 +464,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   backdrop?.addEventListener('touchstart', (e) => {
     e.stopPropagation();
     if (e.cancelable) e.preventDefault();
-    const touch = e.touches[0];
+    const touch = e.touches?.[0];
     const card = touch && composerCardTarget(touch.clientX, touch.clientY);
     cardTap = card ? { card, x: touch.clientX, y: touch.clientY } : null;
     clearSelection();
@@ -474,7 +474,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   backdrop?.addEventListener('touchend', (e) => {
     const tap = cardTap;
     cardTap = null;
-    const touch = e.changedTouches[0];
+    const touch = e.changedTouches?.[0];
     if (!tap || !touch || Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y) > 10) return;
     if (e.cancelable) e.preventDefault();
     if (tap.card.isConnected) passToCard(tap.card);
