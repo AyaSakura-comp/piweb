@@ -75,7 +75,8 @@ public/          index.html, app.css, app.js — no framework, no build step
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  vendor/highlight/ = highlight.js browser build (no CDN)
                  icons/piweb/  = home-screen icon set; manifest.webmanifest
-third_party/komorebi-voice/  git submodule (Komorebi voice IME); only sdk/js is used
+third_party/komorebi-voice/  git submodule (Komorebi voice IME); only sdk/js is used. Push the
+                             Komorebi commit to GitHub BEFORE committing the pointer here
 scripts/history.py  read-only history query CLI (stdlib only)
 deploy/          piweb-worker.service
 ```

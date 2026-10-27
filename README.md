@@ -16,11 +16,19 @@ Start from **this fork**, not the upstream Discord package:
 
 ```bash
 mkdir -p "$HOME/src"
-git clone https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
+git clone --recurse-submodules https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
 cd "$HOME/src/piweb"
 npm ci
 npm run build
 ```
+
+The voice input SDK is the git submodule `third_party/komorebi-voice`
+([AyaSakura-comp/komorebi-voice](https://github.com/AyaSakura-comp/komorebi-voice),
+private, cloned over SSH). `--recurse-submodules` needs a GitHub SSH key with
+read access to it; in a checkout cloned without it, run
+`git submodule update --init` before `npm run build`, which stops with that hint
+otherwise. See [the submodule section](README.piweb.md#komorebi-voice-sdk-submodule)
+for how it is built and updated.
 
 Prerequisites: Node.js **>=22.19.0**, Git, OpenSSL, Docker Engine + Compose v2,
 Linux/systemd for the host worker, and a configured Pi model/provider. Native

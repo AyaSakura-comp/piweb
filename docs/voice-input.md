@@ -151,11 +151,16 @@ the Komorebi server with the session and is used only for that connection.
 | `public/session-dashboard.js` | registers each pane composer, takes before a pane send (BTW too), retargets on card moves |
 | `public/app.css` | `.voice-ime-btn`, `.composer.voice-listening`, `.settings-field` / `.settings-input` |
 
-After a fresh clone: `git submodule update --init` (the build fails with that
-hint otherwise). To move to a newer Komorebi SDK: `git -C
+The submodule URL is SSH to the private `AyaSakura-comp/komorebi-voice`
+(`branch = main`). After a fresh clone: `git submodule update --init` (the
+build fails with that hint otherwise); after `git pull`, run it again, since
+pull does not move submodules. To move to a newer Komorebi SDK: **push the
+Komorebi commit first** (piweb must only record commits that exist on GitHub,
+or fresh clones cannot check the submodule out), then `git -C
 third_party/komorebi-voice fetch && git -C third_party/komorebi-voice checkout
 <commit>`, `npm run build:client`, commit the submodule pointer, hot-deploy
-`public/komorebi/`.
+`public/komorebi/`. The full steps are in
+[README.piweb.md](../README.piweb.md#komorebi-voice-sdk-submodule).
 
 ## Verification
 

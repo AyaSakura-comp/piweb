@@ -310,7 +310,7 @@ Breeze ASR are **optional**, not installation prerequisites.
 
 ```bash
 mkdir -p "$HOME/src"
-git clone https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
+git clone --recurse-submodules https://github.com/AyaSakura-comp/piweb.git "$HOME/src/piweb"
 cd "$HOME/src/piweb"
 node --version
 docker compose version
@@ -326,7 +326,42 @@ repository's pinned Pi packages (currently 0.84.1) and the local `pi` executable
 you do not need an unrelated globally installed/latest Pi. Credentials stay in
 that user's Pi configuration, normally `~/.pi/agent/auth.json`, not in the web
 container. `npm run build` compiles TypeScript **and** builds the pinned LobeHub
-reply-renderer browser bundle; running `tsc` alone is insufficient.
+reply-renderer browser bundle and copies the Komorebi voice SDK into
+`public/komorebi/`; running `tsc` alone is insufficient.
+
+#### Komorebi voice SDK submodule
+
+`third_party/komorebi-voice` is a git submodule pointing at
+[AyaSakura-comp/komorebi-voice](https://github.com/AyaSakura-comp/komorebi-voice)
+(`branch = main`). The repository is **private** and the submodule URL is SSH
+(`git@github.com:AyaSakura-comp/komorebi-voice.git`), so cloning it needs a
+GitHub SSH key with read access. Only `sdk/js/*.js` is used:
+
+| step | what happens |
+| --- | --- |
+| `git clone --recurse-submodules …` or `git submodule update --init` | checks out the commit piweb records |
+| `npm run build` / `npm run build:client` | `scripts/build-client.mjs` copies `sdk/js/*.js` to `public/komorebi/` (gitignored); it stops with a `git submodule update --init` hint if the SDK is missing |
+| `docker compose build app` | the Dockerfile copies `third_party/komorebi-voice/sdk/js` into the build stage, so the submodule must be checked out on the build host |
+
+The browser imports `public/komorebi/index.js` on the first mic tap, so the
+rest of the app does not wait for it. To move piweb to a newer SDK:
+
+```bash
+# 1. In the Komorebi checkout: commit, then push FIRST. piweb may only record
+#    commits that already exist on GitHub, or fresh clones fail to check out.
+git -C ~/src/komorebi-voice push origin main
+# 2. In piweb: move the submodule, rebuild the copied SDK, commit the pointer.
+git -C third_party/komorebi-voice fetch origin
+git -C third_party/komorebi-voice checkout origin/main   # or a specific commit
+npm run build:client
+git add third_party/komorebi-voice && git commit -m "chore: Komorebi SDK <commit>"
+# 3. Hot-deploy the copied SDK like any public/ change.
+docker cp public/komorebi/. piweb-app:/app/public/komorebi/
+```
+
+Check the recorded commit is on GitHub before pushing piweb:
+`git -C third_party/komorebi-voice branch -r --contains HEAD` must list
+`origin/main`.
 
 **Do not use `piscord setup` or `npx piscord@latest setup` to install PiWeb.**
 Those commands configure the optional Discord gateway, not this web/worker split.
@@ -506,6 +541,7 @@ set -e  # stop this update sequence if any build/install command fails
 systemctl --user stop piweb-worker.service
 # In the checkout; resolve any local changes before pulling.
 git pull --ff-only
+git submodule update --init   # pull does not move the Komorebi SDK submodule
 npm ci
 npm run build
 # Rebuild before recreating either container; do not proceed if it fails.

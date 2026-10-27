@@ -1,3 +1,4 @@
 [submodule "third_party/komorebi-voice"]
 	path = third_party/komorebi-voice
 	url = git@github.com:AyaSakura-comp/komorebi-voice.git
+	branch = main
