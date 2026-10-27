@@ -44,7 +44,8 @@ RPC snapshots add `pending`, an array of questions whose side send is still
 running. The client restores these on reload/session return and polls snapshots
 until completion; it does not resend the question. This pending tracker is
 in-memory: recovery after a host worker/RPC process restart is not guaranteed.
-An ordinary side answer does not grant BTW support to AGY or Claude harnesses.
+An ordinary side answer does not grant BTW support to AGY; Claude Code sessions
+have their own backend (below).
 
 ## Streaming answers
 
@@ -64,6 +65,50 @@ streamed answer node is finished in place rather than rebuilt; the thinking card
 goes away because the settled thread holds only questions and answers, exactly
 what a reopen shows. A snapshot requested before the send settled is ignored.
 An older `pi-btw` without `streaming` just shows the waiting dots as before.
+
+## Claude Code sessions: Claude Code's own /btw (2026-10-27)
+
+A session on a `claude-code/*` model uses the same BTW view, endpoint and thread
+shape; the worker answers it with Claude Code's side question instead of pi-btw
+(`src/agent/claude-btw.ts`). AGY sessions still have no BTW (entry hidden, web
+and worker refuse).
+
+- **How Claude is asked.** The TUI's `/btw` shows its answer in a panel that is
+  never written to the transcript, and `claude -p "/btw …"` answers "/btw isn't
+  available in this environment". The form that works headless is the Agent
+  SDK's `askSideQuestion()`: a `claude -p --input-format stream-json
+  --output-format stream-json` process gets a `control_request` with
+  `{ subtype: "side_question", question, history }` and replies with a
+  `control_response` `{ response, synthetic }`. Piweb starts that process per
+  question with `--resume <the TUI's conversation> --fork-session
+  --no-session-persistence`, the session's model and effort, no MCP servers
+  (`--strict-mcp-config`) and no hooks (`disableAllHooks`), in the TUI's cwd
+  (Claude finds a conversation by its project directory). Before the first turn
+  there is no conversation and it asks without `--resume`.
+- **The TUI is never touched.** Nothing is typed into the tmux pane, so a side
+  question works while a main turn is running, and the main transcript does not
+  change (the live test compares it before and after).
+- **The side thread is Piweb's.** Claude keeps nothing between processes, so the
+  worker keeps `{ sessionId, entries: [{ question, response }] }` in
+  `claude-btw.json` in the session directory and sends the entries back as
+  `history`; a follow-up sees the earlier side answers. The entries belong to
+  one Claude conversation id: `/pi new` (new directory, new id) starts empty.
+  Clear empties the file and is refused while a question is pending, as for Pi.
+- **One question at a time per session**, in order, each seeing the one before.
+  `pending` lists the questions in flight (in memory, like Pi's); there is no
+  `streaming` text, so the view shows the waiting dots until the answer.
+- A `synthetic` reply is a stand-in, not the model's answer: it is reported as
+  the error and not kept. A question unanswered after 600 s is given up (the web
+  route waits 610 s).
+
+```bash
+npx vitest run test/claude-btw.test.ts test/control-btw-routing.test.ts
+# Explicit opt-in, real Claude quota (Haiku): a side question beside a running
+# TUI turn sees the conversation and the running command, a follow-up sees the
+# first answer, the main turn finishes and its transcript never sees the side chat.
+PATH=$HOME/.local/bin:$PATH CLAUDE_TMUX_BIN=$HOME/.local/bin/claude \
+  PIWEB_CLAUDE_LIVE=1 npx vitest run test/claude-btw-live.test.ts
+```
 
 ## Commands and verification
 

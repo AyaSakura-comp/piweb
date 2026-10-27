@@ -158,6 +158,13 @@ empty tool results, growing background output, completion at the poll boundary,
 and genuine idle/noise timeouts. They do not consume Claude quota or prove
 live-provider timing.
 
+## BTW side questions
+
+**⋯ → BTW** works in a Claude session: each side question goes to Claude Code's
+own `/btw` through a headless `claude -p` that resumes this conversation as an
+unsaved fork, beside the TUI rather than in it. See
+[BTW workspace](btw-workspace.md#claude-code-sessions-claude-codes-own-btw-2026-10-27).
+
 ## Subagents
 
 Open **⋯ → Subagents** to browse this Claude session's child transcripts. The

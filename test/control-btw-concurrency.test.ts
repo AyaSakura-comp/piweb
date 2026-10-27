@@ -53,6 +53,7 @@ vi.mock('../src/agent/channel-settings.js', () => ({
 }));
 vi.mock('../src/agent/agy.js', () => ({ isAgyModelRef: () => false }));
 vi.mock('../src/agent/claude-tmux.js', () => ({ isClaudeTmuxModelRef: () => false }));
+vi.mock('../src/agent/claude-btw.js', () => ({ claudeBtw: vi.fn() }));
 vi.mock('../src/config.js', () => ({ config: { rpcSteer: true } }));
 vi.mock('../src/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

@@ -231,18 +231,56 @@ test('a failed BTW send removes the pending question and puts the draft back', a
   await expect(page.locator('#btw-messages .btw-waiting')).toHaveCount(0);
 });
 
-for (const model of ['agy/gemini-3-pro', 'claude-code/opus']) {
-  test(`BTW entry is hidden for non-Pi model ${model}`, async ({ page }) => {
-    const calls = routes(page, true, { ...session, model });
-    await page.goto('/');
-    await expect(page.getByText('Main message')).toBeVisible();
-    await page.locator('#btn-more').click();
-    await expect(page.locator('#more-menu')).toBeVisible();
-    await expect(page.locator('#mi-btw')).toBeHidden();
-    await expect(page.getByRole('button', { name: '開啟 BTW' })).toBeHidden();
-    expect(calls.filter((p) => p.endsWith('/btw'))).toEqual([]);
+test('BTW entry is hidden for an AGY model', async ({ page }) => {
+  const calls = routes(page, true, { ...session, model: 'agy/gemini-3-pro' });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(page.locator('#more-menu')).toBeVisible();
+  await expect(page.locator('#mi-btw')).toBeHidden();
+  await expect(page.getByRole('button', { name: '開啟 BTW' })).toBeHidden();
+  expect(calls.filter((p) => p.endsWith('/btw'))).toEqual([]);
+});
+
+// Claude Code sessions answer through Claude Code's own /btw (worker side);
+// the page is the same BTW view and endpoint as for Pi.
+test('a Claude Code session offers BTW and sends through the same endpoint', async ({ page }, info) => {
+  routes(page, true, { ...session, model: 'claude-code/opus', busy: false });
+  const sent: unknown[] = [];
+  await page.route('**/api/sessions/*/btw', async (route) => {
+    if (route.request().method() === 'POST') {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({
+        json: {
+          available: true,
+          generation: 'web_btw_test',
+          thread: {
+            messages: [
+              { role: 'user', content: 'what is the main task doing?' },
+              { role: 'assistant', content: 'Claude side answer' },
+            ],
+            pending: [],
+            streaming: [],
+          },
+        },
+      });
+    }
+    return route.fulfill({
+      json: { available: true, generation: 'web_btw_test', thread: { messages: [], pending: [], streaming: [] } },
+    });
   });
-}
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  await page.locator('#btn-more').click();
+  await expect(page.locator('#mi-btw')).toBeVisible();
+  await page.locator('#mi-btw').click();
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await page.locator('#input').fill('what is the main task doing?');
+  await page.locator('#btn-send').click();
+  await expect(page.locator('#btw-messages')).toContainText('Claude side answer');
+  expect(sent).toEqual([{ text: 'what is the main task doing?', generation: 'web_btw_test' }]);
+  await page.screenshot({ path: info.outputPath('claude-btw.png') });
+});
 
 for (const busy of [true, false]) {
   test(`main view always offers BTW above the composer (main ${busy ? 'busy' : 'idle'})`, async ({

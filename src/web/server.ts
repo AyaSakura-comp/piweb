@@ -1123,10 +1123,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         sendJson(res, 200, { available: false, reason: '此對話未使用長駐 Pi RPC，BTW 未送出' });
         return;
       }
-      // Prefixes spelled inline: the web tier must not import src/agent (invariant 2).
+      // Pi sessions use pi-btw, Claude Code sessions Claude's own /btw (the
+      // worker picks); AGY has none. Prefix spelled inline: the web tier must
+      // not import src/agent (invariant 2).
       const override = (channel.modelOverride || '').trim().toLowerCase();
-      if (override.startsWith('agy/') || override.startsWith('claude-code/')) {
-        sendJson(res, 200, { available: false, reason: 'BTW 僅支援 Pi 模型；此對話目前使用其他 agent' });
+      if (override.startsWith('agy/')) {
+        sendJson(res, 200, { available: false, reason: 'BTW 不支援 AGY 模型；此對話目前使用 AGY' });
         return;
       }
       const generation = channel.folder;

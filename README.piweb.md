@@ -632,7 +632,9 @@ navigation. While a side answer is pending, **BTW 回答中 ›** opens its tran
 the main composer and other session controls remain usable. Reloading or switching
 sessions restores pending side questions from the worker snapshot.
 **清除 BTW** confirms before clearing the native side thread, without deleting main
-messages; it is disabled while answering. See [BTW workspace](docs/btw-workspace.md)
+messages; it is disabled while answering. Claude Code sessions use the same view:
+their side questions go to Claude Code's own `/btw` (AGY sessions have no BTW).
+See [BTW workspace](docs/btw-workspace.md)
 for API/generation safeguards, tests and the coordinated web/worker deployment requirement.
 
 The Playwright suite runs end to end against deterministic local fixtures at the

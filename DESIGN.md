@@ -310,7 +310,7 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   open (Claude Code / AGY). Same line, same dots, in the chat and in Dashboard panes.
 - **Main view**: no recipient row. A quiet 12px “BTW ›” link sits at the right
   end of the typing line, directly above the composer, whenever the session can
-  use BTW (Pi models, not read-only); it reads “BTW 回答中 ›” while a side answer
+  use BTW (Pi and Claude Code models, not AGY or read-only); it reads “BTW 回答中 ›” while a side answer
   is pending. Either opens BTW. In the BTW view the same spot reads “‹ 主對話”
   and returns to the main transcript, mirroring the header's back icon.
   The row stays 25px so it can share the typing line, but the link's touch

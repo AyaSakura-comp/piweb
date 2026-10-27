@@ -106,7 +106,7 @@ export function createSessionDashboard({
   getSessionBadge,
   usageCommandForSession = () => 'gpt-usage',
   isAgyCommandSession = () => false,
-  isPiBtwSession = () => true,
+  isBtwSession = () => true,
   isCommandEchoText = () => false,
   buildEventNode,
   streamRich,
@@ -1021,7 +1021,7 @@ export function createSessionDashboard({
       '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="typing-label">pi is working…</span>';
 
     const btwPendingRow = el('div', 'btw-pending-row pane-btw-pending-row');
-    btwPendingRow.hidden = !isPiBtwSession(jid);
+    btwPendingRow.hidden = !isBtwSession(jid);
     const btwPendingLink = el('button', 'pane-btw-switch-btn', 'BTW ›');
     btwPendingLink.type = 'button';
     btwPendingLink.setAttribute('aria-label', '開啟 BTW');
@@ -1509,7 +1509,7 @@ export function createSessionDashboard({
       const btwItem = moreMenu.querySelector('[data-action="btw"]');
       const splitItem = moreMenu.querySelector('[data-action="split-dir"]');
       if (commandsItem) commandsItem.hidden = !isAgyCommandSession(jid);
-      if (btwItem) btwItem.hidden = !isPiBtwSession(jid);
+      if (btwItem) btwItem.hidden = !isBtwSession(jid);
       if (splitItem) splitItem.hidden = allJids().length < 2;
       // A narrow pane drops its Status / Usage icons (CSS container query);
       // the menu then carries them, naming the quota this session draws on.
@@ -1873,7 +1873,7 @@ export function createSessionDashboard({
     // ── Per-pane BTW Side Workspace ──────────────────────────────────────────
     const sideBusy = () => pane.btwSending || pane.btwRemotePending;
     const syncPaneBtwControls = () => {
-      const available = isPiBtwSession(jid);
+      const available = isBtwSession(jid);
       const isBtw = pane.btwTarget === 'btw';
       btwPendingRow.hidden = isBtw ? false : !available;
       const linkText = isBtw ? '‹ 主對話' : sideBusy() ? 'BTW 回答中 ›' : 'BTW ›';
@@ -1987,8 +1987,8 @@ export function createSessionDashboard({
     };
 
     const openPaneBtw = async () => {
-      if (!isPiBtwSession(jid)) {
-        showToast?.('BTW 僅支援 Pi 模型');
+      if (!isBtwSession(jid)) {
+        showToast?.('BTW 不支援 AGY 模型');
         return;
       }
       if (pane.attachments.length > 0 || pane.pendingQuote) {

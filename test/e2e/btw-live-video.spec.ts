@@ -111,7 +111,7 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
   await page.screenshot({ path: info.outputPath('06-other-session-empty.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
-  // Optional: a non-Pi harness (e.g. agy/…) must close BTW and hide its entry.
+  // Optional: an AGY model (agy/…) must close BTW and hide its entry.
   const nonPiModel = process.env.PIWEB_BTW_LIVE_NONPI_MODEL;
   if (nonPiModel) {
     const setModel = await context.request.post(origin! + '/api/sessions/' + encodeURIComponent(other.jid) + '/commands', {
@@ -119,7 +119,7 @@ test('real PiWeb BTW bridge: concurrent parent, side transcript, reload and isol
     });
     expect(setModel.ok(), await setModel.text()).toBe(true);
     await expect(page.locator('#btw-card'), 'drawer poll must leave BTW after the switch').toBeHidden({ timeout: 30_000 });
-    await expect(page.getByText('BTW 僅支援 Pi 模型')).toBeVisible();
+    await expect(page.getByText('BTW 不支援 AGY 模型')).toBeVisible();
     await page.screenshot({ path: info.outputPath('07-nonpi-left-btw.png') });
     await page.locator('#btn-more').click();
     await expect(page.locator('#more-menu')).toBeVisible();

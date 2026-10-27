@@ -33,7 +33,7 @@ import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
-import { createSessionDashboard } from './session-dashboard.js?v=bg-wait-1';
+import { createSessionDashboard } from './session-dashboard.js?v=claude-btw-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -2248,7 +2248,7 @@ const btwWorkspace = createBtwWorkspace({
     key: `${state.activeJid}:${sessionSelectionGeneration}:${state.lifeSession?.generation || ''}`,
     readOnly: state.previewingDeleted || state.mode === 'life',
   } : null,
-  isAvailable: () => isPiBtwSession(),
+  isAvailable: () => isBtwSession(),
   notify: (message) => showToast(message),
   buildMessage: (message) => buildEventNode({
     kind: 'message', role: message.role, content: message.content,
@@ -2313,7 +2313,7 @@ const sessionDashboard = createSessionDashboard({
   getSessionBadge: (session) => sessionBadge(session),
   usageCommandForSession: (jid) => usageCommandForSession(jid),
   isAgyCommandSession: (jid) => isAgyCommandSession(jid),
-  isPiBtwSession: (jid) => isPiBtwSession(jid),
+  isBtwSession: (jid) => isBtwSession(jid),
   isCommandEchoText,
   buildEventNode,
   streamRich: updateStreamingRich,
@@ -2407,26 +2407,26 @@ function isAgyCommandSession(targetJid = state.activeJid) {
   if (model) return model.startsWith('agy/') || model.startsWith('claude-code/');
   return session.provider === 'agy' || session.provider === 'claude-code' || String(session.runningModel || '').toLowerCase().startsWith('agy/') || String(session.runningModel || '').toLowerCase().startsWith('claude-code/');
 }
-// BTW runs inside the persistent Pi RPC session, so it exists only for Pi
-// models. AGY and Claude Code sessions are different harnesses: hide the entry
-// instead of offering a control the worker would refuse. No override = Pi's
-// own default model.
-function isPiBtwSession(targetJid = state.activeJid) {
+// BTW is pi-btw in the persistent Pi RPC session, or Claude Code's own /btw
+// for a Claude Code session (the worker picks). AGY has no side question: hide
+// the entry instead of offering a control the worker would refuse. No
+// override = Pi's own default model.
+function isBtwSession(targetJid = state.activeJid) {
   if (!targetJid) return false;
   if (targetJid === state.activeJid && (state.mode === 'life' || state.selectionPending || state.previewingDeleted)) return false;
-  // Hide only a KNOWN non-Pi harness. Right after load the session list can
-  // lag the selection; the web and worker still refuse non-Pi BTW requests.
+  // Hide only a KNOWN AGY session. Right after load the session list can
+  // lag the selection; the web and worker still refuse AGY BTW requests.
   const session = state.sessions.find((item) => item.jid === targetJid);
   const model = String(session?.model || '').trim().toLowerCase();
-  return !model.startsWith('agy/') && !model.startsWith('claude-code/');
+  return !model.startsWith('agy/');
 }
 function syncBtwAvailability() {
-  const available = isPiBtwSession();
+  const available = isBtwSession();
   $('mi-btw').hidden = !available;
   btwWorkspace.refresh();
   if (!available && btwWorkspace.isSide()) {
     btwWorkspace.close();
-    showToast('BTW 僅支援 Pi 模型，已回主對話');
+    showToast('BTW 不支援 AGY 模型，已回主對話');
   }
 }
 onMenuItem('mi-commands-running', () => {
@@ -2608,7 +2608,7 @@ $('media-sheet').addEventListener('click', (e) => {
   if (e.target === $('media-sheet')) closeMediaSheet();
 });
 
-onMenuItem('mi-btw', () => { if (isPiBtwSession()) { cameraComposer.close(); btwWorkspace.open(); } });
+onMenuItem('mi-btw', () => { if (isBtwSession()) { cameraComposer.close(); btwWorkspace.open(); } });
 onMenuItem('mi-status', () => runQuickCommand('pi status'));
 onMenuItem('mi-usage', () => runQuickCommand(usageCommandForSession()));
 onMenuItem('mi-sessions', openDrawer);

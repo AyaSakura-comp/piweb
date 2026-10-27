@@ -105,6 +105,11 @@ const EFFORT_BY_THINKING: Partial<Record<ThinkingLevel, string>> = {
   max: 'max',
 };
 
+/** Claude Code's `--effort` for a Piweb thinking level, if it has one. */
+export function claudeEffort(thinking: ThinkingLevel | undefined): string | undefined {
+  return thinking ? EFFORT_BY_THINKING[thinking] : undefined;
+}
+
 export function buildClaudeArgs(options: {
   sessionId: string;
   modelRef: string;
@@ -116,7 +121,7 @@ export function buildClaudeArgs(options: {
     : ['--session-id', options.sessionId];
   const model = claudeModelId(options.modelRef);
   if (model) args.push('--model', model);
-  const effort = options.thinking ? EFFORT_BY_THINKING[options.thinking] : undefined;
+  const effort = claudeEffort(options.thinking);
   if (effort) args.push('--effort', effort);
   args.push(
     '--permission-mode',
@@ -718,6 +723,12 @@ export async function invokeClaudeTmux(
   }
 }
 
+/** The Claude conversation a channel's TUI uses (id and launch cwd), if it has one yet. */
+export function readClaudeTmuxState(sessionDir: string): { sessionId: string; cwd: string } | undefined {
+  const state = readState(join(sessionDir, STATE_FILE));
+  return state && { sessionId: state.sessionId, cwd: state.cwd };
+}
+
 function readState(file: string): ClaudeTmuxState | undefined {
   try {
     const value = JSON.parse(readFileSync(file, 'utf8'));
@@ -935,7 +946,7 @@ async function prepareClaudeAttachments(
   return files.map((file) => file.filePath);
 }
 
-function findClaudeTranscript(sessionId: string): string | undefined {
+export function findClaudeTranscript(sessionId: string): string | undefined {
   const root = join(homedir(), '.claude', 'projects');
   try {
     for (const project of readdirSync(root, { withFileTypes: true })) {
