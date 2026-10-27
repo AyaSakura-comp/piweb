@@ -157,12 +157,34 @@ function withLifeGeneration(path, jid, generation = state.lifeSession?.generatio
   return `${path}${separator}generation=${encodeURIComponent(generation || '')}`;
 }
 
+/**
+ * Boot's GETs, started by index.html's head before the module graph loaded.
+ * api() hands each one to the first plain call for that exact path; the rest
+ * are dropped when boot ends or the login gate shows, so none is served stale.
+ */
+const bootPrefetch = window.piwebBootPrefetch instanceof Map ? window.piwebBootPrefetch : new Map();
+const BOOT_JID_KEY = 'piweb.bootJid';
+
+/** Remember the session the next boot will open, so the head can prefetch it. */
+function rememberBootJid(jid) {
+  try {
+    if (jid) localStorage.setItem(BOOT_JID_KEY, jid);
+    else localStorage.removeItem(BOOT_JID_KEY);
+  } catch {
+    // Storage is optional; boot then fetches the session's events itself.
+  }
+}
+
 async function api(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
-    headers: options.body ? { 'content-type': 'application/json' } : undefined,
-    ...options,
-  });
+  const prefetched = Object.keys(options).length === 0 ? bootPrefetch.get(path) : undefined;
+  bootPrefetch.delete(path);
+  const res =
+    (await prefetched) ??
+    (await fetch(path, {
+      credentials: 'same-origin',
+      headers: options.body ? { 'content-type': 'application/json' } : undefined,
+      ...options,
+    }));
 
   if (res.status === 401) {
     showLogin();
@@ -186,6 +208,7 @@ const systemMetricsMonitor = mountSystemMetrics({
 });
 
 function showLogin() {
+  bootPrefetch.clear();
   systemMetricsMonitor.stop();
   streamPlayer.stop();
   $('login').hidden = false;
@@ -1234,6 +1257,8 @@ async function loadSessions() {
   const { sessions } = await api('/api/sessions');
   if (generation !== sessionsLoadGeneration) return false;
   state.sessions = sessions;
+  // Boot opens the most recent session (standardFallbackJid).
+  rememberBootJid(sessionsForDisplay()[0]?.jid);
 
   // The message response updates the active title immediately. Polling remains
   // the fallback for another tab and crash-recovered worker jobs, but never
@@ -6625,5 +6650,9 @@ document.addEventListener('visibilitychange', () => {
     $('settings-account-identity').textContent = 'Signed in with access token';
   }
   showApp();
-  await boot();
+  try {
+    await boot();
+  } finally {
+    bootPrefetch.clear();
+  }
 })();

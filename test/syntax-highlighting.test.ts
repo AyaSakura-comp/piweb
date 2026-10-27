@@ -156,7 +156,10 @@ describe('code block syntax highlighting', () => {
 
     expect(existsSync(resolve(publicDir, 'vendor/highlight/highlight.min.js'))).toBe(true);
     expect(html).toContain(`<script src="${highlighterScript}"></script>`);
-    expect(html.indexOf(highlighterScript)).toBeLessThan(html.indexOf('/app.js'));
+    // The app's <script> tag, not its modulepreload: a preload only fetches.
+    const appScript = html.indexOf('<script src="/app.js');
+    expect(appScript).toBeGreaterThan(0);
+    expect(html.indexOf(highlighterScript)).toBeLessThan(appScript);
   });
 
   it('visually distinguishes common syntax tokens in the dark transcript theme', () => {

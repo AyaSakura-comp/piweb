@@ -24,6 +24,37 @@
         // Storage can be unavailable in private/locked-down browsing contexts.
       }
     </script>
+    <!-- Start boot's GETs now, before the stylesheets (which would hold an inline
+         script back) and the module graph. On the phone each request is a full
+         tailnet round trip, often 0.2-1s over a DERP relay; awaited one after
+         another they kept the app blank for ~10s. app.js's api() takes each
+         response once; whatever boot does not take is dropped when boot ends. -->
+    <script>
+      (() => {
+        const paths = [
+          '/api/me',
+          '/api/commands',
+          '/api/models',
+          '/api/sessions',
+          '/api/sessions/deleted',
+        ];
+        try {
+          // The session boot will open, as the last session list predicted it.
+          const jid = localStorage.getItem('piweb.bootJid');
+          if (jid && localStorage.getItem('piweb.mode') !== 'life') {
+            paths.push(`/api/sessions/${encodeURIComponent(jid)}/events?limit=50`);
+          }
+        } catch {
+          // Storage is optional; boot fetches the session's events itself.
+        }
+        window.piwebBootPrefetch = new Map(
+          paths.map((path) => [
+            path,
+            fetch(path, { credentials: 'same-origin' }).catch(() => null),
+          ]),
+        );
+      })();
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="piweb" />
@@ -47,6 +78,38 @@
     <link rel="stylesheet" href="/image-annotator.css" />
     <link rel="stylesheet" href="/commands-running.css">
     <link rel="stylesheet" href="/session-dashboard.css?v=card-basis-1" />
+    <!-- app.js's whole static import graph, so it downloads in one round trip
+         instead of one per import level (three). The URLs must match the
+         imports exactly, ?v= included; test/boot-prefetch.test.ts checks. -->
+    <link rel="modulepreload" href="/app.js?v=voice-mic-1" />
+    <link rel="modulepreload" href="/markdown.js" />
+    <link rel="modulepreload" href="/media-files.js" />
+    <link rel="modulepreload" href="/system-metrics.js" />
+    <link rel="modulepreload" href="/streaming-rich.js" />
+    <link rel="modulepreload" href="/outbox-stream.js" />
+    <link rel="modulepreload" href="/reading-reveal.js" />
+    <link rel="modulepreload" href="/lobehub-rich.js" />
+    <link rel="modulepreload" href="/camera-composer.js" />
+    <link rel="modulepreload" href="/camera-effects.js" />
+    <link rel="modulepreload" href="/image-annotator.js" />
+    <link rel="modulepreload" href="/btw-workspace.js" />
+    <link rel="modulepreload" href="/subagents.js" />
+    <link rel="modulepreload" href="/settings-motion.js" />
+    <link rel="modulepreload" href="/commands-running.js" />
+    <link rel="modulepreload" href="/stream-player.js" />
+    <link rel="modulepreload" href="/image-compression.js" />
+    <link rel="modulepreload" href="/theme.js" />
+    <link rel="modulepreload" href="/prompt-turn-scroll.js" />
+    <link rel="modulepreload" href="/viewport-shell.js" />
+    <link rel="modulepreload" href="/prompt-pin.js" />
+    <link rel="modulepreload" href="/hot-keywords.js" />
+    <link rel="modulepreload" href="/voice-ime.js?v=voice-status-1" />
+    <link rel="modulepreload" href="/selection-bubble.js" />
+    <link rel="modulepreload" href="/session-dashboard.js?v=voice-tidy-1" />
+    <link rel="modulepreload" href="/session-ui.js" />
+    <link rel="modulepreload" href="/message-copy.js" />
+    <link rel="modulepreload" href="/text-selection.js" />
+    <link rel="modulepreload" href="/upload-progress.js" />
 </head>
   <body>
     <!-- Login gate -->
