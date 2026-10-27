@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from 'playwright/test';
 
 // iPhone recording 2026-10-27: opening the app took ~10s, blank and then "no
@@ -70,6 +71,11 @@ async function setup(page: Page): Promise<Fixture> {
   return fx;
 }
 
+// The app script as index.html names it, `?v=` included.
+const appScript = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8').match(
+  /<script src="([^"]+)" type="module"><\/script>/,
+)![1];
+
 const bootPaths = [
   '/api/me',
   '/api/commands',
@@ -99,7 +105,7 @@ test('after the page, boot needs one round trip: scripts, modules and its API ca
   const page0 = fx.starts.find((s) => s.path === '/')!.at;
   const firstWave = page0 + RTT; // the page's response
   const startOf = (path: string) => fx.starts.find((s) => s.path === path)?.at;
-  for (const path of [...bootPaths, '/app.js?v=voice-mic-1', '/selection-bubble.js']) {
+  for (const path of [...bootPaths, appScript, '/selection-bubble.js']) {
     // Leaf modules and every boot request leave as soon as the page arrives.
     expect(startOf(path), path).toBeLessThan(firstWave + RTT / 2);
   }

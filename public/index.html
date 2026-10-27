@@ -77,11 +77,11 @@
     <link rel="stylesheet" href="/camera-composer.css" />
     <link rel="stylesheet" href="/image-annotator.css" />
     <link rel="stylesheet" href="/commands-running.css">
-    <link rel="stylesheet" href="/session-dashboard.css?v=card-basis-1" />
+    <link rel="stylesheet" href="/session-dashboard.css?v=dash-off-1" />
     <!-- app.js's whole static import graph, so it downloads in one round trip
          instead of one per import level (three). The URLs must match the
          imports exactly, ?v= included; test/boot-prefetch.test.ts checks. -->
-    <link rel="modulepreload" href="/app.js?v=voice-mic-1" />
+    <link rel="modulepreload" href="/app.js?v=dash-off-1" />
     <link rel="modulepreload" href="/markdown.js" />
     <link rel="modulepreload" href="/media-files.js" />
     <link rel="modulepreload" href="/system-metrics.js" />
@@ -105,7 +105,7 @@
     <link rel="modulepreload" href="/hot-keywords.js" />
     <link rel="modulepreload" href="/voice-ime.js?v=voice-status-1" />
     <link rel="modulepreload" href="/selection-bubble.js" />
-    <link rel="modulepreload" href="/session-dashboard.js?v=voice-tidy-1" />
+    <link rel="modulepreload" href="/session-dashboard.js?v=dash-off-1" />
     <link rel="modulepreload" href="/session-ui.js" />
     <link rel="modulepreload" href="/message-copy.js" />
     <link rel="modulepreload" href="/text-selection.js" />
@@ -660,6 +660,11 @@
                 <span class="settings-row-label">自動捲動</span>
                 <span class="settings-toggle" data-state="off" aria-hidden="true"></span>
               </button>
+              <button class="settings-row" id="btn-dashboard-enabled" type="button" role="switch" aria-checked="true" aria-label="Dashboard，開啟" aria-describedby="dashboard-enabled-help">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.8" /><rect x="13" y="3" width="8" height="8" rx="1.8" /><rect x="3" y="13" width="8" height="8" rx="1.8" /><rect x="13" y="13" width="8" height="8" rx="1.8" /></svg></span>
+                <span class="settings-row-label">Dashboard</span>
+                <span class="settings-toggle" data-state="on" aria-hidden="true"></span>
+              </button>
               <button class="settings-row" id="btn-theme" data-theme-toggle type="button">
                 <span class="settings-row-icon">
                   <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -685,6 +690,7 @@
           </section>
 
           <p class="settings-footnote" id="auto-scroll-help">送出提問會置頂；關閉時，回覆不會自動往下捲，仍可點選 Jump to present。</p>
+          <p class="settings-footnote" id="dashboard-enabled-help">關閉 Dashboard 會收起側邊欄入口、頂列與對話列的並排按鈕，也不能把對話拖進並排；並排版面會保留，重新開啟就回來。設定儲存於此瀏覽器。</p>
           <p class="settings-footnote" id="hot-keywords-days-help">熱門關鍵字從最新 prompt 往前回推；設定儲存於此瀏覽器。</p>
 
           <section class="settings-section" aria-labelledby="settings-monitor-title">
@@ -838,6 +844,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=voice-mic-1" type="module"></script>
+    <script src="/app.js?v=dash-off-1" type="module"></script>
   </body>
 </html>

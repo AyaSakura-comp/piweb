@@ -108,6 +108,17 @@
     display: none;
   }
 
+  /* Settings → Dashboard off: no way in, and rows no longer look draggable. */
+  .app.dashboard-off .dashboard-topbar-btn,
+  .app.dashboard-off .dashboard-nav-entry,
+  .app.dashboard-off .session-tile-btn {
+    display: none;
+  }
+
+  .app.dashboard-off .session-item {
+    cursor: pointer;
+  }
+
   /* Draggable session items & tile button in sidebar */
   .session-item {
     cursor: grab;

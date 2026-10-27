@@ -143,6 +143,9 @@ export function createSessionDashboard({
 }) {
   const wideQuery = window.matchMedia('(min-width: 768px) and (min-height: 500px), (min-width: 768px) and (pointer: fine)');
   let active = false;
+  // Settings → Dashboard. Off hides every way in (entry, topbar button, row
+  // tile button, dragging a row) and keeps the layout for when it is back on.
+  let enabled = true;
   let panes = new Map(); // jid -> pane state
   let composerJid = null;
   try {
@@ -3685,6 +3688,7 @@ export function createSessionDashboard({
 
   // ── Public Operations ──────────────────────────────────────────────────────
   function setActive(nextActive) {
+    if (nextActive && !enabled) return;
     if (active === nextActive) return;
     active = nextActive;
     syncNavCounts();
@@ -3721,7 +3725,7 @@ export function createSessionDashboard({
   }
 
   function addPane(jid, dropTarget = null) {
-    if (!jid || jid === 'web:life') return;
+    if (!enabled || !jid || jid === 'web:life') return;
     if (!wideQuery.matches) document.getElementById('btn-hide-drawer')?.click();
     const wasAlreadyIn = allJids().includes(jid);
     animatePaneLayoutTransition(() => {
@@ -3751,7 +3755,7 @@ export function createSessionDashboard({
    *  and its pane flashes so the eye finds it. No keyboard on touch; a mouse
    *  can type straight away. */
   function revealSession(jid) {
-    if (!jid || jid === 'web:life') return;
+    if (!enabled || !jid || jid === 'web:life') return;
     if (!allJids().includes(jid)) addPane(jid);
     else if (zoomedJid && zoomedJid !== jid) setZoom(null);
     const pane = panes.get(jid);
@@ -4336,6 +4340,7 @@ export function createSessionDashboard({
 
   // HTML5 Drag & Drop on main / stage
   main.addEventListener('dragover', (e) => {
+    if (!enabled) return;
     const hasSession =
       dragSourceJid || e.dataTransfer?.types?.includes('text/piweb-session-jid');
     if (!hasSession) return;
@@ -4353,6 +4358,7 @@ export function createSessionDashboard({
   });
 
   main.addEventListener('drop', (e) => {
+    if (!enabled) return;
     const jid =
       e.dataTransfer?.getData('text/piweb-session-jid') || dragSourceJid;
     const target = currentDropTarget || computeDropTarget(e.clientX, e.clientY);
@@ -4378,9 +4384,9 @@ export function createSessionDashboard({
       if (!session || session.kind === 'life') return;
       const jid = session.jid;
       item.dataset.jid = jid;
-      item.draggable = true;
+      item.draggable = enabled;
       const inDash = jids.includes(jid);
-      item.classList.toggle('in-dashboard', inDash);
+      item.classList.toggle('in-dashboard', enabled && inDash);
 
       if (!item.dataset.dashDragBound) {
         item.dataset.dashDragBound = '1';
@@ -4480,7 +4486,7 @@ export function createSessionDashboard({
           // If vertical movement dominates, prioritize scrolling the session list
           if (Math.abs(dy) >= 6 && Math.abs(dy) >= Math.abs(dx)) {
             pointerDrag.mode = 'scroll';
-          } else if (dx >= 16 && dx > Math.abs(dy) * 1.2) {
+          } else if (enabled && dx >= 16 && dx > Math.abs(dy) * 1.2) {
             // Dragging horizontally towards the dashboard stage
             pointerDrag.mode = 'drag';
           } else if (Math.abs(dy) >= 6) {
@@ -4775,6 +4781,13 @@ export function createSessionDashboard({
       return panes.get(composerJid)?.textarea ?? null;
     },
     setActive,
+    /** Settings → Dashboard. Turning it off leaves the Dashboard for the chat. */
+    setEnabled(next) {
+      enabled = Boolean(next);
+      app.classList.toggle('dashboard-off', !enabled);
+      if (!enabled) setActive(false);
+      onRenderSessionListDecorations();
+    },
     addPane,
     revealSession,
     removePane,

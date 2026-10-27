@@ -409,6 +409,12 @@ arc while both transcripts ease to their new height (the newest message rides up
 the card); nothing ever scrolls behind it. On a touch screen that tap also opens the
 keyboard; a finger scroll moves nothing.
 
+- **Settings → General → Dashboard** (on by default, per browser): the standard 54px
+  outline-icon switch row (four-squares icon, `.settings-toggle`) after 自動捲動, with a
+  footnote. Off removes every way in rather than greying it out: the drawer's Dashboard
+  entry, the topbar button and each row's tile button are not rendered, rows are not
+  draggable, and an open Dashboard gives way to the chat. The tiled layout is kept, so
+  turning it back on restores the panes.
 - **Header (52px, directly in `.main`)**: same `--bg` surface and `1px solid var(--border)`
   bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: “Session Dashboard” at 15px/650
   and a 12px `--text-2` counter (`N 個並排視窗`). Centre-right: dark capsule layout

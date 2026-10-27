@@ -22,6 +22,26 @@ export function saveAutoScrollPreference(enabled, storage) {
   }
 }
 
+// Not 'piweb.dashboard': that key holds the Dashboard's layout.
+const DASHBOARD_KEY = 'piweb.dashboardEnabled';
+
+/** Local browser preference; the Dashboard is on unless turned off here. */
+export function readDashboardPreference(storage) {
+  try {
+    return (storage ?? globalThis.localStorage).getItem(DASHBOARD_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function saveDashboardPreference(enabled, storage) {
+  try {
+    (storage ?? globalThis.localStorage).setItem(DASHBOARD_KEY, enabled ? 'on' : 'off');
+  } catch {
+    // Keep the in-memory choice when private mode or policy blocks persistence.
+  }
+}
+
 export function shouldAutoScrollTranscript(scroller, enabled, bottomLocked = false) {
   return Boolean(enabled && (bottomLocked || isTranscriptNearBottom(scroller)));
 }

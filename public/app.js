@@ -33,7 +33,7 @@ import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
-import { createSessionDashboard } from './session-dashboard.js?v=voice-tidy-1';
+import { createSessionDashboard } from './session-dashboard.js?v=dash-off-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -43,6 +43,8 @@ import {
   jumpToLatest,
   readAutoScrollPreference,
   saveAutoScrollPreference,
+  readDashboardPreference,
+  saveDashboardPreference,
   shouldAutoScrollTranscript,
   runningToolNode,
   setDrawerCollapsed,
@@ -2354,6 +2356,22 @@ const sessionDashboard = createSessionDashboard({
     attachmentLimitProblem(attachments, uploadLimits, options),
 });
 dashboardForVoice = sessionDashboard;
+
+// Settings → Dashboard: per browser, on unless turned off.
+let dashboardEnabled = readDashboardPreference();
+function renderDashboardSetting() {
+  sessionDashboard.setEnabled(dashboardEnabled);
+  const toggle = $('btn-dashboard-enabled');
+  toggle.setAttribute('aria-checked', String(dashboardEnabled));
+  toggle.setAttribute('aria-label', `Dashboard，${dashboardEnabled ? '開啟' : '關閉'}`);
+  toggle.querySelector('.settings-toggle').dataset.state = dashboardEnabled ? 'on' : 'off';
+}
+$('btn-dashboard-enabled').addEventListener('click', () => {
+  dashboardEnabled = !dashboardEnabled;
+  saveDashboardPreference(dashboardEnabled);
+  renderDashboardSetting();
+});
+renderDashboardSetting();
 // The same long-press selection in every Dashboard pane: on touch the panes'
 // transcripts are user-select:none like the chat's, so without it a pane's
 // text could not be selected and quoted at all.

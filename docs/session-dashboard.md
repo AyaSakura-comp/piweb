@@ -514,6 +514,27 @@ curl -s -o /dev/null -w '%{http_code}\n' https://piweb.crayfish-monitor.ts.net/
 ```
 
 
+## Turning the Dashboard off (Settings, 2026-10-27)
+
+Settings → General → **Dashboard** is a switch, on by default, saved per browser as
+`localStorage['piweb.dashboardEnabled']` (`readDashboardPreference()` /
+`saveDashboardPreference()` in `public/session-ui.js`). It must not use
+`piweb.dashboard`: that key is `DASHBOARD_STORAGE_KEY`, the saved layout, and the
+first cut overwrote the tiles with `"off"` (`test/dashboard-preference.test.ts`).
+
+`app.js` passes the choice to `sessionDashboard.setEnabled()`, which:
+- sets `.app.dashboard-off`, so `session-dashboard.css` hides `#btn-dashboard-home`,
+  `#btn-topbar-dashboard` and every `.session-tile-btn`, and rows lose the grab cursor;
+- leaves an open Dashboard (`setActive(false)`), so the chat shows;
+- re-decorates the rows: `draggable` false, no `.in-dashboard` rail.
+
+While off, `setActive(true)`, `addPane()` and `revealSession()` return early and the
+stage ignores `dragover`/`drop`, so no path can open it. A sideways finger drag on a
+drawer row no longer turns into a pane drag (no ghost); the list still scrolls through
+the same handler. The layout and its cloud copy are untouched, so turning it back on
+brings the panes back. `test/e2e/dashboard-setting.spec.ts` covers desktop (entries,
+open Dashboard, reload, layout restored) and a phone finger drag.
+
 ## Phone dashboard
 
 Dashboard uses the same layout engine and functionality at every viewport width:
