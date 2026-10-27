@@ -36,6 +36,12 @@ const SETTINGS_KEY = 'piweb.voiceIme.settings';
 // send must not wait on it.
 const TAKE_TIMEOUT_MS = 1200;
 const IDLE_CLOSE_MS = 8000;
+// The microphone sends a chunk every ~100ms, silent or not. None for this long
+// while listening means the browser stopped it under us: iOS pauses a page's
+// audio for the photo picker, a screen recording or another app, and the page
+// still read as listening, so no tap could start it again (iPad, 2026-10-27:
+// two minutes of nothing after attaching a video, until the mic was toggled).
+const STALL_MS = 3000;
 // The highlight on what the clean-up changed fades over 1.2s (app.css), then goes.
 const FRESH_MS = 1400;
 // Character diffs beyond this many cells highlight the whole changed middle.
@@ -224,6 +230,8 @@ export function createVoiceIme({
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
   let armed = false;
+  let heardAt = 0; // the last microphone chunk (its level), while listening
+  let stallTimer = 0;
   // The lasso over the box's text: { start, end, text, item } in shown.text;
   // `item` is the sentence that is replacing it.
   let lasso = null;
@@ -246,6 +254,7 @@ export function createVoiceIme({
   }
 
   function setLevel(rms) {
+    heardAt = Date.now();
     const entry = target && composers.get(target);
     entry?.frame.style.setProperty('--voice-level', glowLevel(rms).toFixed(3));
   }
@@ -427,12 +436,33 @@ export function createVoiceIme({
     actions.hidden = true;
     actions.innerHTML =
       '<button type="button" data-act="delete">刪除</button><button type="button" data-act="cancel">取消</button>';
-    // Keep the box's focus (no keyboard) and the circle while a button is pressed.
-    actions.addEventListener('pointerdown', (event) => event.preventDefault());
+    const act = (event) => {
+      const name = event.target.closest?.('[data-act]')?.dataset.act;
+      if (name === 'delete') deleteLasso();
+      else if (name === 'cancel') dropLasso();
+    };
+    // A finger acts on pointerup (≤10px of movement) and the click after it is
+    // ignored: iOS Safari can withhold that click, and the iPad's 刪除 / 取消
+    // often did nothing (2026-10-27), as the BTW link did (DESIGN.md).
+    let tapStart = null;
+    let tapHandledAt = 0;
+    actions.addEventListener('pointerdown', (event) => {
+      // Keep the box's focus (no keyboard) and the circle while a button is pressed.
+      event.preventDefault();
+      tapStart = event.pointerType === 'mouse' ? null : { id: event.pointerId, x: event.clientX, y: event.clientY };
+    });
+    actions.addEventListener('pointercancel', () => (tapStart = null));
+    actions.addEventListener('pointerup', (event) => {
+      const start = tapStart;
+      tapStart = null;
+      if (!start || start.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) return;
+      tapHandledAt = event.timeStamp;
+      act(event);
+    });
     actions.addEventListener('click', (event) => {
-      const act = event.target.closest?.('[data-act]')?.dataset.act;
-      if (act === 'delete') deleteLasso();
-      else if (act === 'cancel') dropLasso();
+      if (tapHandledAt && event.timeStamp - tapHandledAt < 800) return;
+      act(event);
     });
     doc.body.append(layer, actions);
     const bubble = createSelectionBubble(layer, {
@@ -683,6 +713,7 @@ export function createVoiceIme({
       if (doc?.activeElement && composers.has(doc.activeElement)) doc.activeElement.blur();
       await d.start();
       retried = false;
+      watchStall(d);
     })()
       .catch((err) => {
         error = err?.message || '無法開始收音';
@@ -707,6 +738,27 @@ export function createVoiceIme({
       d.close();
       dictation = null;
     }, IDLE_CLOSE_MS);
+  }
+
+  /** Listening without chunks: stop, so the next tap anywhere starts it again. */
+  function watchStall(d) {
+    heardAt = Date.now();
+    clearInterval(stallTimer);
+    stallTimer = setInterval(() => {
+      if (dictation !== d || !d.listening) {
+        clearInterval(stallTimer);
+        return;
+      }
+      if (Date.now() - heardAt < STALL_MS) return;
+      clearInterval(stallTimer);
+      void d
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          sync();
+          if (on && dictation === d) armGesture();
+        });
+    }, 1000);
   }
 
   // Browsers only start audio from a user gesture, so after a reload, a return

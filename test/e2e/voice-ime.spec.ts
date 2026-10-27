@@ -476,6 +476,41 @@ test('刪除 takes the circled words out; 取消 and a tap put the circle away',
   await expect(input).toBeFocused({ timeout: 100 }).catch(() => {}); // focus is not required
 });
 
+test('a finger on 刪除 / 取消 acts even when the browser withholds the click', async ({ page }) => {
+  // iOS Safari can withhold the click after a tap; the iPad's 刪除 / 取消 often
+  // did nothing (2026-10-27). Here every click is swallowed.
+  await page.addInitScript(() =>
+    window.addEventListener('click', (event) => event.isTrusted && event.stopImmediatePropagation(), true),
+  );
+  const server = await fakeKomorebi(page, ['明天下午三點開會。']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  // The mic button is a click; this one is let through.
+  await page.locator('#composer .voice-ime-btn').dispatchEvent('click');
+  await expect(input).toHaveValue('明天下午三點開會。', { timeout: 6000 });
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+  const actions = page.locator('.voice-lasso-actions');
+  const tap = async (name: string) => {
+    const box = (await actions.getByRole('button', { name }).boundingBox())!;
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect(actions).toBeVisible();
+  await tap('取消');
+  await expect(actions).toBeHidden();
+  await expect.poll(() => server.selections.at(-1)).toBeNull();
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect(actions).toBeVisible();
+  await tap('刪除');
+  await expect(input).toHaveValue('明天三點開會。');
+  await expect(actions).toBeHidden();
+});
+
 test('Settings sets the clean-up API, applied to the next sentence', async ({ page }) => {
   const server = await fakeKomorebi(page, ['一句話。']);
   await mockApi(page);
@@ -518,6 +553,47 @@ test('Settings sets the clean-up API, applied to the next sentence', async ({ pa
   await expect
     .poll(() => server.sessions.at(-1)?.komorebi?.refine)
     .toEqual({ provider: 'openai', base_url: 'https://api.example.test/v1', model: 'tidy-model' });
+});
+
+test('a microphone the browser stopped under us starts again on the next tap', async ({ page }) => {
+  // iOS pauses a page's audio (photo picker, screen recording) and the page
+  // still read as listening, so taps did nothing (iPad, 2026-10-27).
+  await page.addInitScript(() => {
+    const contexts: AudioContext[] = ((window as any).__contexts = []);
+    const Native = window.AudioContext;
+    (window as any).AudioContext = class extends Native {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        contexts.push(this);
+      }
+    };
+  });
+  const server = await fakeKomorebi(page, ['第一句。', '第二句。']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  const composer = page.locator('#composer');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('第一句。', { timeout: 6000 });
+  await expect(composer).toHaveClass(/voice-listening/);
+  // Rewritten, as long before a photo is attached.
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+  const updates = server.sessions.length;
+
+  // The browser stops the audio; the page notices and waits for a tap.
+  await page.evaluate(() => Promise.all((window as any).__contexts.map((c: AudioContext) => c.suspend())));
+  await expect(composer).not.toHaveClass(/voice-listening/, { timeout: 6000 });
+  await expect(input).toHaveAttribute('placeholder', '點一下畫面開始收音…');
+  await expect(page.locator('#composer .voice-ime-btn')).toHaveAttribute('aria-pressed', 'true');
+
+  // Any tap starts it again, with a fresh microphone.
+  await page.locator('#messages').tap();
+  await expect(composer).toHaveClass(/voice-listening/);
+  await expect.poll(() => server.sessions.length).toBeGreaterThan(updates);
+  server.allowed = 2;
+  await expect(input).toHaveValue('第一句。第二句。', { timeout: 8000 });
 });
 
 test('通話模式收音 off reopens the microphone without the browser processing', async ({ page }) => {

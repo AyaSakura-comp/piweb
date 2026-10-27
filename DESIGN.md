@@ -189,8 +189,9 @@ call-style mic processing off. While voice input is on, a sideways finger
 stroke on the box circles whole words without a long press: the quote
 selection's bubble (`.sel-bubble`, same spring and colours) drawn over the box,
 and the quote pill's glass (`.selection-actions`) above the words with 刪除 and
-取消 (44px). The next sentence spoken replaces the circled words; a tap
-elsewhere puts the circle away; vertical strokes still scroll. See [voice input](docs/voice-input.md).
+取消 (44px; a finger acts on `pointerup`, like the BTW link). The next sentence
+spoken replaces the circled words; a tap elsewhere puts the circle away;
+vertical strokes still scroll. See [voice input](docs/voice-input.md).
 
 ## Render-first replies
 

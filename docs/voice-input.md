@@ -87,7 +87,9 @@ over the box) and a 刪除／取消 pill (`.selection-actions`, above the words)
 - **刪除** takes the words out at once (the draft is synced, the removal shows
   struck through and folds away); **取消**, a tap on the box or anywhere else,
   typing, Send, switching composers or turning voice off put the circle away and
-  clear the server's selection.
+  clear the server's selection. A finger on 刪除 / 取消 acts on `pointerup`
+  (≤10px of movement) and the click after it is ignored: iOS Safari can withhold
+  that click, and on the iPad the buttons often did nothing (2026-10-27).
 - No circling while a sentence is still being heard or rewritten: its rewrite
   would move the offsets.
 - A mouse selects in the box as usual; letting go circles the selection.
@@ -119,6 +121,13 @@ behind its back keeps that text and only appends a sentence the server appended
 Browsers start audio only from a user gesture, so after a reload, a return to a
 backgrounded page or a dropped connection, voice input that is on starts again
 on the next tap anywhere (a one-shot capture `pointerdown`/`keydown` listener).
+The same happens when the browser stops the microphone under a page that is
+still listening: iOS pauses a page's audio for the photo picker, a screen
+recording or another app without telling it. The mic sends a chunk every
+~100 ms, silent or not, so none for 3 s (`STALL_MS`) stops listening and waits
+for that tap; before 2026-10-27 the page kept reading as listening and only
+toggling the mic brought it back (two minutes of no audio after attaching a
+video on the iPad).
 Turning it off stops the mic; the connection closes 8 s later, after the last
 sentence has landed. The SDK keeps the microphone stream for 5 minutes after a
 stop so iOS does not ask for permission again.
