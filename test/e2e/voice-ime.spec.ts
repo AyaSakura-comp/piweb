@@ -603,4 +603,39 @@ test.describe('Dashboard', () => {
     expect(server.sockets).toBe(1);
     expect(errors).toEqual([]);
   });
+
+  test('a pane box hides its own text under the rewrite layer, so the change is drawn once', async ({ page }, info) => {
+    // iPad 2026-10-27: the pane textarea's own color beat .voice-mirrored, and
+    // the rewrite showed both texts, one char apart, as doubled glyphs.
+    const sessions = [{ ...session, jid: 'web:vb', name: 'Right' }];
+    const server = await fakeKomorebi(page, [['他的動畫看起來怪。我現在', '他的動畫看起來怪，我現在']]);
+    server.holdRewrites = true;
+    await mockApi(page, sessions);
+    await page.addInitScript(() => {
+      localStorage.setItem('piweb.mode', 'sessions');
+      localStorage.setItem(
+        'piweb.dashboard',
+        JSON.stringify({ direction: 'row', updatedAt: Date.now(), groups: [{ weight: 1, items: [{ jid: 'web:vb', weight: 1 }] }] }),
+      );
+      localStorage.setItem('piweb.dashboard.composer', 'web:vb');
+    });
+    await page.goto('/');
+    await page.locator('#btn-dashboard-home').click();
+    const pane = page.locator('.dashboard-pane[data-jid="web:vb"]');
+    const input = pane.locator('.dashboard-pane-input');
+    const mirror = pane.locator('.voice-mirror');
+    await pane.locator('.voice-ime-btn').click();
+    await expect(mirror.locator('.voice-preedit')).toHaveClass(/refining/, { timeout: 6000 });
+    const color = () => input.evaluate((el) => getComputedStyle(el).color);
+    expect(await color()).toBe('rgba(0, 0, 0, 0)');
+
+    server.flush();
+    await expect(mirror.locator('.voice-fresh')).toHaveText(['，']);
+    await expect(input).toHaveClass(/voice-mirrored/);
+    expect(await color()).toBe('rgba(0, 0, 0, 0)');
+    await page.waitForTimeout(150);
+    await pane.locator('.dashboard-pane-composer').screenshot({ path: info.outputPath('voice-dashboard-rewrite.png') });
+    await expect(mirror).toBeHidden({ timeout: 3000 });
+    expect(await color()).not.toBe('rgba(0, 0, 0, 0)');
+  });
 });

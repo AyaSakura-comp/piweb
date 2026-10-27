@@ -2343,7 +2343,10 @@ html.keyboard-shell .life-edge-hint {
   pointer-events: none;
 }
 
-textarea.voice-mirrored {
+/* Framed, so it outranks a composer's own color (.dashboard-pane-composer
+   textarea loads later at the same specificity and left the box's text
+   showing under the layer: the rewrite read as doubled glyphs, iPad 2026-10-27). */
+.voice-ime-frame textarea.voice-mirrored {
   color: transparent;
   caret-color: var(--text-bright);
 }
