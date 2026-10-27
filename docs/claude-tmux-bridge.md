@@ -126,6 +126,20 @@ task stayed "running" forever and the turn never completed: replies kept arrivin
 background replies while the session spun until stopped by hand (2026-10-24). A failed
 stop (`is_error`) leaves the task running.
 
+**Replied, still waiting (2026-10-27).** While Piweb holds a turn open only for
+background commands after Claude's reply, the typing line reads **等待背景命令…**
+instead of "pi is working…" (`isWaitingOnBackgroundCommands()` in
+`public/session-ui.js`: a command row whose latest state is running, and the
+reply as the newest row; tool or thinking rows after it read as working again).
+**Stop** in that state also ends those commands: it SIGTERMs every process
+writing to the command's output file (`stopCommandProcesses()`; Claude Code
+starts a background command, and so its children, with stdout/stderr on that
+file). Escape/C-c alone reach an idle prompt and stop nothing. The case that
+prompted it: a foreground `until` loop hit its 600 s timeout, Claude Code moved
+it to the background, the file it polled was later deleted, and the loop could
+never end; its error output kept renewing the inactivity budget, so the session
+showed "pi is working…" under a finished reply for as long as the TUI lived.
+
 Use the existing **Stop** control to interrupt work or **⋯ → 背景命令**
 to inspect the tracked command view. This change adds no new slash command and
 does not turn Pi-only controls into Claude-native controls.

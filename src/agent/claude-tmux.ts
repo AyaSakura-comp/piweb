@@ -21,7 +21,11 @@ import { resolveChannelSessionDir } from '../session/path.js';
 import type { AgentResult, ThinkingLevel } from '../types.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
 import { createClaudeSubagentTracker } from './claude-subagents.js';
-import { createClaudeCommandTracker, type ClaudeCommand } from './claude-commands.js';
+import {
+  createClaudeCommandTracker,
+  stopCommandProcesses,
+  type ClaudeCommand,
+} from './claude-commands.js';
 import type { AvailableModelInfo } from './model-catalog.js';
 
 export const CLAUDE_TMUX_PROVIDER = 'claude-code';
@@ -268,6 +272,8 @@ export interface ClaudeTmuxDependencies {
   startupTimeoutMs: number;
   /** Maximum time without meaningful transcript or background-command output progress. */
   turnTimeoutMs: number;
+  /** Ends a background command's processes (by its output file). */
+  stopCommand?: (outputFile: string) => number[];
 }
 
 const defaultDependencies: ClaudeTmuxDependencies = {
@@ -326,9 +332,23 @@ export async function invokeClaudeTmux(
   let aborted = Boolean(signal?.aborted);
   let abortPromise: Promise<unknown> | undefined;
   let childTracker: ReturnType<typeof createClaudeSubagentTracker> | undefined;
+  let commandTracker: ReturnType<typeof createClaudeCommandTracker> | undefined;
+  // Claude has ended its turn and replied; Piweb holds the turn open only for
+  // the background commands still running (see the turnComplete check).
+  let waitingOnBackground = false;
 
   const onAbort = () => {
     aborted = true;
+    // Then Stop means those commands: Escape/C-c reach an idle prompt and stop
+    // nothing, and a command that never ends (a loop waiting on a file that is
+    // gone) would otherwise keep running after the turn is abandoned.
+    if (waitingOnBackground && commandTracker) {
+      for (const command of commandTracker.getCommands()) {
+        if (command.state === 'running' && command.outputFile) {
+          (deps.stopCommand ?? stopCommandProcesses)(command.outputFile);
+        }
+      }
+    }
     // Dismiss any active prompt dialog (Escape) and interrupt running commands (C-c).
     // This is correct only after Enter handed work to Claude. During startup,
     // attachment staging, or paste acknowledgement it could interrupt unrelated
@@ -403,7 +423,7 @@ export async function invokeClaudeTmux(
     childTracker = createClaudeSubagentTracker(sessionDir, state.sessionId, {
       isCurrent: opts?.isCurrent,
     });
-    const commandTracker = createClaudeCommandTracker(state.sessionId, { cwd });
+    commandTracker = createClaudeCommandTracker(state.sessionId, { cwd });
     const publishCommands = async (cmds: ClaudeCommand[]) => {
       for (const cmd of cmds) {
         await opts?.onEvent?.({ type: 'agy_command_update', command: cmd });
@@ -576,6 +596,7 @@ export async function invokeClaudeTmux(
             // keep the transcript tail alive across acknowledgement turns.
             turnComplete = !(record.pendingBackgroundAgentCount > 0 || childTracker.hasPending ||
               commandTracker.getCommands().some((command) => command.state === 'running'));
+            waitingOnBackground = !turnComplete;
             if (!turnComplete && finalText) {
               lastYieldedText = finalText;
               if (opts?.onBackgroundReply) {

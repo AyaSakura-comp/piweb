@@ -33,7 +33,7 @@ import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
-import { createSessionDashboard } from './session-dashboard.js?v=dash-off-1';
+import { createSessionDashboard } from './session-dashboard.js?v=bg-wait-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -45,6 +45,7 @@ import {
   saveAutoScrollPreference,
   readDashboardPreference,
   saveDashboardPreference,
+  bindTypingLabel,
   shouldAutoScrollTranscript,
   runningToolNode,
   setDrawerCollapsed,
@@ -3300,6 +3301,8 @@ function setToolElapsedTicking(on) {
   syncRunningTool();
 }
 
+const mainTypingLabel = bindTypingLabel($('typing'), $('messages'));
+
 function setBusy(busy) {
   // Hiding the working indicator enlarges the transcript viewport. Replenish
   // the owned prompt reservation before native scroll clamping can paint.
@@ -3307,6 +3310,7 @@ function setBusy(busy) {
     $('app').classList.toggle('agent-busy', busy);
     $('typing').hidden = !busy;
   });
+  if (busy) mainTypingLabel.sync();
   setToolElapsedTicking(busy);
   // Stop only exists while there is something to stop — it would be dead
   // weight in an already crowded header otherwise.
@@ -3631,10 +3635,11 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     return el('div', 'tool-progress', event.content || '');
   }
   const isAgyBackgroundCommand = event.kind === 'system' && (event.role === 'agy-command' || event.role === 'claude-command');
+  let backgroundCommand = null;
   if (isAgyBackgroundCommand) {
     try {
-      const command = JSON.parse(event.content);
-      event = { ...event, content: `${command.command}\n${command.state} · ${command.agent}` };
+      backgroundCommand = JSON.parse(event.content);
+      event = { ...event, content: `${backgroundCommand.command}\n${backgroundCommand.state} · ${backgroundCommand.agent}` };
     } catch { /* Render malformed historic text without interpreting it. */ }
   }
   if (event.kind === 'message' || event.kind === 'narration') {
@@ -3677,6 +3682,12 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
   {
     const [label, icon] = EVENT_LABELS[event.kind] ?? ['Event', '•'];
     const details = el('details', `event ${event.kind}`);
+    // The typing line reads these to tell "replied, waiting on background
+    // commands" from working (isWaitingOnBackgroundCommands).
+    if (typeof backgroundCommand?.id === 'string') {
+      details.dataset.commandId = backgroundCommand.id;
+      details.dataset.commandState = String(backgroundCommand.state);
+    }
     // When the call started, for the running-tool clock. SQLite hands back UTC
     // with no zone marker; without the Z Safari reads it as local time and the
     // clock starts hours out.

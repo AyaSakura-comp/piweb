@@ -1,7 +1,10 @@
+import { spawn } from 'node:child_process';
 import {
   appendFileSync,
+  closeSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -676,6 +679,63 @@ describe('Claude tmux invocation', () => {
     expect(result).toEqual({ ok: true, text: hasFinalText ? 'All done.' : 'Results are ready.' });
     expect(phase).toBe(4);
     expect(fixture.submissionCount).toBe(1);
+  });
+
+  // Hay 回測 (2026-10-27): Claude replied and ended its turn, but a command it
+  // had left in the background (a loop waiting on a file that was later
+  // deleted) never ended, so the session spun on. Stop must end that command:
+  // Escape/C-c at an idle prompt stop nothing.
+  it('Stop after Claude has replied ends the background command it was waiting for', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    const output = join(fixture.root, 'stuck.output');
+    writeFileSync(output, '');
+    const fd = openSync(output, 'a');
+    const stuck = spawn('sh', ['-c', 'while :; do echo waiting; sleep 0.1; done'], {
+      stdio: ['ignore', fd, fd],
+    });
+    closeSync(fd);
+    const exited = new Promise<string | null>((resolve) => stuck.on('exit', (_code, signal) => resolve(signal)));
+    const append = (rows: any[]) =>
+      appendFileSync(fixture.transcript, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const controller = new AbortController();
+    const replies: string[] = [];
+    let yielded = false;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const result = await tmux(args);
+      if (fixture.submissionCount && !yielded) {
+        yielded = true;
+        append([
+          { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'wait', name: 'Bash',
+            input: { command: 'until [ -f gone ]; do sleep 3; done' } }] } },
+          { type: 'user', toolUseResult: { backgroundTaskId: 'stuck' }, message: { content: [{
+            type: 'tool_result', tool_use_id: 'wait',
+            content: `Command did not complete within its 600s timeout and was moved to the background (ID: stuck). Output is being written to: ${output}` }] } },
+          { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'All three fixed.' }] } },
+          { type: 'system', subtype: 'turn_duration' },
+        ]);
+      }
+      return result;
+    };
+    fixture.dependencies.sleep = async () => {
+      if (replies.length) controller.abort();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
+    try {
+      const result = await invokeClaudeTmux('web_claude1', 'fix it', {
+        dependencies: fixture.dependencies,
+        signal: controller.signal,
+        onBackgroundReply: async (text: string) => {
+          replies.push(text);
+        },
+      });
+      expect(replies).toEqual(['All three fixed.']);
+      expect(result).toMatchObject({ ok: false, aborted: true });
+      expect(await exited).toBe('SIGTERM');
+    } finally {
+      stuck.kill('SIGKILL');
+    }
   });
 
   it('does not submit when already aborted before startup', async () => {

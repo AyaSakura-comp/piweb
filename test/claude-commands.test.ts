@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -7,7 +8,38 @@ import {
   extractTaskNotificationXml,
   findTaskOutputFile,
   readOutputTail,
+  stopCommandProcesses,
 } from '../src/agent/claude-commands.js';
+
+describe('stopCommandProcesses', () => {
+  it('stops the processes writing to that output file, children included, and nothing else', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-stop-'));
+    const start = (file: string) => {
+      const fd = openSync(file, 'a');
+      // A parent shell with a child sleep: both write to the file.
+      const child = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: ['ignore', fd, fd] });
+      closeSync(fd);
+      return child;
+    };
+    const target = start(join(root, 'task.output'));
+    const other = start(join(root, 'other.output'));
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const stopped = stopCommandProcesses(join(root, 'task.output'));
+      expect(stopped).toContain(target.pid);
+      expect(stopped.length).toBeGreaterThanOrEqual(2);
+      expect(stopped).not.toContain(other.pid);
+      expect(await new Promise((resolve) => target.on('exit', (_c, signal) => resolve(signal)))).toBe('SIGTERM');
+      expect(other.exitCode).toBeNull();
+      expect(stopCommandProcesses(join(root, 'missing.output'))).toEqual([]);
+    } finally {
+      for (const child of [target, other]) child.kill('SIGKILL');
+      stopCommandProcesses(join(root, 'task.output'));
+      stopCommandProcesses(join(root, 'other.output'));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('Claude command tracker', () => {
   it('extracts task notification XML from various record shapes', () => {

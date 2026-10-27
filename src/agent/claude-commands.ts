@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface ClaudeCommand {
@@ -34,6 +34,38 @@ export function readOutputTail(filePath: string, maxBytes = 12000): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * End a background command: SIGTERM every process writing to its output file.
+ * Claude Code starts the command with stdout and stderr on that file, and its
+ * children inherit them, so the path names exactly this task's processes.
+ */
+export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): number[] {
+  const stopped: number[] = [];
+  let pids: string[];
+  try {
+    pids = readdirSync(procRoot).filter((name) => /^\d+$/.test(name));
+  } catch {
+    return stopped;
+  }
+  for (const pid of pids) {
+    const writesThere = ['1', '2'].some((fd) => {
+      try {
+        return readlinkSync(join(procRoot, pid, 'fd', fd)) === outputFile;
+      } catch {
+        return false;
+      }
+    });
+    if (!writesThere) continue;
+    try {
+      process.kill(Number(pid), 'SIGTERM');
+      stopped.push(Number(pid));
+    } catch {
+      /* already gone */
+    }
+  }
+  return stopped;
 }
 
 export function findTaskOutputFile(sessionId: string, taskId: string, cwd?: string): string | undefined {

@@ -23,6 +23,42 @@ export function saveAutoScrollPreference(enabled, storage) {
 }
 
 // Not 'piweb.dashboard': that key holds the Dashboard's layout.
+const WORKING_LABEL = 'pi is working…';
+const BACKGROUND_LABEL = '等待背景命令…';
+
+/**
+ * A busy session that has replied and is held open only by background
+ * commands: Claude Code and AGY hand over their reply while commands they
+ * started keep running, and Piweb waits for those. True when a command row's
+ * latest state is running and the newest row besides command updates is the
+ * agent's reply; tool or thinking rows after it mean the agent is working again.
+ */
+export function isWaitingOnBackgroundCommands(transcript) {
+  const states = new Map();
+  let newest = null;
+  for (const row of transcript.querySelectorAll(':scope > .msg, :scope > details.event')) {
+    if (row.dataset.commandId) states.set(row.dataset.commandId, row.dataset.commandState);
+    else newest = row;
+  }
+  if (![...states.values()].includes('running')) return false;
+  return Boolean(newest?.matches('.msg:not(.msg-user):not(.msg-narration):not(.partial)'));
+}
+
+/**
+ * Keep a typing line's label true to what the session waits for. Re-checks
+ * whenever rows are added or removed; returns the check for busy changes.
+ */
+export function bindTypingLabel(typingEl, transcript) {
+  const label = typingEl.querySelector('.typing-label');
+  const sync = () => {
+    const text = isWaitingOnBackgroundCommands(transcript) ? BACKGROUND_LABEL : WORKING_LABEL;
+    if (label && label.textContent !== text) label.textContent = text;
+  };
+  const observer = new MutationObserver(sync);
+  observer.observe(transcript, { childList: true });
+  return { sync, disconnect: () => observer.disconnect() };
+}
+
 const DASHBOARD_KEY = 'piweb.dashboardEnabled';
 
 /** Local browser preference; the Dashboard is on unless turned off here. */

@@ -6,7 +6,7 @@
  * with independent draggable vertical AND horizontal resize splitters.
  */
 
-import { shouldLoadOlderHistory } from './session-ui.js';
+import { bindTypingLabel, shouldLoadOlderHistory } from './session-ui.js';
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const PANE_PAGE_SIZE = 50;
@@ -1280,6 +1280,7 @@ export function createSessionDashboard({
       btwMessagesEl,
       jumpBtn,
       typingEl,
+      typingLabel: bindTypingLabel(typingEl, messagesEl),
       btwPendingRow,
       btwPendingLink,
       dock,
@@ -2395,6 +2396,7 @@ export function createSessionDashboard({
     pane.spinnerEl.hidden = !busy;
     pane.stopBtn.hidden = !busy;
     pane.typingEl.hidden = !busy || pane.btwTarget === 'btw';
+    if (busy) pane.typingLabel.sync();
     pane.splitDownBtn.hidden = allJids().length < 2;
     pane.syncBtwControls?.();
   }
@@ -2864,6 +2866,7 @@ export function createSessionDashboard({
     pane.disposed = true;
     voiceIme?.unregister(pane.textarea);
     transcriptObserver?.unobserve(pane.messagesEl);
+    pane.typingLabel.disconnect();
     paneSizeObserver?.unobserve(pane.el);
     paneSizeObserver?.unobserve(pane.el.querySelector('.dashboard-pane-header'));
     paneSizeObserver?.unobserve(pane.el.querySelector('.dashboard-pane-dock'));
