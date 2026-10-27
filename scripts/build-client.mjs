@@ -20,6 +20,14 @@ const result = await build({
   metafile: true,
 });
 
+// piscord serves this bundle to a bare page with only its same-directory
+// imports beside it (test/piscord-renderer-contract.test.ts); anything else the
+// bundle imports would 404 there and turn every Discord table back into text.
+for (const { path, external } of result.metafile.outputs['public/lobehub-rich.js'].imports) {
+  if (external && !/^\.\/[\w.-]+\.js$/.test(path))
+    throw new Error(`public/lobehub-rich.js imports ${path}; keep externals to ./name.js beside it`);
+}
+
 // Preserve full bundled-package license notices as well as esbuild's comments.
 const packages = new Set();
 for (const input of Object.keys(result.metafile.inputs)) {
