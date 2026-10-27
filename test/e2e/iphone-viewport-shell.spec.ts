@@ -329,10 +329,13 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   const bottomRest = (await onScreen()).dock;
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);
+  // The lift re-samples the viewport up to 700ms after the keyboard event; on
+  // a loaded machine (the full suite) the card landed ~120ms after the fixed
+  // wait, 1-20px short. Wait for where it settles, not a moment in between.
+  await expect.poll(async () => (await onScreen()).dock.bottom).toBe(480 - 6);
   const bottomTyping = await onScreen();
   expect(bottomTyping.panes).toEqual(rest.panes);
   expect(bottomTyping.lifted).toEqual([false, true]);
-  expect(bottomTyping.dock.bottom).toBe(480 - 6);
   expect(bottomTyping.dock.top).toBeGreaterThanOrEqual(8);
   await expect(paneAt(1).locator('textarea')).toBeFocused();
   // The lifted card is what a tap there hits, not the pane above.
