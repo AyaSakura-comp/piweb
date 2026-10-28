@@ -254,6 +254,20 @@ The existing palette and composer/viewer controls are unchanged. See
 [render-first reply reveal](docs/render-reveal.md) for software architecture,
 component/state ownership, the live-to-final workflow, buffering and evidence limits.
 
+## Tables
+
+A reply's table keeps its in-transcript form (13.5px, cells on one line,
+scrolling sideways inside `.table-wrap`). A tap on it opens it full screen in
+the same pan/zoom viewer as Mermaid (`openTableViewer()` in
+`public/markdown.js`): a copy, first shrunk to the viewer's width so every
+column is in view (never below half size; a wider table pans), placed at its
+top left. Pinch, pan, double-tap, the zoom buttons and Reset (back to that
+first view) work as for diagrams; close with ×, the backdrop or Escape. Unlike
+the always-dark Mermaid figure, the table viewer follows the light/dark
+appearance. A link in a cell keeps its own tap (copy, with Open), a sideways swipe still
+scrolls the table, and selecting its text (long press, or a mouse drag) is not
+a tap. Same in Dashboard panes.
+
 ## Pinned prompt
 
 While reading a turn whose prompt has scrolled away, that prompt is pinned to

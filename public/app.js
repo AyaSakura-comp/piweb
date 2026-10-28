@@ -10,7 +10,7 @@
  * events it missed instead of losing them or double-rendering.
  */
 
-import { renderRich } from './markdown.js';
+import { openTableViewer, renderRich } from './markdown.js';
 import { mountSystemMetrics } from './system-metrics.js';
 import { canReuseStreamingRich, updateStreamingRich } from './streaming-rich.js';
 import { renderLobehubStatic } from './lobehub-rich.js';
@@ -3409,6 +3409,18 @@ document.addEventListener('click', (event) => {
   if (!card?.closest(STREAM_ROOTS)) return;
   event.preventDefault();
   playFromTranscript(card.dataset.streamUrl, card.dataset.streamType, card);
+});
+
+// A tap on a reply's table opens it full screen (DESIGN.md "Tables"); from the
+// document, since Dashboard panes render the same markup. Links in it still
+// open, and selecting its text (a mouse drag or the quote selection) is no tap.
+document.addEventListener('click', (event) => {
+  if (event.defaultPrevented || event.button !== 0) return;
+  const table = event.target.closest?.('.table-wrap table');
+  if (!table?.closest(STREAM_ROOTS) || event.target.closest('a, button, input, summary')) return;
+  if (customSelectionActive || !(document.getSelection()?.isCollapsed ?? true)) return;
+  event.preventDefault();
+  openTableViewer(table);
 });
 
 streamPlayer.onChange((now) => {

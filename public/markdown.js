@@ -524,7 +524,13 @@ function fitMermaidSvgInline(svgEl, isGantt = false) {
   svgEl.style.maxHeight = 'min(42dvh, 340px)';
 }
 
-function openMermaidModal(svgHtml) {
+// The full-screen pan/zoom viewer: Mermaid diagrams and tables share it.
+// `zoomView` (set when it is first built) places the stage; `homeView` is
+// where Reset returns.
+let zoomView = null;
+let homeView = { scale: 1, x: 0, y: 0 };
+
+function zoomViewer() {
   let modal = document.getElementById('mermaid-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -601,22 +607,21 @@ function openMermaidModal(svgHtml) {
 
     modal.querySelector('.mm-zoom-in').addEventListener('click', () => zoomByRatio(1.3));
     modal.querySelector('.mm-zoom-out').addEventListener('click', () => zoomByRatio(1 / 1.3));
-    modal.querySelector('.mm-zoom-reset').addEventListener('click', () => {
-      scale = 1;
-      x = 0;
-      y = 0;
-      updateTransform(true);
-    });
+    zoomView = (view, animate = false) => {
+      ({ scale, x, y } = view);
+      updateTransform(animate);
+    };
+    modal.querySelector('.mm-zoom-reset').addEventListener('click', () => zoomView(homeView, true));
     const closeModal = () => {
       modal.hidden = true;
       document.body.style.overflow = '';
-      scale = 1;
-      x = 0;
-      y = 0;
-      updateTransform(false);
+      zoomView({ scale: 1, x: 0, y: 0 });
     };
     modal.querySelector('.mm-modal-close').addEventListener('click', closeModal);
     modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) closeModal();
+    });
 
     // Two-finger pinch centered on the midpoint between fingers
     body.addEventListener(
@@ -651,10 +656,8 @@ function openMermaidModal(svgHtml) {
           ) {
             if (e.cancelable) e.preventDefault();
             lastTap = 0;
-            if (scale > 1.2) {
-              scale = 1;
-              x = 0;
-              y = 0;
+            if (scale > Math.max(1.2, homeView.scale * 1.2)) {
+              ({ scale, x, y } = homeView);
             } else {
               const stageRect = stage.getBoundingClientRect();
               const origX = stageRect.left - x;
@@ -726,21 +729,69 @@ function openMermaidModal(svgHtml) {
     body.addEventListener('touchcancel', endTouch);
   }
 
+  return modal;
+}
+
+function openZoomViewer(title, kind, fill) {
+  const modal = zoomViewer();
+  modal.querySelector('.mm-modal-title').textContent = title;
+  modal.dataset.kind = kind;
   const stage = modal.querySelector('.mm-modal-stage');
-  stage.innerHTML = svgHtml;
-  const svgEl = stage.querySelector('svg');
-  if (svgEl) {
-    const { width: intrinsicW } = parseSvgIntrinsicDimensions(svgEl);
-    svgEl.removeAttribute('width');
-    svgEl.removeAttribute('height');
-    svgEl.style.display = 'block';
-    svgEl.style.width = intrinsicW > 0 ? `min(86vw, ${intrinsicW}px)` : '86vw';
-    svgEl.style.maxWidth = '86vw';
-    svgEl.style.maxHeight = '76dvh';
-    svgEl.style.height = 'auto';
-  }
+  fill(stage);
+  homeView = { scale: 1, x: 0, y: 0 };
+  zoomView(homeView);
   modal.hidden = false;
   document.body.style.overflow = 'hidden';
+  return modal;
+}
+
+function openMermaidModal(svgHtml) {
+  openZoomViewer('Mermaid Diagram', 'mermaid', (stage) => {
+    stage.innerHTML = svgHtml;
+    const svgEl = stage.querySelector('svg');
+    if (svgEl) {
+      const { width: intrinsicW } = parseSvgIntrinsicDimensions(svgEl);
+      svgEl.removeAttribute('width');
+      svgEl.removeAttribute('height');
+      svgEl.style.display = 'block';
+      svgEl.style.width = intrinsicW > 0 ? `min(86vw, ${intrinsicW}px)` : '86vw';
+      svgEl.style.maxWidth = '86vw';
+      svgEl.style.maxHeight = '76dvh';
+      svgEl.style.height = 'auto';
+    }
+  });
+}
+
+/**
+ * A reply's table, full screen: a copy in the same pan/zoom viewer, laid out
+ * at the viewer's width with its cells free to wrap between words, so most
+ * tables show every column at full size. One that still does not fit is
+ * shrunk to the width (never below half size; a wider one pans). Placed at
+ * the top, centred across.
+ */
+export function openTableViewer(table) {
+  let sheet;
+  const modal = openZoomViewer('Table', 'table', (stage) => {
+    sheet = document.createElement('div');
+    sheet.className = 'msg-text table-viewer-sheet';
+    sheet.append(table.cloneNode(true));
+    stage.replaceChildren(sheet);
+  });
+  const body = modal.querySelector('.mm-modal-body');
+  const style = getComputedStyle(body);
+  const box = body.getBoundingClientRect();
+  const left = box.left + (Number.parseFloat(style.paddingLeft) || 0);
+  const top = box.top + (Number.parseFloat(style.paddingTop) || 0);
+  const width = body.clientWidth - (Number.parseFloat(style.paddingLeft) || 0) * 2;
+  sheet.style.maxWidth = `${width}px`;
+  const copy = sheet.querySelector('table').getBoundingClientRect();
+  const scale = Math.max(0.5, Math.min(1, width / (copy.width || 1)));
+  homeView = {
+    scale,
+    x: left + Math.max(0, (width - copy.width * scale) / 2) - copy.left,
+    y: top - copy.top,
+  };
+  zoomView(homeView);
 }
 
 export function highlightCode(code, language = '', highlighter = globalThis.window?.hljs) {

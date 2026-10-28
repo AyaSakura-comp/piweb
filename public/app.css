@@ -3153,6 +3153,29 @@ html.keyboard-shell .life-edge-hint {
   margin: 8px 0;
 }
 
+/* A tap opens the table full screen (app.js); pointer also lets iOS deliver the
+   tap. No tap flash: the viewer itself is the feedback. */
+.table-wrap table {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The full-screen copy keeps the transcript's table look, but its cells may wrap
+   (between words) so the table fits the viewer's width at full size. */
+.mermaid-modal[data-kind='table'] .mm-modal-body {
+  padding: 12px;
+}
+
+.table-viewer-sheet {
+  white-space: normal;
+}
+
+.msg-text.table-viewer-sheet th,
+.msg-text.table-viewer-sheet td {
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
 .msg-text table {
   border-collapse: collapse;
   font-size: 13.5px;
@@ -5390,6 +5413,22 @@ dialog.sheet::backdrop {
 :root[data-theme='light'] .mermaid-title,
 :root[data-theme='light'] .mm-modal-title {
   color: #f4f0e6;
+}
+
+/* A table is not a dark figure: its viewer follows the app appearance. */
+:root[data-theme='light'] .mermaid-modal[data-kind='table'] .mm-modal-content {
+  background: var(--bg-alt);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .mermaid-modal[data-kind='table'] .mm-modal-head {
+  background: var(--bg-dark);
+  border-color: var(--border);
+}
+
+:root[data-theme='light'] .mermaid-modal[data-kind='table'] .mm-modal-title {
+  color: var(--text-bright);
 }
 
 :root[data-theme='light'] .mermaid-btn {
