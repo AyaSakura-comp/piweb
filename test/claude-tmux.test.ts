@@ -241,6 +241,45 @@ describe('Claude tmux invocation', () => {
     expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(false);
   });
 
+  // Torch NPU (2026-10-28): a background agent's Bash prompt carried one more
+  // footer hint, went unrecognised, and the agent sat on it for ten hours.
+  it.each([
+    ['on one row', ' Esc to cancel · Tab to amend · ctrl+x ctrl+k twice to stop background agents'],
+    ['wrapped', ' Esc to cancel · Tab to amend · ctrl+x ctrl+k twice to stop background\n agents'],
+  ])('auto-approves a background agent\'s prompt whose footer has more hints (%s)', async (_, footer) => {
+    // The turn only finishes once the prompt is answered.
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    let promptShown = true;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && promptShown) {
+        return [
+          ' Bash command · from the general-purpose agent',
+          ' │ bash -c \'cd /tmp/claude-1000/scratchpad/swiglu; diff a.mlir b.mlir; rm -rf',
+          ' │ air_project_*_b65536\'',
+          '╌'.repeat(80),
+          ' This shell -c script runs rm and could not be checked',
+          '',
+          ' Do you want to proceed?',
+          ' ❯ 1. Yes',
+          '   2. No',
+          '',
+          footer,
+        ].join('\n');
+      }
+      if (args[0] === 'send-keys' && args.includes('Enter') && fixture.submissionCount && promptShown) {
+        promptShown = false;
+        fixture.appendTurn();
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(false);
+  });
+
   it('emits agy_command_update events when Claude runs a background command', async () => {
     const fixture = createRuntimeFixture({ completeTurns: false });
     const events: any[] = [];

@@ -775,10 +775,13 @@ async function ensurePaneAlive(pane: string, deps: ClaudeTmuxDependencies): Prom
 
 function requiresManualConfirmation(screen: string): boolean {
   // Check the dialog footer, not prior terminal history or model/tool output.
+  // The footer grows "· hint" items as they apply (Tab to amend; with
+  // background agents running, "ctrl+x ctrl+k twice to stop background
+  // agents"), and the 80-column pane may wrap the last of them onto a new row.
   const tail = screen.trimEnd().slice(-1000);
   return (
     /Do you want to proceed\?/u.test(tail) &&
-    /Esc to cancel(?:\s*·\s*Tab to amend)?\s*$/u.test(tail)
+    /Esc to cancel(?:[ \t]*·[^\n]*(?:\n[^\n]*)?)?\s*$/u.test(tail)
   );
 }
 

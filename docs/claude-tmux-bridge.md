@@ -86,6 +86,17 @@ needs its next approved safe restart to pick up a changed launch policy.
   fails promptly instead of waiting for the inactivity timeout. As with other
   bridge code changes, an already-running worker needs an approved safe restart
   to load the new timeout behavior; compiling it does not hot-patch active turns.
+- Bypass mode still asks about some commands ("This shell -c script runs rm and
+  could not be checked", "Dangerous rm operation on working directory…"),
+  background subagents' included. While a turn is open the bridge answers them:
+  a catastrophic one (`isCatastrophicPrompt`: rm of `/`, `~`, `$HOME`, `/home`, `/root`,
+  the workspace or an ancestor, mkfs, dd onto a device) gets Escape and stops
+  the turn naming the operation; anything else is approved. One still up when
+  the next message arrives is cancelled with Escape. A dialog is "Do you want to
+  proceed?" above a footer starting "Esc to cancel", which gains more "· hint"
+  items as they apply and may wrap in the 80-column pane. On 2026-10-28 the
+  "· ctrl+x ctrl+k twice to stop background agents" hint hid one from the
+  matcher, and Torch NPU's subagent waited on it for ten hours.
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.
