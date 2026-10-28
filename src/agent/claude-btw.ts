@@ -91,7 +91,9 @@ export function buildClaudeBtwArgs(options: {
 function readEntries(sessionDir: string, sessionId: string): ClaudeBtwEntry[] {
   try {
     const value = JSON.parse(readFileSync(join(sessionDir, STORE_FILE), 'utf8'));
-    if (value?.sessionId !== sessionId || !Array.isArray(value.entries)) return [];
+    // A thread asked before the first turn ('' : no conversation yet) carries
+    // into the conversation that turn starts; the next write binds it.
+    if ((value?.sessionId && value.sessionId !== sessionId) || !Array.isArray(value?.entries)) return [];
     return value.entries.filter(
       (entry: any) => typeof entry?.question === 'string' && typeof entry?.response === 'string',
     );

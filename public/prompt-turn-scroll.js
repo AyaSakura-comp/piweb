@@ -164,6 +164,9 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
         return;
       }
       watch();
+      // A hidden transcript (BTW in front) measures as zero: keep the last
+      // layout; showing it again resizes it, which schedules a fresh update.
+      if (!scroller.clientHeight) return;
       const previousSpace = Number.parseFloat(scroller.style.getPropertyValue(SPACE_PROPERTY)) || 0;
       const style = getComputedStyle(scroller);
       const bottomPadding = (Number.parseFloat(style.paddingBottom) || 0) - previousSpace;

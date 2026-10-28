@@ -137,6 +137,13 @@ export function createBtwWorkspace({
         typeof message.content === 'string',
     );
   const atBottom = () => side.scrollHeight - side.scrollTop - side.clientHeight < 40;
+  // A view left at its newest message comes back at its newest message, even
+  // when replies arrived while it was hidden; one scrolled up keeps its place.
+  const savedScroll = (node) =>
+    node.scrollHeight - node.scrollTop - node.clientHeight < 40 ? 'bottom' : node.scrollTop;
+  const restoreScroll = (node, saved) => {
+    node.scrollTop = saved === 'bottom' ? node.scrollHeight : saved;
+  };
   const follow = { before: atBottom, after: (was) => was && (side.scrollTop = side.scrollHeight) };
   const liveEntry = (question) => {
     const [q, waiting] = pendingNodes(question);
@@ -338,10 +345,10 @@ export function createBtwWorkspace({
     if (next === target) return;
     if (target === 'main') {
       mainDraft = textarea.value;
-      mainScroll = main.scrollTop;
+      mainScroll = savedScroll(main);
     } else {
       sideDraft = textarea.value;
-      sideScroll = side.scrollTop;
+      sideScroll = savedScroll(side);
     }
     target = next;
     textarea.value = next === 'main' ? mainDraft : sideDraft;
@@ -357,7 +364,7 @@ export function createBtwWorkspace({
     textarea.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Message');
     textarea.placeholder = next === 'btw' ? '問 BTW…' : 'Message pi…';
     send.setAttribute('aria-label', next === 'btw' ? '傳送至 BTW' : 'Send');
-    (next === 'main' ? main : side).scrollTop = next === 'main' ? mainScroll : sideScroll;
+    restoreScroll(next === 'main' ? main : side, next === 'main' ? mainScroll : sideScroll);
     renderStatus();
   }
 
@@ -514,7 +521,7 @@ export function createBtwWorkspace({
         drag.rect = surface.getBoundingClientRect();
         drag.other = surface === main ? side : main;
         overlay(drag.other, drag.rect);
-        drag.other.scrollTop = surface === main ? sideScroll : mainScroll;
+        restoreScroll(drag.other, surface === main ? sideScroll : mainScroll);
         surface.setPointerCapture(event.pointerId);
       }
       event.preventDefault();

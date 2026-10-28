@@ -812,3 +812,45 @@ test('a touch tap on the BTW switch toggles exactly once each way, across its 44
   await expect(page.locator('#btw-card')).toBeHidden();
   await expect(entry).toBeVisible();
 });
+
+// Live check 2026-10-29: back from BTW, the main view sat where it was left and
+// the reply that arrived meanwhile hid below "Jump to present".
+test('back from BTW, a main view left at its newest message shows what arrived meanwhile', async ({
+  page,
+}, info) => {
+  routes(page, true, { ...session, busy: true });
+  await page.goto('/');
+  await expect(page.getByText('Main message')).toBeVisible();
+  const messages = page.locator('#messages');
+  const grow = (text: string) =>
+    messages.evaluate((node, label) => {
+      const block = document.createElement('div');
+      block.className = 'msg';
+      block.style.minHeight = '900px';
+      block.textContent = label;
+      node.append(block);
+    }, text);
+  const gap = () => messages.evaluate((n) => n.scrollHeight - n.scrollTop - n.clientHeight);
+  const switchTo = async (name: string) => {
+    await page.getByRole('button', { name }).click();
+    await page.waitForFunction(() => !document.querySelector('.btw-sliding'));
+  };
+  await grow('earlier reply');
+  await messages.evaluate((n) => (n.scrollTop = n.scrollHeight));
+  expect(await gap()).toBeLessThan(40);
+
+  await switchTo('開啟 BTW');
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await grow('reply that arrived during BTW');
+  await switchTo('返回主對話');
+  expect(await gap()).toBeLessThan(40);
+  await expect(page.getByText('reply that arrived during BTW')).toBeInViewport();
+  await page.screenshot({ path: info.outputPath('back-at-newest.png') });
+
+  // Scrolled up to read: the place is kept.
+  await messages.evaluate((n) => (n.scrollTop = 200));
+  await switchTo('開啟 BTW');
+  await grow('another reply');
+  await switchTo('返回主對話');
+  expect(await messages.evaluate((n) => n.scrollTop)).toBe(200);
+});

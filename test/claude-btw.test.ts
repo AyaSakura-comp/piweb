@@ -148,6 +148,26 @@ describe('Claude Code BTW (side_question)', () => {
     expect(a.messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  // Live check 2026-10-29: a question asked before the first turn vanished from
+  // the side view as soon as that turn started the Claude conversation.
+  it('a side thread from before the first turn carries into the conversation it starts', async () => {
+    const fx = fixture();
+    await fx.btw('send', 'before');
+    writeFileSync(
+      join(fx.sessionDir, 'claude-tmux-session.json'),
+      JSON.stringify({ sessionId: 'conv-1', cwd: fx.tuiCwd, modelRef: 'claude-code/opus' }),
+    );
+    expect((await fx.btw('snapshot')).messages.map((m) => m.content)).toEqual(['before', 'A:before after 0']);
+    await fx.btw('send', 'after');
+    expect(fx.calls()[1].history).toEqual([{ question: 'before', response: 'A:before after 0' }]);
+    // Bound to conv-1 now: a later conversation still starts empty.
+    writeFileSync(
+      join(fx.sessionDir, 'claude-tmux-session.json'),
+      JSON.stringify({ sessionId: 'conv-2', cwd: fx.tuiCwd, modelRef: 'claude-code/opus' }),
+    );
+    expect((await fx.btw('snapshot')).messages).toEqual([]);
+  });
+
   it('a new Claude conversation starts an empty side thread', async () => {
     const fx = fixture({ sessionId: 'conv-1' });
     await fx.btw('send', 'old');

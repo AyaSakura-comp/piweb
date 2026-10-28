@@ -93,6 +93,8 @@ and worker refuse).
   `claude-btw.json` in the session directory and sends the entries back as
   `history`; a follow-up sees the earlier side answers. The entries belong to
   one Claude conversation id: `/pi new` (new directory, new id) starts empty.
+  A thread asked before the first turn is stored with no id and carries into
+  the conversation that turn starts (it used to vanish from the view then).
   Clear empties the file and is refused while a question is pending, as for Pi.
 - **One question at a time per session**, in order, each seeing the one before.
   `pending` lists the questions in flight (in memory, like Pi's); there is no
@@ -108,7 +110,26 @@ npx vitest run test/claude-btw.test.ts test/control-btw-routing.test.ts
 # first answer, the main turn finishes and its transcript never sees the side chat.
 PATH=$HOME/.local/bin:$PATH CLAUDE_TMUX_BIN=$HOME/.local/bin/claude \
   PIWEB_CLAUDE_LIVE=1 npx vitest run test/claude-btw-live.test.ts
+# The same through a real phone-size browser, recorded (isolated web + worker
+# loops, disposable DB): BTW before the first turn, beside a running turn, a
+# follow-up, back to main at its newest message, reload, clear. Haiku by
+# default; PIWEB_CLAUDE_E2E_MODEL=opus PIWEB_CLAUDE_E2E_THINKING=xhigh matches
+# the sessions in use. Its tmux can run on a private server
+# (CLAUDE_TMUX_TMUX_BIN=a wrapper running `tmux -L <name> "$@"`).
+PATH=$HOME/.local/bin:$PATH CLAUDE_TMUX_BIN=$HOME/.local/bin/claude \
+  PIWEB_CLAUDE_E2E_LIVE=1 npx playwright test test/e2e/claude-btw-live.spec.ts
 ```
+
+Live check 2026-10-29 (Opus, xhigh): side answers in 1.8–4.5 s, the main
+turn untouched. It found and fixed two view bugs: the pre-first-turn thread
+vanishing once the conversation existed, and the main view coming back from
+BTW short of its end with "Jump to present" showing — while the transcript was
+hidden, the prompt-turn hold measured it as zero and dropped its reserved
+space (`public/prompt-turn-scroll.js` now skips a hidden transcript). The one
+production failure before it ("Claude BTW timed out" after 26 min on
+2026-10-29 00:22) was the host out of memory (swap full, every process
+stalled until the kernel OOM-killed a 4.5 GB python at 00:48), not BTW: the
+same question on that 182 MB conversation now answers in 4.5 s, 326 MB peak.
 
 ## Commands and verification
 

@@ -167,6 +167,33 @@ describe('prompt turn ownership and lifecycle', () => {
     expect(f.space()).toBe(636);
     expect(f.scroller.scrollTop).toBe(1000);
   });
+  // Live check 2026-10-29: with BTW in front the transcript is display:none and
+  // measures as zero; the reservation computed from that was dropped, and on
+  // the way back it was re-added under the restored position, short of the end.
+  it('keeps the reservation while the transcript is hidden and recomputes once shown', () => {
+    const f = fixture();
+    const ticket = f.controller.begin();
+    const prompt = f.add(12);
+    f.controller.acknowledge(ticket, 12);
+    expect(f.space()).toBe(336);
+    f.scroller.scrollTo.mockClear();
+    const shown = { rect: f.scroller.getBoundingClientRect, rows: prompt.getBoundingClientRect };
+    f.scroller.clientHeight = 0;
+    f.scroller.scrollTop = 0;
+    f.scroller.getBoundingClientRect = () => ({ top: 0 });
+    prompt.getBoundingClientRect = () => ({ top: 0, bottom: 0 });
+    f.controller.update();
+    expect(f.space()).toBe(336);
+    expect(f.scroller.scrollTo).not.toHaveBeenCalled();
+    f.scroller.clientHeight = 400;
+    f.scroller.scrollTop = 1000;
+    f.scroller.getBoundingClientRect = shown.rect;
+    prompt.getBoundingClientRect = shown.rows;
+    f.add(13, 1060, 200, false);
+    f.controller.update();
+    expect(f.space()).toBe(136);
+    expect(f.scroller.scrollTop).toBe(1000);
+  });
   it('restores the prompt if a temporary rich-body replacement clamps native scrollTop', () => {
     const f = fixture();
     const ticket = f.controller.begin();

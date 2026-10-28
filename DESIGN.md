@@ -321,6 +321,10 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   tap is never followed by a content change under the finger.
   The visually hidden `#btw-context-label` keeps the polite live announcement.
 - **Composer**: placeholder “問 BTW…”; the isolation note lives in the header.
+- **Coming back**: each view keeps its own place. A view left at its newest
+  message comes back at its newest message, including what arrived while the
+  other view was in front (never under “Jump to present”); one scrolled up to
+  read comes back where it was.
 - **Motion**: horizontal `translateX` only, no rebound. Enter BTW 220ms and
   return 140ms ease-in; a committed drag settles from the finger over 120–280ms
   with `cubic-bezier(.2,.8,.2,1)`. Drag commits at 28% of the width or by the
