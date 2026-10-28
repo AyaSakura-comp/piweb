@@ -8,6 +8,9 @@ import {
   selectedTranscriptText,
 } from '../public/text-selection.js';
 
+// The text nodes sit in a message's text, where a selection may fall.
+const messageText = { closest: (sel: string) => (sel.includes('msg-text') ? messageText : null) };
+
 describe('transcript text selection', () => {
   it('accepts a dragged selection only when it belongs to the transcript', () => {
     const inside = {};
@@ -16,7 +19,7 @@ describe('transcript text selection', () => {
       rangeCount: 1,
       isCollapsed: false,
       toString: () => '  selected text  ',
-      getRangeAt: () => ({ commonAncestorContainer: inside }),
+      getRangeAt: () => ({ commonAncestorContainer: inside, toString: () => '  selected text  ' }),
     };
 
     expect(selectedTranscriptText(selection, root)).toBe('selected text');
@@ -111,7 +114,7 @@ describe('transcript text selection', () => {
 
   it('triggers custom touch selection on long-press and expands to word', () => {
     vi.useFakeTimers();
-    const textNode = { nodeType: 3, textContent: 'hello world test' };
+    const textNode = { nodeType: 3, textContent: 'hello world test', parentNode: messageText };
     const listeners = new Map<string, (event: any) => void>();
 
     class FakeRange {
@@ -254,7 +257,7 @@ describe('transcript text selection', () => {
 
   it('locks start anchor and moves trailing pivot when dragging across text', () => {
     vi.useFakeTimers();
-    const textNode = { nodeType: 3, textContent: 'first line\nsecond line\nthird line' };
+    const textNode = { nodeType: 3, textContent: 'first line\nsecond line\nthird line', parentNode: messageText };
     const globalListeners = new Map<string, (event: any) => void>();
     const rootListeners = new Map<string, (event: any) => void>();
 

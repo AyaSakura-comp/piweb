@@ -33,6 +33,78 @@ function elementForNode(node) {
   return node?.nodeType === 3 ? node.parentNode : node;
 }
 
+const SELECTABLE = '.msg-text, .event-body';
+
+/**
+ * The block of drawn transcript text holding `node`: a message, or the body of
+ * an opened tool/thinking card. A collapsed card's summary is not one: its
+ * one-line peek is cut off by an ellipsis, so a handle dragged onto it quoted
+ * output nobody could see and stretched the bubble off the screen (iPhone,
+ * 2026-10-29).
+ */
+function selectableBlock(node) {
+  const block = elementForNode(node)?.closest?.(SELECTABLE);
+  if (!block) return null;
+  const card = block.closest?.('details');
+  return card && !card.open ? null : block;
+}
+
+/** The selectable block in `root` nearest to `y` (a finger over a tool card between messages). */
+function nearestBlock(root, x, y) {
+  let best = null;
+  for (const block of root?.querySelectorAll?.(SELECTABLE) ?? []) {
+    if (selectableBlock(block) !== block) continue;
+    const rect = block.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+    const dx = Math.max(rect.left - x, 0, x - rect.right);
+    const score = dy * 1000 + dx;
+    if (!best || score < best.score) best = { block, score };
+  }
+  return best?.block ?? null;
+}
+
+/**
+ * Each text node of `range` that sits in a selectable block, with the part of
+ * it the range covers. Tool cards between two selected messages stay out.
+ */
+function selectedTextParts(range) {
+  const common = range.commonAncestorContainer;
+  const document = common?.ownerDocument;
+  if (!common || !document?.createTreeWalker) return null;
+  const parts = [];
+  const visit = (node) => {
+    if (!selectableBlock(node)) return;
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end = node === range.endContainer ? range.endOffset : node.data.length;
+    if (end > start) parts.push({ node, start, end, block: selectableBlock(node) });
+  };
+  if (common.nodeType === 3) {
+    visit(common);
+    return parts;
+  }
+  const walker = document.createTreeWalker(common, 4 /* NodeFilter.SHOW_TEXT */);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (range.intersectsNode(node)) visit(node);
+  }
+  return parts;
+}
+
+/** The text a range shows on screen: blocks apart, collapsed cards left out. */
+export function visibleRangeText(range) {
+  const parts = selectedTextParts(range);
+  if (!parts) return range.toString();
+  let text = '';
+  let block = null;
+  for (const part of parts) {
+    if (block && part.block !== block) text += '\n\n';
+    text += part.node.data.slice(part.start, part.end);
+    block = part.block;
+  }
+  return text;
+}
+
 /** Return selected transcript text, rejecting collapsed or out-of-transcript selections. */
 export function selectedTranscriptText(selection, transcriptRoot) {
   if (!selection) return '';
@@ -40,7 +112,7 @@ export function selectedTranscriptText(selection, transcriptRoot) {
   if (selection.rangeCount === 0 || selection.isCollapsed) return '';
   const range = selection.getRangeAt(0);
   if (!transcriptRoot.contains(elementForNode(range.commonAncestorContainer))) return '';
-  return selection.toString().trim().slice(0, MAX_SELECTION_LENGTH);
+  return visibleRangeText(range).trim().slice(0, MAX_SELECTION_LENGTH);
 }
 
 /** Compact display text for the composer chip; the full selection is retained separately. */
@@ -176,7 +248,7 @@ export function findTextPoint(document, x, y, rootContainer) {
   const raw = probe.raw;
 
   // 1. Direct text node match (fast path, <0.01ms)
-  if (raw && raw.node && raw.node.nodeType === 3 && !isLayoutWhitespace(raw.node)) {
+  if (raw?.node?.nodeType === 3 && !isLayoutWhitespace(raw.node) && selectableBlock(raw.node)) {
     if (!rootContainer || rootContainer.contains(raw.node.parentNode)) {
       const len = raw.node.textContent?.length ?? 0;
       return { node: raw.node, offset: Math.max(0, Math.min(len, raw.offset)) };
@@ -187,9 +259,9 @@ export function findTextPoint(document, x, y, rootContainer) {
   const elUnderPoint = probe.el;
   const rawEl = raw?.node?.nodeType === 3 ? raw.node.parentElement : raw?.node;
 
-  const msgEl = elUnderPoint?.closest?.('.msg-text, .event-body') ||
-                (rawEl?.nodeType === 1 ? rawEl.closest?.('.msg-text, .event-body') : null) ||
-                (raw?.node?.nodeType === 1 ? raw.node : null);
+  // Over a collapsed card or a gap, the nearest message: dragging a handle
+  // past tool cards stops at the edge of the text beside them.
+  const msgEl = selectableBlock(elUnderPoint) || selectableBlock(rawEl) || nearestBlock(rootContainer, x, y);
 
   if (!msgEl || (rootContainer && !rootContainer.contains(msgEl))) return null;
 
@@ -292,19 +364,20 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
    * break), which drew stray tabs between paragraphs.
    */
   function textRects(range) {
-    const common = range.commonAncestorContainer;
-    if (!common || !document.createTreeWalker) return Array.from(range.getClientRects());
-    if (common.nodeType === 3) return Array.from(range.getClientRects());
-    const walker = document.createTreeWalker(common, 4 /* NodeFilter.SHOW_TEXT */);
-    const part = document.createRange();
+    const parts = selectedTextParts(range);
+    if (!parts) return Array.from(range.getClientRects());
+    const piece = document.createRange();
     const rects = [];
-    let node;
-    while ((node = walker.nextNode())) {
-      if (!range.intersectsNode(node)) continue;
-      part.selectNodeContents(node);
-      if (node === range.startContainer) part.setStart(node, range.startOffset);
-      if (node === range.endContainer) part.setEnd(node, range.endOffset);
-      rects.push(...part.getClientRects());
+    for (const { node, start, end, block } of parts) {
+      piece.setStart(node, start);
+      piece.setEnd(node, end);
+      // Text scrolled sideways out of its block (a long code line) is not drawn.
+      const box = block.getBoundingClientRect();
+      for (const rect of piece.getClientRects()) {
+        const left = Math.max(rect.left, box.left);
+        const right = Math.min(rect.right, box.right);
+        if (right > left) rects.push({ left, right, top: rect.top, bottom: rect.bottom, width: right - left, height: rect.height });
+      }
     }
     return rects;
   }
@@ -399,7 +472,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     overlayEl.hidden = false;
     overlayEl.classList.add('active');
 
-    const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
+    const text = visibleRangeText(currentRange).trim().slice(0, MAX_SELECTION_LENGTH);
     if (text) {
       onSelection(text, currentRange.getBoundingClientRect(), scroller);
     } else {
@@ -574,7 +647,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       isDragging = false;
       overlayEl?.classList.remove('dragging');
       if (currentRange && !currentRange.collapsed) {
-        const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
+        const text = visibleRangeText(currentRange).trim().slice(0, MAX_SELECTION_LENGTH);
         if (text) onSelection(text, currentRange.getBoundingClientRect(), scroller);
       }
     }
@@ -623,7 +696,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       overlayEl?.classList.remove('dragging');
       handleEl.classList.remove('dragging');
       if (currentRange && !currentRange.collapsed) {
-        const text = currentRange.toString().trim().slice(0, MAX_SELECTION_LENGTH);
+        const text = visibleRangeText(currentRange).trim().slice(0, MAX_SELECTION_LENGTH);
         if (text) onSelection(text, currentRange.getBoundingClientRect(), scroller);
       }
     }
