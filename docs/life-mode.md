@@ -61,8 +61,16 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   any other. The
   lower-level typed `/pi new` command remains available for rotating only Pi's
   internal context without promoting the transcript. Life's overflow contains
-  **Search** and **Media**; Sessions, New pi session, Delete session, and their
-  separator remain hidden there.
+  **Search**, **Subagents**, **Media** and, below the separator, **Delete
+  session** (2026-10-29); Sessions and New pi session stay hidden there.
+  Delete session confirms, then runs the pencil's rotation (stopping a running
+  turn the same way) and soft-deletes the conversation it promoted, so it lands
+  in **Recently deleted** (restorable, purged after the retention period)
+  instead of Sessions, and Life opens empty. It is the client composing two
+  existing fenced calls (`POST /api/life-session/new`, then `DELETE
+  /api/sessions/<archived jid>`); the web tier still refuses DELETE on
+  `web:life` itself. If the second call fails, Life has still started over and
+  the old conversation stays in Sessions, which an alert says.
 - The ordinary composer, attachments, transcript history, streaming events, and
   existing integrations remain available; Life adds no separate voice/ASR stack.
 - Tapping **Sessions** or swiping right from within 36 px of the phone's left

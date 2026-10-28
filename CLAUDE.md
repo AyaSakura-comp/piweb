@@ -969,7 +969,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   server-side, with thinking level configurable through `pi thinking`; `pi stop` and
   the typed `pi new` command remain available. Life exposes the generation-bound `pi
   status` shortcut, thinking level picker, and **New Life session** as header actions;
-  its ⋯ menu keeps Search and Media. The pencil button calls
+  its ⋯ menu keeps Search, Subagents and Media, plus Delete session, which
+  rotates Life like the pencil and then soft-deletes the promoted conversation
+  into Recently deleted (client-side, two existing calls). The pencil button calls
   `/api/life-session/new`, which compares the caller's Life generation, refuses
   stale generations, active/queued work, or request/worker leases (the client
   answers an active-work 409 with `pi stop` + retry, and a stopped Life parent

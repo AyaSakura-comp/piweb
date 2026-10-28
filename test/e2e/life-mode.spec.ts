@@ -68,6 +68,7 @@ async function installLifeApi(
     unknownReplyEvent?: boolean;
     delayRestore?: boolean;
     delayDelete?: boolean;
+    failDelete?: boolean;
     delayCreate?: boolean;
     delayTrashLoad?: boolean;
     delayTrashRequestAt?: number;
@@ -333,6 +334,12 @@ async function installLifeApi(
     }
     if (/^\/api\/sessions\/[^/]+$/.test(path) && request.method() === 'DELETE') {
       if (deleteGate) await deleteGate;
+      if (options.failDelete) {
+        return route.fulfill({
+          status: 409,
+          json: { error: 'Session changed before it could be moved to trash' },
+        });
+      }
       const jid = decodeURIComponent(path.split('/')[3]);
       const removed = standardSessions.find((session) => session.jid === jid);
       standardSessions = standardSessions.filter((session) => session.jid !== jid);
@@ -556,6 +563,7 @@ async function installLifeApi(
     lifeRequests: () => lifeRequests,
     archivedLifeCount: () => archivedLifeCount,
     standardSessions: () => standardSessions,
+    deletedSessions: () => deletedSessions,
     lifeReadUrls: () => [...lifeReadUrls],
     releaseLifeResponse: () => releaseLifeResponse?.(),
     releaseSecondLife: () => releaseSecondLife?.(),
@@ -853,9 +861,10 @@ test('right-edge swipe enters persistent default-model Life mode', async ({ page
   await expect(page.getByRole('menuitem', { name: 'Media' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'New pi session' })).toBeHidden();
   await expect(page.locator('#mi-sessions')).toBeHidden();
-  await expect(page.locator('#mi-delete')).toBeHidden();
+  // Delete session trashes the current Life conversation (tested below).
+  await expect(page.locator('#mi-delete')).toBeVisible();
   await expect(page.locator('#mi-clean')).toHaveCount(0);
-  await expect(page.locator('#mi-management-separator')).toBeHidden();
+  await expect(page.locator('#mi-management-separator')).toBeVisible();
   await page.getByRole('menuitem', { name: 'Search' }).click();
   await expect(page.locator('#search-panel')).toBeVisible();
   await page.locator('#btn-search-close').click();
@@ -1002,6 +1011,91 @@ test('New Life stops a running Life turn instead of refusing', async ({ page }) 
   await expect(page.locator('#session-name')).toHaveText('Life');
   await expect(page.locator('#btn-life-new-session')).not.toHaveAttribute('aria-busy', 'true');
   expect(dialogs).toEqual([]);
+});
+
+// 2026-10-29: Life's ⋯ gets Delete session. It rotates Life like the pencil,
+// then trashes the old conversation (restorable) instead of listing it.
+for (const theme of ['light', 'dark'])
+  test(`Life ⋯ Delete session moves the conversation to Recently deleted and starts over (${theme})`, async ({
+    page,
+  }, info) => {
+    const api = await installLifeApi(page, { lifeEventCount: 2, lifeBusyUntilStop: true });
+    await page.addInitScript((value) => localStorage.setItem('piweb.theme', value), theme);
+    const dialogs: string[] = [];
+    page.on('dialog', (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.accept();
+    });
+    await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+    await page.goto('/');
+    await expect(page.locator('#messages .msg')).toHaveCount(2);
+
+    await page.locator('#btn-more').click();
+    const item = page.getByRole('menuitem', { name: 'Delete session' });
+    await expect(item).toBeVisible();
+    await expect(item).toBeEnabled();
+    const box = (await item.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await page
+    .locator('#more-menu')
+    .evaluate((menu) => Promise.all(menu.getAnimations({ subtree: true }).map((a) => a.finished)));
+  await page.screenshot({ path: info.outputPath(`life-menu-delete-${theme}.png`) });
+    await item.click();
+
+    // A running Life turn is stopped first, exactly as for the pencil.
+    await expect.poll(api.archivedLifeCount).toBe(1);
+    expect(api.commandBodies).toEqual([
+      expect.objectContaining({ command: 'pi stop', lifeGeneration: 'life-generation-1' }),
+    ]);
+    await expect
+      .poll(() => api.deletedSessions().map((s) => s.jid))
+      .toContain('web:life-archive-1');
+    expect(api.standardSessions().map((s) => s.jid)).not.toContain('web:life-archive-1');
+    expect(dialogs).toEqual([
+      'Move this Life conversation to Recently deleted? Life starts over empty.',
+    ]);
+    await expect(page.locator('#messages .msg')).toHaveCount(0);
+    await expect(page.locator('#session-name')).toHaveText('Life');
+    await expect(page.locator('#app')).toHaveClass(/life-mode/);
+    await page.screenshot({ path: info.outputPath(`life-after-delete-${theme}.png`) });
+  });
+
+test('Life ⋯ Delete session does nothing when the confirmation is dismissed', async ({ page }) => {
+  const api = await installLifeApi(page, { lifeEventCount: 2 });
+  page.on('dialog', (dialog) => void dialog.dismiss());
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#messages .msg')).toHaveCount(2);
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Delete session' }).click();
+  await page.waitForTimeout(300);
+  expect(api.archivedLifeCount()).toBe(0);
+  expect(api.deletedSessions().map((s) => s.jid)).not.toContain('web:life-archive-1');
+  await expect(page.locator('#messages .msg')).toHaveCount(2);
+});
+
+test('when trashing fails, Life still starts over and the old conversation stays in Sessions', async ({
+  page,
+}) => {
+  const api = await installLifeApi(page, { lifeEventCount: 2, failDelete: true });
+  const dialogs: string[] = [];
+  page.on('dialog', (dialog) => {
+    dialogs.push(dialog.message());
+    void dialog.accept();
+  });
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'life'));
+  await page.goto('/');
+  await expect(page.locator('#messages .msg')).toHaveCount(2);
+  await page.locator('#btn-more').click();
+  await page.getByRole('menuitem', { name: 'Delete session' }).click();
+  await expect.poll(() => dialogs.length).toBe(2);
+  expect(dialogs[1]).toBe(
+    'The old Life conversation stayed in Sessions: Session changed before it could be moved to trash',
+  );
+  expect(api.standardSessions().map((s) => s.jid)).toContain('web:life-archive-1');
+  await expect(page.locator('#messages .msg')).toHaveCount(0);
+  await expect(page.locator('#session-name')).toHaveText('Life');
 });
 
 for (const width of [320, 350, 360, 361, 374, 375]) {

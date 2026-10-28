@@ -176,7 +176,8 @@ protected channel, resolves Pi's exact runtime-default model and effective
 thinking level before every turn, and hides channel/model management. Its header
 shows **Sessions / Life / DEFAULT**, puts the generation-bound **pi status** shortcut
 beside a dedicated **New Life session** pencil and the ⋯ button, and keeps
-**Search** and **Media** in that menu. New
+**Search**, **Subagents**, **Media** and **Delete session** (the conversation goes
+to Recently deleted and Life starts over empty) in that menu. New
 Life session promotes the current transcript, media, and Pi folder into the
 ordinary Sessions list under an extractive title, then opens a brand-new empty
 Life session. Tap **Sessions**, or swipe right from the phone's left edge, to

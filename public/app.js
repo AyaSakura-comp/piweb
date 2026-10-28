@@ -2071,15 +2071,32 @@ function newPiSession() {
   runQuickCommand('pi new');
 }
 
-async function newLifeSession() {
-  if (
-    state.selectionPending ||
-    state.mode !== 'life' ||
-    state.activeJid !== LIFE_JID ||
-    $('btn-life-new-session').disabled
-  ) {
-    return;
-  }
+function canReplaceLife() {
+  return (
+    !state.selectionPending &&
+    state.mode === 'life' &&
+    state.activeJid === LIFE_JID &&
+    !$('btn-life-new-session').disabled
+  );
+}
+
+function newLifeSession() {
+  return replaceLifeSession();
+}
+
+/**
+ * ⋯ → Delete session in Life: the same rotation as New Life, after which the
+ * old conversation, now an ordinary session, goes to Recently deleted like
+ * any deleted session (restorable) instead of staying in Sessions.
+ */
+async function deleteLifeSession() {
+  if (!canReplaceLife()) return;
+  if (!confirm('Move this Life conversation to Recently deleted? Life starts over empty.')) return;
+  await replaceLifeSession({ trash: true });
+}
+
+async function replaceLifeSession({ trash = false } = {}) {
+  if (!canReplaceLife()) return;
 
   const navigation = lifeNavigationGeneration;
   const generation = state.lifeSession?.generation;
@@ -2103,6 +2120,12 @@ async function newLifeSession() {
     }
 
     markSeen(result.archived.jid, newestReadEvent);
+    let trashError = null;
+    if (trash) {
+      await api(`/api/sessions/${encodeURIComponent(result.archived.jid)}`, {
+        method: 'DELETE',
+      }).catch((err) => (trashError = err));
+    }
     state.lifeSession = result.life;
     const selected = await selectSession(LIFE_JID, {
       name: result.life.name,
@@ -2110,9 +2133,12 @@ async function newLifeSession() {
       navigation,
     });
     if (!selected || navigation !== lifeNavigationGeneration) return;
-    // The archived conversation appears in Sessions immediately; the regular
-    // poll remains a fallback if this refresh happens to fail offline.
+    // The archived conversation appears in Sessions (or the trash) immediately;
+    // the regular poll remains a fallback if this refresh happens to fail offline.
     await loadSessions().catch(() => false);
+    if (trash) void refreshTrashCount({ navigation });
+    // Life has started over either way; the old conversation is not lost.
+    if (trashError) alert(`The old Life conversation stayed in Sessions: ${trashError.message}`);
   } catch (err) {
     if (navigation !== lifeNavigationGeneration) return;
     // The archive may have committed even when its response was lost. Always
@@ -2448,15 +2474,15 @@ function openMoreMenu() {
   $('menu-scrim').hidden = false;
   $('btn-more').setAttribute('aria-expanded', 'true');
   // Life keeps transcript browsing and may rotate to a fresh Pi context, but
-  // never exposes channel-list, delete, clear, model, thinking, or cwd controls.
+  // never exposes channel-list, clear, model, thinking, or cwd controls. Its
+  // Delete session trashes the current conversation and starts Life over.
   // A trashed session is frozen: only Search still makes sense.
   $('mi-sessions').hidden = life;
   $('mi-new-chat').hidden = life;
-  $('mi-delete').hidden = life;
-  $('mi-management-separator').hidden = life;
   $('mi-new-chat').disabled = state.previewingDeleted;
-  $('mi-delete').disabled =
-    Boolean(deletingSessionJid) || state.selectionPending || state.previewingDeleted || life;
+  $('mi-delete').disabled = life
+    ? !canReplaceLife()
+    : Boolean(deletingSessionJid) || state.selectionPending || state.previewingDeleted;
 }
 
 function closeMoreMenu() {
@@ -3158,13 +3184,8 @@ $('btn-new-session').addEventListener('click', createSession);
 $('btn-life-back').addEventListener('click', openSessionsFromLife);
 
 async function deleteActiveSession() {
-  if (
-    state.selectionPending ||
-    !state.activeJid ||
-    state.previewingDeleted ||
-    state.mode === 'life'
-  )
-    return;
+  if (state.mode === 'life') return deleteLifeSession();
+  if (state.selectionPending || !state.activeJid || state.previewingDeleted) return;
   // Event metadata, not the 5s list cache, proves the active destination. Use
   // the rendered confirmed name so notification-opened sessions remain deletable.
   await deleteSession({
