@@ -2080,8 +2080,8 @@ function canReplaceLife() {
   );
 }
 
-function newLifeSession() {
-  return replaceLifeSession();
+async function newLifeSession() {
+  await replaceLifeSession();
 }
 
 /**
