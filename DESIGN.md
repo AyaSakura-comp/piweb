@@ -268,6 +268,37 @@ appearance. A link in a cell keeps its own tap (copy, with Open), a sideways swi
 scrolls the table, and selecting its text (long press, or a mouse drag) is not
 a tap. Same in Dashboard panes.
 
+## Full-screen reading
+
+A tap on the chat's transcript gives the conversation the whole screen
+(`public/session-fullscreen.js`, `.session-fullscreen` in `app.css`); another
+tap brings everything back, and so does Escape. There is no button for it: the
+tap is the gesture, as in a reader.
+
+- **What goes**: the header, the pinned prompt, the search bar, the typing line
+  with BTW ›, the chips and the composer (its draft, quote and attachments are
+  kept). "Jump to present" stays, at the foot. The status bar keeps a `--bg`
+  band (`safe-area-inset-top`) so text never runs under the clock, and the last
+  line clears the home indicator.
+- **Nothing under the finger moves.** Going full screen, the header and the
+  composer turn into overlays, the transcript grows under them and its scroll
+  offset is corrected in the same frame; then they slide off (header up,
+  composer down, 140ms ease-in, the exit curve), uncovering more of it. Coming
+  back they slide in over the transcript (220ms `cubic-bezier(.2,.8,.2,1)`) and
+  the layout returns only once they cover its edges. A transcript at its newest
+  message stays at its newest message instead: its last line rides down and up
+  with the composer (not while a just-sent prompt holds the top).
+- **What is a tap**: a touch tap only (a mouse click selects or deselects).
+  Anything with its own tap keeps it — links (copy), code (copy), tables
+  (viewer), images, media, tool cards, buttons — and so do a long-press
+  selection and the touch that ends one. A scroll, and a tap while typing in
+  the composer, are not taps. A tap while the chrome is still moving is
+  ignored, so a double tap is not two.
+- The main chat and Life; not the BTW view or Dashboard panes. Switching
+  sessions leaves full screen. Reduced motion switches at once.
+- Messages get their hover tint only with a real hover (`@media (hover:
+  hover)`): iOS left it on the last tapped message.
+
 ## Pinned prompt
 
 While reading a turn whose prompt has scrolled away, that prompt is pinned to
@@ -577,6 +608,7 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/session-dashboard-mobile.spec.ts \
   test/e2e/session-dashboard-zoom.spec.ts \
   test/e2e/text-selection.spec.ts \
+  test/e2e/session-fullscreen.spec.ts \
   test/e2e/keyboard-send.spec.ts \
   test/e2e/iphone-viewport-shell.spec.ts \
   test/e2e/settings-motion.spec.ts

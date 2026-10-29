@@ -31,6 +31,7 @@ import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
+import { createSessionFullscreen } from './session-fullscreen.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
 import { createSessionDashboard } from './session-dashboard.js?v=claude-btw-1';
@@ -1579,6 +1580,7 @@ async function createSession() {
 }
 
 async function selectSession(jid, opts = {}) {
+  sessionFullscreen.exit({ animate: false });
   closeLightbox();
   cameraComposer.close();
   btwWorkspace.reset();
@@ -3422,6 +3424,53 @@ document.addEventListener('click', (event) => {
   event.preventDefault();
   openTableViewer(table);
 });
+
+// A bare tap on the chat's transcript shows it full screen; another brings the
+// header and composer back (DESIGN.md "Full-screen reading"). Registered after
+// the link, code, table and media taps, so whatever they claim stays theirs.
+// Touch only: a mouse click there selects or deselects. A tap that puts the
+// keyboard away is not one either.
+const sessionFullscreen = createSessionFullscreen({
+  app: $('app'),
+  scroller: $('messages'),
+  // At its newest message (and not holding a just-sent prompt at the top),
+  // the transcript stays at its newest message.
+  followsTail: () => isNearBottom() && $('messages').dataset.promptTurn !== 'active',
+});
+const TRANSCRIPT_TAP_OWNERS =
+  'a, button, input, textarea, select, summary, label, img, video, audio, iframe, [role="button"], [contenteditable], [data-stream-url]';
+let transcriptTap = null;
+$('messages').addEventListener(
+  'pointerdown',
+  (event) => {
+    transcriptTap = {
+      touch: event.pointerType === 'touch',
+      editing:
+        document.documentElement.classList.contains('keyboard-shell') ||
+        Boolean(document.activeElement?.matches?.('input, textarea, select, [contenteditable="true"]')),
+    };
+  },
+  { passive: true },
+);
+document.addEventListener('click', (event) => {
+  const tap = transcriptTap;
+  transcriptTap = null;
+  if (event.defaultPrevented || event.button !== 0 || !tap?.touch || tap.editing) return;
+  if (!event.target.closest?.('#messages') || event.target.closest(TRANSCRIPT_TAP_OWNERS)) return;
+  if (customSelectionActive || !(document.getSelection()?.isCollapsed ?? true)) return;
+  sessionFullscreen.toggle();
+});
+// Escape leaves full screen unless it is closing something on top first.
+document.addEventListener(
+  'keydown',
+  (event) => {
+    if (event.key !== 'Escape' || !sessionFullscreen.active) return;
+    const layer =
+      '#lightbox:not([hidden]), #mermaid-modal:not([hidden]), dialog[open], .sheet:not([hidden]), .menu-pop:not([hidden]), .drawer.open';
+    if (!document.querySelector(layer)) sessionFullscreen.exit();
+  },
+  { capture: true },
+);
 
 streamPlayer.onChange((now) => {
   for (const node of document.querySelectorAll('[data-stream-url]')) {

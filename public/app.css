@@ -1109,8 +1109,12 @@ html.keyboard-shell .life-edge-hint {
   padding: 6px 14px;
 }
 
-.msg:hover {
-  background: rgb(0 0 0 / 0.04);
+/* Hover only where there is one: iOS keeps :hover on the last tapped message,
+   and a tap on the transcript is the full-screen switch. */
+@media (hover: hover) {
+  .msg:hover {
+    background: rgb(0 0 0 / 0.04);
+  }
 }
 
 .avatar {
@@ -2972,6 +2976,106 @@ html.keyboard-shell .life-edge-hint {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   pointer-events: auto;
+}
+
+/* ── full-screen reading ─────────────────────────────────────────────────
+   A tap on the transcript (session-fullscreen.js): the header and the bottom
+   chrome turn into overlays, so the transcript fills .main at once, then slide
+   off (hidden only once they are gone, so nothing off screen takes focus).
+   Leaving, they slide back over it before the layout returns. */
+.app.session-fullscreen .main {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* The status bar keeps its band; the text scrolls under it, not under the clock. */
+.app.session-fullscreen .main::before {
+  content: '';
+  position: absolute;
+  z-index: 47;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: var(--bg);
+}
+
+.app.session-fullscreen .main > .topbar,
+.app.session-fullscreen #typing,
+.app.session-fullscreen .main > .btw-pending-row,
+.app.session-fullscreen #composer-wrap {
+  position: absolute;
+  z-index: 45;
+  left: 0;
+  right: 0;
+  visibility: hidden;
+  transition:
+    transform 140ms ease-in,
+    visibility 0s linear 140ms;
+}
+
+.app.session-fullscreen .main > .topbar {
+  top: 0;
+  transform: translateY(-100%);
+}
+
+/* The typing line and the BTW link share the line above the composer. */
+.app.session-fullscreen #typing,
+.app.session-fullscreen .main > .btw-pending-row {
+  bottom: var(--composer-h, 84px);
+  transform: translateY(calc(100% + var(--composer-h, 84px)));
+}
+
+.app.session-fullscreen #composer-wrap {
+  bottom: 0;
+  transform: translateY(100%);
+}
+
+.app.session-fullscreen.session-fullscreen-leaving .main > .topbar,
+.app.session-fullscreen.session-fullscreen-leaving #typing,
+.app.session-fullscreen.session-fullscreen-leaving .main > .btw-pending-row,
+.app.session-fullscreen.session-fullscreen-leaving #composer-wrap {
+  visibility: visible;
+  transform: none;
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.app.session-fullscreen .main > .prompt-pin-clip,
+.app.session-fullscreen #search-panel,
+.app.session-fullscreen #deleted-banner {
+  display: none !important;
+}
+
+.app.session-fullscreen #messages {
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+}
+
+.app.session-fullscreen #messages[data-prompt-turn='active'] {
+  padding-bottom: calc(4px + env(safe-area-inset-bottom) + var(--prompt-turn-space, 0px));
+}
+
+.app.session-fullscreen .main > .stream-dock {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.app.session-fullscreen #jump-live {
+  bottom: calc(12px + env(safe-area-inset-bottom) + var(--stream-player-h, 0px));
+}
+
+/* session-fullscreen.js measures the layout it is about to return to. */
+.app.session-fullscreen-measuring .main > .topbar,
+.app.session-fullscreen-measuring #typing,
+.app.session-fullscreen-measuring .main > .btw-pending-row,
+.app.session-fullscreen-measuring #composer-wrap {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app.session-fullscreen .main > .topbar,
+  .app.session-fullscreen #typing,
+  .app.session-fullscreen .main > .btw-pending-row,
+  .app.session-fullscreen #composer-wrap {
+    transition: none !important;
+  }
 }
 
 /* ── rendered markdown ───────────────────────────────────────────────── */
