@@ -25,6 +25,7 @@ import {
   translateClaudeTranscriptRecord,
   type ClaudeTmuxDependencies,
 } from '../src/agent/claude-tmux.js';
+import { STOP_REQUESTED } from '../src/agent/claude-commands.js';
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -723,8 +724,13 @@ describe('Claude tmux invocation', () => {
   // Hay 回測 (2026-10-27): Claude replied and ended its turn, but a command it
   // had left in the background (a loop waiting on a file that was later
   // deleted) never ended, so the session spun on. Stop must end that command:
-  // Escape/C-c at an idle prompt stop nothing.
-  it('Stop after Claude has replied ends the background command it was waiting for', async () => {
+  // Escape/C-c at an idle prompt stop nothing. LFM (2026-10-29): a wait on a
+  // benchmark can last hours, so only Stop ends it; a newer message ("how far
+  // along is it?") or a worker restart leaves it running.
+  it.each([
+    ['Stop', STOP_REQUESTED, 'SIGTERM'],
+    ['a newer message', undefined, null],
+  ] as const)('%s after Claude has replied: the background command it was waiting for ends only on Stop', async (_name, reason, ended) => {
     const fixture = createRuntimeFixture({ completeTurns: false });
     const output = join(fixture.root, 'stuck.output');
     writeFileSync(output, '');
@@ -758,7 +764,7 @@ describe('Claude tmux invocation', () => {
       return result;
     };
     fixture.dependencies.sleep = async () => {
-      if (replies.length) controller.abort();
+      if (replies.length) controller.abort(reason);
       await new Promise((resolve) => setTimeout(resolve, 20));
     };
     try {
@@ -771,7 +777,8 @@ describe('Claude tmux invocation', () => {
       });
       expect(replies).toEqual(['All three fixed.']);
       expect(result).toMatchObject({ ok: false, aborted: true });
-      expect(await exited).toBe('SIGTERM');
+      const still = new Promise((resolve) => setTimeout(() => resolve(null), 300));
+      expect(await Promise.race([exited, still])).toBe(ended);
     } finally {
       stuck.kill('SIGKILL');
     }
@@ -1178,7 +1185,7 @@ describe('Claude tmux progress-aware timeout', () => {
     expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
   });
 
-  it.each(['idle', 'noise', 'background-noise'] as const)(
+  it.each(['idle', 'noise'] as const)(
     'still interrupts %s without meaningful transcript or output progress', async (mode) => {
       const { result, fixture, elapsed } = await runTimeoutScenario(mode);
       expect(result).toMatchObject({ ok: false });
@@ -1188,14 +1195,46 @@ describe('Claude tmux progress-aware timeout', () => {
       expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(true);
     },
   );
+
+  // LFM (2026-10-29): Claude replied "I'll send the comparison table when it's
+  // done" and left `until grep -q DONE log; do sleep 60; done` watching a
+  // benchmark of several hours. The loop prints nothing, so after an hour the
+  // finished reply got "Agent error: … timed out" under it. A command whose
+  // processes still run is a long wait, not a hang.
+  it('waits past the budget, without an error, for a silent background command that is still running', async () => {
+    const { result, fixture, elapsed } = await runTimeoutScenario('background-silent');
+    expect(result).toEqual({ ok: true, text: 'Benchmark finished.' });
+    expect(elapsed).toBeGreaterThan(fixture.dependencies.turnTimeoutMs * 4);
+    expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(false);
+  });
+
+  it('ends quietly under its reply when the background command is gone and no notification came', async () => {
+    const { result, fixture, elapsed, events } = await runTimeoutScenario('background-noise');
+    expect(result).toEqual({ ok: true, text: 'Benchmark running.' });
+    expect(elapsed).toBeLessThanOrEqual(140);
+    expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(false);
+    // Its row stops reading as running: nothing is waiting on it any more.
+    const last = events.filter((e) => e.type === 'agy_command_update').at(-1);
+    expect(last.command).toMatchObject({ id: 'benchmark', state: 'unknown' });
+  });
 });
 
 async function runTimeoutScenario(
-  mode: 'transcript' | 'background-output' | 'empty-tool-result' | 'boundary' | 'idle' | 'noise' | 'background-noise',
+  mode:
+    | 'transcript' | 'background-output' | 'empty-tool-result' | 'boundary' | 'idle' | 'noise'
+    | 'background-noise' | 'background-silent',
 ) {
   const fixture = createRuntimeFixture({ completeTurns: false });
   const output = join(fixture.root, 'benchmark.output');
   writeFileSync(output, mode === 'background-noise' ? 'steady output\n' : '');
+  // A silent watcher: alive, holding the output file, printing nothing.
+  let watcher: ReturnType<typeof spawn> | undefined;
+  if (mode === 'background-silent') {
+    const fd = openSync(output, 'a');
+    watcher = spawn('sleep', ['30'], { stdio: ['ignore', fd, fd] });
+    closeSync(fd);
+  }
+  const events: any[] = [];
   let elapsed = 0;
   let ticks = 0;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => elapsed);
@@ -1208,7 +1247,7 @@ async function runTimeoutScenario(
   fixture.dependencies.tmux = async (args) => {
     const answer = await tmux(args);
     if (args[0] === 'send-keys' && args.at(-1) === 'Enter' && fixture.submissionCount === 1) {
-      if (mode === 'background-output' || mode === 'background-noise') {
+      if (mode === 'background-output' || mode === 'background-noise' || mode === 'background-silent') {
         append(tool('background-tool'));
         append({
           type: 'user', toolUseResult: { backgroundTaskId: 'benchmark' },
@@ -1234,6 +1273,14 @@ async function runTimeoutScenario(
           '<task-notification><task-id>benchmark</task-id><status>completed</status></task-notification>' } });
         append({ type: 'system', subtype: 'turn_duration' });
       }
+    } else if (mode === 'background-silent') {
+      if (ticks === 8) {
+        watcher?.kill('SIGKILL');
+        append({ type: 'user', message: { role: 'user', content:
+          '<task-notification><task-id>benchmark</task-id><status>completed</status></task-notification>' } });
+        append({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Benchmark finished.' }] } });
+        append({ type: 'system', subtype: 'turn_duration' });
+      }
     } else if (mode === 'noise') {
       appendFileSync(fixture.transcript, '{invalid-json}\n');
       append({ type: 'progress', message: 'heartbeat' });
@@ -1253,10 +1300,16 @@ async function runTimeoutScenario(
     }
   };
   try {
-    const result = await invokeClaudeTmux('web_claude1', 'run benchmark', { dependencies: fixture.dependencies });
-    return { result, fixture, elapsed };
+    const result = await invokeClaudeTmux('web_claude1', 'run benchmark', {
+      dependencies: fixture.dependencies,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    return { result, fixture, elapsed, events };
   } finally {
     clock.mockRestore();
+    watcher?.kill('SIGKILL');
   }
 }
 

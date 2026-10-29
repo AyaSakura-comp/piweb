@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { STOP_REQUESTED } from '../src/agent/claude-commands.js';
 
 const { closeRpcSessionMock, invokeAgentMock, invokeAgyMock, invokeClaudeMock, sendResponseMock } =
   vi.hoisted(() => ({
@@ -144,6 +145,30 @@ describe('queue Claude tmux routing', () => {
     ]);
   });
 
+  // LFM (2026-10-29): a replied turn can wait hours on a benchmark. Only Stop
+  // ends the commands it waits for; "how far along is it?" must not.
+  it.each([
+    ['Stop', true],
+    ['a newer message', false],
+  ] as const)('%s tells the Claude bridge whether to end background commands', async (_how, stop) => {
+    const reasons: unknown[] = [];
+    await runQueuedMessage('claude-code/haiku', true, true, async (_folder, _prompt, opts) => {
+      if (invokeClaudeMock.mock.calls.length > 1) return { ok: true, text: 'claude answered' };
+      await new Promise((resolve) => opts.signal.addEventListener('abort', resolve, { once: true }));
+      reasons.push(opts.signal.reason);
+      return { ok: false, text: '', aborted: true };
+    }, stop ? 0 : 1, async ({ queue, db }) => {
+      await vi.waitFor(() => expect(invokeClaudeMock).toHaveBeenCalledTimes(1), { timeout: 2000, interval: 10 });
+      if (stop) queue.stopChannelTask('web:claude1');
+      else db.enqueueMessage({
+        channelJid: 'web:claude1', sender: 'u1', senderName: 'Alice',
+        content: 'how far along is it?', timestamp: new Date().toISOString(),
+      });
+      await vi.waitFor(() => expect(reasons).toHaveLength(1), { timeout: 2000, interval: 10 });
+    });
+    expect(reasons[0] === STOP_REQUESTED).toBe(stop);
+  });
+
   it('leaves non-Claude models on their existing path', async () => {
     await runQueuedMessage('local-llama/qwen', false, false);
 
@@ -158,6 +183,7 @@ async function runQueuedMessage(
   claudeTmuxEnabled: boolean,
   claudeImplementation?: (...args: any[]) => Promise<any>,
   expectedResponses = 1,
+  whileRunning?: (modules: { queue: any; db: any }) => Promise<void>,
 ): Promise<void> {
   const tempDir = mkdtempSync(join(tmpdir(), 'piweb-claude-routing-'));
   tempDirs.push(tempDir);
@@ -208,6 +234,7 @@ async function runQueuedMessage(
       timestamp: new Date().toISOString(),
     });
     queue.startProcessingLoop();
+    await whileRunning?.({ queue, db });
     await vi.waitFor(() => expect(sendResponseMock).toHaveBeenCalledTimes(expectedResponses), {
       timeout: 2000,
       interval: 10,

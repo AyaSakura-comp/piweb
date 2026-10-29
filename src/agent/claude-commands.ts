@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface ClaudeCommand {
@@ -37,30 +37,50 @@ export function readOutputTail(filePath: string, maxBytes = 12000): string {
 }
 
 /**
- * End a background command: SIGTERM every process writing to its output file.
+ * The abort reason of an explicit Stop. Only Stop ends the background commands
+ * a replied turn is waiting for; a newer message or a worker restart leaves
+ * them running, since the wait can be a benchmark of several hours.
+ */
+export const STOP_REQUESTED = 'piweb-stop';
+
+/**
+ * A background command's processes: every one writing to its output file.
  * Claude Code starts the command with stdout and stderr on that file, and its
  * children inherit them, so the path names exactly this task's processes.
  */
-export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): number[] {
-  const stopped: number[] = [];
+export function commandProcessIds(outputFile: string, procRoot = '/proc'): number[] {
   let pids: string[];
   try {
     pids = readdirSync(procRoot).filter((name) => /^\d+$/.test(name));
   } catch {
-    return stopped;
+    return [];
   }
-  for (const pid of pids) {
-    const writesThere = ['1', '2'].some((fd) => {
-      try {
-        return readlinkSync(join(procRoot, pid, 'fd', fd)) === outputFile;
-      } catch {
-        return false;
-      }
-    });
-    if (!writesThere) continue;
+  const paths = new Set([outputFile]);
+  try {
+    paths.add(realpathSync(outputFile));
+  } catch {
+    /* the file is gone; its writers still name the old path */
+  }
+  return pids
+    .filter((pid) =>
+      ['1', '2'].some((fd) => {
+        try {
+          return paths.has(readlinkSync(join(procRoot, pid, 'fd', fd)));
+        } catch {
+          return false;
+        }
+      }),
+    )
+    .map(Number);
+}
+
+/** End a background command: SIGTERM its processes (see commandProcessIds). */
+export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): number[] {
+  const stopped: number[] = [];
+  for (const pid of commandProcessIds(outputFile, procRoot)) {
     try {
-      process.kill(Number(pid), 'SIGTERM');
-      stopped.push(Number(pid));
+      process.kill(pid, 'SIGTERM');
+      stopped.push(pid);
     } catch {
       /* already gone */
     }

@@ -1328,6 +1328,10 @@ operations before closing the pane. Keep this feature disabled by default.
 The worker's reaper closes `piweb-cc-*` sessions of trashed/purged channels; it
 only touches sessions proven owned by this DB (channel row or `@piweb_owner`
 stamp), never other instances' or non-Piweb tmux sessions.
+After Claude replies, a turn held open by its background commands waits as long
+as their processes run (no one-hour "timed out" under a finished reply), and
+only **Stop** (`STOP_REQUESTED`) ends them — a newer message or a worker restart
+leaves an hours-long benchmark running ("Replied, still waiting" in the doc).
 
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 

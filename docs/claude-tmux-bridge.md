@@ -80,7 +80,10 @@ needs its next approved safe restart to pick up a changed launch policy.
   renew it. Pending transcript/output is read before checking the idle deadline.
   A genuine idle timeout still sends Escape/Ctrl-C and reports the idle duration;
   it does not retry or resubmit the prompt. Silent work exceeding the inactivity
-  budget can still time out; merely retaining a running-task flag is not progress.
+  budget can still time out while Claude is mid-turn; merely retaining a
+  running-task flag is not progress. Once Claude has **replied** and only its
+  background commands hold the turn open, a command whose processes still run
+  renews the budget (see "Replied, still waiting" below).
 - Stop sends Ctrl-C, including for a running turn recovered after worker restart.
   The tmux session/context remains available for the next message. A dead pane
   fails promptly instead of waiting for the inactivity timeout. As with other
@@ -151,6 +154,26 @@ it to the background, the file it polled was later deleted, and the loop could
 never end; its error output kept renewing the inactivity budget, so the session
 showed "pi is working…" under a finished reply for as long as the TUI lived.
 
+**Long silent waits; only Stop ends them (2026-10-29).** In the LFM session
+Claude replied "I'll send the comparison table when it's done" and left
+`until grep -q "VLCHAIN DONE" …; do sleep 60; done` watching a benchmark of
+several hours. The loop prints nothing, so after one hour the finished reply got
+"⚠️ Agent error: Claude Code tmux turn timed out" under it (twice that day), and
+the bridge stopped tailing the transcript. Now, at the inactivity deadline of a
+replied turn, the bridge asks whether any running tracked command still has a
+process writing to its output file (`commandProcessIds()`, the same `/proc` fd
+match Stop uses); if so it renews the budget and keeps waiting. If none does and
+no `<task-notification>` arrived, the turn ends quietly under the reply already
+delivered: no error, no Escape/C-c, and those commands are published as
+`unknown` so their rows stop reading as running.
+
+Since a wait can now last hours, ending its commands is reserved for **Stop**:
+`stopChannelTask()`/`abortChannelTask()` abort with `STOP_REQUESTED`, and only
+that reason SIGTERMs them. A newer message (`interruptChannelTask()`), a worker
+restart or a lost lease abort without it, so "how far along is it?" releases the
+turn but leaves the benchmark running; Claude Code still delivers its
+notification to the conversation.
+
 Use the existing **Stop** control to interrupt work or **⋯ → 背景命令**
 to inspect the tracked command view. This change adds no new slash command and
 does not turn Pi-only controls into Claude-native controls.
@@ -166,7 +189,10 @@ Fake transcript/queue tests cover monitor/background-command continuation,
 publication before completion, identical-final suppression and distinct-final
 publication. Virtual-clock regressions cover multi-budget thinking/tool activity,
 empty tool results, growing background output, completion at the poll boundary,
-and genuine idle/noise timeouts. They do not consume Claude quota or prove
+genuine idle/noise timeouts, a silent background command whose real process
+outlives several budgets, and a vanished one ending quietly. Stop vs a newer
+message is covered both at the bridge (a real looping process is or is not
+SIGTERMed) and at the queue (the abort reason each path passes). They do not consume Claude quota or prove
 live-provider timing.
 
 ## BTW side questions

@@ -22,7 +22,9 @@ import type { AgentResult, ThinkingLevel } from '../types.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
 import { createClaudeSubagentTracker } from './claude-subagents.js';
 import {
+  commandProcessIds,
   createClaudeCommandTracker,
+  STOP_REQUESTED,
   stopCommandProcesses,
   type ClaudeCommand,
 } from './claude-commands.js';
@@ -279,6 +281,8 @@ export interface ClaudeTmuxDependencies {
   turnTimeoutMs: number;
   /** Ends a background command's processes (by its output file). */
   stopCommand?: (outputFile: string) => number[];
+  /** Whether a background command still has processes (by its output file). */
+  commandRunning?: (outputFile: string) => boolean;
 }
 
 const defaultDependencies: ClaudeTmuxDependencies = {
@@ -346,8 +350,9 @@ export async function invokeClaudeTmux(
     aborted = true;
     // Then Stop means those commands: Escape/C-c reach an idle prompt and stop
     // nothing, and a command that never ends (a loop waiting on a file that is
-    // gone) would otherwise keep running after the turn is abandoned.
-    if (waitingOnBackground && commandTracker) {
+    // gone) would otherwise keep running after the turn is abandoned. Only Stop:
+    // a newer message or a worker restart must not end an hours-long benchmark.
+    if (waitingOnBackground && commandTracker && signal?.reason === STOP_REQUESTED) {
       for (const command of commandTracker.getCommands()) {
         if (command.state === 'running' && command.outputFile) {
           (deps.stopCommand ?? stopCommandProcesses)(command.outputFile);
@@ -471,6 +476,13 @@ export async function invokeClaudeTmux(
       }
       return changed;
     };
+    const backgroundCommandRunning = () =>
+      commandTracker!.getCommands().some(
+        (command) =>
+          command.state === 'running' &&
+          Boolean(command.outputFile) &&
+          (deps.commandRunning ?? ((file) => commandProcessIds(file).length > 0))(command.outputFile!),
+      );
     const refreshChildren = (force = false) => {
       if (transcriptPath && (force || Date.now() >= nextProjectionAt)) {
         childTracker?.refresh(transcriptPath);
@@ -623,7 +635,13 @@ export async function invokeClaudeTmux(
         if (commandsMadeProgress(pollUpdates)) deadline = Date.now() + deps.turnTimeoutMs;
         await publishCommands(pollUpdates);
       }
-      if (!turnComplete && Date.now() >= deadline) break;
+      if (!turnComplete && Date.now() >= deadline) {
+        // Claude has replied and waits only on what it left in the background.
+        // A command whose processes still run is a long wait, not a hang: a
+        // benchmark watched by a silent `until grep …; do sleep 60; done`.
+        if (!waitingOnBackground || !backgroundCommandRunning()) break;
+        deadline = Date.now() + deps.turnTimeoutMs;
+      }
       if (!turnComplete) {
         await ensurePaneAlive(pane, deps);
         if (Date.now() >= nextPromptCheckAt) {
@@ -669,6 +687,12 @@ export async function invokeClaudeTmux(
     }
 
     ensureNotAborted();
+    if (!turnComplete && waitingOnBackground) {
+      // The reply is in and nothing it waits for runs any more, yet no
+      // notification came: end the turn under that reply, not with an error.
+      await publishCommands(commandTracker.finish());
+      turnComplete = true;
+    }
     if (!turnComplete) {
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
       await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);

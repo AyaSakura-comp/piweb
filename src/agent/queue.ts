@@ -31,6 +31,7 @@ import {
 import { invokeAgent, UNTIL_DONE_MARKER } from './invoke.js';
 import { invokeAgy, isAgyModelRef } from './agy.js';
 import { invokeClaudeTmux, isClaudeTmuxModelRef } from './claude-tmux.js';
+import { STOP_REQUESTED } from './claude-commands.js';
 import {
   abortRpcSession,
   prepareRpcSession,
@@ -87,7 +88,7 @@ export function abortChannelTask(jid: string): { aborted: boolean; cleared: numb
   const channel = getChannel(jid);
   const aborted = Boolean(controller) || Boolean(channel && abortRpcSession(channel.folder));
   if (controller) {
-    controller.abort();
+    controller.abort(STOP_REQUESTED);
   }
   const cleared = clearPendingMessages(jid);
   return { aborted, cleared };
@@ -113,7 +114,7 @@ export function stopChannelTask(jid: string): {
   retireLife();
 
   const controller = activeChannelControllers.get(jid);
-  if (controller) controller.abort();
+  if (controller) controller.abort(STOP_REQUESTED);
   return { aborted: Boolean(controller), cleared: 0, preservedSession: false };
 }
 
