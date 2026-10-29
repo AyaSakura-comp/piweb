@@ -183,20 +183,26 @@ export function createClaudeCommandTracker(sessionId: string, options?: { cwd?: 
           const content = typeof part.content === 'string' ? part.content : '';
           const result = record.toolUseResult || {};
 
-          // Check for Bash background task
+          // A launch is known from its call, never from what a command printed:
+          // a foreground command that prints a log or a test file can carry
+          // another task's launch line, and the turn would wait on that task.
           const bgTaskId =
             result.backgroundTaskId ||
-            /Command running in background with ID:\s*([A-Za-z0-9_-]+)/i.exec(content)?.[1];
-          const rawOutputFile =
-            /Output is being written to:\s*([^\s,;]+)/i.exec(content)?.[1]?.replace(/[.,;]+$/, '');
+            (call?.name === 'Bash' && call.input?.run_in_background === true
+              ? /Command running in background with ID:\s*([A-Za-z0-9_-]+)/i.exec(content)?.[1]
+              : undefined);
+          const rawOutputFile = bgTaskId
+            ? /Output is being written to:\s*([^\s,;]+)/i.exec(content)?.[1]?.replace(/[.,;]+$/, '')
+            : undefined;
           const outputFile =
             rawOutputFile ||
             (bgTaskId ? findTaskOutputFile(sessionId, bgTaskId, options?.cwd) : undefined);
 
           // Check for Monitor task
           const monitorTaskId =
-            result.taskId ||
-            /Monitor started \(task\s*([A-Za-z0-9_-]+)/i.exec(content)?.[1];
+            call?.name === 'Monitor'
+              ? result.taskId || /Monitor started \(task\s*([A-Za-z0-9_-]+)/i.exec(content)?.[1]
+              : undefined;
 
           // Claude stopping its own task (TaskStop, or KillShell in older
           // builds) sends no <task-notification>; its tool result is the end.

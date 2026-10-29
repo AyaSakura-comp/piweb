@@ -684,7 +684,7 @@ describe('Claude tmux invocation', () => {
         phase = 1;
         append([
           { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call',
-            name: tool, input: { command: 'watch progress' } }] } },
+            name: tool, input: { command: 'watch progress', ...(tool === 'Bash' && { run_in_background: true }) } }] } },
           { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call',
             content: tool === 'Monitor' ? 'Monitor started (task watch_1, expires in 30m)' :
               'Command running in background with ID: watch_1' }] } },
@@ -1217,19 +1217,31 @@ describe('Claude tmux progress-aware timeout', () => {
     const last = events.filter((e) => e.type === 'agy_command_update').at(-1);
     expect(last.command).toMatchObject({ id: 'benchmark', state: 'unknown' });
   });
+
+  // Piweb (2026-10-29): a foreground command printed LFM's events, among them
+  // LFM's "Command running in background with ID: …" line. That was taken for
+  // a launch, the finished turn waited an hour on LFM's watcher, and "timed
+  // out" landed under the reply. Only a launch call starts a background wait.
+  it('does not wait on a launch line that a foreground command only printed', async () => {
+    const { result, fixture, elapsed, events } = await runTimeoutScenario('quoted-launch');
+    expect(result).toEqual({ ok: true, text: 'Here is the log.' });
+    expect(elapsed).toBeLessThanOrEqual(140);
+    expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(false);
+    expect(events.filter((e) => e.type === 'agy_command_update')).toEqual([]);
+  });
 });
 
 async function runTimeoutScenario(
   mode:
     | 'transcript' | 'background-output' | 'empty-tool-result' | 'boundary' | 'idle' | 'noise'
-    | 'background-noise' | 'background-silent',
+    | 'background-noise' | 'background-silent' | 'quoted-launch',
 ) {
   const fixture = createRuntimeFixture({ completeTurns: false });
   const output = join(fixture.root, 'benchmark.output');
   writeFileSync(output, mode === 'background-noise' ? 'steady output\n' : '');
   // A silent watcher: alive, holding the output file, printing nothing.
   let watcher: ReturnType<typeof spawn> | undefined;
-  if (mode === 'background-silent') {
+  if (mode === 'background-silent' || mode === 'quoted-launch') {
     const fd = openSync(output, 'a');
     watcher = spawn('sleep', ['30'], { stdio: ['ignore', fd, fd] });
     closeSync(fd);
@@ -1256,6 +1268,18 @@ async function runTimeoutScenario(
         });
         append({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Benchmark running.' }] } });
         append({ type: 'system', subtype: 'turn_duration' });
+      } else if (mode === 'quoted-launch') {
+        // Another session's log, printed by a foreground command.
+        append(tool('read-log'));
+        append({
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-log', content: [
+            `Command running in background with ID: benchmark. Output is being written to: ${output}`,
+            'Monitor started (task watch_2, expires in 30m)',
+          ].join('\n') }] },
+        });
+        append({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Here is the log.' }] } });
+        append({ type: 'system', subtype: 'turn_duration' });
       } else if (mode === 'empty-tool-result') append(tool('tool-0'));
     }
     return answer;
@@ -1273,6 +1297,9 @@ async function runTimeoutScenario(
           '<task-notification><task-id>benchmark</task-id><status>completed</status></task-notification>' } });
         append({ type: 'system', subtype: 'turn_duration' });
       }
+    } else if (mode === 'quoted-launch') {
+      // Bound the RED run: the quoted task's process ends.
+      if (ticks === 8) watcher?.kill('SIGKILL');
     } else if (mode === 'background-silent') {
       if (ticks === 8) {
         watcher?.kill('SIGKILL');

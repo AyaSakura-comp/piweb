@@ -174,6 +174,19 @@ restart or a lost lease abort without it, so "how far along is it?" releases the
 turn but leaves the benchmark running; Claude Code still delivers its
 notification to the conversation.
 
+**A launch comes from its call, not from printed text (2026-10-29).** The same
+day the Piweb session itself got "timed out" under a finished reply: a
+foreground `node q.cjs …` printed LFM's events, among them LFM's own
+"Command running in background with ID: bwp2y8yx7. Output is being written to:
+…" line, and the tracker took it for a launch. The turn then waited an hour on
+LFM's watcher (with the process check above it would have waited for as long
+as that watcher ran, and Stop would have SIGTERMed another session's process).
+`createClaudeCommandTracker()` now starts a command only from a launch call: the
+structured `toolUseResult.backgroundTaskId` (also set when Claude Code moves a
+timed-out command to the background), a `Bash` call with
+`run_in_background: true`, or a `Monitor` call. Text in any other tool result,
+such as a log, a test file or another session's events, starts nothing.
+
 Use the existing **Stop** control to interrupt work or **⋯ → 背景命令**
 to inspect the tracked command view. This change adds no new slash command and
 does not turn Pi-only controls into Claude-native controls.

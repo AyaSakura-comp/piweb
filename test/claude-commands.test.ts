@@ -331,6 +331,42 @@ checks: empty-conversation</event>
     expect(states).toEqual({ bjpeem6yi: 'cancelled', b3t0mr4ci: 'running', bkill: 'cancelled' });
   });
 
+  // Piweb (2026-10-29): `sed` of a test file and a query of LFM's events
+  // printed launch lines; each became a "running" command the turn waited on.
+  it('takes a launch from its call, never from what a command printed', () => {
+    const tracker = createClaudeCommandTracker(`test-quoted-${Date.now()}`);
+    const call = (id: string, name: string, input: any) => tracker.observe({
+      type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] },
+    });
+    const result = (id: string, content: string, toolUseResult?: any) => tracker.observe({
+      type: 'user', ...(toolUseResult && { toolUseResult }),
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] },
+    });
+    const printed = [
+      'Command running in background with ID: bwp2y8yx7. Output is being written to: /tmp/other/tasks/bwp2y8yx7.output',
+      'Monitor started (task watch_1, expires in 30m)',
+    ].join('\n');
+
+    call('q', 'Bash', { command: 'node q.cjs "select * from web_events"' });
+    expect(result('q', printed)).toEqual([]);
+    call('r', 'Read', { file_path: 'test/claude-tmux.test.ts' });
+    expect(result('r', printed)).toEqual([]);
+    expect(tracker.getCommands()).toEqual([]);
+
+    // Real launches still count, with or without the structured result.
+    call('bg', 'Bash', { command: 'pytest', run_in_background: true });
+    result('bg', 'Command running in background with ID: b1. Output is being written to: /tmp/me/tasks/b1.output');
+    call('auto', 'Bash', { command: 'make' });
+    result('auto', 'Command did not complete within its 120s timeout and was moved to the background (ID: b2).', {
+      backgroundTaskId: 'b2',
+    });
+    call('mon', 'Monitor', { description: 'watch log', command: 'tail -f log' });
+    result('mon', 'Monitor started (task m1, expires in 30m)');
+    expect(tracker.getCommands().map((c) => [c.id, c.state])).toEqual([
+      ['b1', 'running'], ['b2', 'running'], ['m1', 'running'],
+    ]);
+  });
+
   it('marks running tasks as unknown when finished / shut down', () => {
     const sessionId = `test-finish-${Date.now()}`;
     const tracker = createClaudeCommandTracker(sessionId);

@@ -1332,6 +1332,9 @@ After Claude replies, a turn held open by its background commands waits as long
 as their processes run (no one-hour "timed out" under a finished reply), and
 only **Stop** (`STOP_REQUESTED`) ends them — a newer message or a worker restart
 leaves an hours-long benchmark running ("Replied, still waiting" in the doc).
+A background command starts only from a launch call (`backgroundTaskId`, Bash
+`run_in_background: true`, Monitor), never from text a command printed: a log
+quoting another session's launch line once held a turn on that session's task.
 
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 
