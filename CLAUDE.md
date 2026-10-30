@@ -70,7 +70,7 @@ src/media-path.ts  ONE spelling of a media dir/URL (invariant 9)
 src/cli/piweb.ts   entrypoint: worker | web | all
 public/          index.html, app.css, app.js — no framework, no build step
                  markdown.js = markdown + KaTeX + Mermaid + code highlighting
-                 sw.js       = service worker (Web Push receive only)
+                 sw.js       = service worker (Web Push + reconnect page for a launch that cannot load)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  vendor/highlight/ = highlight.js browser build (no CDN)
@@ -1103,6 +1103,24 @@ issued on that device.
   delete it rather than retrying forever.
 - It runs in the web tier because that is where the subscriptions are and the
   half that has a reason to reach the public internet.
+
+### A launch that cannot load (iPhone white screen)
+
+iOS drops a backgrounded Home Screen app's page and reloads it on return, often
+while the phone's Tailscale tunnel is still restarting (piweb-ts logs the
+iPhone's disco key changing in the same minutes). A Home Screen app shows that
+failed load as a **plain white screen with no error and no retry**; only a
+force-quit brought it back (iPhone recording 2026-10-31).
+
+- `app.js` registers `sw.js` on every launch, not only for notifications.
+- `sw.js` answers **navigations only**: network first, nothing cached (a cached
+  shell would serve a stale UI after a deploy). When the page cannot be
+  fetched, or has not answered in 10 s, it returns a small reconnect page in
+  the saved theme that retries every 1.5 s and reloads once Piweb answers.
+  After a timeout the reloads wait without a limit for 60 s, so a slow link
+  cannot loop through the reconnect page.
+- `test/e2e/launch-reconnect.spec.ts` covers offline (both themes) and a
+  stalled page.
 
 ### Staying logged in
 

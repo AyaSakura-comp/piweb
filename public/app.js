@@ -987,8 +987,11 @@ $('subscription-device-code').addEventListener('click', async () => {
   showToast(copied ? 'Device code copied' : 'Could not copy device code');
 });
 
-// Tapping a notification asks the open window to switch sessions.
+// Tapping a notification asks the open window to switch sessions. The worker
+// is registered on every launch, not only with notifications: it is also what
+// turns a launch that cannot reach Piweb into a reconnect page (see sw.js).
 if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e.data?.type !== 'open-session' || !e.data.jid) return;
     if (e.data.jid === LIFE_JID) enterLifeMode();

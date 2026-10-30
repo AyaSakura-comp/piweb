@@ -34,7 +34,9 @@ interface Fixture {
 async function setup(page: Page): Promise<Fixture> {
   const fx: Fixture = { starts: [], served: new Map(), authed: true };
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
-  await page.route('**/*', async (route) => {
+  // The context, not the page: once sw.js controls the page, the page itself is
+  // fetched by the worker, which page.route never sees.
+  await page.context().route('**/*', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
