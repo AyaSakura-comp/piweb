@@ -34,7 +34,7 @@ import { createPromptPin } from './prompt-pin.js';
 import { parseUsageReport, renderUsageReport } from './usage-report.js';
 import { createSessionFullscreen } from './session-fullscreen.js';
 import { createHotKeywords } from './hot-keywords.js';
-import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
+import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-backends-1';
 import { createSessionDashboard } from './session-dashboard.js?v=host-strip-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';

@@ -25,6 +25,8 @@ type FakeServer = {
   /** Rewrites wait here while true, until `flush()`. */
   holdRewrites: boolean;
   flush: () => void;
+  /** Send an event on the latest connection, as the server would. */
+  send: (event: object) => void;
 };
 
 /** Hears the sentences in order, over a few audio chunks each, but no further
@@ -41,9 +43,11 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
     allowed: 1,
     holdRewrites: false,
     flush: () => held.splice(0).forEach((rewrite) => rewrite()),
+    send: () => {},
   };
   await page.routeWebSocket(KOMOREBI, (ws: WebSocketRoute) => {
     server.sockets++;
+    server.send = (event) => ws.send(JSON.stringify(event));
     let draft = '';
     let chunks = 0;
     let item = 0;
@@ -362,6 +366,82 @@ test('a long voice status keeps the empty box one line, before and after it goes
   await expect(input).toHaveAttribute('placeholder', 'Message pi…');
   expect(await height()).toBe(oneLine);
 });
+
+for (const theme of ['dark', 'light']) {
+  test(`the box says while voice input opens and while Komorebi starts its services (${theme})`, async ({
+    page,
+  }, info) => {
+    // 2026-10-31: "怎麼講都沒有用" — the box said 說話即可輸入… whatever was
+    // behind it. Komorebi now checks its recognizer and clean-up model when a
+    // session starts and starts the ones that are down (komorebi.backends).
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.addInitScript((t) => {
+      localStorage.setItem('piweb.mode', 'sessions');
+      localStorage.setItem('piweb.theme', t);
+      // The microphone opens only when the test says so.
+      const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = (c) =>
+        new Promise((resolve) => ((window as any).__openMic = () => resolve(open(c))));
+    }, theme);
+    const server = await fakeKomorebi(page, []);
+    await mockApi(page);
+    await page.goto('/');
+    await expect(page.locator('#session-name')).toHaveText('Voice');
+    const input = page.locator('#input');
+    const composer = page.locator('#composer');
+    const mic = composer.locator('.voice-ime-btn');
+    const height = () => input.evaluate((el) => Math.round(el.getBoundingClientRect().height));
+    const oneLine = await height();
+    const backends = (asr: string, refine: string, reason = '') => ({
+      type: 'komorebi.backends',
+      state: asr === 'unavailable' ? 'unavailable' : [asr, refine].includes('starting') ? 'starting' : 'ready',
+      backends: [
+        { role: 'asr', name: 'sensevoice', state: asr, reason: asr === 'unavailable' ? reason : '' },
+        { role: 'refine', name: 'cpu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
+      ],
+    });
+
+    await mic.click();
+    await expect(input).toHaveAttribute('placeholder', '語音輸入開啟中…');
+    await expect(mic).toHaveAttribute('title', '語音輸入開啟中（點一下關閉）');
+    await expect(composer).not.toHaveClass(/voice-listening/);
+    await page.screenshot({ path: info.outputPath(`1-opening-${theme}.png`) });
+    await page.evaluate(() => (window as any).__openMic());
+    await expect.poll(() => server.sessions.length).toBe(1);
+
+    server.send(backends('starting', 'ready'));
+    await expect(input).toHaveAttribute('placeholder', '語音服務啟動中…');
+    await expect(mic).toHaveAttribute('title', '語音服務啟動中，說的話會在啟動後出現（點一下關閉）');
+    await expect(composer).toHaveClass(/voice-listening/); // the mic still hears; Komorebi holds it
+    await expect(mic).not.toHaveClass(/voice-error/);
+    await page.screenshot({ path: info.outputPath(`2-starting-${theme}.png`) });
+
+    server.send(backends('ready', 'starting'));
+    await expect(input).toHaveAttribute('placeholder', '可說話，整理模型啟動中');
+    await page.screenshot({ path: info.outputPath(`3-refine-starting-${theme}.png`) });
+    server.send(backends('ready', 'ready'));
+    await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
+    await expect(mic).toHaveAttribute('title', '語音輸入中（點一下關閉）');
+
+    server.send(backends('unavailable', 'ready', '主機記憶體不足'));
+    await expect(input).toHaveAttribute('placeholder', '語音辨識無法啟動（主機記憶體不足）');
+    await expect(mic).toHaveClass(/voice-error/);
+    expect(await height()).toBe(oneLine); // a long status keeps the box one line
+    await page.screenshot({ path: info.outputPath(`4-unavailable-${theme}.png`) });
+
+    // Off and on again: a new check, and the box reads as it says.
+    await mic.click();
+    await expect(input).toHaveAttribute('placeholder', 'Message pi…');
+    await mic.click();
+    await page.evaluate(() => (window as any).__openMic());
+    await expect.poll(() => server.sessions.length).toBe(2);
+    server.send(backends('ready', 'ready'));
+    await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
+    await expect(mic).not.toHaveClass(/voice-error/);
+    expect(errors).toEqual([]);
+  });
+}
 
 /** Where character `index` of the one-line box's text is drawn (its middle). */
 async function charPoint(page: Page, index: number) {

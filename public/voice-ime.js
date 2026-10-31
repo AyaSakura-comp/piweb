@@ -18,6 +18,11 @@
  *   text goes transparent, keeping its caret.
  * Send waits for the last sentence (take()) and sends the cleaned-up text.
  *
+ * The placeholder says what is happening, including the services behind it:
+ * Komorebi checks its speech recognizer and clean-up model when a session
+ * starts, starts the ones that are down and says so (`komorebi.backends`),
+ * so the box reads 語音服務啟動中… instead of taking speech into nothing.
+ *
  * A finger stroked sideways across the box's text circles those words (as on
  * the Komorebi IME page, in the quote selection's bubble): the next sentence
  * spoken replaces them, or 刪除 takes them out. Up and down still scrolls.
@@ -200,6 +205,35 @@ export function freshRanges(before, after) {
   return ranges;
 }
 
+/**
+ * What the box's placeholder and the mic button's title say. `service` is the
+ * session's last `komorebi.backends` event: whether the speech recognizer
+ * (role asr) and clean-up model (role refine) are up, or being started.
+ */
+export function voiceStatus({ error = '', connecting = false, listening = false, service = null } = {}) {
+  const asr = service?.backends?.find((b) => b.role === 'asr');
+  const refine = service?.backends?.find((b) => b.role === 'refine');
+  const why = (b) => (b.reason ? `（${b.reason}）` : '');
+  if (error) return { placeholder: `語音輸入：${error}`, title: `語音輸入：${error}（點一下重試，再點一下關閉）`, failed: true };
+  if (connecting) return { placeholder: '語音輸入開啟中…', title: '語音輸入開啟中（點一下關閉）', failed: false };
+  if (!listening) return { placeholder: '點一下畫面開始收音…', title: '語音輸入（點畫面任何地方開始收音）', failed: false };
+  // The placeholder stays on one line and a phone shows about 11 characters of
+  // it, so what matters comes first; the title has the rest.
+  if (asr?.state === 'unavailable') {
+    const text = `語音辨識無法啟動${why(asr)}`;
+    return { placeholder: text, title: `${text}（點一下關閉）`, failed: true };
+  }
+  if (asr?.state === 'starting') {
+    // Komorebi holds what is said meanwhile and transcribes it once it is up.
+    return { placeholder: '語音服務啟動中…', title: '語音服務啟動中，說的話會在啟動後出現（點一下關閉）', failed: false };
+  }
+  if (refine?.state === 'starting') {
+    return { placeholder: '可說話，整理模型啟動中', title: '整理模型啟動中，先照原句輸入（點一下關閉）', failed: false };
+  }
+  const raw = refine?.state === 'unavailable' ? `：整理模型無法啟動${why(refine)}，照原句輸入` : '';
+  return { placeholder: '說話即可輸入…', title: `語音輸入中${raw}（點一下關閉）`, failed: false };
+}
+
 /** Microphone RMS (0–1) → glow strength (0–1): room noise stays dark. */
 export function glowLevel(rms) {
   return Math.max(0, Math.min(1, (rms - 0.012) / 0.12));
@@ -226,6 +260,7 @@ export function createVoiceIme({
   let target = null;
   let shown = { text: '', live: '', value: '' }; // what render() last wrote into target
   let starting = null;
+  let service = null; // the session's last komorebi.backends: its recognizer and clean-up model
   let error = '';
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
@@ -261,18 +296,13 @@ export function createVoiceIme({
 
   function sync() {
     const listening = Boolean(dictation?.listening);
+    const state = voiceStatus({ error, connecting: Boolean(starting) && !listening, listening, service });
     for (const [textarea, entry] of composers) {
       const mine = textarea === target;
       entry.button.setAttribute('aria-pressed', String(on));
       entry.button.classList.toggle('voice-on', on);
-      entry.button.classList.toggle('voice-error', on && Boolean(error));
-      entry.button.title = !on
-        ? '語音輸入'
-        : error
-          ? `語音輸入：${error}（點一下重試，再點一下關閉）`
-          : listening
-            ? '語音輸入中（點一下關閉）'
-            : '語音輸入（點畫面任何地方開始收音）';
+      entry.button.classList.toggle('voice-error', on && state.failed);
+      entry.button.title = on ? state.title : '語音輸入';
       entry.button.setAttribute('aria-label', on ? '關閉語音輸入' : '開啟語音輸入');
       // No on-screen keyboard while voice input is on; the box still takes a
       // hardware keyboard, paste and the caret.
@@ -280,8 +310,7 @@ export function createVoiceIme({
       else textarea.removeAttribute('inputmode');
       // The box says what voice input is doing; its own placeholder (which the
       // Dashboard rewrites for renames and BTW) comes back afterwards.
-      const status =
-        on && mine ? (error ? `語音輸入：${error}` : listening ? '說話即可輸入…' : '點一下畫面開始收音…') : null;
+      const status = on && mine ? state.placeholder : null;
       const before = textarea.placeholder;
       if (status) {
         if (!entry.overridden) entry.placeholder = textarea.placeholder;
@@ -677,8 +706,19 @@ export function createVoiceIme({
       },
     });
     dictation.voice.onLevel = setLevel;
+    // A new connection is a new session, which checks its services again.
+    const closed = dictation.voice.onClose;
+    dictation.voice.onClose = (...args) => {
+      service = null;
+      closed(...args);
+    };
     const handle = dictation.voice.onEvent;
     dictation.voice.onEvent = (event) => {
+      if (event.type === 'komorebi.backends') {
+        service = event;
+        sync();
+        return;
+      }
       trackStage(event);
       if (event.type === 'komorebi.draft.updated') {
         const items = event.item_ids || [event.item_id];
@@ -723,6 +763,7 @@ export function createVoiceIme({
         starting = null;
         sync();
       });
+    sync(); // 語音輸入開啟中… while it connects and opens the microphone
     return starting;
   }
 
@@ -737,6 +778,7 @@ export function createVoiceIme({
       if (on || dictation !== d) return;
       d.close();
       dictation = null;
+      service = null;
     }, IDLE_CLOSE_MS);
   }
 
@@ -937,6 +979,7 @@ export function createVoiceIme({
       const options = dictationOptions(readVoiceSettings(storage));
       if (d.voice.url !== options.url) {
         dictation = null;
+        service = null;
         void d.stop().finally(() => d.close());
         if (on) void start();
         return;

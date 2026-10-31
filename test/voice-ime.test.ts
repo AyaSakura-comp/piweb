@@ -9,6 +9,7 @@ import {
   readVoiceSettings,
   saveVoiceSettings,
   typedText,
+  voiceStatus,
 } from '../public/voice-ime.js';
 
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -150,5 +151,55 @@ describe('how the clean-up changed the text', () => {
     const runs = diffRuns(before, after);
     expect(runs.filter(([op]) => op !== '-').map(([, t]) => t).join('')).toBe(after);
     expect(runs.filter(([op]) => op !== '+').map(([, t]) => t).join('')).toBe(before);
+  });
+});
+
+describe('voice status', () => {
+  const backends = (asr: string, refine: string, reason = '') => ({
+    type: 'komorebi.backends',
+    backends: [
+      { role: 'asr', name: 'sensevoice', state: asr, reason: asr === 'unavailable' ? reason : '' },
+      { role: 'refine', name: 'cpu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
+    ],
+  });
+
+  it('says it is opening until the microphone listens', () => {
+    expect(voiceStatus({ connecting: true }).placeholder).toBe('語音輸入開啟中…');
+    expect(voiceStatus({}).placeholder).toBe('點一下畫面開始收音…');
+    expect(voiceStatus({ listening: true }).placeholder).toBe('說話即可輸入…');
+  });
+
+  it('says the recognizer is starting, and only then that speech goes in', () => {
+    const starting = voiceStatus({ listening: true, service: backends('starting', 'ready') });
+    expect(starting).toEqual(expect.objectContaining({ placeholder: '語音服務啟動中…', failed: false }));
+    expect(starting.title).toContain('說的話會在啟動後出現');
+    expect(voiceStatus({ listening: true, service: backends('ready', 'ready') }).placeholder).toBe('說話即可輸入…');
+  });
+
+  it('a clean-up model starting or missing still takes speech, as heard', () => {
+    expect(voiceStatus({ listening: true, service: backends('ready', 'starting') }).placeholder).toBe(
+      '可說話，整理模型啟動中',
+    );
+    const missing = voiceStatus({ listening: true, service: backends('ready', 'unavailable', '主機記憶體不足') });
+    expect(missing).toEqual({
+      placeholder: '說話即可輸入…',
+      title: '語音輸入中：整理模型無法啟動（主機記憶體不足），照原句輸入（點一下關閉）',
+      failed: false,
+    });
+  });
+
+  it('a recognizer that cannot start reads as a failure, with the reason', () => {
+    expect(voiceStatus({ listening: true, service: backends('unavailable', 'ready', '服務已停用') })).toEqual({
+      placeholder: '語音辨識無法啟動（服務已停用）',
+      title: '語音辨識無法啟動（服務已停用）（點一下關閉）',
+      failed: true,
+    });
+  });
+
+  it('a connection or microphone error comes first; a server without the event reads as before', () => {
+    expect(voiceStatus({ error: '連線中斷', listening: true, service: backends('starting', 'ready') }).placeholder).toBe(
+      '語音輸入：連線中斷',
+    );
+    expect(voiceStatus({ listening: true, service: null }).title).toBe('語音輸入中（點一下關閉）');
   });
 });

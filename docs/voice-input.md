@@ -48,9 +48,32 @@ Komorebi directly.
   so room noise stays dark). The ring is brighter while a sentence is being
   heard (`.voice-hearing`). Inset because pane composers clip their overflow;
   the composer's size never changes (the e2e test checks the height).
-- **The placeholder says what is happening**: 說話即可輸入… while listening,
-  點一下畫面開始收音… while waiting for a tap, 語音輸入：<error> after a failure.
-  No toasts. The placeholder stays on one line (`white-space: nowrap`, the full
+- **The placeholder says what is happening**: 語音輸入開啟中… while it connects
+  and opens the microphone, 說話即可輸入… while listening, 點一下畫面開始收音…
+  while waiting for a tap, 語音輸入：<error> after a failure, and what Komorebi
+  says about its services (below). No toasts.
+- **Komorebi's services** (2026-10-31). The user: 「怎麼講都沒有用」, as if
+  switching voice input on had not started the service behind it. Komorebi
+  (`app/backends.py`, its commit `46d49cd`) now checks the speech recognizer
+  (SenseVoice) and the clean-up model (Gemma E2B on the CPU) each session uses
+  when the session starts, starts a systemd unit that is down, and sends
+  `komorebi.backends` (`{state, backends: [{role: asr|refine, name, state,
+  reason}]}`). The box reads 語音服務啟動中… while the recognizer starts (the
+  mic stays on and Komorebi transcribes what was said once it is up), 可說話，
+  整理模型啟動中 while only the clean-up model starts (sentences go in as heard
+  meanwhile), and 語音辨識無法啟動（<reason>） with the mic in `--danger` when the
+  recognizer cannot start (服務已停用 / 主機記憶體不足 / 服務啟動失敗 / 服務沒有回應);
+  a clean-up model that cannot start only shows in the mic's title. A server
+  without the event reads as before. `voiceStatus()` makes the text; the state
+  is dropped when the connection closes, since a new session checks again. A
+  phone shows about 11 characters of the one-line placeholder, so the failure
+  leads and the reason may be cut (the title has it all).
+  What the captures showed (`~/.cache/komorebi-capture`, Komorebi's
+  `KOMOREBI_CAPTURE_DIR`): the piweb sessions that heard nothing that day
+  (19:34 and 20:05, Safari on an iPad or Mac) had the server and SenseVoice up;
+  their microphone audio was almost silent (RMS 0.001–0.002 while speaking,
+  about −55 dBFS, against 0.07 for the test recording), so DeepFilterNet and
+  the VAD took it for room noise. The service check does not change that case. The placeholder stays on one line (`white-space: nowrap`, the full
   error is in the mic button's title), and the box measures itself again when
   the status changes: an empty textarea's `scrollHeight` counts its
   placeholder, so iOS's long microphone refusal grew the box to three lines,

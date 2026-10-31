@@ -179,8 +179,11 @@ more than 1.2s for it); when the rewrite lands, inserted
 characters get a 34% `--accent` highlight that fades over 1.2s and removed ones
 stay struck through in `--danger`, then fade and fold away. This is drawn in a
 layer over the textarea (its text transparent, caret kept), only while there is
-something to show. Status goes in the placeholder (說話即可輸入… / 點一下畫面開始收音…
-/ 語音輸入：<error>), never a toast. Settings → 語音輸入（Komorebi） uses stacked
+something to show. Status goes in the placeholder (語音輸入開啟中… / 語音服務啟動中… /
+可說話，整理模型啟動中 / 說話即可輸入… / 點一下畫面開始收音… / 語音輸入：<error> /
+語音辨識無法啟動（<reason>）), never a toast; it stays on one line, and a phone shows
+about 11 characters of it, so what matters comes first and the mic's title has the rest.
+A recognizer that cannot start turns the mic `--danger` like an error. Settings → 語音輸入（Komorebi） uses stacked
 rows (label above a full-width 16px input, `.settings-field`) for the server and
 clean-up API URLs. A 整理草稿 switch (the standard `.settings-toggle`, on by default)
 turns the clean-up off; while off the clean-up API rows are disabled at 45%
