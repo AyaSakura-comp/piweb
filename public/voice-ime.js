@@ -47,6 +47,10 @@ const IDLE_CLOSE_MS = 8000;
 // still read as listening, so no tap could start it again (iPad, 2026-10-27:
 // two minutes of nothing after attaching a video, until the mic was toggled).
 const STALL_MS = 3000;
+// A new session says whether its services are up (komorebi.backends) right
+// after the microphone opens; until then the box still says it is opening. A
+// server without that event reads as ready after this long.
+const CHECK_WAIT_MS = 1500;
 // The highlight on what the clean-up changed fades over 1.2s (app.css), then goes.
 const FRESH_MS = 1400;
 // Character diffs beyond this many cells highlight the whole changed middle.
@@ -261,6 +265,7 @@ export function createVoiceIme({
   let shown = { text: '', live: '', value: '' }; // what render() last wrote into target
   let starting = null;
   let service = null; // the session's last komorebi.backends: its recognizer and clean-up model
+  let checkTimer = 0; // listening, waiting for the new session's first komorebi.backends
   let error = '';
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
@@ -296,7 +301,10 @@ export function createVoiceIme({
 
   function sync() {
     const listening = Boolean(dictation?.listening);
-    const state = voiceStatus({ error, connecting: Boolean(starting) && !listening, listening, service });
+    // Opening until start() is done and, on a new session, until it has said
+    // whether its services are up (or CHECK_WAIT_MS passed).
+    const connecting = Boolean(starting || checkTimer);
+    const state = voiceStatus({ error, connecting, listening, service });
     for (const [textarea, entry] of composers) {
       const mine = textarea === target;
       entry.button.setAttribute('aria-pressed', String(on));
@@ -716,6 +724,8 @@ export function createVoiceIme({
     dictation.voice.onEvent = (event) => {
       if (event.type === 'komorebi.backends') {
         service = event;
+        clearTimeout(checkTimer);
+        checkTimer = 0;
         sync();
         return;
       }
@@ -754,6 +764,13 @@ export function createVoiceIme({
       await d.start();
       retried = false;
       watchStall(d);
+      // Not 說話即可輸入… before the session has said its services are up.
+      if (!service && !checkTimer) {
+        checkTimer = setTimeout(() => {
+          checkTimer = 0;
+          sync();
+        }, CHECK_WAIT_MS);
+      }
     })()
       .catch((err) => {
         error = err?.message || '無法開始收音';

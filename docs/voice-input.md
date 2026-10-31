@@ -63,8 +63,13 @@ Komorebi directly.
   整理模型啟動中 while only the clean-up model starts (sentences go in as heard
   meanwhile), and 語音辨識無法啟動（<reason>） with the mic in `--danger` when the
   recognizer cannot start (服務已停用 / 主機記憶體不足 / 服務啟動失敗 / 服務沒有回應);
-  a clean-up model that cannot start only shows in the mic's title. A server
-  without the event reads as before. `voiceStatus()` makes the text; the state
+  a clean-up model that cannot start only shows in the mic's title. Until a new
+  session's first event the box still says 語音輸入開啟中… (it arrives with the
+  `session.updated`; without it 說話即可輸入… flashed before 語音服務啟動中…), and
+  a server without the event reads as ready after 1.5 s (`CHECK_WAIT_MS`).
+  Measured in Chromium against the real server with SenseVoice stopped:
+  開啟中 → 啟動中 at 0.3 s → 說話即可輸入… at 1.4 s, the first sentence in the box
+  at 1.8 s; with it up, 說話即可輸入… at 0.08 s. `voiceStatus()` makes the text; the state
   is dropped when the connection closes, since a new session checks again. A
   phone shows about 11 characters of the one-line placeholder, so the failure
   leads and the reason may be cut (the title has it all).

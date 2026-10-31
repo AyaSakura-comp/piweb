@@ -27,6 +27,8 @@ type FakeServer = {
   flush: () => void;
   /** Send an event on the latest connection, as the server would. */
   send: (event: object) => void;
+  /** Answer session.update with komorebi.backends ready, as Komorebi does since 2026-10-31. */
+  reportsBackends: boolean;
 };
 
 /** Hears the sentences in order, over a few audio chunks each, but no further
@@ -44,6 +46,7 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
     holdRewrites: false,
     flush: () => held.splice(0).forEach((rewrite) => rewrite()),
     send: () => {},
+    reportsBackends: true,
   };
   await page.routeWebSocket(KOMOREBI, (ws: WebSocketRoute) => {
     server.sockets++;
@@ -80,8 +83,12 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
     };
     ws.onMessage((raw) => {
       const event = JSON.parse(String(raw));
-      if (event.type === 'session.update') server.sessions.push(event.session);
-      else if (event.type === 'komorebi.selection.set') {
+      if (event.type === 'session.update') {
+        server.sessions.push(event.session);
+        if (server.reportsBackends && server.sessions.length === 1) {
+          send({ type: 'komorebi.backends', state: 'ready', backends: [{ role: 'asr', name: 'sensevoice', state: 'ready', reason: '' }] });
+        }
+      } else if (event.type === 'komorebi.selection.set') {
         selection = event.selection;
         server.selections.push(event.selection);
       } else if (event.type === 'komorebi.draft.set') {
@@ -385,6 +392,7 @@ for (const theme of ['dark', 'light']) {
         new Promise((resolve) => ((window as any).__openMic = () => resolve(open(c))));
     }, theme);
     const server = await fakeKomorebi(page, []);
+    server.reportsBackends = false; // this test sends them
     await mockApi(page);
     await page.goto('/');
     await expect(page.locator('#session-name')).toHaveText('Voice');
@@ -409,6 +417,9 @@ for (const theme of ['dark', 'light']) {
     await page.screenshot({ path: info.outputPath(`1-opening-${theme}.png`) });
     await page.evaluate(() => (window as any).__openMic());
     await expect.poll(() => server.sessions.length).toBe(1);
+    // Listening, but the session has not said yet whether its services are up.
+    await expect(composer).toHaveClass(/voice-listening/);
+    await expect(input).toHaveAttribute('placeholder', '語音輸入開啟中…');
 
     server.send(backends('starting', 'ready'));
     await expect(input).toHaveAttribute('placeholder', '語音服務啟動中…');
@@ -442,6 +453,20 @@ for (const theme of ['dark', 'light']) {
     expect(errors).toEqual([]);
   });
 }
+
+test('a server that does not report its services reads as ready after a moment', async ({ page }) => {
+  const server = await fakeKomorebi(page, []);
+  server.reportsBackends = false;
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(page.locator('#composer')).toHaveClass(/voice-listening/);
+  await expect(input).toHaveAttribute('placeholder', '語音輸入開啟中…');
+  await expect(input).toHaveAttribute('placeholder', '說話即可輸入…', { timeout: 3000 });
+});
 
 /** Where character `index` of the one-line box's text is drawn (its middle). */
 async function charPoint(page: Page, index: number) {
