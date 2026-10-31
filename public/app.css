@@ -2431,9 +2431,13 @@ html.keyboard-shell .life-edge-hint {
 }
 
 /* Komorebi voice input (voice-ime.js). The mic sits before Send; on, it is
-   accent. While listening the composer itself shows what the microphone hears:
-   an inset ring and glow that follow the level (--voice-level, 0–1), drawn
-   inside the box so they take no space and survive overflow: hidden. */
+   accent. While listening the box's edge shows what the microphone hears: a
+   1–2px ring on the edge (inset, so a pane composer's overflow: hidden cannot
+   cut it) and a soft glow outside the box, both following the level
+   (--voice-level, 0–1). Nothing is drawn over the text: an inner glow did,
+   once quiet iPhone speech moved it (2026-11-01, 「不要擋到我輸入的內容」).
+   While nothing is heard the ring breathes, so the box still reads as
+   listening. */
 .voice-ime-btn.voice-on {
   color: var(--accent);
 }
@@ -2450,11 +2454,22 @@ html.keyboard-shell .life-edge-hint {
 }
 
 .composer.voice-listening {
-  --voice-ring: color-mix(in srgb, var(--accent) calc(35% + var(--voice-level, 0) * 65%), transparent);
+  --voice-ring: color-mix(in srgb, var(--accent) calc(45% + var(--voice-level, 0) * 55%), transparent);
   box-shadow:
     inset 0 0 0 calc(1px + var(--voice-level, 0) * 1px) var(--voice-ring),
-    inset 0 0 calc(var(--voice-level, 0) * 18px) color-mix(in srgb, var(--accent) 30%, transparent);
+    0 0 calc(2px + var(--voice-level, 0) * 10px) calc(var(--voice-level, 0) * 2px)
+      color-mix(in srgb, var(--accent) calc(var(--voice-level, 0) * 55%), transparent);
   transition: box-shadow 120ms linear;
+}
+
+.composer.voice-listening.voice-quiet {
+  animation: voice-ring-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes voice-ring-breathe {
+  50% {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
 }
 
 .composer.voice-listening.voice-hearing {
@@ -2613,7 +2628,8 @@ html.keyboard-shell .life-edge-hint {
   }
 
   .voice-preedit.listening::after,
-  .voice-ime-btn.voice-live.voice-quiet .voice-meter {
+  .voice-ime-btn.voice-live.voice-quiet .voice-meter,
+  .composer.voice-listening.voice-quiet {
     animation: none;
   }
 

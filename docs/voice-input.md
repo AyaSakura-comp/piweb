@@ -43,9 +43,17 @@ Komorebi directly.
   takes a hardware keyboard, paste, hot-keyword chips and the caret; what is
   typed becomes the draft the next rewrite starts from (`Dictation.setText`).
 - **A listening ring that takes no space.** While listening the composer gets
-  an inset `box-shadow` ring plus an inner glow that follow the microphone
-  level (`--voice-level`, 0–1, from the SDK's ~10 Hz RMS, mapped by `glowLevel`
-  so room noise stays dark).
+  an inset 1–2px `box-shadow` ring on its edge and a soft glow outside it, both
+  following the microphone level (`--voice-level`, 0–1, from the SDK's ~10 Hz
+  RMS, mapped by `glowLevel` so room noise stays dark). Until 2026-11-01 the
+  glow was inset (pane composers clip their overflow), reaching 18px in over
+  the text; once the dB map made it move for real speech the user said it got
+  in the way of what they were writing (「不要擋到我現在輸入的內容」). Now only
+  the ring is inside (it sits on the edge, over the box's 4px padding), the
+  e2e test checks a pixel inside the box is the same as with voice off, and in
+  a pane the outside glow is cut at the top (the wrap has no top padding).
+  While nothing is heard the frame gets `.voice-quiet` with the mic and the
+  ring breathes (accent 45% → 12%, 1.6 s).
 - **The mic shows what it hears** (2026-11-01; the user: 「至少讓我知道說他有在
   收音，而且還是有收到的」). While listening the mic glyph becomes five bars
   (`.voice-meter`, `meterBars`): the newest level in the middle, the two before

@@ -340,8 +340,10 @@ export function createVoiceIme({
     levels = [level, levels[0], levels[1]];
     entry.frame.style.setProperty('--voice-level', level.toFixed(3));
     meterBars(levels).forEach((h, i) => entry.bars[i]?.style.setProperty('--h', h.toFixed(3)));
-    // Dots that breathe while nothing is heard: the mic is open, just quiet.
-    entry.button.classList.toggle('voice-quiet', !levels[0] && !levels[1]);
+    // Dots and a ring that breathe while nothing is heard: the mic is open, just quiet.
+    const quiet = !levels[0] && !levels[1];
+    entry.button.classList.toggle('voice-quiet', quiet);
+    entry.frame.classList.toggle('voice-quiet', quiet);
   }
 
   function sync() {
@@ -383,6 +385,7 @@ export function createVoiceIme({
       if (!(on && mine && listening)) entry.frame.style.removeProperty('--voice-level');
       if (!live) {
         entry.button.classList.add('voice-quiet');
+        entry.frame.classList.remove('voice-quiet');
         for (const bar of entry.bars) bar.style.removeProperty('--h');
       }
     }

@@ -168,10 +168,14 @@ Dashboard pane composer (44px target on touch; accent when on, `--danger` after
 an error). It is one app-wide switch that stays on until turned off. While on,
 the composers set `inputmode="none"` (no iPhone/iPad keyboard), speech streams
 into the visible composer as the cleaned-up draft plus the sentence being heard,
-and the composer shows a listening ring: an inset 1–2px `--accent` ring and an
-inner glow following the microphone level, brighter while a sentence is heard.
-It is a `box-shadow` inside the box, so it takes no space; reduced motion drops
-its 120ms easing. While listening the mic glyph turns into a meter in the same
+and the composer shows a listening ring on its edge: an inset 1–2px `--accent`
+ring and a soft glow outside the box (up to 12px), following the microphone
+level, brighter while a sentence is heard. Nothing is drawn over the text: an
+inner glow did, once quiet iPhone speech moved it (2026-11-01). While nothing is
+heard the ring breathes (accent 45% → 12%, 1.6s). It is a `box-shadow`, so it
+takes no space (a pane's `overflow: hidden` cuts the outside glow at the top,
+never the ring); reduced motion drops its 120ms easing and the breathing.
+While listening the mic glyph turns into a meter in the same
 44px button: five 3px `currentColor` (accent) bars, the newest level in the middle
 and the two before it spreading out, so speech visibly moves them; while nothing
 is heard they are dots that breathe (opacity 1 → 0.45, 1.6s), so an open but

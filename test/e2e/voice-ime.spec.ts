@@ -470,19 +470,50 @@ for (const theme of ['dark', 'light']) {
     // 2026-11-01: 「至少讓我知道他有在收音，而且還是有收到」. The ring's old
     // linear map never moved for the iPhone's quiet speech; the mic now turns
     // into five bars that follow the level, breathing dots while it is quiet.
+    // Then: 「不要擋到我輸入的內容」: the box shows the level on its edge and
+    // outside it, never over the text; quiet, the ring breathes.
     await fakeKomorebi(page, []);
     await mockApi(page);
     await page.addInitScript((t) => {
       localStorage.setItem('piweb.mode', 'sessions');
       localStorage.setItem('piweb.theme', t);
+      // A microphone the test turns up and down: a tone through a gain.
+      navigator.mediaDevices.getUserMedia = async () => {
+        const ctx = new AudioContext();
+        const tone = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        const out = ctx.createMediaStreamDestination();
+        tone.connect(gain).connect(out);
+        tone.start();
+        (window as any).__mic = (level: number) => gain.gain.setValueAtTime(level, ctx.currentTime);
+        return out.stream;
+      };
     }, theme);
     await page.goto('/');
     await expect(page.locator('#session-name')).toHaveText('Voice');
     const composer = page.locator('#composer');
     const mic = composer.locator('.voice-ime-btn');
     const meter = mic.locator('.voice-meter');
+    const middle = meter.locator('i').nth(2);
     await expect(meter).toBeHidden();
     const size = (await mic.boundingBox())!;
+    // Inside the box, left of the text, where the old inner glow tinted it.
+    const inside = async () => {
+      const box = (await composer.boundingBox())!;
+      const shot = await page.screenshot({ clip: { x: box.x + 14, y: box.y + box.height / 2, width: 1, height: 1 } });
+      return shot.toString('base64');
+    };
+    const before = await inside();
+    const state = () =>
+      composer.evaluate((el) => ({
+        level: Number(el.style.getPropertyValue('--voice-level') || 0),
+        bar: Number((el.querySelectorAll('.voice-meter i')[2] as HTMLElement).style.getPropertyValue('--h') || 0),
+        quiet: el.classList.contains('voice-quiet'),
+        boxAnimation: getComputedStyle(el).animationName,
+        dotsAnimation: getComputedStyle(el.querySelector('.voice-meter')!).animationName,
+        shadow: getComputedStyle(el).boxShadow,
+      }));
 
     await mic.click();
     await expect(mic).toHaveClass(/voice-live/);
@@ -490,34 +521,40 @@ for (const theme of ['dark', 'light']) {
     await expect(mic.locator('svg')).toBeHidden();
     // Same target as before: the button did not change size.
     expect(await mic.boundingBox()).toEqual(size);
-    // Chromium's fake microphone beeps about once a second: the bars rise with
-    // a beep and fall back to breathing dots between beeps.
-    await mic.evaluate((el) => {
-      const w = window as any;
-      w.__bar = { max: 0, quiet: 0, loud: 0 };
-      const middle = el.querySelectorAll('.voice-meter i')[2] as HTMLElement;
-      new MutationObserver(() => {
-        const h = Number(middle.style.getPropertyValue('--h') || 0);
-        w.__bar.max = Math.max(w.__bar.max, h);
-        if (el.classList.contains('voice-quiet')) w.__bar.quiet++;
-        else w.__bar.loud++;
-      }).observe(middle, { attributes: true, attributeFilter: ['style'] });
-    });
-    await expect.poll(() => page.evaluate(() => (window as any).__bar.max), { timeout: 8000 }).toBeGreaterThan(0.8);
-    await expect.poll(() => page.evaluate(() => (window as any).__bar.quiet)).toBeGreaterThan(0);
-    await expect.poll(() => page.evaluate(() => (window as any).__bar.loud)).toBeGreaterThan(0);
-    // Breathing only while quiet.
-    await expect(mic).toHaveClass(/voice-quiet/, { timeout: 5000 });
-    expect(await meter.evaluate((el) => getComputedStyle(el).animationName)).toBe('voice-breathe');
-    await composer.screenshot({ path: info.outputPath(`meter-quiet-${theme}.png`) });
-    await expect(mic).not.toHaveClass(/voice-quiet/, { timeout: 5000 });
-    expect(await meter.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
-    await composer.screenshot({ path: info.outputPath(`meter-loud-${theme}.png`) });
 
-    // Off: the mic icon again.
+    // Quiet: dots, and the dots and the ring breathe.
+    await expect(composer).toHaveClass(/voice-quiet/);
+    expect(await state()).toMatchObject({ level: 0, quiet: true, boxAnimation: 'voice-ring-breathe', dotsAnimation: 'voice-breathe' });
+    expect((await middle.boundingBox())!.height).toBeLessThan(5);
+    await composer.screenshot({ path: info.outputPath(`meter-quiet-${theme}.png`) });
+
+    // Speech: the bars rise, the breathing stops, the glow is outside the box
+    // and inside it the box looks as it did with voice off.
+    await page.evaluate(() => (window as any).__mic(0.5));
+    await expect.poll(async () => (await state()).bar, { timeout: 5000 }).toBeGreaterThan(0.8);
+    const loud = await state();
+    expect(loud).toMatchObject({ quiet: false, boxAnimation: 'none', dotsAnimation: 'none' });
+    expect(loud.level).toBeGreaterThan(0.8);
+    expect(loud.shadow.match(/inset/g)).toHaveLength(1);
+    expect(loud.shadow).toMatch(/ 0px 0px 0px [0-9.]+px inset/); // the ring has no blur reaching in
+    expect(await inside()).toBe(before);
+    await expect.poll(async () => (await middle.boundingBox())!.height).toBeGreaterThan(15); // after its 90ms easing
+    const box = (await composer.boundingBox())!;
+    await page.screenshot({
+      path: info.outputPath(`meter-loud-${theme}.png`),
+      clip: { x: 0, y: box.y - 24, width: 390, height: box.height + 40 },
+    });
+
+    // Quiet again: back to breathing dots.
+    await page.evaluate(() => (window as any).__mic(0));
+    await expect(composer).toHaveClass(/voice-quiet/, { timeout: 5000 });
+    await expect(mic).toHaveClass(/voice-quiet/);
+
+    // Off: the mic icon again, and no ring.
     await mic.click();
     await expect(meter).toBeHidden();
     await expect(mic.locator('svg')).toBeVisible();
+    await expect(composer).not.toHaveClass(/voice-listening/);
   });
 }
 
