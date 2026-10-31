@@ -560,6 +560,14 @@ keyboard; a finger scroll moves nothing.
 - **Busy panes**: a running session shows a 13px spinner before its name and a 2px
   `--accent` light bar along the header's foot (`.pane-busy`; a still bar under reduced
   motion), so a busy pane is visible without opening the session list.
+- **Unread panes**: the session list's three states, in the header before the name:
+  spinner (working), the list's 9px `--tool` green dot (`.unread-dot`, `.pane-unread`:
+  finished, not looked at on this device), neither (idle and read). Only the pane
+  holding the input card counts as read when a reply lands, like the open chat; any
+  other pane keeps its dot, across a reload too, until it is tapped (the card comes)
+  or its transcript is scrolled or touched (the card stays). Same `piweb.seen` marks
+  as the list, so its row clears with the pane. A reply that arrives while the app is
+  in the background is read when the app is back on screen.
 - **Selecting text in a pane** quotes it at once, as in the chat (see "Text selection
   and quoting"); a narrow pane keeps `⋯` in its header and folds Status, Usage, split and
   expand into that menu (at ≤460px; at ≤300px Model too).
@@ -607,12 +615,17 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/session-dashboard-split.spec.ts \
   test/e2e/session-dashboard-mobile.spec.ts \
   test/e2e/session-dashboard-zoom.spec.ts \
+  test/e2e/session-dashboard-unread.spec.ts \
   test/e2e/text-selection.spec.ts \
   test/e2e/session-fullscreen.spec.ts \
   test/e2e/keyboard-send.spec.ts \
   test/e2e/iphone-viewport-shell.spec.ts \
   test/e2e/settings-motion.spec.ts
 ```
+
+`session-dashboard-unread.spec.ts` covers the pane states (running, unread, read), a
+reply in the pane in use, reload, tap, scroll, a reply only the session poll knew of, and
+screenshots in both themes.
 
 `session-dashboard-zoom.spec.ts` covers the session-list tap (tile + flash, staying in
 the Dashboard), the zoom spring both ways (a mid-flight transform, stage size, hidden

@@ -790,6 +790,23 @@
     display: none;
   }
 
+  /* Finished while you were looking elsewhere: the session list's unread dot,
+     in the spinner's place. A dot, not a spinner, so the two read apart even
+     without motion. */
+  .dashboard-pane-title .unread-dot {
+    width: 9px;
+    height: 9px;
+    margin: 0 2px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--tool);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--tool) 25%, transparent);
+  }
+
+  .dashboard-pane-title .unread-dot[hidden] {
+    display: none;
+  }
+
   .dashboard-pane.pane-busy .dashboard-pane-header {
     position: relative;
   }

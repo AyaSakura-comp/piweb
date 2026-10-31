@@ -133,6 +133,8 @@ export function createSessionDashboard({
   openLightbox,
   onSelectSingleSession,
   onMarkSeen,
+  // (jid, replyId) => whether this device has not read that reply yet.
+  isUnread = () => false,
   onApplySessionTitle,
   showToast,
   isAutoScrollEnabled = () => false,
@@ -814,7 +816,12 @@ export function createSessionDashboard({
     badgeEl.hidden = true;
     const spinnerEl = el('span', 'work-spinner');
     spinnerEl.hidden = true;
-    titleWrap.append(hash, spinnerEl, nameEl, nameInput, badgeEl);
+    // The session list's three states: spinning (working), dot (finished, not
+    // read yet), neither (idle and read).
+    const unreadDot = el('span', 'unread-dot');
+    unreadDot.hidden = true;
+    unreadDot.title = '有新回覆，還沒查看';
+    titleWrap.append(hash, spinnerEl, unreadDot, nameEl, nameInput, badgeEl);
 
     // Topbar right actions (Stop, Status, Usage, Model, Thinking, More ⋯, Close ×)
     const actions = el('div', 'dashboard-pane-actions');
@@ -1258,6 +1265,7 @@ export function createSessionDashboard({
       nameInput,
       badgeEl,
       spinnerEl,
+      unreadDot,
       stopBtn,
       statusBtn,
       usageBtn,
@@ -1308,6 +1316,9 @@ export function createSessionDashboard({
       loadingOlder: false,
       historyGeneration: 0,
       busy: false,
+      // Newest reply this pane has shown; the session poll may know a newer one.
+      lastReplyId: 0,
+      unread: false,
       source: null,
       reconnectTimer: null,
       disposed: false,
@@ -1417,6 +1428,8 @@ export function createSessionDashboard({
         evtName,
         () => {
           if (!isNearBottom()) pane.userScrolledUp = true;
+          // Scrolling or touching a transcript is reading it.
+          if (pane.unread) markPaneSeen(pane);
         },
         { passive: true },
       );
@@ -2394,11 +2407,47 @@ export function createSessionDashboard({
     const busy = Boolean(pane.busy || session?.busy);
     pane.el.classList.toggle('pane-busy', busy);
     pane.spinnerEl.hidden = !busy;
+    pane.unread = !busy && isUnread(pane.jid, latestReplyId(pane, session));
+    pane.el.classList.toggle('pane-unread', pane.unread);
+    pane.unreadDot.hidden = !pane.unread;
     pane.stopBtn.hidden = !busy;
     pane.typingEl.hidden = !busy || pane.btwTarget === 'btw';
     if (busy) pane.typingLabel.sync();
     pane.splitDownBtn.hidden = allJids().length < 2;
     pane.syncBtwControls?.();
+  }
+
+  function latestReplyId(pane, session = getSessions().find((s) => s.jid === pane.jid)) {
+    return Math.max(pane.lastReplyId, session?.lastReplyId ?? 0);
+  }
+
+  /** Something to read: not the user's own turn, nor thinking/tool chatter. */
+  function isReplyEvent(event) {
+    return (
+      event.kind !== 'thinking' &&
+      event.kind !== 'narration' &&
+      event.kind !== 'tool' &&
+      event.kind !== 'tool_result' &&
+      event.role !== 'user'
+    );
+  }
+
+  /** The pane holding the input card is the one being read, like the open
+   *  chat; the others stay unread until they are tapped or scrolled. */
+  function paneInUse(pane) {
+    return (
+      active &&
+      composerJid === pane.jid &&
+      (!zoomedJid || zoomedJid === pane.jid) &&
+      document.visibilityState === 'visible'
+    );
+  }
+
+  function markPaneSeen(pane) {
+    const replyId = latestReplyId(pane);
+    if (!replyId || !isUnread(pane.jid, replyId)) return;
+    onMarkSeen(pane.jid, replyId);
+    syncPaneHeader(pane);
   }
 
   function shouldFollowPane(pane) {
@@ -2541,14 +2590,10 @@ export function createSessionDashboard({
       const existing = event.id ? pane.messagesEl.querySelector(`[data-event-id="${event.id}"]`) : null;
       if (event.id <= pane.cursor && !existing) return;
       appendPaneEvent(pane, event, true);
-      if (
-        event.kind !== 'thinking' &&
-        event.kind !== 'narration' &&
-        event.kind !== 'tool' &&
-        event.kind !== 'tool_result' &&
-        event.role !== 'user'
-      ) {
-        onMarkSeen(pane.jid, event.id);
+      if (isReplyEvent(event) && event.id > pane.lastReplyId) {
+        pane.lastReplyId = event.id;
+        if (paneInUse(pane)) markPaneSeen(pane);
+        else syncPaneHeader(pane);
       }
     });
 
@@ -2683,13 +2728,14 @@ export function createSessionDashboard({
       }
       resetPaneHistory(pane, events, hasMore);
       pane.busy = Boolean(busy);
+      for (const ev of events || []) {
+        if (isReplyEvent(ev)) pane.lastReplyId = Math.max(pane.lastReplyId, ev.id);
+      }
       if (session?.name && pane.nameInput.hidden) pane.nameEl.textContent = session.name;
+      if (paneInUse(pane)) markPaneSeen(pane);
       syncPaneHeader(pane);
       if (partial?.content || partial?.thinking) {
         renderPanePartial(pane, partial.content ?? '', partial.thinking ?? '');
-      }
-      if (events?.length) {
-        onMarkSeen(pane.jid, events[events.length - 1].id);
       }
       scrollPaneToLatest(pane);
       connectPaneStream(pane);
@@ -2713,7 +2759,10 @@ export function createSessionDashboard({
   function selectComposerPane(jid, { animate = true } = {}) {
     const pane = panes.get(jid);
     if (!pane) return;
-    if (composerJid === jid && pane.dock.classList.contains('is-floating')) return;
+    if (composerJid === jid && pane.dock.classList.contains('is-floating')) {
+      if (pane.unread && paneInUse(pane)) markPaneSeen(pane);
+      return;
+    }
     const prev = composerJid && composerJid !== jid ? panes.get(composerJid) : null;
     const from =
       animate && prev?.dock.classList.contains('is-floating') && prev.el.isConnected
@@ -2746,6 +2795,7 @@ export function createSessionDashboard({
     } catch {
       // Not persisted; the in-memory choice still holds.
     }
+    if (paneInUse(pane)) markPaneSeen(pane);
     if (keepBottom) pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
     // With the keyboard up the card lands already clear of it.
     syncKeyboardLift({ instant: true });
@@ -3688,6 +3738,13 @@ export function createSessionDashboard({
       rebuildGrid();
     });
   }
+
+  // A reply that reached the pane in use while the app was in the background
+  // is read once the app is back on screen.
+  document.addEventListener('visibilitychange', () => {
+    const pane = composerJid ? panes.get(composerJid) : null;
+    if (pane?.unread && paneInUse(pane)) markPaneSeen(pane);
+  });
 
   // ── Public Operations ──────────────────────────────────────────────────────
   function setActive(nextActive) {

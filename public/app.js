@@ -34,7 +34,7 @@ import { createPromptPin } from './prompt-pin.js';
 import { createSessionFullscreen } from './session-fullscreen.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
-import { createSessionDashboard } from './session-dashboard.js?v=claude-btw-1';
+import { createSessionDashboard } from './session-dashboard.js?v=pane-unread-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -1024,17 +1024,29 @@ function saveSeen(seen) {
   }
 }
 
+/** True when this moved the mark forward (something was unread until now). */
 function markSeen(jid, replyId) {
-  if (!jid || !replyId) return;
+  if (!jid || !replyId) return false;
   const seen = loadSeen();
-  if ((seen[jid] ?? 0) >= replyId) return;
+  if ((seen[jid] ?? 0) >= replyId) return false;
   seen[jid] = replyId;
   saveSeen(seen);
+  return true;
 }
 
 function isUnread(session) {
   const seen = loadSeen();
   return session.lastReplyId > (seen[session.jid] ?? 0);
+}
+
+let sessionsRenderFrame = 0;
+/** One list render per frame, outside the caller's stack (it re-syncs the Dashboard). */
+function scheduleSessionsRender() {
+  if (sessionsRenderFrame) return;
+  sessionsRenderFrame = requestAnimationFrame(() => {
+    sessionsRenderFrame = 0;
+    renderSessions();
+  });
 }
 
 // ── sessions ─────────────────────────────────────────────────────────────
@@ -2380,7 +2392,11 @@ const sessionDashboard = createSessionDashboard({
   onSelectSingleSession: (jid) => {
     void openStandardSession(jid);
   },
-  onMarkSeen: (jid, replyId) => markSeen(jid, replyId),
+  // A pane read in the Dashboard clears its row's dot now, not at the next poll.
+  onMarkSeen: (jid, replyId) => {
+    if (markSeen(jid, replyId)) scheduleSessionsRender();
+  },
+  isUnread: (jid, replyId) => isUnread({ jid, lastReplyId: replyId }),
   onApplySessionTitle: (jid, name) => applyImmediateSessionTitle(jid, name),
   showToast: (msg) => showToast(msg),
   isAutoScrollEnabled: () => autoScrollEnabled,
