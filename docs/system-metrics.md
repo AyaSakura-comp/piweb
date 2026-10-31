@@ -7,7 +7,14 @@ The Sessions drawer displays a compact live host-telemetry panel beneath its hea
 Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No subprocesses, elevated permissions or user-supplied filesystem paths are used.
 
 - CPU utilization: deltas of the aggregate `/proc/stat` CPU counters (guest counters excluded). The first sample has no CPU percentage.
-- RAM: `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`; displayed as used / total GiB.
+- RAM: total is the installed memory as `lsmem` counts it — online blocks in
+  `/sys/devices/system/memory` × `block_size_bytes` — falling back to
+  `MemTotal` when that is missing or smaller. `MemTotal` alone leaves out what
+  firmware and the kernel hold back (on this Strix Halo the 512 MiB VRAM
+  carve-out and the crash kernel), so the 128 GiB host read 122.8 GiB. Used is
+  total − `MemAvailable`, so that reserved memory counts as used and used +
+  available = installed. Displayed as used / total GiB. The blocks are read
+  again only when `MemTotal` changes.
 - CPU temperature: `k10temp` or `coretemp` hwmon `temp1_input`.
 - GPU temperature/power: discovered `amdgpu` hwmon `temp1_input`, `power1_average` (fallback `power1_input`).
 - Package power: RAPL package `energy_uj` deltas with wrap handling when readable; takes precedence over GPU power rather than adding overlapping power domains. Tooltip identifies the source; this is not wall/socket power.

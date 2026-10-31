@@ -45,6 +45,28 @@ export function createSystemMetricsSampler({ root = '/', now = () => performance
   const bounded = (value: number | undefined, max: number): value is number =>
     value !== undefined && value >= 0 && value <= max;
 
+  // Installed memory as lsmem counts it: online memory blocks × block size.
+  // MemTotal leaves out what firmware and the kernel hold back (an APU's VRAM
+  // carve-out, the crash kernel), so this 128 GiB box read 122.8. Read again
+  // only when MemTotal moves (hotplug), not on every sample.
+  let installed: { memTotal: number; bytes: number | undefined } | undefined;
+  async function installedMemory(memTotal: number): Promise<number | undefined> {
+    if (installed?.memTotal === memTotal) return installed.bytes;
+    const dir = 'sys/devices/system/memory';
+    const raw = (await text(`${dir}/block_size_bytes`)).trim();
+    const size = /^[0-9a-f]+$/i.test(raw) ? parseInt(raw, 16) : NaN;
+    let bytes: number | undefined;
+    if (Number.isSafeInteger(size) && size > 0) {
+      const blocks = (await entries(dir)).filter((n) => /^memory\d+$/.test(n));
+      const online = await Promise.all(
+        blocks.map(async (n) => (await text(`${dir}/${n}/online`)).trim() === '1'),
+      );
+      bytes = online.filter(Boolean).length * size;
+    }
+    installed = { memTotal, bytes };
+    return bytes;
+  }
+
   async function collect(): Promise<SystemMetrics> {
     const result: SystemMetrics = {};
     const time = now();
@@ -75,9 +97,12 @@ export function createSystemMetricsSampler({ root = '/', now = () => performance
     const total = Number(meminfo.match(/^MemTotal:\s+(\d+)\s+kB/m)?.[1]) * 1024;
     const available = Number(meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/m)?.[1]) * 1024;
     if (total > 0 && bounded(available, total)) {
-      result.memoryTotalBytes = total;
-      result.memoryUsedBytes = total - available;
-      result.memoryPercent = (100 * (total - available)) / total;
+      // What firmware and the kernel hold back is in use too: used + available = installed.
+      const blocks = await installedMemory(total);
+      const capacity = blocks !== undefined && blocks >= total ? blocks : total;
+      result.memoryTotalBytes = capacity;
+      result.memoryUsedBytes = capacity - available;
+      result.memoryPercent = (100 * (capacity - available)) / capacity;
     }
     // Discover sensor indices on every sample: hot removal/permission changes naturally disappear.
     await Promise.all(

@@ -42,6 +42,37 @@ it('samples memory and CPU deltas, excluding guest counters from totals', async 
   await f.put('proc/stat', 'cpu 150 0 100 850 0 0 0 0 100 0\n');
   expect(await f.sample()).toMatchObject({ cpuPercent: 50 });
 });
+it('reports installed memory, counting what firmware and the kernel hold back as used', async () => {
+  // This box: 64 online 2 GiB blocks = 128 GiB installed, MemTotal 122.8 GiB
+  // (a 512 MiB VRAM carve-out and the crash kernel are not in it).
+  const f = await fixture();
+  const GiB = 2 ** 30;
+  await f.put('proc/meminfo', `MemTotal: ${Math.round((122.84 * GiB) / 1024)} kB\nMemAvailable: ${(18 * GiB) / 1024} kB\n`);
+  await f.put('sys/devices/system/memory/block_size_bytes', '80000000\n');
+  for (let i = 0; i < 64; i++) await f.put(`sys/devices/system/memory/memory${i}/online`, '1\n');
+  await f.put('sys/devices/system/memory/auto_online_blocks', 'online\n');
+  const reading = await f.sample();
+  expect(reading.memoryTotalBytes).toBe(128 * GiB);
+  expect(reading.memoryUsedBytes).toBe(110 * GiB);
+  expect(reading.memoryPercent).toBeCloseTo(85.94, 2);
+});
+it('leaves offline blocks out, and falls back to MemTotal when the blocks cannot hold it', async () => {
+  const f = await fixture();
+  await f.put('proc/meminfo', 'MemTotal: 3000000 kB\nMemAvailable: 1000000 kB\n');
+  await f.put('sys/devices/system/memory/block_size_bytes', '40000000');
+  for (let i = 0; i < 4; i++) await f.put(`sys/devices/system/memory/memory${i}/online`, i === 3 ? '0' : '1');
+  // 3 online 1 GiB blocks = 3 GiB, above MemTotal (2.86 GiB): taken.
+  expect((await f.sample()).memoryTotalBytes).toBe(3 * 2 ** 30);
+
+  // Malformed block size, or fewer blocks than MemTotal: MemTotal, never less.
+  for (const [size, count] of [['zz', 4], ['40000000', 2]] as const) {
+    const g = await fixture();
+    await g.put('proc/meminfo', 'MemTotal: 3000000 kB\nMemAvailable: 1000000 kB\n');
+    await g.put('sys/devices/system/memory/block_size_bytes', size);
+    for (let i = 0; i < count; i++) await g.put(`sys/devices/system/memory/memory${i}/online`, '1');
+    expect(await g.sample()).toMatchObject({ memoryTotalBytes: 3072000000, memoryUsedBytes: 2048000000 });
+  }
+});
 it('discovers GPU and CPU hwmon independently and preserves zero usage', async () => {
   const f = await fixture();
   await f.put('sys/class/hwmon/hwmon42/name', 'amdgpu\n');
