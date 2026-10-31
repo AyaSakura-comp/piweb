@@ -465,6 +465,62 @@ for (const theme of ['dark', 'light']) {
   });
 }
 
+for (const theme of ['dark', 'light']) {
+  test(`while listening the mic shows what it hears (${theme})`, async ({ page }, info) => {
+    // 2026-11-01: 「至少讓我知道他有在收音，而且還是有收到」. The ring's old
+    // linear map never moved for the iPhone's quiet speech; the mic now turns
+    // into five bars that follow the level, breathing dots while it is quiet.
+    await fakeKomorebi(page, []);
+    await mockApi(page);
+    await page.addInitScript((t) => {
+      localStorage.setItem('piweb.mode', 'sessions');
+      localStorage.setItem('piweb.theme', t);
+    }, theme);
+    await page.goto('/');
+    await expect(page.locator('#session-name')).toHaveText('Voice');
+    const composer = page.locator('#composer');
+    const mic = composer.locator('.voice-ime-btn');
+    const meter = mic.locator('.voice-meter');
+    await expect(meter).toBeHidden();
+    const size = (await mic.boundingBox())!;
+
+    await mic.click();
+    await expect(mic).toHaveClass(/voice-live/);
+    await expect(meter).toBeVisible();
+    await expect(mic.locator('svg')).toBeHidden();
+    // Same target as before: the button did not change size.
+    expect(await mic.boundingBox()).toEqual(size);
+    // Chromium's fake microphone beeps about once a second: the bars rise with
+    // a beep and fall back to breathing dots between beeps.
+    await mic.evaluate((el) => {
+      const w = window as any;
+      w.__bar = { max: 0, quiet: 0, loud: 0 };
+      const middle = el.querySelectorAll('.voice-meter i')[2] as HTMLElement;
+      new MutationObserver(() => {
+        const h = Number(middle.style.getPropertyValue('--h') || 0);
+        w.__bar.max = Math.max(w.__bar.max, h);
+        if (el.classList.contains('voice-quiet')) w.__bar.quiet++;
+        else w.__bar.loud++;
+      }).observe(middle, { attributes: true, attributeFilter: ['style'] });
+    });
+    await expect.poll(() => page.evaluate(() => (window as any).__bar.max), { timeout: 8000 }).toBeGreaterThan(0.8);
+    await expect.poll(() => page.evaluate(() => (window as any).__bar.quiet)).toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__bar.loud)).toBeGreaterThan(0);
+    // Breathing only while quiet.
+    await expect(mic).toHaveClass(/voice-quiet/, { timeout: 5000 });
+    expect(await meter.evaluate((el) => getComputedStyle(el).animationName)).toBe('voice-breathe');
+    await composer.screenshot({ path: info.outputPath(`meter-quiet-${theme}.png`) });
+    await expect(mic).not.toHaveClass(/voice-quiet/, { timeout: 5000 });
+    expect(await meter.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+    await composer.screenshot({ path: info.outputPath(`meter-loud-${theme}.png`) });
+
+    // Off: the mic icon again.
+    await mic.click();
+    await expect(meter).toBeHidden();
+    await expect(mic.locator('svg')).toBeVisible();
+  });
+}
+
 test('a server that does not report its services reads as ready after a moment', async ({ page }) => {
   const server = await fakeKomorebi(page, []);
   server.reportsBackends = false;

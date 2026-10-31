@@ -5,6 +5,7 @@ import {
   dictationOptions,
   freshRanges,
   glowLevel,
+  meterBars,
   mergeOutsideEdit,
   readVoiceSettings,
   saveVoiceSettings,
@@ -96,11 +97,24 @@ describe('voice input text', () => {
     expect(mergeOutsideEdit('重新寫的', '舊草稿', '改過的草稿')).toBe('重新寫的');
   });
 
-  it('room noise stays dark and speech lights the ring', () => {
+  it('room noise stays dark and quiet iPhone speech still lights the ring', () => {
+    // 100 ms readings from a real iPhone capture (2026-10-31): pauses 0.0006,
+    // speech 0.0031 median, 0.0065 at the 90th percentile.
     expect(glowLevel(0)).toBe(0);
-    expect(glowLevel(0.01)).toBe(0);
-    expect(glowLevel(0.07)).toBeGreaterThan(0.4);
+    expect(glowLevel(0.0006)).toBe(0);
+    expect(glowLevel(0.0031)).toBeGreaterThan(0.25);
+    expect(glowLevel(0.0031)).toBeLessThan(0.4);
+    expect(glowLevel(0.0065)).toBeGreaterThan(0.5);
     expect(glowLevel(0.5)).toBe(1);
+  });
+
+  it('the meter puts the newest level in the middle and the two before it outside', () => {
+    expect(meterBars([0, 0, 0])).toEqual([0.17, 0.17, 0.17, 0.17, 0.17]);
+    const bars = meterBars([1, 0.5, 0.5]);
+    expect(bars[2]).toBe(1);
+    expect(bars[1]).toBe(bars[3]);
+    expect(bars[0]).toBe(bars[4]);
+    expect(bars[0]).toBeLessThan(bars[1]);
   });
 });
 

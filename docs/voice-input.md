@@ -45,7 +45,18 @@ Komorebi directly.
 - **A listening ring that takes no space.** While listening the composer gets
   an inset `box-shadow` ring plus an inner glow that follow the microphone
   level (`--voice-level`, 0–1, from the SDK's ~10 Hz RMS, mapped by `glowLevel`
-  so room noise stays dark). The ring is brighter while a sentence is being
+  so room noise stays dark).
+- **The mic shows what it hears** (2026-11-01; the user: 「至少讓我知道說他有在
+  收音，而且還是有收到的」). While listening the mic glyph becomes five bars
+  (`.voice-meter`, `meterBars`): the newest level in the middle, the two before
+  it outside, so speech moves them; with two silent readings in a row the
+  button gets `.voice-quiet` and the bars are dots that breathe (the mic is
+  open, just quiet). No chunks for 3 s still stops listening (the stall rule
+  below), and the glyph comes back. `glowLevel` was linear from RMS 0.012, but
+  a real iPhone capture (Komorebi, 2026-10-31, call processing on) had speech
+  at 0.0031 median / 0.0065 p90 per 100 ms and 0.0006 in pauses, so the ring
+  never moved for the user's speech. It is now dB: −58 dBFS → 0, −32 dBFS → 1
+  (that speech: 0.30 median, 0.55 p90; the pauses: 0). The ring is brighter while a sentence is being
   heard (`.voice-hearing`). Inset because pane composers clip their overflow;
   the composer's size never changes (the e2e test checks the height).
 - **The placeholder says what is happening**: 語音輸入開啟中… while it connects

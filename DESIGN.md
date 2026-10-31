@@ -171,7 +171,13 @@ into the visible composer as the cleaned-up draft plus the sentence being heard,
 and the composer shows a listening ring: an inset 1–2px `--accent` ring and an
 inner glow following the microphone level, brighter while a sentence is heard.
 It is a `box-shadow` inside the box, so it takes no space; reduced motion drops
-its 120ms easing. The clean-up shows as on the Komorebi IME page: a sentence
+its 120ms easing. While listening the mic glyph turns into a meter in the same
+44px button: five 3px `currentColor` (accent) bars, the newest level in the middle
+and the two before it spreading out, so speech visibly moves them; while nothing
+is heard they are dots that breathe (opacity 1 → 0.45, 1.6s), so an open but
+quiet mic still reads as listening. Levels are on a dB scale (−58 to −32 dBFS):
+an iPhone with call processing records speech around −50 dBFS. Reduced motion
+keeps the bars (they are information) without their easing or the breathing. The clean-up shows as on the Komorebi IME page: a sentence
 being spoken is `--text-dim` with a 1.5px accent underline and a blinking accent
 caret; once heard it is normal text with a dotted accent underline until its
 rewrite lands (no breathing: the clean-up can take seconds, and send never waits

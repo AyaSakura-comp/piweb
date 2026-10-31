@@ -85,6 +85,8 @@ export const DEFAULT_VOICE_SETTINGS = Object.freeze({
 
 const MIC_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>';
+// While listening the mic shows what it hears instead (`.voice-live`).
+const METER = '<span class="voice-meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>';
 
 export function readVoiceSettings(storage = globalThis.localStorage) {
   try {
@@ -247,9 +249,22 @@ export function voiceStatus({ error = '', connecting = false, listening = false,
   return { placeholder: '說話即可輸入…', title: `語音輸入中${raw}（點一下關閉）`, failed: false };
 }
 
-/** Microphone RMS (0–1) → glow strength (0–1): room noise stays dark. */
+/**
+ * Microphone RMS (0–1) → level (0–1) for the ring and the meter, on a dB
+ * scale from −58 dBFS (a quiet room stays at 0) to −32 dBFS. The iPhone with
+ * call processing records speech quietly: in a Komorebi capture (2026-10-31)
+ * 100 ms readings were 0.0031 median and 0.0065 at the 90th percentile while
+ * speaking, 0.0006 in the pauses. The old linear map started at 0.012, so the
+ * ring never moved for that speech.
+ */
 export function glowLevel(rms) {
-  return Math.max(0, Math.min(1, (rms - 0.012) / 0.12));
+  if (!(rms > 0)) return 0;
+  return Math.max(0, Math.min(1, (20 * Math.log10(rms) + 58) / 26));
+}
+
+/** Bar heights (0.17–1) for the last three levels, newest in the middle. */
+export function meterBars([l0 = 0, l1 = 0, l2 = 0] = []) {
+  return [l2 * 0.6, l1 * 0.85, l0, l1 * 0.85, l2 * 0.6].map((l) => 0.17 + 0.83 * l);
 }
 
 export function createVoiceIme({
@@ -281,6 +296,7 @@ export function createVoiceIme({
   let closeTimer = 0;
   let armed = false;
   let heardAt = 0; // the last microphone chunk (its level), while listening
+  let levels = [0, 0, 0]; // the last three, newest first, for the meter
   let stallTimer = 0;
   // The lasso over the box's text: { start, end, text, item } in shown.text;
   // `item` is the sentence that is replacing it.
@@ -306,7 +322,13 @@ export function createVoiceIme({
   function setLevel(rms) {
     heardAt = Date.now();
     const entry = target && composers.get(target);
-    entry?.frame.style.setProperty('--voice-level', glowLevel(rms).toFixed(3));
+    if (!entry) return;
+    const level = glowLevel(rms);
+    levels = [level, levels[0], levels[1]];
+    entry.frame.style.setProperty('--voice-level', level.toFixed(3));
+    meterBars(levels).forEach((h, i) => entry.bars[i]?.style.setProperty('--h', h.toFixed(3)));
+    // Dots that breathe while nothing is heard: the mic is open, just quiet.
+    entry.button.classList.toggle('voice-quiet', !levels[0] && !levels[1]);
   }
 
   function sync() {
@@ -343,7 +365,13 @@ export function createVoiceIme({
       if (textarea.placeholder !== before && !textarea.value) entry.onRender?.(textarea);
       entry.frame.classList.toggle('voice-listening', on && mine && listening);
       entry.frame.classList.toggle('voice-hearing', on && mine && listening && Boolean(shown.live));
+      const live = on && mine && listening && !state.failed;
+      entry.button.classList.toggle('voice-live', live);
       if (!(on && mine && listening)) entry.frame.style.removeProperty('--voice-level');
+      if (!live) {
+        entry.button.classList.add('voice-quiet');
+        for (const bar of entry.bars) bar.style.removeProperty('--h');
+      }
     }
   }
 
@@ -898,7 +926,7 @@ export function createVoiceIme({
       const button = doc.createElement('button');
       button.type = 'button';
       button.className = 'icon-btn voice-ime-btn';
-      button.innerHTML = MIC_ICON;
+      button.innerHTML = MIC_ICON + METER;
       // Keep focus (and so any keyboard) where it is.
       button.addEventListener('pointerdown', (event) => event.preventDefault());
       button.addEventListener('click', () => {
@@ -912,7 +940,8 @@ export function createVoiceIme({
       mirror.hidden = true;
       frame.classList.add('voice-ime-frame');
       frame.append(mirror);
-      composers.set(textarea, { frame, button, mirror, onRender, placeholder: textarea.placeholder, overridden: false });
+      const bars = [...button.querySelectorAll('.voice-meter i')];
+      composers.set(textarea, { frame, button, bars, mirror, onRender, placeholder: textarea.placeholder, overridden: false });
       // A finger on the box may stroke sideways and circle words (see lasso).
       textarea.addEventListener('pointerdown', (event) => {
         if (!on || textarea !== target || event.pointerType === 'mouse' || !event.isPrimary) return;
