@@ -281,11 +281,59 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The right end grows as much as the host readings do, so the layout
+     switcher keeps its place between the title and the right edge. */
   .dashboard-toolbar-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* The drawer's host readings, in the room between the title and the layout
+     switcher: each a value over its label, as many as fit (system-metrics.js
+     drops them from the end); none when nothing fits. Its own size never
+     depends on what it shows, so a sample repaints only this strip. */
+  .dashboard-host-metrics {
+    display: flex;
+    align-items: center;
+    column-gap: 14px;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 32px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+    contain: layout paint;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .dashboard-host-metrics[data-shown='0'] {
+    border-left-color: transparent;
+  }
+
+  .dashboard-host-metric {
+    display: flex;
+    flex-direction: column;
     flex: none;
+    gap: 1px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .dashboard-host-metric strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-bright);
+  }
+
+  .dashboard-host-metric span {
+    font-size: 11px;
   }
 
   /* Dark capsule selector with circular/pill selection ring per DESIGN.md */
@@ -1388,6 +1436,9 @@
   .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: 0; box-sizing: border-box; }
   .dashboard-Menu-btn { display: grid; }
   .dashboard-layout-presets { flex: 0 0 auto; max-width: calc(100% - 52px); margin-left: auto; overflow-x: auto; }
+  /* No room for host readings on a phone; the drawer still has them. */
+  .dashboard-host-metrics { display: none; }
+  .dashboard-toolbar-actions { flex: none; }
   .dashboard-heading-stack h2 { font-size: 15px; }
   .session-tile-btn { min-width: 44px; min-height: 44px; }
 }

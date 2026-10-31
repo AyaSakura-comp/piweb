@@ -404,6 +404,7 @@ export function createSessionDashboard({
           <span class="dashboard-toolbar-sub" id="dashboard-pane-counter">0 個並排視窗</span>
         </div>
       </div>
+      <div class="dashboard-host-metrics" id="dashboard-host-metrics" role="group" aria-label="主機狀態" data-shown="0"></div>
       <div class="dashboard-layout-presets" id="dashboard-layout-presets" role="group" aria-label="並排佈局切換" hidden>
         <button type="button" class="dashboard-preset-btn" data-preset="horizontal" aria-label="水平並排" title="水平並排（左右分欄）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg>

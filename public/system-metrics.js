@@ -50,6 +50,100 @@ export function metricsRows(data = {}) {
   return rows;
 }
 
+/** The Dashboard header's order: the readings that go first when room runs out come last. */
+export const STRIP_ORDER = ['GPU', 'CPU', 'Power', 'RAM', 'GPU temp', 'CPU temp', 'NPU power', 'NPU'];
+
+/**
+ * How many of `widths` (in order) fit in `room` px with `gap` between them:
+ * a leading run, so a reading never shows while one before it is dropped.
+ */
+export function fittingCount(widths, room, gap) {
+  let used = 0;
+  let count = 0;
+  for (const width of widths) {
+    const need = used + (count ? gap : 0) + width;
+    if (need > room) break;
+    used = need;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * The same readings in the Dashboard header, each a value over its label, as
+ * many as fit in the room the header leaves (STRIP_ORDER); none when nothing
+ * fits. Returns the view to hand to the monitor (`addView`).
+ */
+export function mountMetricsStrip(strip) {
+  const doc = strip.ownerDocument;
+  const order = new Map(STRIP_ORDER.map((label, i) => [label, i]));
+  // The widest each reading has been at this header width: a value gaining a
+  // digit must not make the last reading blink in and out with every sample.
+  let widest = new Map();
+  // The strip's content width as the ResizeObserver last reported it: 0 while
+  // the Dashboard is closed or on a phone, so nothing is measured (no forced
+  // layout every second) where it cannot be seen.
+  let room = 0;
+
+  function fit() {
+    const items = [...strip.children];
+    if (room <= 0) {
+      strip.dataset.shown = '0';
+      return;
+    }
+    for (const item of items) item.hidden = false;
+    const widths = items.map((item) => {
+      const width = Math.max(item.offsetWidth, widest.get(item.dataset.label) ?? 0);
+      widest.set(item.dataset.label, width);
+      return width;
+    });
+    const gap = Number.parseFloat(doc.defaultView.getComputedStyle(strip).columnGap) || 0;
+    const shown = fittingCount(widths, room, gap);
+    items.forEach((item, i) => {
+      item.hidden = i >= shown;
+    });
+    strip.dataset.shown = String(shown);
+  }
+
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (width === room) return;
+      room = width;
+      widest = new Map();
+      fit();
+    }).observe(strip);
+  }
+
+  return (data) => {
+    const rows = metricsRows(data)
+      .filter(([label]) => order.has(label))
+      .sort((a, b) => order.get(a[0]) - order.get(b[0]));
+    const labels = rows.map(([label]) => label).join('|');
+    if (strip.dataset.labels !== labels) {
+      strip.dataset.labels = labels;
+      strip.replaceChildren(
+        ...rows.map(([label]) => {
+          const item = doc.createElement('span');
+          item.className = 'dashboard-host-metric';
+          item.dataset.label = label;
+          const value = doc.createElement('strong');
+          const name = doc.createElement('span');
+          name.textContent = label;
+          item.append(value, name);
+          return item;
+        }),
+      );
+    }
+    rows.forEach(([, value, title], i) => {
+      const item = strip.children[i];
+      item.title = title;
+      item.firstChild.textContent = value;
+    });
+    fit();
+  };
+}
+
 /** Single-flight polling. Hidden tabs/logged-out clients stop; stale responses cannot repaint. */
 export function createSystemMetricsMonitor({ fetchMetrics, render, storage, isVisible }) {
   let interval = 1;
@@ -127,6 +221,10 @@ export function createSystemMetricsMonitor({ fetchMetrics, render, storage, isVi
 
 export function mountSystemMetrics({ panel, input, document, storage, fetch = globalThis.fetch }) {
   let isExpanded = false;
+  // Other places showing the same readings (the Dashboard header), painted
+  // from the same sample: one request feeds them all.
+  const views = new Set();
+  let latest = {};
 
   const createMetricRow = (label, value, title) => {
     const row = document.createElement('span');
@@ -236,7 +334,11 @@ export function mountSystemMetrics({ panel, input, document, storage, fetch = gl
   };
   const monitor = createSystemMetricsMonitor({
     storage,
-    render,
+    render: (data) => {
+      latest = data;
+      render(data);
+      for (const view of views) view(data);
+    },
     isVisible: () => !document.hidden,
     fetchMetrics: async (signal) => {
       const timeout = new AbortController();
@@ -261,5 +363,10 @@ export function mountSystemMetrics({ panel, input, document, storage, fetch = gl
     input.value = String(monitor.setInterval(input.value));
   });
   document.addEventListener('visibilitychange', () => monitor.visibilityChanged());
+  /** Paint `view(data)` with every sample from now on, starting with the last one. */
+  monitor.addView = (view) => {
+    views.add(view);
+    view(latest);
+  };
   return monitor;
 }

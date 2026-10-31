@@ -539,7 +539,18 @@ keyboard; a finger scroll moves nothing.
   bottom border as the topbar and BTW header — no `--bg-alt` slab. Left: “Session Dashboard” at 15px/650
   and a 12px `--text-2` counter (`N 個並排視窗`). Centre-right: dark capsule layout
   switcher (`border-radius: 999px`) with selection ring (`border-color: var(--text)`)
-  for **水平 / 垂直 / 網格**. Right: borderless 44×44px outline-icon buttons for
+  for **水平 / 垂直 / 網格**. Between the two, the drawer's host readings
+  (`#dashboard-host-metrics`, `mountMetricsStrip()` in `public/system-metrics.js`,
+  painted from the drawer's own request): each a 13px/600 value over its 11px
+  `--text-2` label, the same wording as the drawer, after a 1px `--border` divider.
+  Shown only as far as there is room: GPU, CPU, Power, RAM, GPU temp, CPU temp,
+  NPU power, NPU in that order, dropped from the end, never cut off; none (and no
+  divider) when even GPU does not fit or no sensor answers, and not at all on a
+  phone. A reading keeps the widest width it has had at this header width, so one
+  gaining a digit cannot make the last reading blink every second. The right end
+  grows as much as the readings do, so the switcher keeps its place midway
+  between the title and the right edge. Display only: no tap. (User request,
+  2026-10-31: "有餘裕的情況下把這個資訊顯示在這".) Right: borderless 44×44px outline-icon buttons for
   **均分視窗大小** (`#btn-dashboard-equalize`) and **清空並排** (`#btn-dashboard-clear`);
   no boxed text buttons or accent-filled primary actions.
 - **Pane headers, full single-session parity & native positions**: `--bg` surface with
@@ -684,6 +695,7 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/session-dashboard-zoom.spec.ts \
   test/e2e/session-dashboard-unread.spec.ts \
   test/e2e/viewer-motion.spec.ts \
+  test/e2e/dashboard-host-metrics.spec.ts \
   test/e2e/table-fullscreen.spec.ts \
   test/e2e/text-selection.spec.ts \
   test/e2e/session-fullscreen.spec.ts \

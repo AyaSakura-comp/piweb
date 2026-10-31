@@ -3,6 +3,8 @@ import {
   normalizeMetricsInterval,
   metricsRows,
   createSystemMetricsMonitor,
+  fittingCount,
+  STRIP_ORDER,
 } from '../public/system-metrics.js';
 
 afterEach(() => vi.useRealTimers());
@@ -152,4 +154,24 @@ it('survives unavailable localStorage', () => {
   expect(monitor.interval).toBe(1);
   expect(() => monitor.setInterval(3)).not.toThrow();
   expect(monitor.interval).toBe(3);
+});
+
+it('the Dashboard header shows a leading run of readings that fits, never one after a dropped one', () => {
+  // GPU 40, CPU 30, Power 50, RAM 100 px wide; 14px between.
+  const widths = [40, 30, 50, 100];
+  expect(fittingCount(widths, 0, 14)).toBe(0);
+  expect(fittingCount(widths, 39, 14)).toBe(0);
+  expect(fittingCount(widths, 40, 14)).toBe(1);
+  expect(fittingCount(widths, 40 + 14 + 30, 14)).toBe(2);
+  expect(fittingCount(widths, 40 + 14 + 30 + 14 + 50 + 13, 14)).toBe(3);
+  // RAM does not fit, so nothing after it shows even if it is narrow.
+  expect(fittingCount([...widths, 5], 200, 14)).toBe(3);
+  expect(fittingCount(widths, 1e4, 14)).toBe(4);
+  // The drawer's three summary readings lead.
+  expect(STRIP_ORDER.slice(0, 3)).toEqual(['GPU', 'CPU', 'Power']);
+  for (const [label] of metricsRows({
+    powerWatts: 1, npuPowerWatts: 1, cpuTemperatureC: 1, gpuTemperatureC: 1,
+    memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, cpuPercent: 1, gpuPercent: 1, npuPercent: 1,
+  }))
+    expect(STRIP_ORDER).toContain(label);
 });

@@ -1,6 +1,6 @@
 # Host system metrics
 
-The Sessions drawer displays a compact live host-telemetry panel beneath its header. Settings → 主機監控 → 數字更新間隔（秒） accepts whole seconds from 1–60, defaults to 1, and persists in this browser's localStorage. Invalid input resets to 1. Polling starts after authentication, pauses in hidden tabs, resumes immediately on return, and stops/clears on logout. Requests have a five-second timeout and cannot overlap.
+The Sessions drawer displays a compact live host-telemetry panel beneath its header. The Dashboard header shows the same readings in the room between its title and layout switcher, as many as fit (DESIGN.md, Dashboard header); it adds no request, since the drawer's poll paints both (`monitor.addView`). Settings → 主機監控 → 數字更新間隔（秒） accepts whole seconds from 1–60, defaults to 1, and persists in this browser's localStorage. Invalid input resets to 1. Polling starts after authentication, pauses in hidden tabs, resumes immediately on return, and stops/clears on logout. Requests have a five-second timeout and cannot overlap.
 
 ## Data and fault handling
 
@@ -20,7 +20,7 @@ The current Docker runtime exposes the host `/proc/stat`, `/proc/meminfo` and re
 ## Verification
 
 - Unit/API/lifecycle: `npx vitest run test/system-metrics*.ts`
-- Maintained mobile E2E: `npx playwright test test/e2e/system-metrics.spec.ts`
+- Maintained mobile E2E: `npx playwright test test/e2e/system-metrics.spec.ts`; Dashboard header: `test/e2e/dashboard-host-metrics.spec.ts` (iPad landscape/portrait, drawer hidden, phone, no sensors, both themes)
 - No special credentials required: E2E uses loopback fixture server and API interception, not live account data.
 - Evidence: `artifacts/playwright/test-results/system-metrics-*/` (screenshots and one continuous walkthrough video).
 - Covered: native NPU milliwatt conversion and correct field offset, malformed/unsupported/truncated binary layouts, sentinel omission, disappearance after a valid reading becomes invalid; drawer numbers and overflow, default interval, reachable 44px input, saving/reloading preference, invalid input reset, disappearing unavailable metrics, recovery preserving GPU 0% and NPU 0.00 W.

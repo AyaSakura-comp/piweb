@@ -11,7 +11,7 @@
  */
 
 import { openTableViewer, renderRich } from './markdown.js';
-import { mountSystemMetrics } from './system-metrics.js';
+import { mountMetricsStrip, mountSystemMetrics } from './system-metrics.js';
 import { canReuseStreamingRich, updateStreamingRich } from './streaming-rich.js';
 import { renderLobehubStatic } from './lobehub-rich.js';
 import { createCameraComposer } from './camera-composer.js';
@@ -34,7 +34,7 @@ import { createPromptPin } from './prompt-pin.js';
 import { createSessionFullscreen } from './session-fullscreen.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
-import { createSessionDashboard } from './session-dashboard.js?v=pane-unread-1';
+import { createSessionDashboard } from './session-dashboard.js?v=host-strip-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import {
@@ -2404,6 +2404,8 @@ const sessionDashboard = createSessionDashboard({
     attachmentLimitProblem(attachments, uploadLimits, options),
 });
 dashboardForVoice = sessionDashboard;
+// The drawer's host readings, also in the Dashboard header wherever it has room.
+systemMetricsMonitor.addView(mountMetricsStrip(document.getElementById('dashboard-host-metrics')));
 
 // Settings → Dashboard: per browser, on unless turned off.
 let dashboardEnabled = readDashboardPreference();
