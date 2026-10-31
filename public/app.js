@@ -2932,8 +2932,8 @@ function renderLifeTags() {
 let thinkingSheetTargetJid = null;
 
 function currentThinkingLevel(targetJid = thinkingSheetTargetJid || state.activeJid) {
-  // Life runs with minimal thinking unless the user picked a level.
-  if (targetJid === LIFE_JID) return state.lifeSession?.thinking || 'minimal';
+  // Life runs with low thinking unless the user picked a level.
+  if (targetJid === LIFE_JID) return state.lifeSession?.thinking || 'low';
   const session = state.sessions.find((s) => s.jid === targetJid);
   return session?.thinking || '';
 }

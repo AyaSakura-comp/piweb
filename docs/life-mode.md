@@ -34,11 +34,11 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   `web:*` JID, while a new empty `web:life` row receives a freshly reserved folder.
 - Every Life turn asks the configured `PI_BIN` for its exact current runtime
   model. It never trusts stale values from `pi --continue`.
-- Life thinking defaults to **`minimal`** (`LIFE_DEFAULT_THINKING` in
+- Life thinking defaults to **`low`** (`LIFE_DEFAULT_THINKING` in
   `src/agent/channel-settings.ts`), not Pi's runtime default, so everyday chat
   stays fast. An explicit thinking override chosen in the picker wins. Both are
   clamped to what the resolved model supports (e.g. `off` for a non-reasoning
-  model), and the picker shows `minimal` when no override is set.
+  model), and the picker shows `low` when no override is set.
 - **Quick tags** (`LIFE_TAGS` in `public/app.js`: 記帳, 生圖, 修圖) sit above the
   Life composer. Tapping one arms it for the next message only: the draft is sent
   as plain text with a `【label】` card in front (e.g. `【記帳】晚餐 120 元`). No
@@ -222,7 +222,7 @@ sequenceDiagram
     Worker->>Probe: --mode rpc --no-session + get_state
     Note over Worker,Probe: Same PI_BIN, PI_CWD, PI_MODEL, PI_THINKING,<br/>extra flags, environment, trust hooks, providers, and auth
     Probe-->>Worker: Exact provider/model
-    Note over Worker: Thinking = override or minimal,<br/>clamped to the model
+    Note over Worker: Thinking = override or low,<br/>clamped to the model
     Worker->>Pi: Continue with explicit model, thinking, and PI_CWD
     loop Thinking, tool, result, and final events
         Pi-->>Worker: Structured event

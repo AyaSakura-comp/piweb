@@ -197,7 +197,7 @@ export async function probePiRuntimeDefaults(
   });
 }
 
-export const LIFE_DEFAULT_THINKING: ThinkingLevel = 'minimal';
+export const LIFE_DEFAULT_THINKING: ThinkingLevel = 'low';
 
 export function getDesiredThinkingLevel(channel: RegisteredChannel): ThinkingLevel {
   if (channel.thinkingOverride) return channel.thinkingOverride;
@@ -229,7 +229,7 @@ export async function computeEffectiveChannelSettings(
     channel.kind === 'life' ||
     Boolean(channel.thinkingOverride) ||
     Boolean(config.piThinking && isThinkingLevel(config.piThinking));
-  // Life defaults to minimal thinking (quick everyday chat) instead of Pi's
+  // Life defaults to low thinking (quick everyday chat) instead of Pi's
   // runtime default; both the default and an explicit override are clamped to
   // what the resolved model supports.
   const desiredThinking =
