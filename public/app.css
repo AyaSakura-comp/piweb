@@ -1790,6 +1790,133 @@ html.keyboard-shell .life-edge-hint {
   padding-top: 2px;
 }
 
+/* /claude-usage, /gpt-usage, /agy-usage as a card (public/usage-report.js):
+   one meter per window, no emoji lights or text bars (DESIGN.md "Usage reports"). */
+.event.usage .event-body {
+  padding-bottom: 12px;
+  white-space: normal;
+  max-height: none;
+}
+
+.usage-report {
+  display: grid;
+  gap: 12px;
+}
+
+.usage-report :is(p, h4) {
+  margin: 0;
+}
+
+.usage-report .usage-caption,
+.usage-report .usage-note,
+.usage-report .usage-footer {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.usage-report .usage-note.is-warn {
+  color: #f28b8d;
+}
+
+:root[data-theme='light'] .usage-report .usage-note.is-warn {
+  color: var(--danger);
+}
+
+.usage-report .usage-footer {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-group {
+  display: grid;
+  gap: 14px;
+}
+
+.usage-report .usage-group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.usage-row {
+  display: grid;
+  gap: 6px;
+}
+
+.usage-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-label {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+.usage-sub {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.usage-value {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-value-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.usage-value strong {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-bright);
+}
+
+/* The upload progress track's shape; --border so the empty part shows on both themes. */
+.usage-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.usage-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.usage-row[data-level='high'] .usage-fill {
+  background: var(--danger);
+}
+
+.usage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row.is-disabled .usage-label {
+  color: var(--text-dim);
+}
+
 /* BTW reuses the existing composer. Its small ownership card replaces the
    main-only typing indicator while the side transcript is selected. */
 .messages[hidden], .btw-card[hidden] { display: none !important; }

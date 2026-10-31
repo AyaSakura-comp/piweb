@@ -525,6 +525,31 @@ code or link panel scrolls into view when it opens.
 
 Flow, storage and error classes: [subscription sign-in](docs/subscription-sign-in.md).
 
+## Usage reports
+
+`/claude-usage`, `/gpt-usage` and `/agy-usage` replies are a card inside the
+usual open notice, not the worker's monospace text (`public/usage-report.js`,
+`.usage-*` in `public/app.css`). The worker still writes that text, which
+Discord shows and history keeps; the page reads it back, so old reports draw
+the same way.
+
+- The summary names the report (`ⓘ Claude Code 用量`, `ChatGPT/Codex 用量`,
+  `Antigravity 用量`), not the command; the account note or plan sits under it
+  in 12px `--text-dim`. agy's groups get a 13px/600 `--text-2` heading.
+- One row per window: its name (15px, `--text-bright`; GPT's window length
+  beside it in 12px), `已用 N%` on the right with the number in 15px/650
+  tabular figures, a 5px rounded meter (`role="meter"`), and under it
+  `剩 N%` and `MM/DD HH:MM 重置 · 還有 …` in 12px `--text-dim`. A disabled agy
+  window shows its reason instead of a meter.
+- The meter is the upload progress track's shape: `--border` track, `--accent`
+  fill, `--danger` from 90 % used. No emoji lights, no `█░` text bars, no
+  monospace box in a box. DESIGN.md has no warning colour, so the old orange
+  middle step is gone; the fill's length already says how far along it is.
+- The query time and cache note close the card under a `--border` rule; extra
+  credits and limit warnings are 12px lines (a warning in the danger colour).
+- Anything the parser does not read whole (an error, an unknown line, a format
+  change) keeps the notice's plain text, so a reading is never hidden.
+
 ## Multi-session tiling dashboard (tablet & desktop)
 
 On viewports `>= 768px`, the **Dashboard** workspace (`public/session-dashboard.js`,
@@ -709,7 +734,8 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/session-fullscreen.spec.ts \
   test/e2e/keyboard-send.spec.ts \
   test/e2e/iphone-viewport-shell.spec.ts \
-  test/e2e/settings-motion.spec.ts
+  test/e2e/settings-motion.spec.ts \
+  test/e2e/usage-report-card.spec.ts
 ```
 
 `session-dashboard-unread.spec.ts` covers the pane states (running, unread, read), a

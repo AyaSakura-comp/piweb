@@ -50,6 +50,12 @@ Formatted like `/gpt-usage` and `/agy-usage` so the three reports read the same:
 - Missing data is never reported as zero. This is account quota, not the
   selected conversation's token count or cost estimate.
 
+That text is what the worker stores and Discord shows. Piweb draws it as a
+card with one meter per window (`public/usage-report.js`, DESIGN.md "Usage
+reports"); `test/usage-report.test.ts` feeds the parser the real formatters'
+output, so a format change on either side fails there rather than quietly
+falling back to the plain text.
+
 ## Worker-only implementation
 
 `src/claude-usage.ts` reads `${CLAUDE_CONFIG_DIR}/.credentials.json` (default

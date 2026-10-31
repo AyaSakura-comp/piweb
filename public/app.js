@@ -31,6 +31,7 @@ import { bindThemeToggle } from './theme.js';
 import { createPromptTurnScroll } from './prompt-turn-scroll.js';
 import { bindViewportShell } from './viewport-shell.js';
 import { createPromptPin } from './prompt-pin.js';
+import { parseUsageReport, renderUsageReport } from './usage-report.js';
 import { createSessionFullscreen } from './session-fullscreen.js';
 import { createHotKeywords } from './hot-keywords.js';
 import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-ime.js?v=voice-status-1';
@@ -3803,6 +3804,9 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
       const startedAt = Date.parse(iso);
       if (Number.isFinite(startedAt)) details.dataset.startedAt = String(startedAt);
     }
+    // /claude-usage, /gpt-usage, /agy-usage: read back into a card (null keeps the text).
+    const usage = event.kind === 'system' ? parseUsageReport(event.role, event.content) : null;
+    if (usage) details.classList.add('usage');
     // Keep ordinary notices/errors open, but recurring AGY commands folded.
     const openByDefault = event.kind === 'error' || (event.kind === 'system' && !isAgyBackgroundCommand);
     details.open = openByDefault;
@@ -3814,7 +3818,7 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     summary.append(
       isAgyBackgroundCommand
         ? el('span', 'label label-command', '$')
-        : el('span', 'label', `${icon} ${event.role || label}`),
+        : el('span', 'label', `${icon} ${usage?.title ?? (event.role || label)}`),
     );
     // A peek would just repeat the body verbatim when it is already expanded.
     if (!openByDefault) {
@@ -3833,6 +3837,7 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     const bodyNode = reuseRich || el('div', 'event-body');
     if (liveRich) growInto(bodyNode, event.content, true);
     else if (event.kind === 'thinking') renderLobehubStatic(bodyNode, event.content);
+    else if (usage) bodyNode.append(renderUsageReport(usage));
     else renderText(bodyNode, event.content);
     bodyWrap.append(bodyNode);
     details.append(bodyWrap);

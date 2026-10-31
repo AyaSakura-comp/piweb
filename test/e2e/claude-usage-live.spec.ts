@@ -71,10 +71,12 @@ test('deployed Claude usage button returns real quota for Opus, Sonnet and Haiku
       .filter({ hasText: 'Claude Code 用量' });
     await expect(reports).toHaveCount(++reportCount, { timeout: 30000 });
     const report = reports.last();
-    await expect(report).toContainText(/5 小時窗 +已用 [0-9.]+%/);
-    await expect(report).toContainText(/週窗 +已用 [0-9.]+%/);
-    await expect(report).toContainText(/[█░]{10}/);
-    await expect(report).toContainText('重置 ');
+    // Drawn as the usage card (public/usage-report.js): one meter per window.
+    const rows = report.locator('.usage-row');
+    await expect(rows.filter({ hasText: '5 小時窗' })).toContainText(/已用\s*[0-9.]+%/);
+    await expect(rows.filter({ hasText: /^週窗/ })).toContainText(/已用\s*[0-9.]+%/);
+    await expect(rows.first().locator('[role=meter]')).toHaveAttribute('aria-valuenow', /^[0-9.]+$/);
+    await expect(report).toContainText('重置');
     await expect(report).not.toContainText('ChatGPT');
     await report.scrollIntoViewIfNeeded();
     await expect(page.locator('#messages .event.error')).toHaveCount(0);

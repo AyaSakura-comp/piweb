@@ -81,7 +81,7 @@
     <!-- app.js's whole static import graph, so it downloads in one round trip
          instead of one per import level (three). The URLs must match the
          imports exactly, ?v= included; test/boot-prefetch.test.ts checks. -->
-    <link rel="modulepreload" href="/app.js?v=fs-tail-1" />
+    <link rel="modulepreload" href="/app.js?v=usage-card-1" />
     <link rel="modulepreload" href="/markdown.js" />
     <link rel="modulepreload" href="/media-files.js" />
     <link rel="modulepreload" href="/viewer-physics.js" />
@@ -103,6 +103,7 @@
     <link rel="modulepreload" href="/prompt-turn-scroll.js" />
     <link rel="modulepreload" href="/viewport-shell.js" />
     <link rel="modulepreload" href="/prompt-pin.js" />
+    <link rel="modulepreload" href="/usage-report.js" />
     <link rel="modulepreload" href="/session-fullscreen.js" />
     <link rel="modulepreload" href="/hot-keywords.js" />
     <link rel="modulepreload" href="/voice-ime.js?v=voice-status-1" />
@@ -846,6 +847,6 @@
 
     <script src="/vendor/katex/katex.min.js"></script>
     <script src="/vendor/highlight/highlight.min.js"></script>
-    <script src="/app.js?v=fs-tail-1" type="module"></script>
+    <script src="/app.js?v=usage-card-1" type="module"></script>
   </body>
 </html>
