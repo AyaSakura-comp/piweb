@@ -778,9 +778,8 @@ for (const theme of ['dark', 'light']) {
   });
 }
 
-test('a microphone the browser stopped under us starts again on the next tap', async ({ page }) => {
-  // iOS pauses a page's audio (photo picker, screen recording) and the page
-  // still read as listening, so taps did nothing (iPad, 2026-10-27).
+/** Keeps every AudioContext the page makes, and lets the test say whether the page is visible. */
+async function pausableAudio(page: Page) {
   await page.addInitScript(() => {
     const contexts: AudioContext[] = ((window as any).__contexts = []);
     const Native = window.AudioContext;
@@ -790,7 +789,63 @@ test('a microphone the browser stopped under us starts again on the next tap', a
         contexts.push(this);
       }
     };
+    (window as any).__visible = true;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => ((window as any).__visible ? 'visible' : 'hidden'),
+    });
+    (window as any).__setVisible = (visible: boolean) => {
+      (window as any).__visible = visible;
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    (window as any).__taps = 0;
+    document.addEventListener('pointerdown', () => (window as any).__taps++, true);
   });
+}
+
+const suspendAudio = (page: Page) =>
+  page.evaluate(() => Promise.all((window as any).__contexts.map((c: AudioContext) => c.suspend())));
+
+test('a microphone the browser paused in the background comes back by itself when the page does', async ({ page }) => {
+  // iOS Safari pauses a page's audio when another app or tab is in front; the
+  // page then waited for a tap (2026-11-01: "iOS 上 safari 放著不管切其他的視窗就會").
+  await pausableAudio(page);
+  const server = await fakeKomorebi(page, ['第一句。', '第二句。']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  const composer = page.locator('#composer');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('第一句。', { timeout: 6000 });
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+  const taps = await page.evaluate(() => (window as any).__taps);
+  const sockets = server.sockets;
+
+  // Away: the audio stops and nothing is done while the page is hidden.
+  await page.evaluate(() => (window as any).__setVisible(false));
+  await suspendAudio(page);
+  await page.waitForTimeout(4500); // past the stall check
+  await expect(composer).toHaveClass(/voice-listening/);
+  expect(await page.evaluate(() => (window as any).__contexts.at(-1).state)).toBe('suspended');
+
+  // Back: the paused audio is resumed, without a tap, on the same connection.
+  await page.evaluate(() => (window as any).__setVisible(true));
+  await expect.poll(() => page.evaluate(() => (window as any).__contexts.at(-1).state)).toBe('running');
+  await expect(input).toHaveAttribute('placeholder', /說話即可輸入…|麥克風恢復中…/);
+  await expect(composer).toHaveClass(/voice-listening/);
+  server.allowed = 2;
+  await expect(input).toHaveValue('第一句。第二句。', { timeout: 8000 });
+  expect(await page.evaluate(() => (window as any).__taps)).toBe(taps);
+  expect(server.sockets).toBe(sockets);
+});
+
+test('a microphone the browser will not reopen without a tap starts again on the next tap', async ({ page }) => {
+  // iOS pauses a page's audio (photo picker, screen recording) and the page
+  // still read as listening, so taps did nothing (iPad, 2026-10-27). When
+  // reviving it fails too, the next tap anywhere starts it.
+  await pausableAudio(page);
   const server = await fakeKomorebi(page, ['第一句。', '第二句。']);
   await mockApi(page);
   await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
@@ -801,17 +856,24 @@ test('a microphone the browser stopped under us starts again on the next tap', a
   await page.locator('#composer .voice-ime-btn').click();
   await expect(input).toHaveValue('第一句。', { timeout: 6000 });
   await expect(composer).toHaveClass(/voice-listening/);
-  // Rewritten, as long before a photo is attached.
   await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
   const updates = server.sessions.length;
 
-  // The browser stops the audio; the page notices and waits for a tap.
-  await page.evaluate(() => Promise.all((window as any).__contexts.map((c: AudioContext) => c.suspend())));
-  await expect(composer).not.toHaveClass(/voice-listening/, { timeout: 6000 });
+  // Without a tap this browser never resumes audio (as Safari may).
+  await page.evaluate(() => {
+    const native = AudioContext.prototype.resume;
+    (window as any).__unblock = () => (AudioContext.prototype.resume = native);
+    AudioContext.prototype.resume = () => new Promise(() => {});
+  });
+  await suspendAudio(page);
+  await expect(input).toHaveAttribute('placeholder', '麥克風恢復中…', { timeout: 6000 });
+  await page.screenshot({ path: test.info().outputPath('reviving.png') });
+  await expect(composer).not.toHaveClass(/voice-listening/, { timeout: 15000 });
   await expect(input).toHaveAttribute('placeholder', '點一下畫面開始收音…');
   await expect(page.locator('#composer .voice-ime-btn')).toHaveAttribute('aria-pressed', 'true');
 
   // Any tap starts it again, with a fresh microphone.
+  await page.evaluate(() => (window as any).__unblock());
   await page.locator('#messages').tap();
   await expect(composer).toHaveClass(/voice-listening/);
   await expect.poll(() => server.sessions.length).toBeGreaterThan(updates);

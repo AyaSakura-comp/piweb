@@ -210,6 +210,11 @@ describe('voice status', () => {
     });
   });
 
+  it('a microphone being revived says so, ahead of a reconnect', () => {
+    const state = voiceStatus({ listening: true, reviving: true, reconnecting: true });
+    expect(state).toEqual(expect.objectContaining({ placeholder: '麥克風恢復中…', failed: false }));
+  });
+
   it('a dropped connection that is coming back reads as reconnecting, not as a failure', () => {
     const state = voiceStatus({ listening: true, reconnecting: true, service: backends('ready', 'ready') });
     expect(state).toEqual(expect.objectContaining({ placeholder: '語音重新連線中…', failed: false }));

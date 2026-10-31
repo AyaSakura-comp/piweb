@@ -20,8 +20,10 @@
  *
  * A dropped connection (Komorebi restarting, the network going) does not stop
  * voice input: the microphone keeps going and the SDK connects again by itself
- * (Dictation's reconnect), the box saying 語音重新連線中… meanwhile. Only a
- * microphone the browser stopped (stall below) waits for a tap.
+ * (Dictation's reconnect), the box saying 語音重新連線中… meanwhile. A
+ * microphone the browser paused (stall below: iOS Safari in the background)
+ * is revived when the page is back, 麥克風恢復中… meanwhile; only when the
+ * browser will not reopen it without one does it wait for a tap.
  *
  * The placeholder says what is happening, including the services behind it:
  * Komorebi checks its speech recognizer and clean-up model when a session
@@ -51,7 +53,13 @@ const IDLE_CLOSE_MS = 8000;
 // audio for the photo picker, a screen recording or another app, and the page
 // still read as listening, so no tap could start it again (iPad, 2026-10-27:
 // two minutes of nothing after attaching a video, until the mic was toggled).
+// A muted track still sends (silence), so the SDK's micLive is checked too.
+// While the page is hidden nothing is done; once it is visible the SDK revives
+// the mic (2026-11-01: "iOS 上 safari 放著不管切其他的視窗就會" fail).
 const STALL_MS = 3000;
+// Back on the page, a mic silent for this long is revived at once, without
+// waiting for the next stall check.
+const RETURN_STALL_MS = 1000;
 // A new session says whether its services are up (komorebi.backends) right
 // after the microphone opens; until then the box still says it is opening. A
 // server without that event reads as ready after this long.
@@ -221,11 +229,14 @@ export function freshRanges(before, after) {
  * session's last `komorebi.backends` event: whether the speech recognizer
  * (role asr) and clean-up model (role refine) are up, or being started.
  */
-export function voiceStatus({ error = '', connecting = false, listening = false, reconnecting = false, service = null } = {}) {
+export function voiceStatus({ error = '', connecting = false, listening = false, reconnecting = false, reviving = false, service = null } = {}) {
   const asr = service?.backends?.find((b) => b.role === 'asr');
   const refine = service?.backends?.find((b) => b.role === 'refine');
   const why = (b) => (b.reason ? `（${b.reason}）` : '');
   if (error) return { placeholder: `語音輸入：${error}`, title: `語音輸入：${error}（點一下重試，再點一下關閉）`, failed: true };
+  if (listening && reviving) {
+    return { placeholder: '麥克風恢復中…', title: '麥克風被系統暫停，正在自動恢復（點一下關閉）', failed: false };
+  }
   if (listening && reconnecting) {
     // Still listening: what is said meanwhile goes in once it is back.
     return { placeholder: '語音重新連線中…', title: '語音輸入連線中斷，正在自動重新連線，說的話接上後會出現（點一下關閉）', failed: false };
@@ -291,6 +302,7 @@ export function createVoiceIme({
   let service = null; // the session's last komorebi.backends: its recognizer and clean-up model
   let checkTimer = 0; // listening, waiting for the new session's first komorebi.backends
   let reconnecting = false; // listening, the SDK connecting again after a drop
+  let reviving = false; // listening, the SDK getting a paused microphone going again
   let error = '';
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
@@ -336,7 +348,7 @@ export function createVoiceIme({
     // Opening until start() is done and, on a new session, until it has said
     // whether its services are up (or CHECK_WAIT_MS passed).
     const connecting = Boolean(starting || checkTimer);
-    const state = voiceStatus({ error, connecting, listening, reconnecting, service });
+    const state = voiceStatus({ error, connecting, listening, reconnecting, reviving, service });
     for (const [textarea, entry] of composers) {
       const mine = textarea === target;
       entry.button.setAttribute('aria-pressed', String(on));
@@ -847,7 +859,7 @@ export function createVoiceIme({
     }, IDLE_CLOSE_MS);
   }
 
-  /** Listening without chunks: stop, so the next tap anywhere starts it again. */
+  /** Listening without chunks (or with a muted mic): revive it once the page is visible. */
   function watchStall(d) {
     heardAt = Date.now();
     clearInterval(stallTimer);
@@ -856,17 +868,32 @@ export function createVoiceIme({
         clearInterval(stallTimer);
         return;
       }
-      if (Date.now() - heardAt < STALL_MS) return;
-      clearInterval(stallTimer);
-      reconnecting = false;
-      void d
-        .stop()
-        .catch(() => {})
-        .finally(() => {
-          sync();
-          if (on && dictation === d) armGesture();
-        });
+      if (stalled(d, STALL_MS)) void revive(d);
     }, 1000);
+  }
+
+  function stalled(d, ms) {
+    if (reviving || doc?.visibilityState === 'hidden') return false;
+    return Date.now() - heardAt >= ms || d.voice?.micLive === false;
+  }
+
+  /** Resume or reopen the paused mic; when the browser wants a tap, stop and wait for one. */
+  async function revive(d) {
+    reviving = true;
+    sync();
+    const back = (await d.voice?.revive?.().catch(() => false)) ?? false;
+    reviving = false;
+    if (dictation !== d) return;
+    if (back) {
+      heardAt = Date.now();
+      sync();
+      return;
+    }
+    clearInterval(stallTimer);
+    reconnecting = false;
+    await d.stop().catch(() => {});
+    sync();
+    if (on && dictation === d) armGesture();
   }
 
   // Browsers only start audio from a user gesture, so after a reload, a return
@@ -910,7 +937,10 @@ export function createVoiceIme({
   }
 
   doc?.addEventListener?.('visibilitychange', () => {
-    if (on && doc.visibilityState === 'visible' && !dictation?.listening) armGesture();
+    if (!on || doc.visibilityState !== 'visible') return;
+    const d = dictation;
+    if (!d?.listening) armGesture();
+    else if (stalled(d, RETURN_STALL_MS)) void revive(d);
   });
 
   return {
