@@ -29,6 +29,10 @@ type FakeServer = {
   send: (event: object) => void;
   /** Answer session.update with komorebi.backends ready, as Komorebi does since 2026-10-31. */
   reportsBackends: boolean;
+  /** Close the latest connection, as a restarting server does. */
+  drop: () => void;
+  /** While true, every new connection is closed at once (the server is down). */
+  down: boolean;
 };
 
 /** Hears the sentences in order, over a few audio chunks each, but no further
@@ -47,10 +51,17 @@ async function fakeKomorebi(page: Page, sentences: Array<string | [string, strin
     flush: () => held.splice(0).forEach((rewrite) => rewrite()),
     send: () => {},
     reportsBackends: true,
+    drop: () => {},
+    down: false,
   };
   await page.routeWebSocket(KOMOREBI, (ws: WebSocketRoute) => {
     server.sockets++;
+    if (server.down) {
+      void ws.close({ code: 1011, reason: 'down' });
+      return;
+    }
     server.send = (event) => ws.send(JSON.stringify(event));
+    server.drop = () => void ws.close({ code: 1012, reason: 'restart' });
     let draft = '';
     let chunks = 0;
     let item = 0;
@@ -659,6 +670,57 @@ test('Settings sets the clean-up API, applied to the next sentence', async ({ pa
     .poll(() => server.sessions.at(-1)?.komorebi?.refine)
     .toEqual({ provider: 'openai', base_url: 'https://api.example.test/v1', model: 'tidy-model' });
 });
+
+for (const theme of ['dark', 'light']) {
+  test(`a dropped connection comes back by itself, with the draft and without a tap (${theme})`, async ({
+    page,
+  }, info) => {
+    // 2026-11-01: "語音輸入法現在又壞掉了…假設使用者有 on 的話，他死掉自己就回來".
+    // Komorebi restarting closed the connection; the mic stopped and the box
+    // said 語音輸入：連線中斷 until a tap.
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.addInitScript((t) => {
+      localStorage.setItem('piweb.mode', 'sessions');
+      localStorage.setItem('piweb.theme', t);
+    }, theme);
+    const server = await fakeKomorebi(page, ['今天下午三點開會。']);
+    await mockApi(page);
+    await page.goto('/');
+    await expect(page.locator('#session-name')).toHaveText('Voice');
+    const input = page.locator('#input');
+    const composer = page.locator('#composer');
+    const mic = composer.locator('.voice-ime-btn');
+    await mic.click();
+    await expect(input).toHaveValue('今天下午三點開會。', { timeout: 5000 });
+    const taps = await page.evaluate(() => {
+      (window as any).__taps = 0;
+      document.addEventListener('pointerdown', () => (window as any).__taps++, true);
+      return 0;
+    });
+
+    server.down = true;
+    server.drop();
+    await expect(input).toHaveAttribute('placeholder', '語音重新連線中…');
+    await expect(mic).toHaveAttribute('title', /正在自動重新連線/);
+    await expect(mic).not.toHaveClass(/voice-error/);
+    await expect(mic).toHaveAttribute('aria-pressed', 'true');
+    await expect(composer).toHaveClass(/voice-listening/); // the mic keeps going
+    await expect(input).toHaveValue('今天下午三點開會。');
+    await expect.poll(() => server.sockets, { timeout: 5000 }).toBeGreaterThan(2); // it keeps trying
+    await page.screenshot({ path: info.outputPath(`reconnecting-${theme}.png`) });
+
+    server.down = false; // back up: the next try gets in
+    await expect(input).toHaveAttribute('placeholder', '說話即可輸入…', { timeout: 15000 });
+    // The new session got the draft back, then heard on (this fake server's
+    // new connection starts its sentences over).
+    await expect.poll(() => server.drafts.at(-1) ?? '').toContain('今天下午三點開會。');
+    await expect(input).toHaveValue('今天下午三點開會。今天下午三點開會。', { timeout: 8000 });
+    expect(await page.evaluate(() => (window as any).__taps)).toBe(taps);
+    await page.screenshot({ path: info.outputPath(`reconnected-${theme}.png`) });
+    expect(errors).toEqual([]);
+  });
+}
 
 test('a microphone the browser stopped under us starts again on the next tap', async ({ page }) => {
   // iOS pauses a page's audio (photo picker, screen recording) and the page

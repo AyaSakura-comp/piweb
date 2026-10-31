@@ -196,6 +196,13 @@ describe('voice status', () => {
     });
   });
 
+  it('a dropped connection that is coming back reads as reconnecting, not as a failure', () => {
+    const state = voiceStatus({ listening: true, reconnecting: true, service: backends('ready', 'ready') });
+    expect(state).toEqual(expect.objectContaining({ placeholder: '語音重新連線中…', failed: false }));
+    expect(state.title).toContain('點一下關閉');
+    expect(voiceStatus({ reconnecting: true }).placeholder).toBe('點一下畫面開始收音…'); // not listening
+  });
+
   it('a connection or microphone error comes first; a server without the event reads as before', () => {
     expect(voiceStatus({ error: '連線中斷', listening: true, service: backends('starting', 'ready') }).placeholder).toBe(
       '語音輸入：連線中斷',

@@ -18,6 +18,11 @@
  *   text goes transparent, keeping its caret.
  * Send waits for the last sentence (take()) and sends the cleaned-up text.
  *
+ * A dropped connection (Komorebi restarting, the network going) does not stop
+ * voice input: the microphone keeps going and the SDK connects again by itself
+ * (Dictation's reconnect), the box saying 語音重新連線中… meanwhile. Only a
+ * microphone the browser stopped (stall below) waits for a tap.
+ *
  * The placeholder says what is happening, including the services behind it:
  * Komorebi checks its speech recognizer and clean-up model when a session
  * starts, starts the ones that are down and says so (`komorebi.backends`),
@@ -214,11 +219,15 @@ export function freshRanges(before, after) {
  * session's last `komorebi.backends` event: whether the speech recognizer
  * (role asr) and clean-up model (role refine) are up, or being started.
  */
-export function voiceStatus({ error = '', connecting = false, listening = false, service = null } = {}) {
+export function voiceStatus({ error = '', connecting = false, listening = false, reconnecting = false, service = null } = {}) {
   const asr = service?.backends?.find((b) => b.role === 'asr');
   const refine = service?.backends?.find((b) => b.role === 'refine');
   const why = (b) => (b.reason ? `（${b.reason}）` : '');
   if (error) return { placeholder: `語音輸入：${error}`, title: `語音輸入：${error}（點一下重試，再點一下關閉）`, failed: true };
+  if (listening && reconnecting) {
+    // Still listening: what is said meanwhile goes in once it is back.
+    return { placeholder: '語音重新連線中…', title: '語音輸入連線中斷，正在自動重新連線，說的話接上後會出現（點一下關閉）', failed: false };
+  }
   if (connecting) return { placeholder: '語音輸入開啟中…', title: '語音輸入開啟中（點一下關閉）', failed: false };
   if (!listening) return { placeholder: '點一下畫面開始收音…', title: '語音輸入（點畫面任何地方開始收音）', failed: false };
   // The placeholder stays on one line and a phone shows about 11 characters of
@@ -266,6 +275,7 @@ export function createVoiceIme({
   let starting = null;
   let service = null; // the session's last komorebi.backends: its recognizer and clean-up model
   let checkTimer = 0; // listening, waiting for the new session's first komorebi.backends
+  let reconnecting = false; // listening, the SDK connecting again after a drop
   let error = '';
   let retried = false; // the tap after an error retried; the next one turns voice off
   let closeTimer = 0;
@@ -304,7 +314,7 @@ export function createVoiceIme({
     // Opening until start() is done and, on a new session, until it has said
     // whether its services are up (or CHECK_WAIT_MS passed).
     const connecting = Boolean(starting || checkTimer);
-    const state = voiceStatus({ error, connecting, listening, service });
+    const state = voiceStatus({ error, connecting, listening, reconnecting, service });
     for (const [textarea, entry] of composers) {
       const mine = textarea === target;
       entry.button.setAttribute('aria-pressed', String(on));
@@ -706,7 +716,13 @@ export function createVoiceIme({
     const options = dictationOptions(readVoiceSettings(storage));
     dictation = new Dictation({
       ...options,
+      reconnect: true,
       onchange: render,
+      onconnection: (state) => {
+        reconnecting = state === 'reconnecting';
+        if (!reconnecting) awaitService();
+        sync();
+      },
       onerror: (err) => {
         error = err?.message || '連線失敗';
         sync();
@@ -764,13 +780,7 @@ export function createVoiceIme({
       await d.start();
       retried = false;
       watchStall(d);
-      // Not 說話即可輸入… before the session has said its services are up.
-      if (!service && !checkTimer) {
-        checkTimer = setTimeout(() => {
-          checkTimer = 0;
-          sync();
-        }, CHECK_WAIT_MS);
-      }
+      awaitService();
     })()
       .catch((err) => {
         error = err?.message || '無法開始收音';
@@ -784,8 +794,18 @@ export function createVoiceIme({
     return starting;
   }
 
+  /** Not 說話即可輸入… before a new session has said its services are up. */
+  function awaitService() {
+    if (service || checkTimer) return;
+    checkTimer = setTimeout(() => {
+      checkTimer = 0;
+      sync();
+    }, CHECK_WAIT_MS);
+  }
+
   async function stop() {
     const d = dictation;
+    reconnecting = false;
     if (!d) return;
     await d.stop().catch(() => {});
     sync();
@@ -810,6 +830,7 @@ export function createVoiceIme({
       }
       if (Date.now() - heardAt < STALL_MS) return;
       clearInterval(stallTimer);
+      reconnecting = false;
       void d
         .stop()
         .catch(() => {})
@@ -997,6 +1018,7 @@ export function createVoiceIme({
       if (d.voice.url !== options.url) {
         dictation = null;
         service = null;
+        reconnecting = false;
         void d.stop().finally(() => d.close());
         if (on) void start();
         return;
