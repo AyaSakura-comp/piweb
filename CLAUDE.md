@@ -72,6 +72,7 @@ public/          index.html, app.css, app.js — no framework, no build step
                  markdown.js = markdown + KaTeX + Mermaid + code highlighting
                  viewer-physics.js = glide/rubber band/spring for the table & diagram viewer
                  usage-report.js = the usage commands' text drawn as a card
+                 clipboard-paste.js = the 貼上 button's clipboard read (chat and panes)
                  sw.js       = service worker (Web Push + reconnect page for a launch that cannot load)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
@@ -1072,6 +1073,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
     audio (MP3, WAV, M4A, AAC, OGG, FLAC), video (MP4, MOV, WebM, MKV), and documents (PDF, CSV).
   - Files are automatically staged into the composer with visual chips and appropriate icons (`🎵`, `🎬`, `📎`)
     or image previews.
+  - The button (chat and Dashboard panes) reads the clipboard ONCE (`public/clipboard-paste.js`,
+    `readClipboard`): iOS shows its 貼上 bubble for every read, and the old second read
+    (`readText()` after `read()` found no media) came back empty for a link copied with
+    Safari's share sheet, which is only `text/uri-list` (iPad, 2026-11-01). Text is
+    `text/plain`, else the link in `text/uri-list`, else the words of `text/html`.
 - **Selection fires on pointerUP with a movement guard**, never on pointerdown.
   pointerdown selects the moment a finger lands, so dragging the list to scroll
   it picks whatever was underneath. `bindAutocompleteTaps()` treats <10px of

@@ -7,6 +7,7 @@
  */
 
 import { bindTypingLabel, shouldLoadOlderHistory } from './session-ui.js';
+import { readClipboard } from './clipboard-paste.js';
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const PANE_PAGE_SIZE = 50;
@@ -1823,38 +1824,19 @@ export function createSessionDashboard({
 
     pasteBtn.addEventListener('click', async () => {
       try {
-        if (navigator.clipboard?.read) {
-          try {
-            const items = await navigator.clipboard.read();
-            const mediaFiles = [];
-            for (let i = 0; i < items.length; i++) {
-              const item = items[i];
-              const fileType = item.types.find(
-                (t) =>
-                  t.startsWith('image/') ||
-                  t.startsWith('audio/') ||
-                  t.startsWith('video/') ||
-                  (t.startsWith('application/') && !t.includes('json') && !t.includes('xml')),
-              );
-              if (fileType) {
-                const blob = await item.getType(fileType);
-                const ext = MIME_EXT_MAP[fileType] || fileType.split('/')[1]?.split('+')[0] || 'bin';
-                mediaFiles.push(
-                  new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type: fileType }),
-                );
-              }
-            }
-            if (mediaFiles.length > 0) {
-              addPaneFiles(mediaFiles);
-              showToast?.(formatPasteToast(mediaFiles));
-              return;
-            }
-          } catch {
-            // Fall through to readText
-          }
+        // One read (clipboard-paste.js): iOS asks again for every read.
+        const clip = await readClipboard();
+        if (clip?.media.length) {
+          const mediaFiles = clip.media.map(({ blob, type }, i) => {
+            const ext = MIME_EXT_MAP[type] || type.split('/')[1]?.split('+')[0] || 'bin';
+            return new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type });
+          });
+          addPaneFiles(mediaFiles);
+          showToast?.(formatPasteToast(mediaFiles));
+          return;
         }
-        if (navigator.clipboard?.readText) {
-          const text = await navigator.clipboard.readText();
+        if (clip) {
+          const text = clip.text;
           if (text) {
             const start = textarea.selectionStart ?? textarea.value.length;
             const end = textarea.selectionEnd ?? textarea.value.length;

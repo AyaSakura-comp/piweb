@@ -38,6 +38,7 @@ import { createVoiceIme, readVoiceSettings, saveVoiceSettings } from './voice-im
 import { createSessionDashboard } from './session-dashboard.js?v=host-strip-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
+import { readClipboard } from './clipboard-paste.js';
 import {
   bindLongPress,
   formatElapsed,
@@ -4224,41 +4225,20 @@ function formatPasteToast(files) {
 
 $('btn-paste')?.addEventListener('click', async () => {
   try {
-    if (navigator.clipboard?.read) {
-      try {
-        const items = await navigator.clipboard.read();
-        const mediaFiles = [];
-
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          const fileType = item.types.find(
-            (t) =>
-              t.startsWith('image/') ||
-              t.startsWith('audio/') ||
-              t.startsWith('video/') ||
-              (t.startsWith('application/') && !t.includes('json') && !t.includes('xml')),
-          );
-
-          if (fileType) {
-            const blob = await item.getType(fileType);
-            const ext = MIME_EXT_MAP[fileType] || fileType.split('/')[1]?.split('+')[0] || 'bin';
-            const file = new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type: fileType });
-            mediaFiles.push(file);
-          }
-        }
-
-        if (mediaFiles.length > 0) {
-          addFiles(mediaFiles);
-          showToast(formatPasteToast(mediaFiles));
-          return;
-        }
-      } catch {
-        // Fallback to readText if read() is not permitted for binary items
-      }
+    // One read (clipboard-paste.js): iOS asks again for every read.
+    const clip = await readClipboard();
+    if (clip?.media.length) {
+      const mediaFiles = clip.media.map(({ blob, type }, i) => {
+        const ext = MIME_EXT_MAP[type] || type.split('/')[1]?.split('+')[0] || 'bin';
+        return new File([blob], `pasted-${Date.now()}-${i}.${ext}`, { type });
+      });
+      addFiles(mediaFiles);
+      showToast(formatPasteToast(mediaFiles));
+      return;
     }
 
-    if (navigator.clipboard?.readText) {
-      const text = await navigator.clipboard.readText();
+    if (clip) {
+      const text = clip.text;
       if (text) {
         const start = input.selectionStart ?? input.value.length;
         const end = input.selectionEnd ?? input.value.length;
