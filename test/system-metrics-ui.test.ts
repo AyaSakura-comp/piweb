@@ -28,7 +28,7 @@ it('formats supported values, preserves zero and omits missing/invalid metrics',
     }),
   ).toEqual([
     ['Power', '40.0 W', 'Package power, not wall power'],
-    ['RAM', '8.0 / 16.0 GiB', '50% used'],
+    ['RAM', '8.0 / 16 GiB', '50% used'],
     ['GPU', '0%', 'GPU utilization'],
   ]);
   expect(metricsRows({})).toEqual([]);
@@ -167,8 +167,13 @@ it('the Dashboard header shows a leading run of readings that fits, never one af
   // RAM does not fit, so nothing after it shows even if it is narrow.
   expect(fittingCount([...widths, 5], 200, 14)).toBe(3);
   expect(fittingCount(widths, 1e4, 14)).toBe(4);
-  // The drawer's three summary readings lead.
-  expect(STRIP_ORDER.slice(0, 3)).toEqual(['GPU', 'CPU', 'Power']);
+  // The drawer's three summary readings lead, then the NPU (it was last, and the
+  // iPad's header had no room for it).
+  expect(STRIP_ORDER.slice(0, 4)).toEqual(['GPU', 'CPU', 'Power', 'NPU power']);
+  // A total that is not whole (MemTotal, when the memory blocks are unreadable) keeps its decimal.
+  expect(metricsRows({ memoryUsedBytes: 2 ** 30, memoryTotalBytes: 122.8 * 2 ** 30, memoryPercent: 1 }).at(0)?.[1]).toBe(
+    '1.0 / 122.8 GiB',
+  );
   for (const [label] of metricsRows({
     powerWatts: 1, npuPowerWatts: 1, cpuTemperatureC: 1, gpuTemperatureC: 1,
     memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, cpuPercent: 1, gpuPercent: 1, npuPercent: 1,

@@ -587,8 +587,9 @@ keyboard; a finger scroll moves nothing.
   (`#dashboard-host-metrics`, `mountMetricsStrip()` in `public/system-metrics.js`,
   painted from the drawer's own request): each a 13px/600 value over its 11px
   `--text-2` label, the same wording as the drawer, after a 1px `--border` divider.
-  Shown only as far as there is room: GPU, CPU, Power, RAM, GPU temp, CPU temp,
-  NPU power, NPU in that order, dropped from the end, never cut off; none (and no
+  Shown only as far as there is room: GPU, CPU, Power, NPU power, NPU, RAM, GPU
+  temp, CPU temp in that order (the NPU moved up 2026-11-01: last, the iPad's header
+  had no room for it), dropped from the end, never cut off; none (and no
   divider) when even GPU does not fit or no sensor answers, and not at all on a
   phone. A reading keeps the widest width it has had at this header width, so one
   gaining a digit cannot make the last reading blink every second. The right end

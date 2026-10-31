@@ -33,9 +33,11 @@ export function metricsRows(data = {}) {
     valid(data.memoryUsedBytes, data.memoryTotalBytes) &&
     valid(data.memoryPercent, 100)
   ) {
+    // Installed memory is a whole number of GiB: 128, not 128.0 (room in the Dashboard header).
+    const total = data.memoryTotalBytes / 2 ** 30;
     rows.push([
       'RAM',
-      `${(data.memoryUsedBytes / 2 ** 30).toFixed(1)} / ${(data.memoryTotalBytes / 2 ** 30).toFixed(1)} GiB`,
+      `${(data.memoryUsedBytes / 2 ** 30).toFixed(1)} / ${Number.isInteger(total) ? total : total.toFixed(1)} GiB`,
       `${data.memoryPercent.toFixed(0)}% used`,
     ]);
   }
@@ -51,7 +53,9 @@ export function metricsRows(data = {}) {
 }
 
 /** The Dashboard header's order: the readings that go first when room runs out come last. */
-export const STRIP_ORDER = ['GPU', 'CPU', 'Power', 'RAM', 'GPU temp', 'CPU temp', 'NPU power', 'NPU'];
+// The NPU comes right after the drawer's three summary readings: last, it was the
+// one the iPad's header had no room for (2026-11-01, 「神經網路加速器不見了」).
+export const STRIP_ORDER = ['GPU', 'CPU', 'Power', 'NPU power', 'NPU', 'RAM', 'GPU temp', 'CPU temp'];
 
 /**
  * How many of `widths` (in order) fit in `room` px with `gap` between them:

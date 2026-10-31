@@ -13,7 +13,8 @@ Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads 
   firmware and the kernel hold back (on this Strix Halo the 512 MiB VRAM
   carve-out and the crash kernel), so the 128 GiB host read 122.8 GiB. Used is
   total − `MemAvailable`, so that reserved memory counts as used and used +
-  available = installed. Displayed as used / total GiB. The blocks are read
+  available = installed. Displayed as used / total GiB, the total without a
+  decimal when it is whole (`108.3 / 128 GiB`: room in the Dashboard header). The blocks are read
   again only when `MemTotal` changes.
 - CPU temperature: `k10temp` or `coretemp` hwmon `temp1_input`.
 - GPU temperature/power: discovered `amdgpu` hwmon `temp1_input`, `power1_average` (fallback `power1_input`).

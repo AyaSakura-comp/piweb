@@ -102,8 +102,9 @@ test('iPad landscape: the readings sit between the title and the switcher, fitti
   const errors = await setup(page, { width: 1180, height: 820 });
   await expect(strip(page)).not.toHaveAttribute('data-shown', '0');
   const labels = await shownLabels(page);
-  // The most important first, in the drawer's own wording.
-  expect(labels.slice(0, 3)).toEqual(['GPU', 'CPU', 'Power']);
+  // The most important first, in the drawer's own wording; the NPU right after.
+  expect(labels.slice(0, 4)).toEqual(['GPU', 'CPU', 'Power', 'NPU power']);
+  await expect(strip(page).locator('[data-label="NPU power"] strong')).toHaveText('0.00 W');
   await expect(strip(page).locator('[data-label="GPU"] strong')).toHaveText('100%');
   await expect(strip(page).locator('[data-label="Power"] strong')).toHaveText('39.1 W');
   const g = await geometry(page);
