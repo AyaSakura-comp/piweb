@@ -176,8 +176,15 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
         anchorTop,
         ...Array.from(scroller.children).map((row) => row.getBoundingClientRect().bottom - origin),
       );
+      // The spacer exists to hold the prompt at the top, so it is sized for the
+      // viewport it was held in. Once the reader has taken over (a scroll, a
+      // tap), a taller viewport (full-screen reading, the keyboard going away)
+      // must not grow it into a blank band under the newest message (iPhone
+      // recording 2026-10-31); a reply that shrinks (a disclosure folding)
+      // still does, so nothing on screen moves.
+      if (turn.pin || turn.motion) turn.heldHeight = scroller.clientHeight;
       const layout = getPromptTurnLayout(
-        scroller.clientHeight,
+        Math.min(scroller.clientHeight, turn.heldHeight ?? scroller.clientHeight),
         anchorTop,
         bottom,
         bottomPadding,
@@ -262,6 +269,10 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
     },
     get navigating() {
       return Boolean(pending || turn?.motion);
+    },
+    /** A just-sent prompt is still being placed, or held, at the top (not yet released by the reader). */
+    get holding() {
+      return Boolean(pending || turn?.motion || (turn?.pin && owned()));
     },
     isCurrent: current,
     acknowledge(ticket, eventId) {

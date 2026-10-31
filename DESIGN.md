@@ -249,6 +249,9 @@ Typing alone does not move it. Replies fill that space without pushing OFF reade
 ON follows overflowing replies only while at the tail. Short replies retain blank
 space; no per-message spacers accumulate. New sends replace the active anchor;
 reader gestures release re-pinning and navigation/manual Jump removes reservation.
+The reservation is sized for the viewport the prompt was held in: once released,
+a taller viewport (full-screen reading, the keyboard going away) does not grow it
+(it still grows when the reply shrinks, a disclosure folding, so nothing moves).
 This applies to the main and Life transcripts; slash commands/BTW are excluded.
 The existing palette and composer/viewer controls are unchanged. See
 [render-first reply reveal](docs/render-reveal.md) for software architecture,
@@ -354,7 +357,12 @@ tap is the gesture, as in a reader.
   back they slide in over the transcript (220ms `cubic-bezier(.2,.8,.2,1)`) and
   the layout returns only once they cover its edges. A transcript at its newest
   message stays at its newest message instead: its last line rides down and up
-  with the composer (not while a just-sent prompt holds the top).
+  with the composer (not while a just-sent prompt is still held at the top;
+  the tap that enters full screen releases it, so a turn that merely still
+  exists does not count). Going full screen adds no blank under the newest
+  message: the prompt turn's reserved space keeps to the chat's height (iPhone
+  recording 2026-10-31: a band where the composer had been;
+  `test/e2e/fullscreen-after-send.spec.ts`).
 - **What is a tap**: a touch tap only (a mouse click selects or deselects).
   Anything with its own tap keeps it — links (copy), code (copy), tables
   (viewer), images, media, tool cards, buttons — and so do a long-press

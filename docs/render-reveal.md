@@ -265,6 +265,9 @@ Reservation is **bottom padding on the transcript**, not cloned messages, fake
 history or a spacer after each row. It is `max(0, viewport height -
 actual turn height - base bottom padding)`: short answers keep whitespace below,
 ready reply/media growth spends it, and long answers need no extra whitespace.
+The viewport height there is the one the prompt was held in: after a reader
+gesture releases the turn, a taller viewport (full-screen reading, the keyboard
+closing) no longer grows the reservation, while a shrinking reply still does.
 Mutation/resize observations batch measurement; reveal-mask animation alone does
 not cause per-frame remeasurement. A temporary rich-body replacement may clamp
 native scrollTop before padding is recalculated; the still-owned prompt position

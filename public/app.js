@@ -3455,8 +3455,10 @@ const sessionFullscreen = createSessionFullscreen({
   app: $('app'),
   scroller: $('messages'),
   // At its newest message (and not holding a just-sent prompt at the top),
-  // the transcript stays at its newest message.
-  followsTail: () => isNearBottom() && $('messages').dataset.promptTurn !== 'active',
+  // the transcript stays at its newest message. The tap that enters full
+  // screen has already released a held prompt; a turn that merely still
+  // exists must not stop the newest line riding down (iPhone 2026-10-31).
+  followsTail: () => isNearBottom() && !promptTurnScroll.holding,
 });
 const TRANSCRIPT_TAP_OWNERS =
   'a, button, input, textarea, select, summary, label, img, video, audio, iframe, [role="button"], [contenteditable], [data-stream-url]';
