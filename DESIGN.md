@@ -266,7 +266,74 @@ first view) work as for diagrams; close with ×, the backdrop or Escape. Unlike
 the always-dark Mermaid figure, the table viewer follows the light/dark
 appearance. A link in a cell keeps its own tap (copy, with Open), a sideways swipe still
 scrolls the table, and selecting its text (long press, or a mouse drag) is not
-a tap. Same in Dashboard panes.
+a tap. Same in Dashboard panes. How it moves is "Viewer motion" below.
+
+## Viewer motion
+
+The full-screen table and Mermaid viewer (`zoomViewer()` in `public/markdown.js`,
+physics in `public/viewer-physics.js`) moves like a native photo viewer: what
+you tap grows out of its place, a throw keeps going, edges give and pull back.
+The user asked for "120fps + 物理慣性" after a recording (2026-10-31) showed it
+cutting in and out with no motion and stopping dead under the finger.
+
+- **How it runs at the display's rate.** While a finger is down the stage
+  follows it 1:1, one `transform` write per touch event and nothing else (no
+  layout reads, no CSS transition). Every motion after the finger lifts is
+  computed up front as a function of time and played as Web Animations
+  keyframes on `transform` (the card also on `opacity`), one keyframe per
+  120Hz frame (`FRAME_MS` = 8.33ms), `easing: linear`. The browser runs those
+  on its compositor at the screen's refresh rate (120Hz on ProMotion), and a
+  long task on the main thread cannot stall them. No `requestAnimationFrame`
+  loops: those are held to the page's frame rate. A finger landing mid-motion
+  reads the position from the animation's `currentTime` and the motion's own
+  function, never from `getComputedStyle`, and the stage stops exactly there.
+- **Open.** The content (the table copy, the diagram) flies from the figure's
+  visible part in the reply (scaled to its width) to its first view, on a
+  slightly underdamped spring (`bouncyProgress`, ω 0.024/ms, ζ 0.8: about 1.5%
+  overshoot, settled in ~360ms). The card around it grows from 94% about the
+  figure's centre on the same spring and fades in over 120ms; the dimmed
+  backdrop fades in over 240ms. A figure scrolled off screen: the card grows
+  from 94% at the centre and the content starts in place.
+- **Close** (×, backdrop, Escape). The reverse on a critically damped spring
+  (ω 0.03/ms, ~300ms): the content flies back onto the figure from wherever it
+  was panned or zoomed, the card shrinks to 94% and fades out as the content
+  lands (from 55% to 95% of the way), the backdrop fades with it. It takes no
+  taps on the way out.
+- **Pan.** A throw keeps its speed (the last 100ms of movement; none if the
+  finger held still 80ms before lifting; capped at 8px/ms) and slows by
+  UIScrollView's normal rate, 0.998 per ms, stopping once under half a pixel
+  is left. Reaching an edge it runs on past it and springs back onto it
+  (critically damped, ω 0.02/ms).
+- **Edges.** The content always covers the viewer when larger than it, and has
+  exactly one place to rest along an axis where it fits: a table at the top
+  and centred across, a diagram centred. Dragged past that, it gives way like a
+  rubber band (iOS's `(1 − 1/(x·0.55/d + 1))·d`, d = the viewer's size), and
+  coming back the finger is 1:1 again. Released past an edge, it springs back,
+  with the throw.
+- **Zoom.** Pinch between 0.2× and 6×; past a limit it gives way less and less
+  (`limit · (raw/limit)^0.3`) and springs back to the limit about the fingers
+  on release. Lifting one finger of two pans on from there. The zoom buttons
+  (1.3× about the centre), double tap (2.2× about the tap, or back to the first
+  view) and Reset move on a critically damped spring (ω 0.02/ms). Scale moves
+  evenly in ratio and the content point the two views share stays put, so a
+  zoom grows from where it is aimed (`viewBetween`). Every zoom ends inside the
+  edges.
+- **Reduced motion.** Opens and closes at once, a throw does not glide, zooms
+  jump; the finger-following drag stays.
+- **State hooks.** `data-motion` on `#mermaid-modal` is `opening` or `closing`
+  while the card moves, and on `.mm-modal-stage` is `moving` while a glide or
+  spring plays; both absent at rest. Tests wait on them before measuring.
+
+Verified by `test/viewer-physics.test.ts` (glide distance and steady slowing,
+the edge bounce, rubber band and its inverse, springs, the zoom fixed point,
+keyframe sampling, release speed) and `test/e2e/viewer-motion.spec.ts` (real
+CDP touches, every frame sampled: the opening starts over the reply's table and
+grows without a jumped frame; keyframes on transform/opacity only, one per
+120Hz frame; a throw gliding on and slowing inside the table; the rubber band
+and spring back; a fitted table springing back to the top; closing back into
+the table; a finger catching a glide; a pinch past 6×; reduced motion; frames
+in both themes). Headless Chromium draws at 60Hz, so the 120Hz rate itself is
+not measured there.
 
 ## Full-screen reading
 
@@ -616,6 +683,8 @@ PIWEB_E2E_PORT=4191 npx playwright test \
   test/e2e/session-dashboard-mobile.spec.ts \
   test/e2e/session-dashboard-zoom.spec.ts \
   test/e2e/session-dashboard-unread.spec.ts \
+  test/e2e/viewer-motion.spec.ts \
+  test/e2e/table-fullscreen.spec.ts \
   test/e2e/text-selection.spec.ts \
   test/e2e/session-fullscreen.spec.ts \
   test/e2e/keyboard-send.spec.ts \

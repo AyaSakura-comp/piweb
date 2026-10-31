@@ -54,6 +54,12 @@ async function setup(page: Page, theme: 'light' | 'dark' = 'dark') {
 }
 
 const viewer = (page: Page) => page.locator('#mermaid-modal');
+/** Open and at rest: the copy flies out of the reply's table first (DESIGN.md "Viewer motion"). */
+async function opened(page: Page) {
+  await expect(viewer(page)).toBeVisible();
+  await expect(viewer(page)).not.toHaveAttribute('data-motion', /./);
+  await expect(viewer(page).locator('.mm-modal-stage')).not.toHaveAttribute('data-motion', /./);
+}
 
 for (const theme of ['light', 'dark'] as const) {
   test(`a tap on a reply's table opens it full screen with every column in view (${theme})`, async ({
@@ -66,7 +72,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.screenshot({ path: info.outputPath(`table-in-transcript-${theme}.png`) });
 
     await page.getByRole('cell', { name: 'GPU' }).tap();
-    await expect(viewer(page)).toBeVisible();
+    await opened(page);
     await expect(viewer(page)).toHaveAttribute('data-kind', 'table');
     await expect(viewer(page).locator('.mm-modal-title')).toHaveText('Table');
     const copy = viewer(page).locator('table');
@@ -105,6 +111,7 @@ for (const theme of ['light', 'dark'] as const) {
 test('zoom and Reset return to the first fitted view; Escape closes', async ({ page }) => {
   await setup(page);
   await page.getByRole('cell', { name: 'CPU' }).tap();
+  await opened(page);
   const stage = viewer(page).locator('.mm-modal-stage');
   const matrix = () => stage.evaluate((n) => new DOMMatrix(getComputedStyle(n).transform).toString());
   const first = await matrix();
@@ -154,7 +161,7 @@ test('a table too wide even with wrapped cells is shrunk to fit, never below hal
   try {
     await setup(page);
     await page.getByRole('cell', { name: 'value_3' }).tap();
-    await expect(viewer(page)).toBeVisible();
+    await opened(page);
     const view = await page.evaluate(() => {
       const body = document.querySelector('#mermaid-modal .mm-modal-body')!.getBoundingClientRect();
       const table = document.querySelector('#mermaid-modal table')!.getBoundingClientRect();

@@ -1349,6 +1349,15 @@ html.keyboard-shell .life-edge-hint {
   display: none !important;
 }
 
+.mermaid-modal[data-motion] .mm-modal-content {
+  will-change: transform, opacity;
+}
+
+/* On its way out it takes no more taps. */
+.mermaid-modal[data-motion='closing'] {
+  pointer-events: none;
+}
+
 .mm-modal-backdrop {
   position: absolute;
   inset: 0;
@@ -1359,6 +1368,8 @@ html.keyboard-shell .life-edge-hint {
 .mm-modal-content {
   position: relative;
   z-index: 1;
+  /* The opening and closing scale it onto the figure it came from. */
+  transform-origin: 0 0;
   width: 94vw;
   height: 90dvh;
   max-width: 1200px;
@@ -1402,9 +1413,11 @@ html.keyboard-shell .life-edge-hint {
   user-select: none;
 }
 
+/* Every move of the stage is a transform: written straight from the finger,
+   or played as Web Animations keyframes (DESIGN.md "Viewer motion"). A CSS
+   transition here would trail the finger. */
 .mm-modal-stage {
   transform-origin: 0 0;
-  transition: transform 0.15s ease-out;
   display: inline-block;
   will-change: transform;
 }

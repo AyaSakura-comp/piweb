@@ -163,6 +163,9 @@ test.describe('mobile Mermaid diagram fit, collapse/expand toggle, and zoom moda
     await expect(modal).toBeVisible();
     const modalSvg = modal.locator('.mm-modal-stage svg');
     await expect(modalSvg).toBeVisible();
+    // Measured at rest: it grows out of the diagram first (DESIGN.md "Viewer motion").
+    await expect(modal).not.toHaveAttribute('data-motion', /./);
+    await expect(modal.locator('.mm-modal-stage')).not.toHaveAttribute('data-motion', /./);
     const modalBodyBox = (await modal.locator('.mm-modal-body').boundingBox())!;
     const modalSvgBox = (await modalSvg.boundingBox())!;
     expect(modalSvgBox.width).toBeLessThanOrEqual(modalBodyBox.width + 2);

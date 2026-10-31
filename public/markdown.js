@@ -13,6 +13,19 @@
  */
 
 import { AUDIO_FILE_RE, createAudioTrack, isSameOriginMediaPath } from './media-files.js';
+import {
+  axisMotion,
+  bouncyDuration,
+  bouncyProgress,
+  dragAxis,
+  releaseVelocity,
+  sampleFrames,
+  springDuration,
+  springProgress,
+  undragAxis,
+  viewBetween,
+  ZOOM_OMEGA,
+} from './viewer-physics.js';
 
 // U+0000 cannot appear in the text we render, so it is a safe sentinel.
 const PLACEHOLDER = '\u0000';
@@ -525,240 +538,539 @@ function fitMermaidSvgInline(svgEl, isGantt = false) {
 }
 
 // The full-screen pan/zoom viewer: Mermaid diagrams and tables share it.
-// `zoomView` (set when it is first built) places the stage; `homeView` is
-// where Reset returns.
-let zoomView = null;
-let homeView = { scale: 1, x: 0, y: 0 };
+// Its motion is DESIGN.md "Viewer motion": it grows out of the figure that was
+// tapped and shrinks back into it, a fling glides on and slows, an edge pulls
+// back like a rubber band, and zooms settle on a spring (viewer-physics.js).
+let viewer = null;
+
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 6;
+/** The closing's spring stiffness (1/ms): a little quicker than the opening. */
+const CLOSE_OMEGA = 0.03;
+
+const clampTo = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const transformOf = (v) => `translate(${v.x}px, ${v.y}px) scale(${v.scale})`;
+
+/** `el`'s box cut down to what its clipping ancestors and the window leave visible. */
+function visiblePart(el) {
+  let { left, top, right, bottom } = el.getBoundingClientRect();
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    if (getComputedStyle(p).overflow === 'visible') continue;
+    const r = p.getBoundingClientRect();
+    left = Math.max(left, r.left);
+    top = Math.max(top, r.top);
+    right = Math.min(right, r.right);
+    bottom = Math.min(bottom, r.bottom);
+  }
+  left = Math.max(left, 0);
+  top = Math.max(top, 0);
+  right = Math.min(right, innerWidth);
+  bottom = Math.min(bottom, innerHeight);
+  if (right - left < 8 || bottom - top < 8) return null;
+  return { left, top, width: right - left, height: bottom - top };
+}
 
 function zoomViewer() {
-  let modal = document.getElementById('mermaid-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'mermaid-modal';
-    modal.className = 'mermaid-modal';
-    modal.hidden = true;
-    modal.innerHTML = `
-      <div class="mm-modal-backdrop"></div>
-      <div class="mm-modal-content">
-        <header class="mm-modal-head">
-          <span class="mm-modal-title">Mermaid Diagram</span>
-          <div class="mm-modal-tools">
-            <button type="button" class="icon-btn mm-zoom-in" title="Zoom In" aria-label="Zoom in">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-            </button>
-            <button type="button" class="icon-btn mm-zoom-out" title="Zoom Out" aria-label="Zoom out">
-              <svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg>
-            </button>
-            <button type="button" class="icon-btn mm-zoom-reset" title="Reset Zoom" aria-label="Reset zoom">
-              <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
-            </button>
-            <button type="button" class="icon-btn mm-modal-close" title="Close" aria-label="Close">
-              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          </div>
-        </header>
-        <div class="mm-modal-body">
-          <div class="mm-modal-stage"></div>
+  if (viewer) return viewer;
+  const modal = document.createElement('div');
+  modal.id = 'mermaid-modal';
+  modal.className = 'mermaid-modal';
+  modal.hidden = true;
+  modal.innerHTML = `
+    <div class="mm-modal-backdrop"></div>
+    <div class="mm-modal-content">
+      <header class="mm-modal-head">
+        <span class="mm-modal-title">Mermaid Diagram</span>
+        <div class="mm-modal-tools">
+          <button type="button" class="icon-btn mm-zoom-in" title="Zoom In" aria-label="Zoom in">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <button type="button" class="icon-btn mm-zoom-out" title="Zoom Out" aria-label="Zoom out">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg>
+          </button>
+          <button type="button" class="icon-btn mm-zoom-reset" title="Reset Zoom" aria-label="Reset zoom">
+            <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+          </button>
+          <button type="button" class="icon-btn mm-modal-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
+      </header>
+      <div class="mm-modal-body">
+        <div class="mm-modal-stage"></div>
       </div>
-    `;
-    document.body.appendChild(modal);
+    </div>
+  `;
+  document.body.appendChild(modal);
 
-    let scale = 1;
-    let x = 0;
-    let y = 0;
-    let originClientX = 0;
-    let originClientY = 0;
-    let isPinching = false;
-    let isPanning = false;
-    let initialDist = 0;
-    let startScale = 1;
-    let contentFocalX = 0;
-    let contentFocalY = 0;
-    let panStartX = 0;
-    let panStartY = 0;
-    let lastTap = 0;
-    let lastTapX = 0;
-    let lastTapY = 0;
+  const stage = modal.querySelector('.mm-modal-stage');
+  const body = modal.querySelector('.mm-modal-body');
+  const card = modal.querySelector('.mm-modal-content');
+  const backdrop = modal.querySelector('.mm-modal-backdrop');
 
-    const stage = modal.querySelector('.mm-modal-stage');
-    const body = modal.querySelector('.mm-modal-body');
+  let view = { scale: 1, x: 0, y: 0 }; // the stage's translate(x, y) scale(scale), origin 0 0
+  let home = view; // where it opened, and where Reset returns
+  let alignY = 'center'; // where content shorter than the viewer rests
+  let subject = null; // what is kept in view: the table copy, the diagram
+  let source = null; // the figure in the transcript it opened from
+  // Layout at rest, in client px: where the stage's box sits before its
+  // transform, the subject's offset and size in it (unscaled), and the inner
+  // box of the viewer's body.
+  let geo = null;
+  let motion = null; // glide or spring on the stage: { animation, at, duration }
+  let cardMotion = null; // opening or closing: { state, animations }
+  let gesture = null;
+  let lastTap = { t: 0, x: 0, y: 0 };
 
-    const updateTransform = (animate = false) => {
-      stage.style.transition = animate ? 'transform 0.22s cubic-bezier(0.2, 0, 0.2, 1)' : 'none';
-      stage.style.transformOrigin = '0 0';
-      stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
-    };
-
-    const zoomByRatio = (factor) => {
-      const stageRect = stage.getBoundingClientRect();
-      const bodyRect = body.getBoundingClientRect();
-      const cx = bodyRect.left + bodyRect.width / 2;
-      const cy = bodyRect.top + bodyRect.height / 2;
-      const origX = stageRect.left - x;
-      const origY = stageRect.top - y;
-      const contentX = (cx - stageRect.left) / scale;
-      const contentY = (cy - stageRect.top) / scale;
-      scale = Math.min(6, Math.max(0.2, scale * factor));
-      x = cx - origX - contentX * scale;
-      y = cy - origY - contentY * scale;
-      updateTransform(true);
-    };
-
-    modal.querySelector('.mm-zoom-in').addEventListener('click', () => zoomByRatio(1.3));
-    modal.querySelector('.mm-zoom-out').addEventListener('click', () => zoomByRatio(1 / 1.3));
-    zoomView = (view, animate = false) => {
-      ({ scale, x, y } = view);
-      updateTransform(animate);
-    };
-    modal.querySelector('.mm-zoom-reset').addEventListener('click', () => zoomView(homeView, true));
-    const closeModal = () => {
-      modal.hidden = true;
-      document.body.style.overflow = '';
-      zoomView({ scale: 1, x: 0, y: 0 });
-    };
-    modal.querySelector('.mm-modal-close').addEventListener('click', closeModal);
-    modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeModal);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !modal.hidden) closeModal();
-    });
-
-    // Two-finger pinch centered on the midpoint between fingers
-    body.addEventListener(
-      'touchstart',
-      (e) => {
-        if (e.touches.length === 2) {
-          if (e.cancelable) e.preventDefault();
-          isPinching = true;
-          isPanning = false;
-          const t1 = e.touches[0];
-          const t2 = e.touches[1];
-          const stageRect = stage.getBoundingClientRect();
-          initialDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-          startScale = scale;
-          const focalClientX = (t1.clientX + t2.clientX) / 2;
-          const focalClientY = (t1.clientY + t2.clientY) / 2;
-          originClientX = stageRect.left - x;
-          originClientY = stageRect.top - y;
-          contentFocalX = (focalClientX - stageRect.left) / startScale;
-          contentFocalY = (focalClientY - stageRect.top) / startScale;
-          return;
-        }
-
-        if (e.touches.length === 1) {
-          const touch = e.touches[0];
-          const now = Date.now();
-
-          // Double tap zoom toggle centered around the tapped spot
-          if (
-            now - lastTap < 300 &&
-            Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY) < 30
-          ) {
-            if (e.cancelable) e.preventDefault();
-            lastTap = 0;
-            if (scale > Math.max(1.2, homeView.scale * 1.2)) {
-              ({ scale, x, y } = homeView);
-            } else {
-              const stageRect = stage.getBoundingClientRect();
-              const origX = stageRect.left - x;
-              const origY = stageRect.top - y;
-              const tapContentX = (touch.clientX - stageRect.left) / scale;
-              const tapContentY = (touch.clientY - stageRect.top) / scale;
-              scale = 2.2;
-              x = touch.clientX - origX - tapContentX * scale;
-              y = touch.clientY - origY - tapContentY * scale;
-            }
-            updateTransform(true);
-            return;
-          }
-          lastTap = now;
-          lastTapX = touch.clientX;
-          lastTapY = touch.clientY;
-
-          isPanning = true;
-          panStartX = touch.clientX - x;
-          panStartY = touch.clientY - y;
-        }
-      },
-      { passive: false },
-    );
-
-    body.addEventListener(
-      'touchmove',
-      (e) => {
-        if (isPinching && e.touches.length === 2) {
-          if (e.cancelable) e.preventDefault();
-          const t1 = e.touches[0];
-          const t2 = e.touches[1];
-          const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-          const ratio = dist / (initialDist || 1);
-          scale = Math.min(6, Math.max(0.2, startScale * ratio));
-
-          const newFocalClientX = (t1.clientX + t2.clientX) / 2;
-          const newFocalClientY = (t1.clientY + t2.clientY) / 2;
-          x = newFocalClientX - originClientX - contentFocalX * scale;
-          y = newFocalClientY - originClientY - contentFocalY * scale;
-          updateTransform(false);
-          return;
-        }
-
-        if (isPanning && e.touches.length === 1) {
-          if (e.cancelable) e.preventDefault();
-          const touch = e.touches[0];
-          x = touch.clientX - panStartX;
-          y = touch.clientY - panStartY;
-          updateTransform(false);
-        }
-      },
-      { passive: false },
-    );
-
-    const endTouch = () => {
-      isPinching = false;
-      isPanning = false;
-      if (scale < 0.2) {
-        scale = 0.2;
-        updateTransform(true);
-      } else if (scale > 6) {
-        scale = 6;
-        updateTransform(true);
-      }
-    };
-
-    body.addEventListener('touchend', endTouch);
-    body.addEventListener('touchcancel', endTouch);
+  function show(v) {
+    view = v;
+    stage.style.transform = transformOf(v);
   }
 
-  return modal;
-}
+  /** Stop the stage where it is right now (a finger caught it mid-glide). */
+  function stop() {
+    if (!motion) return;
+    const { animation, at, duration } = motion;
+    motion = null;
+    show(at(Math.min(duration, Number(animation.currentTime) || 0)));
+    animation.cancel();
+    delete stage.dataset.motion;
+  }
 
-function openZoomViewer(title, kind, fill) {
-  const modal = zoomViewer();
-  modal.querySelector('.mm-modal-title').textContent = title;
-  modal.dataset.kind = kind;
-  const stage = modal.querySelector('.mm-modal-stage');
-  fill(stage);
-  homeView = { scale: 1, x: 0, y: 0 };
-  zoomView(homeView);
-  modal.hidden = false;
-  document.body.style.overflow = 'hidden';
-  return modal;
-}
+  /** Play `at(t)` (a view for each ms) on the compositor, ending on `at(duration)`. */
+  function play(duration, at) {
+    stop();
+    const end = at(duration);
+    if (duration <= 0 || reducedMotion()) return show(end);
+    const frames = sampleFrames(duration, (t) => ({ transform: transformOf(at(t)) }));
+    show(end);
+    const playing = { animation: stage.animate(frames, { duration, easing: 'linear' }), at, duration };
+    motion = playing;
+    stage.dataset.motion = 'moving';
+    playing.animation.finished.then(
+      () => {
+        if (motion !== playing) return;
+        motion = null;
+        delete stage.dataset.motion;
+      },
+      () => {},
+    );
+  }
 
-function openMermaidModal(svgHtml) {
-  openZoomViewer('Mermaid Diagram', 'mermaid', (stage) => {
-    stage.innerHTML = svgHtml;
-    const svgEl = stage.querySelector('svg');
-    if (svgEl) {
-      const { width: intrinsicW } = parseSvgIntrinsicDimensions(svgEl);
-      svgEl.removeAttribute('width');
-      svgEl.removeAttribute('height');
-      svgEl.style.display = 'block';
-      svgEl.style.width = intrinsicW > 0 ? `min(86vw, ${intrinsicW}px)` : '86vw';
-      svgEl.style.maxWidth = '86vw';
-      svgEl.style.maxHeight = '76dvh';
-      svgEl.style.height = 'auto';
+  function springTo(target) {
+    const from = view;
+    const duration = springDuration(ZOOM_OMEGA);
+    play(duration, (t) => (t >= duration ? target : viewBetween(from, target, springProgress(t))));
+  }
+
+  function measurePort() {
+    const style = getComputedStyle(body);
+    const b = body.getBoundingClientRect();
+    const padX = Number.parseFloat(style.paddingLeft) || 0;
+    const padY = Number.parseFloat(style.paddingTop) || 0;
+    return {
+      left: b.left + padX,
+      top: b.top + padY,
+      width: body.clientWidth - 2 * padX,
+      height: body.clientHeight - 2 * padY,
+    };
+  }
+
+  /** Layout at rest. Only while neither the stage nor the card is moving. */
+  function measure() {
+    const s = stage.getBoundingClientRect();
+    const r = (subject?.isConnected ? subject : stage).getBoundingClientRect();
+    geo = {
+      origin: { x: s.left - view.x, y: s.top - view.y },
+      offset: { x: (r.left - s.left) / view.scale, y: (r.top - s.top) / view.scale },
+      size: { width: r.width / view.scale, height: r.height / view.scale },
+      port: measurePort(),
+    };
+  }
+
+  /**
+   * The translate range on one axis at `scale` that keeps the subject covering
+   * the viewer (or inside it): [min, max], or [rest, rest] when it fits.
+   */
+  function range(axis, scale) {
+    const horizontal = axis === 'x';
+    const { origin, offset, size, port } = geo;
+    const len = (horizontal ? size.width : size.height) * scale;
+    const room = horizontal ? port.width : port.height;
+    // The translate that puts the subject's leading edge on the viewer's.
+    const lead =
+      (horizontal ? port.left - origin.x - offset.x * scale : port.top - origin.y - offset.y * scale);
+    if (len <= room) {
+      const rest = !horizontal && alignY === 'start' ? lead : lead + (room - len) / 2;
+      return [rest, rest];
     }
+    return [lead + room - len, lead];
+  }
+
+  function clampView(v) {
+    const [x0, x1] = range('x', v.scale);
+    const [y0, y1] = range('y', v.scale);
+    return { scale: v.scale, x: clampTo(v.x, x0, x1), y: clampTo(v.y, y0, y1) };
+  }
+
+  /** At `scale`, its leading edges in view (top left of a table too big to fit). */
+  function restAt(scale) {
+    return { scale, x: range('x', scale)[1], y: range('y', scale)[1] };
+  }
+
+  /** The view at `scale` that leaves the content under (fx, fy) where it is. */
+  function zoomedAbout(scale, fx, fy) {
+    const { origin } = geo;
+    const cx = (fx - origin.x - view.x) / view.scale;
+    const cy = (fy - origin.y - view.y) / view.scale;
+    return { scale, x: fx - origin.x - cx * scale, y: fy - origin.y - cy * scale };
+  }
+
+  function zoomTo(scale, fx, fy) {
+    springTo(clampView(zoomedAbout(clampTo(scale, MIN_SCALE, MAX_SCALE), fx, fy)));
+  }
+
+  const portCentre = () => ({
+    x: geo.port.left + geo.port.width / 2,
+    y: geo.port.top + geo.port.height / 2,
+  });
+
+  /** After the fingers lift: glide on with `velocity`, or spring back in range. */
+  function settle(velocity, focal) {
+    if (view.scale < MIN_SCALE || view.scale > MAX_SCALE) {
+      const f = focal ?? portCentre();
+      return zoomTo(view.scale, f.x, f.y);
+    }
+    const [x0, x1] = range('x', view.scale);
+    const [y0, y1] = range('y', view.scale);
+    const mx = axisMotion(view.x, velocity.x, x0, x1);
+    const my = axisMotion(view.y, velocity.y, y0, y1);
+    const { scale } = view;
+    play(Math.max(mx.duration, my.duration), (t) => ({ scale, x: mx.at(t), y: my.at(t) }));
+  }
+
+  /** A gesture or button acts on a viewer at rest: the opening jumps to its end. */
+  function takeHold() {
+    if (cardMotion?.state === 'opening') for (const a of cardMotion.animations) a.finish();
+    stop();
+    measure();
+  }
+
+  // ── Opening and closing ──
+  // The content flies between the figure in the reply and its place here,
+  // while the card around it grows a little and fades in (or out) where it is.
+  const CARD_FROM = 0.94;
+
+  /** The figure it came from, as much of it as is on screen, or null. */
+  const sourceRect = () => (source?.isConnected && subject?.isConnected ? visiblePart(source) : null);
+
+  /** The stage view that lays the subject over `rect` (with the card at rest). */
+  function viewOver(rect) {
+    const r = subject.getBoundingClientRect();
+    const scale = view.scale * (rect.width / (r.width || 1));
+    return {
+      scale,
+      x: rect.left - geo.origin.x - geo.offset.x * scale,
+      y: rect.top - geo.origin.y - geo.offset.y * scale,
+    };
+  }
+
+  /** The card at `k` of its size around the figure's centre (origin 0 0). */
+  function cardAt(k, rect) {
+    const c = card.getBoundingClientRect();
+    const px = rect ? rect.left + rect.width / 2 - c.left : c.width / 2;
+    const py = rect ? rect.top + rect.height / 2 - c.top : c.height / 2;
+    return (q) => {
+      const s = k + (1 - k) * q;
+      return `translate(${(1 - s) * px}px, ${(1 - s) * py}px) scale(${s})`;
+    };
+  }
+
+  function runCard(state, animations, done) {
+    for (const a of cardMotion?.animations ?? []) a.cancel();
+    const run = { state, animations };
+    cardMotion = run;
+    modal.dataset.motion = state;
+    Promise.all(animations.map((a) => a.finished)).then(
+      () => {
+        if (cardMotion !== run) return;
+        cardMotion = null;
+        delete modal.dataset.motion;
+        done?.();
+        // The closing holds its last frame until the viewer is hidden; let go
+        // of it now, or the next opening comes up small and invisible.
+        for (const a of animations) a.cancel();
+      },
+      () => {},
+    );
+  }
+
+  function openCard() {
+    if (reducedMotion()) return;
+    const rect = sourceRect();
+    const duration = bouncyDuration();
+    const progress = (t) => (t >= duration ? 1 : bouncyProgress(t));
+    const grow = cardAt(CARD_FROM, rect);
+    const frames = sampleFrames(duration, (t) => ({
+      transform: grow(progress(t)),
+      opacity: Math.min(1, t / 120),
+    }));
+    runCard('opening', [
+      card.animate(frames, { duration, easing: 'linear' }),
+      backdrop.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' }),
+    ]);
+    if (rect) {
+      const from = viewOver(rect);
+      play(duration, (t) => (t >= duration ? home : viewBetween(from, home, progress(t))));
+    }
+  }
+
+  function hide() {
+    for (const a of cardMotion?.animations ?? []) a.cancel();
+    cardMotion = null;
+    delete modal.dataset.motion;
+    stop();
+    gesture = null;
+    modal.hidden = true;
+    document.body.style.overflow = '';
+    show({ scale: 1, x: 0, y: 0 });
+    source = null;
+  }
+
+  function close() {
+    if (modal.hidden || cardMotion?.state === 'closing') return;
+    if (cardMotion?.state === 'opening') for (const a of cardMotion.animations) a.finish();
+    gesture = null;
+    stop();
+    if (reducedMotion()) return hide();
+    measure();
+    const rect = sourceRect();
+    const duration = springDuration(CLOSE_OMEGA);
+    const progress = (t) => (t >= duration ? 1 : springProgress(t, CLOSE_OMEGA));
+    const shrink = cardAt(CARD_FROM, rect);
+    // Fades as the content lands back on the figure, which shows through.
+    const cardFrames = sampleFrames(duration, (t) => ({
+      transform: shrink(1 - progress(t)),
+      opacity: clampTo((0.95 - progress(t)) / 0.4, 0, 1),
+    }));
+    const dim = sampleFrames(duration, (t) => ({ opacity: 1 - progress(t) }));
+    runCard(
+      'closing',
+      [
+        card.animate(cardFrames, { duration, easing: 'linear', fill: 'forwards' }),
+        backdrop.animate(dim, { duration, easing: 'linear', fill: 'forwards' }),
+      ],
+      hide,
+    );
+    if (rect) {
+      const from = view;
+      const to = viewOver(rect);
+      play(duration, (t) => (t >= duration ? to : viewBetween(from, to, progress(t))));
+    }
+  }
+
+  // ── Buttons and keys ──
+  modal.querySelector('.mm-zoom-in').addEventListener('click', () => {
+    takeHold();
+    const c = portCentre();
+    zoomTo(view.scale * 1.3, c.x, c.y);
+  });
+  modal.querySelector('.mm-zoom-out').addEventListener('click', () => {
+    takeHold();
+    const c = portCentre();
+    zoomTo(view.scale / 1.3, c.x, c.y);
+  });
+  modal.querySelector('.mm-zoom-reset').addEventListener('click', () => {
+    takeHold();
+    springTo(home);
+  });
+  modal.querySelector('.mm-modal-close').addEventListener('click', close);
+  backdrop.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) close();
+  });
+  addEventListener('resize', () => {
+    if (modal.hidden || cardMotion) return;
+    stop();
+    measure();
+    show(clampView(view));
+  });
+
+  // ── Touch: pan with momentum, pinch, double tap ──
+  const touchById = (list, id) => [...list].find((t) => t.identifier === id) ?? list[0];
+
+  function beginPan(touch, time) {
+    const [x0, x1] = range('x', view.scale);
+    const [y0, y1] = range('y', view.scale);
+    gesture = {
+      kind: 'pan',
+      id: touch.identifier,
+      fx: touch.clientX,
+      fy: touch.clientY,
+      // Where the finger would have the stage without the rubber band, so a
+      // drag that comes back from past an edge comes back 1:1.
+      rawX: undragAxis(view.x, x0, x1, geo.port.width),
+      rawY: undragAxis(view.y, y0, y1, geo.port.height),
+      samples: [{ t: time, x: view.x, y: view.y }],
+    };
+  }
+
+  function beginPinch(a, b) {
+    const focal = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    gesture = {
+      kind: 'pinch',
+      dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+      scale: view.scale,
+      focal,
+      content: {
+        x: (focal.x - geo.origin.x - view.x) / view.scale,
+        y: (focal.y - geo.origin.y - view.y) / view.scale,
+      },
+    };
+  }
+
+  body.addEventListener(
+    'touchstart',
+    (e) => {
+      if (cardMotion?.state === 'closing') return;
+      takeHold();
+      if (e.touches.length >= 2) {
+        if (e.cancelable) e.preventDefault();
+        beginPinch(e.touches[0], e.touches[1]);
+        return;
+      }
+      const touch = e.touches[0];
+      if (!touch) return;
+      // Double tap: zoom in on that spot, or back to the opening view.
+      if (
+        e.timeStamp - lastTap.t < 300 &&
+        Math.hypot(touch.clientX - lastTap.x, touch.clientY - lastTap.y) < 30
+      ) {
+        if (e.cancelable) e.preventDefault();
+        lastTap = { t: 0, x: 0, y: 0 };
+        gesture = null;
+        if (view.scale > Math.max(1.2, home.scale * 1.2)) springTo(home);
+        else zoomTo(2.2, touch.clientX, touch.clientY);
+        return;
+      }
+      lastTap = { t: e.timeStamp, x: touch.clientX, y: touch.clientY };
+      beginPan(touch, e.timeStamp);
+    },
+    { passive: false },
+  );
+
+  body.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!gesture) return;
+      if (e.cancelable) e.preventDefault();
+      if (gesture.kind === 'pinch' && e.touches.length >= 2) {
+        const [a, b] = e.touches;
+        const raw = (gesture.scale * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)) / gesture.dist;
+        // Past a limit the pinch gives way less and less, and springs back on release.
+        const scale =
+          raw > MAX_SCALE
+            ? MAX_SCALE * (raw / MAX_SCALE) ** 0.3
+            : raw < MIN_SCALE
+              ? MIN_SCALE * (raw / MIN_SCALE) ** 0.3
+              : raw;
+        const focal = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+        gesture.focal = focal;
+        show({
+          scale,
+          x: focal.x - geo.origin.x - gesture.content.x * scale,
+          y: focal.y - geo.origin.y - gesture.content.y * scale,
+        });
+        return;
+      }
+      if (gesture.kind !== 'pan') return;
+      const touch = touchById(e.touches, gesture.id);
+      const [x0, x1] = range('x', view.scale);
+      const [y0, y1] = range('y', view.scale);
+      show({
+        scale: view.scale,
+        x: dragAxis(gesture.rawX + touch.clientX - gesture.fx, x0, x1, geo.port.width),
+        y: dragAxis(gesture.rawY + touch.clientY - gesture.fy, y0, y1, geo.port.height),
+      });
+      const { samples } = gesture;
+      samples.push({ t: e.timeStamp, x: view.x, y: view.y });
+      while (samples.length > 2 && e.timeStamp - samples[0].t > 120) samples.shift();
+    },
+    { passive: false },
+  );
+
+  const endTouch = (e) => {
+    if (!gesture) return;
+    if (e.touches.length === 1 && gesture.kind === 'pinch') {
+      // One finger stays down: it pans on from here.
+      const { focal } = gesture;
+      beginPan(e.touches[0], e.timeStamp);
+      gesture.focal = focal;
+      return;
+    }
+    if (e.touches.length > 0) return;
+    const ended = gesture;
+    gesture = null;
+    const thrown =
+      ended.kind === 'pan' && e.type === 'touchend' && !reducedMotion()
+        ? releaseVelocity(ended.samples, e.timeStamp)
+        : { x: 0, y: 0 };
+    settle(thrown, ended.focal);
+  };
+  body.addEventListener('touchend', endTouch);
+  body.addEventListener('touchcancel', endTouch);
+
+  viewer = {
+    /**
+     * Show `fill(stage, port)`'s content (it returns the element to keep in
+     * view) grown out of `from`. `fit(geo)` gives the opening scale; content
+     * shorter than the viewer rests at `alignY`.
+     */
+    open({ title, kind, fill, from = null, fit = null, align = 'center' }) {
+      for (const a of cardMotion?.animations ?? []) a.cancel();
+      cardMotion = null;
+      delete modal.dataset.motion;
+      stop();
+      gesture = null;
+      modal.querySelector('.mm-modal-title').textContent = title;
+      modal.dataset.kind = kind;
+      modal.hidden = false;
+      document.body.style.overflow = 'hidden';
+      show({ scale: 1, x: 0, y: 0 });
+      subject = fill(stage, measurePort());
+      source = from;
+      alignY = align;
+      measure();
+      home = restAt(fit ? fit(geo) : 1);
+      show(home);
+      openCard();
+      return modal;
+    },
+  };
+  return viewer;
+}
+
+function openMermaidModal(svgHtml, from) {
+  zoomViewer().open({
+    title: 'Mermaid Diagram',
+    kind: 'mermaid',
+    from,
+    fill: (stage) => {
+      stage.innerHTML = svgHtml;
+      const svgEl = stage.querySelector('svg');
+      if (svgEl) {
+        const { width: intrinsicW } = parseSvgIntrinsicDimensions(svgEl);
+        svgEl.removeAttribute('width');
+        svgEl.removeAttribute('height');
+        svgEl.style.display = 'block';
+        svgEl.style.width = intrinsicW > 0 ? `min(86vw, ${intrinsicW}px)` : '86vw';
+        svgEl.style.maxWidth = '86vw';
+        svgEl.style.maxHeight = '76dvh';
+        svgEl.style.height = 'auto';
+      }
+      return svgEl ?? stage;
+    },
   });
 }
 
@@ -770,28 +1082,21 @@ function openMermaidModal(svgHtml) {
  * the top, centred across.
  */
 export function openTableViewer(table) {
-  let sheet;
-  const modal = openZoomViewer('Table', 'table', (stage) => {
-    sheet = document.createElement('div');
-    sheet.className = 'msg-text table-viewer-sheet';
-    sheet.append(table.cloneNode(true));
-    stage.replaceChildren(sheet);
+  zoomViewer().open({
+    title: 'Table',
+    kind: 'table',
+    from: table,
+    align: 'start',
+    fill: (stage, port) => {
+      const sheet = document.createElement('div');
+      sheet.className = 'msg-text table-viewer-sheet';
+      sheet.style.maxWidth = `${port.width}px`;
+      sheet.append(table.cloneNode(true));
+      stage.replaceChildren(sheet);
+      return sheet.querySelector('table');
+    },
+    fit: (geo) => Math.max(0.5, Math.min(1, geo.port.width / (geo.size.width || 1))),
   });
-  const body = modal.querySelector('.mm-modal-body');
-  const style = getComputedStyle(body);
-  const box = body.getBoundingClientRect();
-  const left = box.left + (Number.parseFloat(style.paddingLeft) || 0);
-  const top = box.top + (Number.parseFloat(style.paddingTop) || 0);
-  const width = body.clientWidth - (Number.parseFloat(style.paddingLeft) || 0) * 2;
-  sheet.style.maxWidth = `${width}px`;
-  const copy = sheet.querySelector('table').getBoundingClientRect();
-  const scale = Math.max(0.5, Math.min(1, width / (copy.width || 1)));
-  homeView = {
-    scale,
-    x: left + Math.max(0, (width - copy.width * scale) / 2) - copy.left,
-    y: top - copy.top,
-  };
-  zoomView(homeView);
 }
 
 export function highlightCode(code, language = '', highlighter = globalThis.window?.hljs) {
@@ -909,7 +1214,7 @@ export function renderCode(item) {
     let renderedSvg = '';
     btnZoom.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (renderedSvg) openMermaidModal(renderedSvg);
+      if (renderedSvg) openMermaidModal(renderedSvg, chart);
     });
 
     const id = `mm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;

@@ -70,6 +70,7 @@ src/media-path.ts  ONE spelling of a media dir/URL (invariant 9)
 src/cli/piweb.ts   entrypoint: worker | web | all
 public/          index.html, app.css, app.js — no framework, no build step
                  markdown.js = markdown + KaTeX + Mermaid + code highlighting
+                 viewer-physics.js = glide/rubber band/spring for the table & diagram viewer
                  sw.js       = service worker (Web Push + reconnect page for a launch that cannot load)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
