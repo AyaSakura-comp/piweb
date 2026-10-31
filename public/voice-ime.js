@@ -314,6 +314,7 @@ export function createVoiceIme({
   // `item` is the sentence that is replacing it.
   let lasso = null;
   let stroke = null; // a finger on the box that may become a lasso
+  let measuring = false; // the layer drawn only to find a character under a finger
   let lassoUi = null; // the bubble and the 刪除/取消 pill, made on first use
   const segmenter = globalThis.Intl?.Segmenter ? new Intl.Segmenter('zh-Hant', { granularity: 'word' }) : null;
 
@@ -458,7 +459,10 @@ export function createVoiceIme({
       const runs = textarea === target && fresh.text === shown.text && !lasso ? fresh.runs : [];
       const live = pending.some(([, heard]) => heard);
       const show =
-        textarea === target && on && (live || runs.length > 0 || Boolean(lasso)) && textarea.value === shown.value;
+        textarea === target &&
+        on &&
+        (live || runs.length > 0 || Boolean(lasso) || measuring) &&
+        textarea.value === shown.value;
       textarea.classList.toggle('voice-mirrored', show);
       entry.mirror.hidden = !show;
       if (!show) {
@@ -591,6 +595,40 @@ export function createVoiceIme({
     return best;
   }
 
+  /** Where character `index` of the layer's text is drawn. */
+  function charRect(index) {
+    const node = lassoText();
+    if (!node || index == null || index >= node.data.length) return null;
+    const range = doc.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + 1);
+    return range.getBoundingClientRect();
+  }
+
+  /** Run `fn` with the box's text drawn in the layer, to measure it. */
+  function measure(fn) {
+    measuring = true;
+    decorate();
+    try {
+      return fn();
+    } finally {
+      measuring = false;
+      decorate();
+    }
+  }
+
+  /** A tap on the box: the caret goes where the finger is (iOS no longer does it, see touchstart). */
+  function placeCaret(textarea, x, y) {
+    const offset = measure(() => {
+      const index = charAtPoint(x, y);
+      const rect = charRect(index);
+      if (index == null || !rect) return textarea.value.length;
+      return x > rect.left + rect.width / 2 ? index + 1 : index;
+    });
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(offset, offset);
+  }
+
   /** Whole words, so a quick stroke does not have to land on character edges. */
   function wordAt(text, index) {
     const segment = segmenter?.segment(text).containing(index);
@@ -670,7 +708,14 @@ export function createVoiceIme({
 
   function lassoEvent(event) {
     if (!lasso) return;
-    if (event.type === 'input_audio_buffer.speech_started' && dictation?.selection && !lasso.item) {
+    // The pill goes once a sentence is heard (Komorebi spends the selection
+    // only on a sentence with words), not at every start of speech: a room's
+    // noise started and ended "sentences" that heard nothing every half second
+    // on the iPad, and the pill hid and popped back each time (2026-11-01).
+    const heard =
+      (event.type === 'komorebi.input_audio_transcription.partial' && event.text) ||
+      (event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript);
+    if (heard && dictation?.selection && !lasso.item) {
       lasso.item = event.item_id;
       renderLasso();
     } else if (event.item_id && event.item_id === lasso.item) {
@@ -707,18 +752,29 @@ export function createVoiceIme({
         return;
       }
       stroke.anchor = anchor;
+      const rect = charRect(anchor);
+      stroke.line = rect ? { y: rect.top + rect.height / 2, height: rect.height } : null;
       lasso = null;
       globalThis.navigator?.vibrate?.(10);
     }
-    setLasso(stroke.anchor, charAtPoint(event.clientX, event.clientY) ?? stroke.anchor);
+    // A sideways stroke stays on its line until the finger is a line away: on
+    // the iPad the touch point sat a few pixels above where the finger seemed
+    // to be, and words circled from line 2 ran up into line 1 (2026-11-01).
+    const line = stroke.line;
+    const y = line && Math.abs(event.clientY - line.y) < line.height ? line.y : event.clientY;
+    setLasso(stroke.anchor, charAtPoint(event.clientX, y) ?? stroke.anchor);
   }
 
   function strokeEnd(event) {
     if (!stroke || event.pointerId !== stroke.id) return;
-    const drew = stroke.anchor != null;
+    const { anchor, box } = stroke;
+    const tap = anchor == null && event.type === 'pointerup' && Math.hypot(event.clientX - stroke.x, event.clientY - stroke.y) < 8;
     stroke = null;
-    if (drew) finishLasso();
-    else if (lasso && !lasso.item && event.type === 'pointerup') dropLasso(); // a tap puts it away
+    if (anchor != null) finishLasso();
+    else if (tap) {
+      if (lasso && !lasso.item) dropLasso(); // a tap puts it away
+      if (box) placeCaret(box, event.clientX, event.clientY);
+    }
   }
 
   if (doc?.addEventListener) {
@@ -975,16 +1031,36 @@ export function createVoiceIme({
       // A finger on the box may stroke sideways and circle words (see lasso).
       textarea.addEventListener('pointerdown', (event) => {
         if (!on || textarea !== target || event.pointerType === 'mouse' || !event.isPrimary) return;
-        stroke = { id: event.pointerId, x: event.clientX, y: event.clientY, anchor: null };
+        stroke = { id: event.pointerId, x: event.clientX, y: event.clientY, anchor: null, box: textarea };
       });
-      // iOS would still pan the page or move the caret with a circling stroke.
+      // iOS answers a finger on a focused box with its own edit menu (貼上／選取／
+      // 全選), a loupe on a long press and a moved caret, which cut into circling
+      // words (iPhone and iPad, 2026-11-01). While voice input is on the box
+      // takes the finger itself: a tap places the caret (strokeEnd), up and down
+      // scrolls it (below), sideways circles words.
+      let scroll = null;
       textarea.addEventListener(
-        'touchmove',
+        'touchstart',
         (event) => {
-          if (stroke?.anchor != null && event.cancelable) event.preventDefault();
+          if (!on || textarea !== target || event.touches.length !== 1) return;
+          if (event.cancelable) event.preventDefault();
+          scroll = { y: event.touches[0].clientY, top: textarea.scrollTop };
         },
         { passive: false },
       );
+      textarea.addEventListener(
+        'touchmove',
+        (event) => {
+          if (stroke?.anchor != null) {
+            if (event.cancelable) event.preventDefault();
+          } else if (scroll && !stroke && event.touches.length === 1) {
+            textarea.scrollTop = scroll.top - (event.touches[0].clientY - scroll.y);
+          }
+        },
+        { passive: false },
+      );
+      textarea.addEventListener('touchend', () => (scroll = null));
+      textarea.addEventListener('touchcancel', () => (scroll = null));
       // A mouse selects in the box as usual; letting go circles the selection.
       textarea.addEventListener('mouseup', () =>
         setTimeout(() => {

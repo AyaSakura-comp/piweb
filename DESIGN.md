@@ -200,7 +200,9 @@ selection's bubble (`.sel-bubble`, same spring and colours) drawn over the box,
 and the quote pill's glass (`.selection-actions`) above the words with 刪除 and
 取消 (44px; a finger acts on `pointerup`, like the BTW link). The next sentence
 spoken replaces the circled words; a tap elsewhere puts the circle away;
-vertical strokes still scroll. See [voice input](docs/voice-input.md).
+vertical strokes still scroll. While voice input is on the box handles touches
+itself (no iOS edit menu or loupe: a tap places the caret), and a stroke stays on
+its first line until the finger is a line away. See [voice input](docs/voice-input.md).
 
 ## Render-first replies
 

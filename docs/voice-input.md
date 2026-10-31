@@ -110,8 +110,7 @@ Komorebi directly.
 
 As on the Komorebi IME page: while voice input is on, a finger stroked
 **sideways** across the box's text circles the words it crosses (whole words,
-`Intl.Segmenter`), with no long press. Up and down still scrolls the box
-(`touch-action: pan-y` on the box while it has no keyboard). The circle is the
+`Intl.Segmenter`), with no long press. Up and down still scrolls the box. The circle is the
 quote selection's bubble (`selection-bubble.js`, in a fixed `.voice-lasso-layer`
 over the box) and a 刪除／取消 pill (`.selection-actions`, above the words).
 
@@ -120,9 +119,24 @@ over the box) and a 刪除／取消 pill (`.selection-actions`, above the words)
   Gemma rewrites only that span from what was said (a new word replaces it,
   「刪掉」「正式一點」 do that); off, what was said goes in as heard. The
   server answers `komorebi.selection.replaced`; the box shows what changed as
-  for any rewrite, and the circle goes. While that sentence is spoken the pill
-  hides and the circle cannot be dismissed; a sentence that heard nothing leaves
-  the words circled.
+  for any rewrite, and the circle goes. Once that sentence is heard (a partial
+  with words, or a transcript) the pill hides and the circle cannot be
+  dismissed; a sentence that heard nothing leaves the words circled and the pill
+  where it is. Until 2026-11-01 the pill hid at every `speech_started`: on the
+  iPad a room's noise started and ended empty "sentences" about every half
+  second, and the pill hid and popped back each time (screen recording).
+- **The box takes the finger itself** while voice input is on (2026-11-01:
+  「選擇功能是壞掉的」). iOS answered a finger on the focused box with its edit
+  menu (貼上／選取／全選), a loupe on a long press and a moved caret, in the middle
+  of circling. Now `touchstart` on the box is cancelled: a tap places the caret
+  where the finger is (measured on the layer, `placeCaret`) and focuses the box
+  (no keyboard: `inputmode="none"`), up and down scrolls it (`scrollTop`, no
+  momentum), sideways circles. Native selection, copy and the edit menu in the
+  box come back with voice input off; paste has the composer's 貼上 button.
+- **A stroke stays on its line** until the finger is a full line away from the
+  first word's line. On the iPad the touch point sat a few pixels above where
+  the finger seemed to be, so a stroke along line 2 circled from line 2 into
+  line 1.
 - **刪除** takes the words out at once (the draft is synced, the removal shows
   struck through and folds away); **取消**, a tap on the box or anywhere else,
   typing, Send, switching composers or turning voice off put the circle away and

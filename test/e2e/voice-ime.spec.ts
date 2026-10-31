@@ -1,4 +1,4 @@
-import { expect, test, type Page, type WebSocketRoute } from 'playwright/test';
+import { expect, test, type Locator, type Page, type WebSocketRoute } from 'playwright/test';
 
 // Komorebi voice input in the composers. The Komorebi server is a fake on the
 // WebSocket route: after a few audio chunks it hears a sentence, streams it as
@@ -611,6 +611,117 @@ test('a sideways stroke circles words in the box; the next sentence replaces the
   await expect(page.locator('.voice-lasso-layer .sel-bubble-layer')).toHaveCount(0, { timeout: 2000 });
   await expect(page.locator('#composer .voice-mirror .voice-fresh')).toHaveText('四');
   expect(server.selections.at(-1)).toEqual({ before: '明天下午', text: '三點', after: '開會。' });
+  expect(errors).toEqual([]);
+});
+
+/** Where character `index` of a box's text is drawn, measured on a copy of the box. */
+async function boxCharPoint(box: Locator, index: number) {
+  return box.evaluate((el: HTMLTextAreaElement, i) => {
+    const style = getComputedStyle(el);
+    const copy = document.createElement('div');
+    for (const key of ['boxSizing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth',
+      'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+      'letterSpacing', 'wordSpacing'] as const) copy.style[key] = style[key];
+    const rect = el.getBoundingClientRect();
+    Object.assign(copy.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`,
+      whiteSpace: 'pre-wrap', overflowWrap: 'break-word', borderStyle: 'solid', visibility: 'hidden' });
+    copy.textContent = el.value;
+    document.body.append(copy);
+    const range = document.createRange();
+    range.setStart(copy.firstChild!, i);
+    range.setEnd(copy.firstChild!, i + 1);
+    const c = range.getBoundingClientRect();
+    copy.remove();
+    return { x: c.left + c.width / 2, y: c.top + c.height / 2 - el.scrollTop, height: c.height };
+  }, index);
+}
+
+test('circling on an iPad: noise keeps the pill still, a stroke stays on its line, a tap is the box\'s own', async ({
+  page,
+}, info) => {
+  // 2026-11-01, a screen recording from the iPad Dashboard: the circle went,
+  // the 刪除／取消 pill hid and popped back every half second, words circled
+  // on line 2 ran up into line 1, and iOS's loupe and edit menu came up.
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const server = await fakeKomorebi(page, []);
+  await mockApi(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('piweb.mode', 'sessions');
+    (window as any).__touchstart = [];
+    addEventListener('touchstart', (e) => (window as any).__touchstart.push(e.defaultPrevented));
+  });
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(page.locator('#composer')).toHaveClass(/voice-listening/);
+  const text = '語音輸入還可以用嗎？現在我的語音輸入還是用什麼模型？我想確定一下。';
+  await input.fill(text);
+  await input.dispatchEvent('input');
+  const actions = page.locator('.voice-lasso-actions');
+
+  // Line 2 starts where the y of a character first changes.
+  const points = await Promise.all([...text].map((_, i) => boxCharPoint(input, i)));
+  const line2 = points.findIndex((p) => p.y > points[0].y + 4);
+  expect(line2).toBeGreaterThan(4);
+  const from = points[line2];
+  const to = points[line2 + 4];
+  // Sideways along line 2 with the touch point drifting up 60% of a line.
+  await stroke(page, from, { x: to.x, y: to.y - from.height * 0.6 });
+  await expect.poll(() => server.selections.at(-1)).toEqual(
+    expect.objectContaining({ text: expect.stringMatching(new RegExp(`^${text.slice(line2, line2 + 2)}`)) }),
+  );
+  const circled = server.selections.at(-1);
+  expect(circled.before.length).toBeGreaterThanOrEqual(line2); // nothing from line 1
+  await expect(actions).toBeVisible();
+  await page.waitForTimeout(700); // the pop settles
+  const pill = (await actions.boundingBox())!;
+
+  // Room noise: sentences that start and hear nothing. The pill stays put.
+  await actions.evaluate((el) => {
+    (window as any).__pillChanges = 0;
+    new MutationObserver(() => (window as any).__pillChanges++).observe(el, { attributes: true, attributeFilter: ['hidden'] });
+  });
+  for (let n = 0; n < 4; n++) {
+    server.send({ type: 'input_audio_buffer.speech_started', item_id: `noise${n}` });
+    await page.waitForTimeout(120);
+    server.send({ type: 'conversation.item.input_audio_transcription.completed', item_id: `noise${n}`, transcript: '', komorebi: {} });
+    await page.waitForTimeout(120);
+  }
+  expect(await page.evaluate(() => (window as any).__pillChanges)).toBe(0);
+  await expect(actions).toBeVisible();
+  expect(await actions.boundingBox()).toEqual(pill);
+  await expect(page.locator('.voice-lasso-layer .sel-bubble')).toHaveCount(1);
+  await page.screenshot({ path: info.outputPath('lasso-after-noise.png') });
+  // A sentence with words still takes the pill away while it is said.
+  server.send({ type: 'input_audio_buffer.speech_started', item_id: 'said' });
+  await page.waitForTimeout(150);
+  await expect(actions).toBeVisible();
+  server.send({ type: 'komorebi.input_audio_transcription.partial', item_id: 'said', text: '模型' });
+  await expect(actions).toBeHidden();
+  server.send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'said', transcript: '', komorebi: {} });
+  await expect(actions).toBeVisible();
+
+  // A tap: the circle goes and the caret lands where the finger is, from the
+  // page, not the browser (which would bring iOS's loupe and edit menu).
+  const four = points[4];
+  await stroke(page, four, four);
+  await expect(actions).toBeHidden();
+  const caret = await input.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd, document.activeElement === el]);
+  expect(caret[2]).toBe(true);
+  expect(caret[0]).toBe(caret[1]);
+  expect([4, 5]).toContain(caret[0]);
+  expect(await page.evaluate(() => (window as any).__touchstart.every(Boolean))).toBe(true);
+
+  // Up and down still scrolls a box taller than it shows.
+  await input.fill(Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行`).join('\n'));
+  await input.dispatchEvent('input');
+  await input.evaluate((el) => (el.scrollTop = 0));
+  const middle = (await input.boundingBox())!;
+  const x = middle.x + 40;
+  await stroke(page, { x, y: middle.y + middle.height - 10 }, { x, y: middle.y + 10 });
+  expect(await input.evaluate((el) => el.scrollTop)).toBeGreaterThan(50);
   expect(errors).toEqual([]);
 });
 
