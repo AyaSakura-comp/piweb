@@ -243,6 +243,7 @@ origin check.
 | automatic first-prompt title                   | `src/agent/session-title-ranker.ts` (in-process linear candidate ranker, original writing system, ≤10 graphemes), `src/web/server.ts` (apply on message enqueue), `src/worker/session-title.ts` (recovery fallback), `session_title_jobs` in `src/db.ts`                                                                                                                                        |
 | cross-harness dialogue continuity              | `src/agent/harness-handoff.ts`, `src/db.ts` (`harness_context`), `src/commands/index.ts` (selection/reset), `src/agent/queue.ts` (prepare/commit); see [`docs/cross-harness-context.md`](docs/cross-harness-context.md) |
 | rename / model sheet / edge-swipe drawer       | `public/app.js` (all client-side)                                                                                                                                                                                                                                                                                                                                                               |
+| Android Back (gesture navigation)              | `public/android-back.js` (`bindAndroidBack`: one history entry, pushed only after a user activation, Back popping it = an in-app step), `handleAndroidBack()`/`closeLayerForBack()` in `public/app.js`: closes the top layer, else Life → sessions, else toggles the drawer; Android, narrow layout only, iPhone untouched; `test/android-back.test.ts`, `test/e2e/android-back.spec.ts` |
 | Dashboard on/off (Settings)                    | Settings → General → Dashboard: `readDashboardPreference()` in `public/session-ui.js` (localStorage `piweb.dashboardEnabled`, on by default; NOT `piweb.dashboard`, which is the layout), `setEnabled()` in `public/session-dashboard.js` hides the entry, topbar and row tile buttons (`.app.dashboard-off`), blocks drags and leaves an open Dashboard; layout kept. `test/e2e/dashboard-setting.spec.ts`|
 | topbar ⋯ overflow menu & iPadOS safe clearance | `#more-menu` in `index.html`; `openMoreMenu()`/`onMenuItem()` in `app.js`; iPad topbar `padding-left: max(60px, ...)` to clear multitasking pill                                                                                                                                                                                                                                                |
 | stay signed in                                 | persisted `auth.signingKey` + localStorage `piweb.token` auto-login                                                                                                                                                                                                                                                                                                                             |
@@ -962,7 +963,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   desktop breakpoint changes cancel it.
   The fixed edge button is outside `.messages`' scroll ancestry, so a vertical lock that
   starts on the button explicitly forwards `dy` to the transcript; test real
-  `scrollTop`, not merely the absence of a Life request. Swipe gestures are disabled
+  `scrollTop`, not merely the absence of a Life request. On Android the system takes the
+  left-edge swipe as Back, so Back itself opens and closes the drawer there
+  (`public/android-back.js`). Swipe gestures are disabled
   above 768px (where the water-drop button remains available for direct click entry) and
   while a lightbox/sheet owns the foreground. **Never
   recover a drag position with `getComputedStyle`** — a style flush can return

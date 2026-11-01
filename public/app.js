@@ -39,6 +39,7 @@ import { createSessionDashboard } from './session-dashboard.js?v=host-strip-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import { readClipboard } from './clipboard-paste.js';
+import { bindAndroidBack, isAndroid } from './android-back.js';
 import {
   bindLongPress,
   formatElapsed,
@@ -6113,6 +6114,83 @@ $('btn-menu').addEventListener('click', openDrawer);
 document.querySelector('.hash')?.addEventListener('click', openDrawer);
 $('btn-hide-drawer').addEventListener('click', hideDrawer);
 $('scrim').addEventListener('click', closeDrawer);
+
+// ── Android back ─────────────────────────────────────────────────────────
+//
+// With Android gesture navigation the left-edge swipe is the system's Back, so
+// the edge drag above rarely reaches the page and Back used to leave piweb.
+// Back now stays in the app (public/android-back.js): it closes what is open on
+// top, else toggles the sessions, and Life goes back to its sessions as its own
+// back drag does. Modal <dialog>s are closed by Chrome itself before any
+// history step. Narrow layouts only: above the breakpoint the drawer is a
+// sidebar and Back keeps its usual meaning. iPhone is left alone (Safari's back
+// swipe shows the previous page, not a gesture the page can take over).
+
+/** Close the topmost layer Back should dismiss first; false when none is open. */
+function closeLayerForBack() {
+  const dialog = document.querySelector('dialog[open]');
+  if (dialog) {
+    if (typeof dialog.requestClose === 'function') dialog.requestClose();
+    return true;
+  }
+  const mermaid = document.getElementById('mermaid-modal');
+  if (mermaid && !mermaid.hidden) {
+    mermaid.querySelector('.mm-modal-close')?.click();
+    return true;
+  }
+  if (!$('lightbox').hidden) {
+    closeLightbox();
+    return true;
+  }
+  if (isRowMenuOpen()) {
+    closeSessionRowMenu();
+    return true;
+  }
+  if (isMenuOpen()) {
+    closeMoreMenu();
+    return true;
+  }
+  if (!$('trash-sheet').hidden) {
+    closeTrash({ explicitDismissal: true });
+    return true;
+  }
+  const sheets = [
+    ['model-sheet', closeModelSheet],
+    ['thinking-sheet', closeThinkingSheet],
+    ['media-sheet', closeMediaSheet],
+  ];
+  for (const [id, close] of sheets) {
+    if (!$(id).hidden) {
+      close();
+      return true;
+    }
+  }
+  return false;
+}
+
+function handleAndroidBack() {
+  if (!$('login').hidden) return;
+  // Armed on a phone, then rotated wide: no in-app step, so finish the Back.
+  if (wideDrawer.matches) {
+    history.back();
+    return;
+  }
+  cancelEdgeGestures();
+  if (closeLayerForBack()) return;
+  if (state.mode === 'life') {
+    openSessionsFromLife();
+    return;
+  }
+  if ($('drawer').classList.contains('open')) closeDrawer();
+  else openDrawer();
+}
+
+if (isAndroid()) {
+  bindAndroidBack({
+    shouldArm: () => !wideDrawer.matches && $('login').hidden,
+    onBack: handleAndroidBack,
+  });
+}
 
 // ── edge swipe ───────────────────────────────────────────────────────────
 //
