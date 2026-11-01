@@ -46,6 +46,7 @@ vi.mock('../src/agent/model-catalog.js', () => ({
 const originalEnv = { ...process.env };
 const tempDirs: string[] = [];
 const ENV_KEYS = [
+  'DB_PATH',
   'PI_BIN',
   'PI_CWD',
   'PI_MODEL',
@@ -57,7 +58,9 @@ const ENV_KEYS = [
   'LIFE_PROBE_TERM_PATH',
 ];
 
-afterEach(() => {
+afterEach(async () => {
+  const db = await import('../src/db.js').catch(() => null);
+  db?.closeDb();
   vi.resetModules();
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
@@ -96,9 +99,19 @@ const lifeChannel = {
   kind: 'life' as const,
 };
 
+/** Channel settings over a fresh database (it holds Settings' default thinking). */
+async function importSettings() {
+  const tempDir = mkdtempSync(join(tmpdir(), 'piweb-life-defaults-db-'));
+  tempDirs.push(tempDir);
+  process.env.DB_PATH = join(tempDir, 'gateway.db');
+  const db = await import('../src/db.js');
+  db.initDb();
+  return import('../src/agent/channel-settings.js');
+}
+
 describe('Life runtime defaults', () => {
   it('uses the Pi-resolved model with low thinking while ignoring stored overrides', async () => {
-    const { computeEffectiveChannelSettings } = await import('../src/agent/channel-settings.js');
+    const { computeEffectiveChannelSettings } = await importSettings();
     await expect(
       computeEffectiveChannelSettings(lifeChannel, {
         lifeDefaults: { modelRef: 'openai-codex/gpt-default', thinking: 'max' },
@@ -120,7 +133,7 @@ describe('Life runtime defaults', () => {
     process.env.PI_THINKING = ' ';
     process.env.PIDG_CONFIG = join(tmpdir(), 'missing-piweb-config.env');
     vi.resetModules();
-    const { computeEffectiveChannelSettings } = await import('../src/agent/channel-settings.js');
+    const { computeEffectiveChannelSettings } = await importSettings();
 
     await expect(
       computeEffectiveChannelSettings({ ...lifeChannel, kind: 'standard' }),

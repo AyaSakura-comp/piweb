@@ -136,6 +136,8 @@ const state = {
   selectionPending: false,
   commands: [],
   models: [],
+  // Settings' default thinking per mode ('' = Pi's own default), from /api/sessions.
+  thinkingDefaults: { life: '', standard: '' },
   previewingDeleted: false,
   renamingJid: null,
   renameDraft: '',
@@ -1275,9 +1277,10 @@ function applyImmediateSessionTitle(jid, name) {
 
 async function loadSessions() {
   const generation = ++sessionsLoadGeneration;
-  const { sessions } = await api('/api/sessions');
+  const { sessions, thinkingDefaults } = await api('/api/sessions');
   if (generation !== sessionsLoadGeneration) return false;
   state.sessions = sessions;
+  if (thinkingDefaults) setThinkingDefaults(thinkingDefaults);
   // Boot opens the most recent session (standardFallbackJid).
   rememberBootJid(sessionsForDisplay()[0]?.jid);
 
@@ -2353,6 +2356,7 @@ const sessionDashboard = createSessionDashboard({
   main: document.querySelector('.main'),
   api,
   getSessions: () => sessionsForDisplay(),
+  getThinkingDefault: () => state.thinkingDefaults.standard,
   getCommands: () => state.commands,
   getModels: () => state.models,
   getSessionBadge: (session) => sessionBadge(session),
@@ -2936,10 +2940,60 @@ function renderLifeTags() {
 let thinkingSheetTargetJid = null;
 
 function currentThinkingLevel(targetJid = thinkingSheetTargetJid || state.activeJid) {
-  // Life runs with low thinking unless the user picked a level.
-  if (targetJid === LIFE_JID) return state.lifeSession?.thinking || 'low';
+  // A session with no level of its own runs with its mode's default (Settings);
+  // Life's built-in one is low.
+  if (targetJid === LIFE_JID) {
+    return state.lifeSession?.thinking || state.thinkingDefaults.life || 'low';
+  }
   const session = state.sessions.find((s) => s.jid === targetJid);
-  return session?.thinking || '';
+  return session?.thinking || state.thinkingDefaults.standard || '';
+}
+
+// ── default thinking per mode (Settings) ─────────────────────────────────
+
+const thinkingDefaultSelects = {
+  life: $('thinking-default-life'),
+  standard: $('thinking-default-standard'),
+};
+
+for (const select of Object.values(thinkingDefaultSelects)) {
+  for (const level of THINKING_LEVELS) select.append(new Option(level, level));
+}
+
+function setThinkingDefaults(defaults) {
+  state.thinkingDefaults = { life: defaults.life || '', standard: defaults.standard || '' };
+  for (const [mode, select] of Object.entries(thinkingDefaultSelects)) {
+    const level = state.thinkingDefaults[mode] || (mode === 'life' ? 'low' : '');
+    // With no PI_THINKING (or before the worker publishes it) ordinary
+    // sessions follow Pi's own default: shown as an extra first option.
+    let runtime = select.querySelector('option[value=""]');
+    if (!level && !runtime) {
+      runtime = new Option('Pi 預設', '');
+      select.prepend(runtime);
+    } else if (level && runtime) {
+      runtime.remove();
+    }
+    select.value = level;
+  }
+  renderThinkingButton();
+}
+
+for (const [mode, select] of Object.entries(thinkingDefaultSelects)) {
+  select.addEventListener('change', async () => {
+    const level = select.value;
+    if (!level) return;
+    try {
+      const { defaults } = await api('/api/thinking-defaults', {
+        method: 'POST',
+        body: JSON.stringify({ mode, level }),
+      });
+      setThinkingDefaults(defaults);
+      sessionDashboard.syncSessions();
+    } catch (err) {
+      setThinkingDefaults(state.thinkingDefaults);
+      alert(err.message);
+    }
+  });
 }
 
 function renderThinkingButton() {

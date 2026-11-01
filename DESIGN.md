@@ -478,8 +478,9 @@ Every Settings section is one `.settings-group` (rounded `--bg-alt` card,
 `--border` lines between rows), never a stack of separate cards. A row is
 54px+: a 22px `--text-dim` outline icon, the label, and at the end a value, a
 switch, a chevron or one borderless accent text action. Values are plain
-`--text-dim` text (Appearance's Dark mode, the 熱門關鍵字 select, the refresh seconds),
-never a box inside the group. A URL too long for the row's end goes on a second
+`--text-dim` text (Appearance's Dark mode, the 熱門關鍵字 and 預設 thinking
+selects, the refresh seconds), never a box inside the group; a select's chosen
+value is right-aligned so values in one group end in the same column. A URL too long for the row's end goes on a second
 line under the label (`.settings-field`: 16px, `--text-dim`, no border). Tapping
 the row edits the value and the row takes the `--bg-hover` fill while it does.
 Subscriptions are rows too: the provider glyph in the icon's place, the name

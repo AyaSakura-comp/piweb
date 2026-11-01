@@ -192,6 +192,8 @@ test('mobile Settings and OpenAI device-code workflow remains visually usable', 
     };
   });
   expect(geometry).toEqual({ contained: true, documentOverflow: 0 });
+  // Below the first screen since 預設 thinking sits above the subscriptions.
+  await page.locator('#subscription-action').scrollIntoViewIfNeeded();
   await expectReachable(page.locator('#subscription-action'));
 
   await page.locator('#btn-theme').click();
@@ -292,6 +294,7 @@ for (const theme of ['dark', 'light'] as const) {
       };
     });
     expect(box).toEqual({ border: '0px', background: 'rgba(0, 0, 0, 0)' });
+    await action.scrollIntoViewIfNeeded();
     await expectReachable(action);
     await page.screenshot({ path: testInfo.outputPath(`settings-open-${theme}.png`) });
     await page.locator('#subscription-agy').scrollIntoViewIfNeeded();

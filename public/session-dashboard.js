@@ -102,6 +102,7 @@ export function createSessionDashboard({
   main,
   api,
   getSessions,
+  getThinkingDefault = () => '',
   getCommands = () => [],
   getModels = () => [],
   getSessionBadge,
@@ -862,7 +863,7 @@ export function createSessionDashboard({
     thinkingBtn.title = 'Thinking level';
     thinkingBtn.setAttribute('aria-label', `Choose thinking level for ${session?.name || jid}`);
     thinkingBtn.setAttribute('aria-haspopup', 'dialog');
-    thinkingBtn.dataset.level = session?.thinking || 'default';
+    thinkingBtn.dataset.level = session?.thinking || getThinkingDefault() || 'default';
     thinkingBtn.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 15.5a6 6 0 117 0c-1 .7-1.5 1.5-1.5 2.5h-4c0-1-.5-1.8-1.5-2.5z"/><path d="M10 21h4M12 1V0M4.2 4.2l-1.4-1.4M19.8 4.2l1.4-1.4M2 11H0M24 11h-2"/></svg>';
 
@@ -2375,7 +2376,8 @@ export function createSessionDashboard({
       } else {
         pane.badgeEl.hidden = true;
       }
-      const thinkingLevel = session.thinking || '';
+      // No level of its own: the Settings default for ordinary sessions.
+      const thinkingLevel = session.thinking || getThinkingDefault() || '';
       pane.thinkingBtn.dataset.level = thinkingLevel || 'default';
       const tLabel = thinkingLevel || 'runtime default';
       pane.thinkingBtn.title = `Thinking: ${tLabel}`;

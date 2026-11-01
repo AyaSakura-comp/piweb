@@ -697,6 +697,23 @@
           <p class="settings-footnote" id="dashboard-enabled-help">關閉 Dashboard 會收起側邊欄入口、頂列與對話列的並排按鈕，也不能把對話拖進並排；並排版面會保留，重新開啟就回來。設定儲存於此瀏覽器。</p>
           <p class="settings-footnote" id="hot-keywords-days-help">熱門關鍵字從最新 prompt 往前回推；設定儲存於此瀏覽器。</p>
 
+          <section class="settings-section" aria-labelledby="settings-thinking-title">
+            <h3 id="settings-thinking-title">預設 thinking</h3>
+            <div class="settings-group">
+              <label class="settings-row" for="thinking-default-life">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" /></svg></span>
+                <span class="settings-row-label">Life 模式</span>
+                <select class="settings-select" id="thinking-default-life" aria-describedby="thinking-default-help"></select>
+              </label>
+              <label class="settings-row" for="thinking-default-standard">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg></span>
+                <span class="settings-row-label">開發模式</span>
+                <select class="settings-select" id="thinking-default-standard" aria-describedby="thinking-default-help"></select>
+              </label>
+            </div>
+            <p class="settings-footnote" id="thinking-default-help">對話沒有自己選過 thinking 時用這裡的等級，下一則訊息起生效；模型不支援的等級會換成最接近的。開發模式是一般 Sessions。設定存在主機，所有裝置共用。</p>
+          </section>
+
           <section class="settings-section" aria-labelledby="settings-monitor-title">
             <h3 id="settings-monitor-title">主機監控</h3>
             <div class="settings-group">

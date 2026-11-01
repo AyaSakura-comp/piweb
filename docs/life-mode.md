@@ -36,9 +36,13 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   model. It never trusts stale values from `pi --continue`.
 - Life thinking defaults to **`low`** (`LIFE_DEFAULT_THINKING` in
   `src/agent/channel-settings.ts`), not Pi's runtime default, so everyday chat
-  stays fast. An explicit thinking override chosen in the picker wins. Both are
-  clamped to what the resolved model supports (e.g. `off` for a non-reasoning
-  model), and the picker shows `low` when no override is set.
+  stays fast. Settings → 預設 thinking sets a different default for Life and
+  for ordinary sessions (開發模式, else `PI_THINKING`) separately, stored in
+  `meta` (`thinking.default.life` / `thinking.default.standard`) and read by
+  the worker on every turn. An explicit thinking override chosen in the picker
+  wins. Both are clamped to what the resolved model supports (e.g. `off` for a
+  non-reasoning model), and the picker shows the mode's default when no
+  override is set.
 - **Quick tags** (`LIFE_TAGS` in `public/app.js`: 記帳, 生圖, 修圖) sit above the
   Life composer. Tapping one arms it for the next message only: the draft is sent
   as plain text with a `【label】` card in front (e.g. `【記帳】晚餐 120 元`). No

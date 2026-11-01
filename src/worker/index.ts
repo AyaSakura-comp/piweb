@@ -16,6 +16,7 @@ import {
 } from '../db.js';
 import { purgeSessionBatch, recoverPendingSessionPurges } from '../session/purge.js';
 import { listAvailableModels, primeModelRegistry, reloadModelConfig } from '../agent/model-catalog.js';
+import { builtinModeThinking } from '../agent/channel-settings.js';
 import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -134,6 +135,20 @@ async function publishModelCatalog(): Promise<void> {
 }
 
 /**
+ * Publish each mode's built-in default thinking for Settings: ordinary
+ * sessions' comes from PI_THINKING, which only the worker's environment has.
+ */
+function publishBuiltinThinking(): void {
+  setMeta(
+    'thinking.builtin',
+    JSON.stringify({
+      life: builtinModeThinking('life'),
+      standard: builtinModeThinking('standard'),
+    }),
+  );
+}
+
+/**
  * Discover and publish pi's extension slash commands for the web UI's autocomplete.
  */
 async function publishExtensionCommands(): Promise<void> {
@@ -152,6 +167,7 @@ export async function startWorker(): Promise<void> {
   subscriptionRetryDelayMs = SUBSCRIPTION_RETRY_INITIAL_MS;
   initDb();
   setTransport(webTransport);
+  publishBuiltinThinking();
   await recoverPendingSessionPurges();
 
   startProcessingLoop();

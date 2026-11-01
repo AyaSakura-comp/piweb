@@ -375,7 +375,7 @@ that file. Run `piscord status` to see the resolved config path.
 | `DISCORD_BOT_TOKEN`          | _(required)_                    | Discord bot token                                                          |
 | `PI_BIN`                     | `pi`                            | Path to pi binary                                                          |
 | `PI_MODEL`                   | _(none)_                        | Default model override                                                     |
-| `PI_THINKING`                | _(none)_                        | Default thinking level                                                     |
+| `PI_THINKING`                | _(none)_                        | Default thinking level (web: until Settings → 預設 thinking sets one)       |
 | `PI_CWD`                     | `$HOME`                         | Default working directory for pi; can be overridden per registered channel |
 | `PI_EXTRA_FLAGS`             | _(none)_                        | Extra flags passed to pi                                                   |
 | `TRIGGER_NAME`               | `pi`                            | Bot trigger name for @mentions                                             |

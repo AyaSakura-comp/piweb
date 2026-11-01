@@ -627,7 +627,7 @@ describe('Life session API', () => {
     const uploadDestination = resolve(uploadRoot, archivedDir);
     expect(existsSync(mediaSource)).toBe(true);
     expect(existsSync(mediaDestination)).toBe(false);
-    expect(await (await request('/api/sessions')).json()).toEqual({ sessions: [] });
+    expect((await (await request('/api/sessions')).json()).sessions).toEqual([]);
 
     const blocked = [
       ['events read', `/api/sessions/${encodedJid}/events`, 'GET', undefined],

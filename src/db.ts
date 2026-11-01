@@ -11,6 +11,7 @@ import {
   validateSessionFolder,
 } from './session/path.js';
 import {
+  THINKING_LEVELS,
   type ChannelKind,
   type RegisteredChannel,
   type QueuedMessage,
@@ -2899,6 +2900,49 @@ export function getMeta(key: string): string | undefined {
     | { value: string }
     | undefined;
   return row?.value;
+}
+
+// ── piweb: default thinking per mode ──
+
+function asThinkingLevel(value: unknown): ThinkingLevel | '' {
+  return typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value)
+    ? (value as ThinkingLevel)
+    : '';
+}
+
+/**
+ * The level Life or ordinary sessions run with when the session picked none of
+ * its own, as chosen in Settings; '' when Settings has not chosen one, so the
+ * worker's built-in default applies (channel-settings.ts).
+ */
+export function getModeThinkingDefault(kind: ChannelKind): ThinkingLevel | '' {
+  return asThinkingLevel(getMeta(`thinking.default.${kind}`));
+}
+
+/** Settings' choice for one mode; false (nothing stored) for an unknown mode or level. */
+export function setModeThinkingDefault(kind: unknown, level: unknown): boolean {
+  if ((kind !== 'life' && kind !== 'standard') || !asThinkingLevel(level)) return false;
+  setMeta(`thinking.default.${kind}`, level as ThinkingLevel);
+  return true;
+}
+
+/**
+ * Each mode's default for the web UI: Settings' choice, else the built-in one
+ * the worker publishes as `thinking.builtin` (ordinary sessions' comes from
+ * PI_THINKING, which only the worker's environment has). '' = Pi's own default,
+ * or the worker has not published yet.
+ */
+export function getThinkingDefaults(): Record<ChannelKind, ThinkingLevel | ''> {
+  let builtin: Partial<Record<ChannelKind, unknown>> = {};
+  try {
+    builtin = JSON.parse(getMeta('thinking.builtin') ?? '{}') ?? {};
+  } catch {
+    // Unreadable: no built-in defaults known.
+  }
+  return {
+    life: getModeThinkingDefault('life') || asThinkingLevel(builtin.life),
+    standard: getModeThinkingDefault('standard') || asThinkingLevel(builtin.standard),
+  };
 }
 
 // ── piweb: provider subscription jobs ──

@@ -8,7 +8,8 @@ import {
   type AvailableModelInfo,
 } from './model-catalog.js';
 import { resolvePiSpawn } from './invoke.js';
-import type { RegisteredChannel, ThinkingLevel } from '../types.js';
+import { getModeThinkingDefault } from '../db.js';
+import type { ChannelKind, RegisteredChannel, ThinkingLevel } from '../types.js';
 
 export interface EffectiveChannelSettings {
   rawModelRef: string;
@@ -199,10 +200,24 @@ export async function probePiRuntimeDefaults(
 
 export const LIFE_DEFAULT_THINKING: ThinkingLevel = 'low';
 
+/**
+ * A mode's level when neither the session nor Settings picked one: Life runs
+ * low (quick everyday chat) rather than Pi's runtime default; ordinary
+ * sessions run PI_THINKING, '' (Pi's own default) when it is unset.
+ */
+export function builtinModeThinking(kind: ChannelKind): ThinkingLevel | '' {
+  if (kind === 'life') return LIFE_DEFAULT_THINKING;
+  return config.piThinking && isThinkingLevel(config.piThinking) ? config.piThinking : '';
+}
+
+/** The level a session with none of its own runs with: Settings' default for its mode, else the built-in one. */
+export function modeDefaultThinking(kind: ChannelKind): ThinkingLevel | '' {
+  return getModeThinkingDefault(kind) || builtinModeThinking(kind);
+}
+
 export function getDesiredThinkingLevel(channel: RegisteredChannel): ThinkingLevel {
   if (channel.thinkingOverride) return channel.thinkingOverride;
-  if (config.piThinking && isThinkingLevel(config.piThinking)) return config.piThinking;
-  return 'off';
+  return modeDefaultThinking(channel.kind ?? 'standard') || 'off';
 }
 
 export async function computeEffectiveChannelSettings(
@@ -225,17 +240,11 @@ export async function computeEffectiveChannelSettings(
       ? lifeDefaults!.modelRef
       : channel.modelOverride || config.piModel || '';
   const modelInfo = rawModelRef ? resolveModelReference(rawModelRef, models) : undefined;
-  const hasManagedThinking =
-    channel.kind === 'life' ||
-    Boolean(channel.thinkingOverride) ||
-    Boolean(config.piThinking && isThinkingLevel(config.piThinking));
-  // Life defaults to low thinking (quick everyday chat) instead of Pi's
-  // runtime default; both the default and an explicit override are clamped to
-  // what the resolved model supports.
-  const desiredThinking =
-    channel.kind === 'life' && !channel.thinkingOverride
-      ? LIFE_DEFAULT_THINKING
-      : getDesiredThinkingLevel(channel);
+  const modeDefault = modeDefaultThinking(channel.kind ?? 'standard');
+  const hasManagedThinking = Boolean(channel.thinkingOverride || modeDefault);
+  // Both a mode's default and an explicit override are clamped to what the
+  // resolved model supports.
+  const desiredThinking = getDesiredThinkingLevel(channel);
   const thinkingResolution = resolveThinkingForModel(modelInfo, desiredThinking);
   const effectiveCwd = channel.kind === 'life' ? config.piCwd : channel.cwdOverride || config.piCwd;
   const cwdSource: EffectiveChannelSettings['cwdSource'] =
@@ -249,8 +258,7 @@ export async function computeEffectiveChannelSettings(
 
   let thinkingSource: EffectiveChannelSettings['thinkingSource'];
   if (channel.thinkingOverride) thinkingSource = 'override';
-  else if (channel.kind === 'life') thinkingSource = 'default';
-  else if (config.piThinking && isThinkingLevel(config.piThinking)) thinkingSource = 'default';
+  else if (modeDefault) thinkingSource = 'default';
   else thinkingSource = 'pi runtime default';
 
   return {

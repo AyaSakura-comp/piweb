@@ -3665,6 +3665,9 @@ dialog h2[tabindex='-1']:focus {
   outline: none;
   cursor: pointer;
   max-width: 170px;
+  /* The box is as wide as the longest option; the chosen one ends at the row's end. */
+  text-align: right;
+  text-align-last: right;
 }
 
 /* A setting that only applies while another is on (the clean-up API while

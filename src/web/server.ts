@@ -42,6 +42,8 @@ import {
   getFirstUserMessageContent,
   getMeta,
   setMeta,
+  getThinkingDefaults,
+  setModeThinkingDefault,
   getLatestSubscriptionJob,
   isSubscriptionProvider,
   submitSubscriptionJobCode,
@@ -688,6 +690,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
+  // ── Default thinking per mode (Settings) ──
+  // Stored in meta; the worker applies it to every Life or ordinary session
+  // that has no level of its own (channel-settings.ts).
+  if (path === '/api/thinking-defaults') {
+    if (method === 'GET') {
+      sendJson(res, 200, { defaults: getThinkingDefaults() });
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readJson<{ mode?: unknown; level?: unknown }>(req);
+      if (setModeThinkingDefault(body?.mode, body?.level)) {
+        sendJson(res, 200, { defaults: getThinkingDefaults() });
+        return;
+      }
+      sendJson(res, 400, { error: 'Invalid thinking default' });
+      return;
+    }
+  }
+
   // ── Pi provider subscriptions ──
   // The web tier never imports pi or sees auth.json. It only queues a host-side
   // operation and returns the public device code or authorization link emitted
@@ -864,7 +885,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     sendJson(res, 200, { sessions: sessions.map((session) => ({
       ...session, subagentsBusy: activity.get(session.jid) ?? false,
-    })) });
+    })), thinkingDefaults: getThinkingDefaults() });
     return;
   }
 
