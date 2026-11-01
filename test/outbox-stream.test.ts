@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { continuesSource, tokenizeOutbox } from '../public/outbox-stream.js';
+import { continuesSource, tokenizeOutbox, tokenizePublishedOutbox } from '../public/outbox-stream.js';
 
 describe('outbox markers while streaming', () => {
   it('tokenizes a local marker so the text after it keeps streaming', () => {
     const partial = 'Before.\n\n[[image: /home/u/.pi-outbox/a.png]]\n\nAfter the image.';
     expect(tokenizeOutbox(partial, false)).toEqual({
       source: 'Before.\n\n[[media:0]]\n\nAfter the image.',
-      media: [{ kind: 'image', url: null }],
+      media: [{ kind: 'image', url: null, raw: '[[image: /home/u/.pi-outbox/a.png]]' }],
     });
   });
   it('cuts only an unfinished marker at the very end', () => {
@@ -30,7 +30,9 @@ describe('outbox markers while streaming', () => {
       true,
     );
     expect(final.source.startsWith(streamed.source)).toBe(true);
-    expect(final.media).toEqual([{ kind: 'image', url: '/media/web_x/1-a.png' }]);
+    expect(final.media).toEqual([
+      { kind: 'image', url: '/media/web_x/1-a.png', raw: '[[image: /media/web_x/1-a.png]]' },
+    ]);
   });
   it('treats publication as a continuation, a rewrite as a rewrite', () => {
     const raw = 'Before.\n\n[[image: /home/u/a.png]]\n\nAfter [[ima';
@@ -38,5 +40,16 @@ describe('outbox markers while streaming', () => {
     expect(continuesSource(final, raw)).toBe(true);
     expect(continuesSource(final, tokenizeOutbox(raw, false).source)).toBe(true);
     expect(continuesSource('Rewritten. [[image: /media/a.png]]', raw)).toBe(false);
+  });
+  it('a finished reply tokenizes only published markers; a missing file stays readable', () => {
+    const text =
+      '[[file: /media/web_x/2e1b52f3-light-__.png]]\n[[file: /media/web_x/99549cf0-dark-__.png]]\n[[file: /home/u/gone.png]]';
+    expect(tokenizePublishedOutbox(text)).toEqual({
+      source: '[[media:0]]\n[[media:1]]\n[[file: /home/u/gone.png]]',
+      media: [
+        { kind: 'file', url: '/media/web_x/2e1b52f3-light-__.png', raw: '[[file: /media/web_x/2e1b52f3-light-__.png]]' },
+        { kind: 'file', url: '/media/web_x/99549cf0-dark-__.png', raw: '[[file: /media/web_x/99549cf0-dark-__.png]]' },
+      ],
+    });
   });
 });

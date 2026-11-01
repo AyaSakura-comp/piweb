@@ -41,10 +41,18 @@ function mediaNode(kind, url) {
 
 const MEDIA = /\[\[(image|video|file)\s*:\s*([^\]]+?)\s*\]\]|\[\[media:(\d+)\]\]/gi;
 
+const LITERAL = ['code', 'inlineCode', 'html', 'math', 'inlineMath'];
+
 function visit(node, media) {
+  // Markers are tokens by now; where Markdown keeps text literal, a marker is
+  // just text the reply quoted, so it reads as written.
+  if (LITERAL.includes(node.type) && typeof node.value === 'string') {
+    node.value = node.value.replace(/\[\[media:(\d+)\]\]/g, (token, n) => media[+n]?.raw ?? token);
+    return;
+  }
   if (
     !node.children ||
-    ['link', 'image', 'code', 'inlineCode', 'html', 'math', 'inlineMath'].includes(node.type)
+    ['link', 'image', ...LITERAL].includes(node.type)
   )
     return;
   const children = node.children;

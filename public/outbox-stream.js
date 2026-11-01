@@ -26,9 +26,28 @@ export function tokenizeOutbox(text, complete) {
     if (tail) source = source.slice(0, tail.index);
   }
   const media = [];
-  source = source.replace(MARKER, (_marker, kind, target) => {
+  source = source.replace(MARKER, (marker, kind, target) => {
     const url = target.trim();
-    media.push({ kind: kind.toLowerCase(), url: published(url) ? url : null });
+    // `raw` puts the marker back where Markdown keeps text literal (code).
+    media.push({ kind: kind.toLowerCase(), url: published(url) ? url : null, raw: marker });
+    return `[[media:${media.length - 1}]]`;
+  });
+  return { source, media };
+}
+
+/**
+ * A finished reply's published markers as tokens, before Markdown parses it.
+ * Left in the text, a marker is at the mercy of emphasis: a file named
+ * `2e1b52f3-light-__.png` paired with the next marker's `__` became bold that
+ * split both markers, and the images showed as literal text (2026-11-01).
+ * Unpublished ones (the file was missing) stay visible text, as they were.
+ */
+export function tokenizePublishedOutbox(text) {
+  const media = [];
+  const source = text.replace(MARKER, (marker, kind, target) => {
+    const url = target.trim();
+    if (!published(url)) return marker;
+    media.push({ kind: kind.toLowerCase(), url, raw: marker });
     return `[[media:${media.length - 1}]]`;
   });
   return { source, media };

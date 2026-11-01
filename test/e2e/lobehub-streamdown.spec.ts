@@ -685,6 +685,31 @@ test('LobeHub published markers preserve inline media downloads code and safe UR
   expect(errors).toEqual([]);
 });
 
+// A history reply is rendered whole, so its markers have to be tokens before
+// Markdown parses it. Raw, two files named *-__.png made one bold run across
+// both markers and the reply showed them as text (2026-11-01).
+test('history images named with __ show as images, not as bold marker text', async ({
+  page,
+}, info) => {
+  const urls = ['/media/web_hay/2e1b52f3-light-__.png', '/media/web_hay/99549cf0-dark-__.png'];
+  await page.route('**/media/web_hay/**', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="390" height="300"><rect width="390" height="300" fill="#82b5aa"/></svg>',
+    }),
+  );
+  const source = `DESIGN.md 也補上了這條規則。本機 main 現在是 \`c738c3f1\`，還沒 push。\n\n[[file: ${urls[0]}]]\n[[file: ${urls[1]}]]`;
+  const { errors } = await setup(page, [event(1, source, 'assistant', 'message', urls)]);
+  const body = page.locator('.msg[data-event-id="1"] .msg-text');
+  await expect(body.locator('img.msg-inline-img')).toHaveCount(2);
+  await expect(body.locator('img.msg-inline-img').nth(1)).toHaveAttribute('src', urls[1]);
+  await expect(body).not.toContainText('[[file:');
+  await expect(body.locator('strong')).toHaveCount(0);
+  await body.locator('img').last().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('history-images.png') });
+  expect(errors).toEqual([]);
+});
+
 test('LobeHub block spacing does not turn Markdown separators into blank lines', async ({
   page,
 }, info) => {

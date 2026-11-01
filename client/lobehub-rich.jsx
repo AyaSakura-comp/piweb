@@ -19,7 +19,7 @@ import rehypeKatex from 'rehype-katex';
 // External leaf helpers. No old Markdown block parsing runs in this island.
 import { bindInlineYouTube, getYouTubeVideoId, renderCode } from './markdown.js';
 import { remarkOutboxMedia } from './outbox-media.js';
-import { continuesSource, tokenizeOutbox } from '../public/outbox-stream.js';
+import { continuesSource, tokenizeOutbox, tokenizePublishedOutbox } from '../public/outbox-stream.js';
 import {
   AUDIO_FILE_RE,
   downloadNameFromMediaUrl,
@@ -349,7 +349,8 @@ export function updateLobehubRich(
 
 export function renderLobehubStatic(target, text) {
   const record = recordFor(target, false);
-  record.source = normalize(text);
-  record.media = [];
+  const { source, media } = tokenizePublishedOutbox(normalize(text));
+  record.source = source;
+  record.media = media;
   paint(record);
 }

@@ -4,13 +4,14 @@ import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { remarkOutboxMedia } from '../client/outbox-media.js';
+import { tokenizePublishedOutbox } from '../public/outbox-stream.js';
 
-function parse(source: string) {
+function parse(source: string, media?: unknown[]) {
   const processor = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
-    .use(remarkOutboxMedia);
+    .use(remarkOutboxMedia, { media });
   return processor.runSync(processor.parse(source));
 }
 function nodes(tree: any, type: string): any[] {
@@ -21,6 +22,31 @@ function nodes(tree: any, type: string): any[] {
 }
 
 describe('published outbox Markdown extension', () => {
+  // History replies are tokenized before Markdown (renderLobehubStatic). Raw,
+  // two files named *-__.png made bold across both markers and showed as text.
+  it('shows images whose names would otherwise turn into emphasis', () => {
+    const raw =
+      '本機 main 現在是 `c738c3f1`。\n\n[[file: /media/web_e4936da6/2e1b52f3-light-__.png]]\n[[file: /media/web_e4936da6/99549cf0-dark-__.png]]';
+    const broken = parse(raw);
+    expect(nodes(broken, 'image')).toHaveLength(0);
+    const { source, media } = tokenizePublishedOutbox(raw);
+    const tree = parse(source, media);
+    expect(nodes(tree, 'image').map((n) => n.url)).toEqual([
+      '/media/web_e4936da6/2e1b52f3-light-__.png',
+      '/media/web_e4936da6/99549cf0-dark-__.png',
+    ]);
+    expect(nodes(tree, 'strong')).toHaveLength(0);
+    expect(nodes(tree, 'text').some((n) => n.value.includes('[['))).toBe(false);
+  });
+  it('a marker quoted in code reads as written, not as a token', () => {
+    const marker = '[[file: /media/lobe.svg]]';
+    const { source, media } = tokenizePublishedOutbox(`\`${marker}\`\n\n\`\`\`text\n${marker}\n\`\`\``);
+    const tree = parse(source, media);
+    expect(nodes(tree, 'inlineCode').map((n) => n.value)).toEqual([marker]);
+    expect(nodes(tree, 'code').map((n) => n.value)).toEqual([marker]);
+    expect(nodes(tree, 'image')).toHaveLength(0);
+  });
+
   it('recognizes file images with published paths at their inline and nested positions', () => {
     const tree = parse(
       'Before [[file: /media/web_example/mem-used.png]] after.\n\n- **[[IMAGE: /media/chart.svg]]**\n\n[[file: /media/chart.PNG?download=1]]',
