@@ -17,6 +17,7 @@ import {
 import { purgeSessionBatch, recoverPendingSessionPurges } from '../session/purge.js';
 import { listAvailableModels, primeModelRegistry, reloadModelConfig } from '../agent/model-catalog.js';
 import { builtinModeThinking } from '../agent/channel-settings.js';
+import { piDefaultModelRef } from '../agent/pi-default-model.js';
 import { listAgyModels } from '../agent/agy.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
@@ -128,6 +129,8 @@ async function publishModelCatalog(): Promise<void> {
     });
     const models = listAvailableModels();
     setMeta('models', JSON.stringify(models));
+    // What Settings' "Pi 預設" model means right now.
+    setMeta('model.pi_default', config.piModel || piDefaultModelRef() || '');
     logger.debug({ count: models.length }, 'Published model catalog');
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Failed to publish model catalog');

@@ -8,7 +8,7 @@ import {
   type AvailableModelInfo,
 } from './model-catalog.js';
 import { resolvePiSpawn } from './invoke.js';
-import { getModeThinkingDefault } from '../db.js';
+import { getModeModelDefault, getModeThinkingDefault } from '../db.js';
 import type { ChannelKind, RegisteredChannel, ThinkingLevel } from '../types.js';
 
 export interface EffectiveChannelSettings {
@@ -220,6 +220,34 @@ export function getDesiredThinkingLevel(channel: RegisteredChannel): ThinkingLev
   return modeDefaultThinking(channel.kind ?? 'standard') || 'off';
 }
 
+/**
+ * Settings' default model for a mode, while the worker's catalog still offers
+ * it: a model that went away (a signed-out subscription, a removed provider)
+ * falls back to Pi's default instead of failing every turn. An empty catalog
+ * (the worker still starting) cannot tell, so the choice stands.
+ */
+export function modeDefaultModel(
+  kind: ChannelKind,
+  models: AvailableModelInfo[] = listAvailableModels(),
+): string {
+  const ref = getModeModelDefault(kind);
+  if (!ref || (models.length > 0 && !resolveModelReference(ref, models))) return '';
+  return ref;
+}
+
+/**
+ * The model a session is set to: its own pick, else its mode's default
+ * (Settings), else PI_MODEL. '' = Pi's runtime default, which Life resolves
+ * with probePiRuntimeDefaults. Life has no model of its own.
+ */
+export function configuredModelRef(
+  channel: RegisteredChannel,
+  models?: AvailableModelInfo[],
+): string {
+  if (channel.kind === 'life') return modeDefaultModel('life', models);
+  return channel.modelOverride || modeDefaultModel('standard', models) || config.piModel || '';
+}
+
 export async function computeEffectiveChannelSettings(
   channel: RegisteredChannel,
   options: {
@@ -229,16 +257,15 @@ export async function computeEffectiveChannelSettings(
   } = {},
 ): Promise<EffectiveChannelSettings> {
   const models = listAvailableModels({ forceRefresh: options.forceRefresh ?? false });
+  const configuredModel = configuredModelRef(channel, models);
+  // Life with no Settings model asks Pi which model its default is now.
   const lifeDefaults =
-    channel.kind === 'life'
+    channel.kind === 'life' && !configuredModel
       ? (options.lifeDefaults ??
         (await probePiRuntimeDefaults(channel, { signal: options.signal })))
       : undefined;
 
-  const rawModelRef =
-    channel.kind === 'life'
-      ? lifeDefaults!.modelRef
-      : channel.modelOverride || config.piModel || '';
+  const rawModelRef = configuredModel || lifeDefaults?.modelRef || '';
   const modelInfo = rawModelRef ? resolveModelReference(rawModelRef, models) : undefined;
   const modeDefault = modeDefaultThinking(channel.kind ?? 'standard');
   const hasManagedThinking = Boolean(channel.thinkingOverride || modeDefault);
@@ -253,7 +280,7 @@ export async function computeEffectiveChannelSettings(
   let modelSource: EffectiveChannelSettings['modelSource'];
   if (channel.kind === 'life') modelSource = 'default';
   else if (channel.modelOverride) modelSource = 'override';
-  else if (config.piModel) modelSource = 'default';
+  else if (configuredModel) modelSource = 'default';
   else modelSource = 'pi runtime default';
 
   let thinkingSource: EffectiveChannelSettings['thinkingSource'];

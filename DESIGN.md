@@ -480,8 +480,8 @@ Every Settings section is one `.settings-group` (rounded `--bg-alt` card,
 switch, a chevron or one borderless accent text action. Values are plain
 `--text-dim` text (Appearance's Dark mode, the 熱門關鍵字 and 預設 thinking
 selects, the refresh seconds), never a box inside the group; a select's chosen
-value is right-aligned so values in one group end in the same column. A URL too long for the row's end goes on a second
-line under the label (`.settings-field`: 16px, `--text-dim`, no border). Tapping
+value is right-aligned so values in one group end in the same column. A URL, or a model name (預設模型), too long for the row's end goes on a second
+line under the label (`.settings-field`: 16px, `--text-dim`, no border, a select's value read from the start). Tapping
 the row edits the value and the row takes the `--bg-hover` fill while it does.
 Subscriptions are rows too: the provider glyph in the icon's place, the name
 over its 12px status, Connect/Cancel/Disconnect at the end; the sign-in panel

@@ -698,6 +698,23 @@
           <p class="settings-footnote" id="dashboard-enabled-help">關閉 Dashboard 會收起側邊欄入口、頂列與對話列的並排按鈕，也不能把對話拖進並排；並排版面會保留，重新開啟就回來。設定儲存於此瀏覽器。</p>
           <p class="settings-footnote" id="hot-keywords-days-help">熱門關鍵字從最新 prompt 往前回推；設定儲存於此瀏覽器。</p>
 
+          <section class="settings-section" aria-labelledby="settings-model-title">
+            <h3 id="settings-model-title">預設模型</h3>
+            <div class="settings-group">
+              <label class="settings-row settings-field" for="model-default-life">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4C11 4 6 8.4 6 15c0 2.1.8 3.7 2.1 4.8M7 18c2.8-4.7 6.1-7.8 10.2-10" /></svg></span>
+                <span class="settings-row-label">Life 模式</span>
+                <select class="settings-select" id="model-default-life" aria-describedby="model-default-help"></select>
+              </label>
+              <label class="settings-row settings-field" for="model-default-standard">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg></span>
+                <span class="settings-row-label">開發模式</span>
+                <select class="settings-select" id="model-default-standard" aria-describedby="model-default-help"></select>
+              </label>
+            </div>
+            <p class="settings-footnote" id="model-default-help">Life 每則訊息都用這裡的模型；開發模式的對話沒有自己選過模型時才用。下一則訊息起生效，之後不能用的模型（例如訂閱登出）會先改用 Pi 預設。Life 不列 AGY 與 Claude Code。設定存在主機，所有裝置共用。</p>
+          </section>
+
           <section class="settings-section" aria-labelledby="settings-thinking-title">
             <h3 id="settings-thinking-title">預設 thinking</h3>
             <div class="settings-group">

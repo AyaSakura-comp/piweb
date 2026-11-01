@@ -42,7 +42,10 @@ import {
   getFirstUserMessageContent,
   getMeta,
   setMeta,
+  getModeModelDefault,
+  getModelDefaults,
   getThinkingDefaults,
+  setModeModelDefault,
   setModeThinkingDefault,
   getLatestSubscriptionJob,
   isSubscriptionProvider,
@@ -709,6 +712,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
+  // ── Default model per mode (Settings) ──
+  // Stored in meta; the worker runs Life, and every ordinary session with no
+  // model of its own, on it (channel-settings.ts). '' = Pi's default.
+  if (path === '/api/model-defaults') {
+    if (method === 'GET') {
+      sendJson(res, 200, { defaults: getModelDefaults() });
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readJson<{ mode?: unknown; model?: unknown }>(req);
+      if (setModeModelDefault(body?.mode, body?.model)) {
+        sendJson(res, 200, { defaults: getModelDefaults() });
+        return;
+      }
+      sendJson(res, 400, { error: 'Invalid model default' });
+      return;
+    }
+  }
+
   // ── Pi provider subscriptions ──
   // The web tier never imports pi or sees auth.json. It only queues a host-side
   // operation and returns the public device code or authorization link emitted
@@ -830,6 +852,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (path === '/api/sessions' && method === 'GET') {
+    const modelDefaults = getModelDefaults();
     const sessions = listWebSessions().map((s) => {
       // The badge must track the model the session is *set to*, so picking a
       // model in the sheet is reflected immediately.
@@ -838,14 +861,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // (channel-settings.ts), so it is what the session uses — it wins. The
       // session file only records what the last run happened to use, which goes
       // stale the moment the model is changed and no message has been sent yet.
-      // With no override (following the gateway default) the session file is the
-      // only honest source, so fall back to it.
+      // With no override, Settings' default model for ordinary sessions is
+      // passed the same way. With neither (following Pi's default) the session
+      // file is the only honest source, so fall back to it.
       const running = getSessionModel(s.folder);
-      const overrideProvider = providerFromRef(s.modelOverride);
+      const configured = s.modelOverride || modelDefaults.standard;
+      const overrideProvider = providerFromRef(configured);
       const provider = overrideProvider || running?.provider || '';
       // For the Codex GPT-5.6 variants the badge is the codename (Terra/Sol/Luna),
       // which needs the model id, not just the provider.
-      const badgeModelId = s.modelOverride || running?.modelId || '';
+      const badgeModelId = configured || running?.modelId || '';
       return {
         jid: s.jid,
         name: s.name,
@@ -862,7 +887,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // an override chosen but not yet exercised by an actual run. The
         // override is a ref ("openai-codex/gpt-5.6-sol"); modelId is the bare id.
         pending: overrideProvider
-          ? modelIdFromRef(s.modelOverride) !== (running?.modelId ?? '')
+          ? modelIdFromRef(configured) !== (running?.modelId ?? '')
           : !running,
         badge: provider ? providerBadge(provider, badgeModelId) : null,
       };
@@ -885,7 +910,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     sendJson(res, 200, { sessions: sessions.map((session) => ({
       ...session, subagentsBusy: activity.get(session.jid) ?? false,
-    })), thinkingDefaults: getThinkingDefaults() });
+    })), thinkingDefaults: getThinkingDefaults(), modelDefaults });
     return;
   }
 
@@ -1147,7 +1172,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // Pi sessions use pi-btw, Claude Code sessions Claude's own /btw (the
       // worker picks); AGY has none. Prefix spelled inline: the web tier must
       // not import src/agent (invariant 2).
-      const override = (channel.modelOverride || '').trim().toLowerCase();
+      const override = (channel.modelOverride || getModeModelDefault('standard'))
+        .trim()
+        .toLowerCase();
       if (override.startsWith('agy/')) {
         sendJson(res, 200, { available: false, reason: 'BTW 不支援 AGY 模型；此對話目前使用 AGY' });
         return;
@@ -1596,7 +1623,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
         const command = resolveWebUsageCommand(
           (body.command ?? '').trim(),
-          channel.modelOverride || config.piModel || '',
+          channel.modelOverride || getModeModelDefault(channel.kind ?? 'standard') || config.piModel || '',
           body.source,
         );
         if (

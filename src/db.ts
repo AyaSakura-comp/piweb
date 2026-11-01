@@ -2945,6 +2945,57 @@ export function getThinkingDefaults(): Record<ChannelKind, ThinkingLevel | ''> {
   };
 }
 
+// ── piweb: default model per mode ──
+
+/**
+ * The model ("provider/id") Life, or an ordinary session with no model of its
+ * own, runs with, as chosen in Settings; '' = Pi's default (channel-settings.ts).
+ */
+export function getModeModelDefault(kind: ChannelKind): string {
+  return (getMeta(`model.default.${kind}`) ?? '').trim();
+}
+
+/** Life runs on Pi only: agy and Claude Code models hand the turn to another CLI. */
+export function isPiModelRef(ref: string): boolean {
+  const provider = ref.trim().toLowerCase().split('/')[0];
+  return provider !== 'agy' && provider !== 'claude-code';
+}
+
+/**
+ * Settings' choice for one mode: '' follows Pi's default again; anything else
+ * must be a model the worker currently publishes (and a Pi model for Life).
+ * False, storing nothing, otherwise.
+ */
+export function setModeModelDefault(kind: unknown, model: unknown): boolean {
+  if ((kind !== 'life' && kind !== 'standard') || typeof model !== 'string') return false;
+  const ref = model.trim();
+  if (ref) {
+    let catalog: Array<{ ref?: unknown }> = [];
+    try {
+      catalog = JSON.parse(getMeta('models') ?? '[]');
+    } catch {
+      // Unreadable catalog: nothing can be checked, so nothing is stored.
+    }
+    if (!Array.isArray(catalog) || !catalog.some((item) => item?.ref === ref)) return false;
+    if (kind === 'life' && !isPiModelRef(ref)) return false;
+  }
+  setMeta(`model.default.${kind}`, ref);
+  return true;
+}
+
+/**
+ * Each mode's Settings choice ('' = Pi's default) and Pi's default itself as
+ * the worker last published it (`model.pi_default`: PI_MODEL, else Pi's
+ * settings.json), which only the worker can read.
+ */
+export function getModelDefaults(): { life: string; standard: string; piDefault: string } {
+  return {
+    life: getModeModelDefault('life'),
+    standard: getModeModelDefault('standard'),
+    piDefault: (getMeta('model.pi_default') ?? '').trim(),
+  };
+}
+
 // ── piweb: provider subscription jobs ──
 
 // OpenAI Codex signs in with a device code; Anthropic (Claude Pro/Max) with a

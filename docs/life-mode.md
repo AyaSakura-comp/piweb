@@ -32,8 +32,12 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   is the deliberate boundary: under an immediate database lock, the old row, transcript,
   Pi folder, logs, scheduled tasks, and media ownership are re-keyed to a new standard
   `web:*` JID, while a new empty `web:life` row receives a freshly reserved folder.
-- Every Life turn asks the configured `PI_BIN` for its exact current runtime
-  model. It never trusts stale values from `pi --continue`.
+- Life runs on the model chosen in Settings → 預設模型 → Life 模式
+  (`meta` `model.default.life`, Pi models only: agy and Claude Code hand the
+  turn to another CLI). With none chosen (「Pi 預設」), or when the worker's
+  catalog no longer offers the chosen one, every Life turn asks the configured
+  `PI_BIN` for its exact current runtime model. It never trusts stale values
+  from `pi --continue`.
 - Life thinking defaults to **`low`** (`LIFE_DEFAULT_THINKING` in
   `src/agent/channel-settings.ts`), not Pi's runtime default, so everyday chat
   stays fast. Settings → 預設 thinking sets a different default for Life and

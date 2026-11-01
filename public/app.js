@@ -139,6 +139,7 @@ const state = {
   models: [],
   // Settings' default thinking per mode ('' = Pi's own default), from /api/sessions.
   thinkingDefaults: { life: '', standard: '' },
+  modelDefaults: { life: '', standard: '', piDefault: '' },
   previewingDeleted: false,
   renamingJid: null,
   renameDraft: '',
@@ -903,7 +904,12 @@ async function openSettings({ animate = true } = {}) {
   const covered = settingsMotion.open({ animate }).then(() => {
     if ($('settings-dialog').open) closeDrawer();
   });
-  await Promise.all([covered, refreshNotifyState(), refreshSubscriptionStatus()]);
+  await Promise.all([
+    covered,
+    refreshNotifyState(),
+    refreshSubscriptionStatus(),
+    refreshModelDefaults(),
+  ]);
 }
 
 // Programmatic closes (logout, leaving from Recently deleted) are immediate.
@@ -1278,10 +1284,11 @@ function applyImmediateSessionTitle(jid, name) {
 
 async function loadSessions() {
   const generation = ++sessionsLoadGeneration;
-  const { sessions, thinkingDefaults } = await api('/api/sessions');
+  const { sessions, thinkingDefaults, modelDefaults } = await api('/api/sessions');
   if (generation !== sessionsLoadGeneration) return false;
   state.sessions = sessions;
   if (thinkingDefaults) setThinkingDefaults(thinkingDefaults);
+  if (modelDefaults) setModelDefaults(modelDefaults);
   // Boot opens the most recent session (standardFallbackJid).
   rememberBootJid(sessionsForDisplay()[0]?.jid);
 
@@ -2473,7 +2480,7 @@ function isBtwSession(targetJid = state.activeJid) {
   // Hide only a KNOWN AGY session. Right after load the session list can
   // lag the selection; the web and worker still refuse AGY BTW requests.
   const session = state.sessions.find((item) => item.jid === targetJid);
-  const model = String(session?.model || '').trim().toLowerCase();
+  const model = String(session?.model || state.modelDefaults.standard || '').trim().toLowerCase();
   return !model.startsWith('agy/');
 }
 function syncBtwAvailability() {
@@ -2726,11 +2733,15 @@ function renderModelList(query) {
   const q = query.trim().toLowerCase();
   const matches = state.models.filter((m) => modelMatches(m, q));
 
+  // No model of its own: Settings' default for ordinary sessions, else Pi's.
+  const fallback = state.modelDefaults.standard || state.modelDefaults.piDefault;
   $('model-note').textContent = q
     ? `${matches.length} of ${state.models.length} models`
     : current
       ? `This session uses ${current}.`
-      : 'This session follows the gateway default.';
+      : fallback
+        ? `This session follows the default, ${fallback}.`
+        : 'This session follows the gateway default.';
 
   // "Gateway default" is an action, not a model, so it is hidden once the user
   // is filtering for something specific.
@@ -2992,6 +3003,91 @@ for (const [mode, select] of Object.entries(thinkingDefaultSelects)) {
       sessionDashboard.syncSessions();
     } catch (err) {
       setThinkingDefaults(state.thinkingDefaults);
+      alert(err.message);
+    }
+  });
+}
+
+// ── default model per mode (Settings) ────────────────────────────────────
+
+const modelDefaultSelects = {
+  life: $('model-default-life'),
+  standard: $('model-default-standard'),
+};
+let modelDefaultsRendered = '';
+
+/** Life runs on Pi only: agy and Claude Code models hand the turn to another CLI. */
+function isPiModelRef(ref) {
+  return !/^(agy|claude-code)\//i.test(String(ref || '').trim());
+}
+
+function modelLabel(ref) {
+  return state.models.find((m) => m.ref === ref)?.name || ref;
+}
+
+function setModelDefaults(defaults) {
+  state.modelDefaults = {
+    life: defaults.life || '',
+    standard: defaults.standard || '',
+    piDefault: defaults.piDefault || '',
+  };
+  renderModelDefaults();
+}
+
+/**
+ * Both selects from the published catalog: Pi's default first, then the models
+ * by provider. Rebuilt only when something changed, so polling never resets a
+ * picker the user has open.
+ */
+function renderModelDefaults({ force = false } = {}) {
+  const key = JSON.stringify([state.modelDefaults, state.models.map((m) => [m.ref, m.name])]);
+  if (!force && key === modelDefaultsRendered) return;
+  modelDefaultsRendered = key;
+  const { piDefault } = state.modelDefaults;
+  for (const [mode, select] of Object.entries(modelDefaultSelects)) {
+    const chosen = state.modelDefaults[mode];
+    const models = state.models.filter((m) => mode !== 'life' || isPiModelRef(m.ref));
+    select.textContent = '';
+    select.append(new Option(piDefault ? `Pi 預設：${modelLabel(piDefault)}` : 'Pi 預設', ''));
+    // A model the catalog no longer offers stays visible, so the row never
+    // reads as Pi's default while the worker quietly falls back to it.
+    if (chosen && !models.some((m) => m.ref === chosen)) {
+      select.append(new Option(`${chosen}（目前不能用，先用 Pi 預設）`, chosen));
+    }
+    const groups = new Map();
+    for (const model of models) {
+      if (!groups.has(model.provider)) {
+        const group = document.createElement('optgroup');
+        group.label = model.provider;
+        groups.set(model.provider, group);
+      }
+      groups.get(model.provider).append(new Option(model.name || model.ref, model.ref));
+    }
+    select.append(...groups.values());
+    select.value = chosen;
+  }
+}
+
+/** Settings shows the catalog as the worker last published it. */
+async function refreshModelDefaults() {
+  const { models } = await api('/api/models').catch(() => ({ models: null }));
+  if (models) state.models = models;
+  renderModelDefaults();
+}
+
+for (const [mode, select] of Object.entries(modelDefaultSelects)) {
+  select.addEventListener('change', async () => {
+    try {
+      const { defaults } = await api('/api/model-defaults', {
+        method: 'POST',
+        body: JSON.stringify({ mode, model: select.value }),
+      });
+      setModelDefaults(defaults);
+      // Sessions following the default show its badge from the next listing.
+      await loadSessions();
+      sessionDashboard.syncSessions();
+    } catch (err) {
+      renderModelDefaults({ force: true });
       alert(err.message);
     }
   });

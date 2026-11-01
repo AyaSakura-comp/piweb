@@ -177,7 +177,7 @@ between the two processes use an autoincrement `rowid` as a cursor.
 | `session_title_jobs`                                                      | crash-safe first-prompt title job (normally `waiting` → `done` during enqueue; worker fallback uses `pending` → `processing`); the copied prompt is erased on completion/cancel                                | web                                                  | both                   |
 | `session_purge_journal` / `session_purge_paths` / `session_purge_batches` | durable exact-batch claim, immutable detach manifest, and completion receipt for cross-filesystem permanent deletion; fences owner writes/deletes until tombstone cleanup and atomic DB finalization finish    | both                                                 | both                   |
 | `subscription_jobs`                                                       | provider sign-in/out jobs run by the worker; mirrors only device codes and authorization links (tokens stay in pi's `auth.json`); a pasted code passes through `manual_code` once | web | worker |
-| `meta`                                                                    | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor`, `thinking.default.{life,standard}` (Settings), `thinking.builtin` (worker's built-in per-mode defaults) | worker (models), web (auth/push)                     | web                    |
+| `meta`                                                                    | key/value the web tier needs but can't compute: `models` (pi's catalog), `auth.signingKey`, `push.vapid`, `push.cursor`, `thinking.default.{life,standard}` and `model.default.{life,standard}` (Settings), `thinking.builtin` (worker's built-in per-mode defaults), `model.pi_default` (worker: PI_MODEL, else Pi's settings.json default) | worker (models), web (auth/push)                     | web                    |
 | `push_subscriptions`                                                      | one row per opted-in device                                                                                                                                                                                    | web                                                  | push                   |
 | `message_log`, `scheduled_tasks`                                          | inherited from piscord; `message_log` duplicates web_events (gap)                                                                                                                                              | worker                                               | —                      |
 
@@ -200,6 +200,7 @@ origin check.
 | `/api/commands`                             | GET           | the `COMMANDS` catalog for autocomplete                                                                                                                                                                                          |
 | `/api/models`                               | GET           | pi's model list (from `meta`, published by the worker)                                                                                                                                                                           |
 | `/api/thinking-defaults`                    | GET/POST      | Settings' default thinking per mode `{ life, standard }` ('' = Pi's own); POST `{ mode, level }`. Also returned by `GET /api/sessions` as `thinkingDefaults` |
+| `/api/model-defaults`                       | GET/POST      | Settings' default model per mode `{ life, standard, piDefault }` ('' = Pi's default); POST `{ mode, model }` (a published ref, Pi-only for Life, '' resets). Also returned by `GET /api/sessions` as `modelDefaults` |
 | `/api/subscriptions/:provider`              | GET/POST/DELETE | subscription status; POST queues a login job, DELETE a logout job (`openai-codex`, `anthropic`, `agy`); `/code` submits a pasted code, `/cancel` cancels — see [`docs/subscription-sign-in.md`](docs/subscription-sign-in.md) |
 | `/api/life-session`                         | POST          | idempotently create/restore the singleton Life channel and clear its overrides                                                                                                                                                   |
 | `/api/life-session/new`                     | POST          | promote current Life into the standard list and create a fresh empty Life singleton                                                                                                                                              |
@@ -1201,6 +1202,11 @@ Consequences worth knowing:
   switch-qwen-model skill moves qwen-mtp ↔ Strata old sessions kept calling the
   stopped engine. A warm RPC parent whose model no longer matches is retired at
   its next prompt. No piweb restart is needed after switching models.
+  Settings → 預設模型 sits above this: an ordinary session with no override
+  runs on `model.default.standard` (else `PI_MODEL`, else Pi's default), Life
+  on `model.default.life` (else its runtime probe); a chosen model the
+  worker's catalog no longer offers falls back to Pi's default
+  (`configuredModelRef` in `src/agent/channel-settings.ts`).
 - To send images to a local model, `qwen-mtp` must be the one running. It is
   `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
   standalone `llama-server` on 8001.

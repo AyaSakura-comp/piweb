@@ -52,6 +52,7 @@ import {
 import {
   buildThinkingAdjustmentMessage,
   computeEffectiveChannelSettings,
+  configuredModelRef,
   getDesiredThinkingLevel,
   type EffectiveChannelSettings,
 } from '../agent/channel-settings.js';
@@ -236,7 +237,7 @@ async function cmdNew(
     assertChannelHasNoActiveOperations(channel.jid);
     resetHarnessContext(
       getChannel(channel.jid)!,
-      harnessForModel(channel.modelOverride || config.piModel || ''),
+      harnessForModel(configuredModelRef(channel)),
     );
     // Kill only after ownership and cross-worker activity checks, while the
     // transaction prevents another worker from claiming the next Claude turn.
@@ -409,7 +410,7 @@ async function cmdModelSet(
 
   assertOwnership?.();
 
-  noteHarnessSelection(channel, harnessForModel(channel.modelOverride || config.piModel || ''));
+  noteHarnessSelection(channel, harnessForModel(configuredModelRef(channel)));
   const thinkingResolution = mutateOwnedChannel(channel, () => {
     setChannelModelOverride(channel.jid, selectedModel.ref);
     const updated = getChannel(channel.jid)!;
@@ -448,7 +449,7 @@ async function cmdModelReset(
   assertOwnership?.();
   const notes = ['Model reset to the gateway default.'];
 
-  noteHarnessSelection(channel, harnessForModel(channel.modelOverride || config.piModel || ''));
+  noteHarnessSelection(channel, harnessForModel(configuredModelRef(channel)));
   mutateOwnedChannel(channel, () => {
     clearChannelModelOverride(channel.jid);
     const updated = getChannel(channel.jid)!;
