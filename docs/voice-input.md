@@ -120,7 +120,9 @@ As on the Komorebi IME page: while voice input is on, a finger stroked
 **sideways** across the box's text circles the words it crosses (whole words,
 `Intl.Segmenter`), with no long press. Up and down still scrolls the box. The circle is the
 quote selection's bubble (`selection-bubble.js`, in a fixed `.voice-lasso-layer`
-over the box) and a 刪除／取消 pill (`.selection-actions`, above the words).
+over the box) and a 刪除／取消 pill (`.selection-actions`, above the words, and
+above any control it would cover: the hot keyword chips sit right over the box,
+and a pill on them took the tap meant for a chip, iPhone 2026-11-01).
 
 - Letting go sends the span (`Dictation.select(start, end)` →
   `komorebi.selection.set`). The **next sentence replaces it**: with 整理草稿 on

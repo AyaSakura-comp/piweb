@@ -667,11 +667,42 @@ export function createVoiceIme({
     if (ui.actions.hidden) return;
     const box = range.getBoundingClientRect();
     const view = doc.defaultView;
-    const half = ui.actions.offsetWidth / 2 + 8;
-    ui.actions.style.left = `${Math.min(view.innerWidth - half, Math.max(half, box.left + box.width / 2))}px`;
-    // Above the words: the box sits at the bottom of the screen.
-    const above = box.top - ui.actions.offsetHeight - 12;
-    ui.actions.style.top = `${above > 56 ? above : box.bottom + 12}px`;
+    const width = ui.actions.offsetWidth;
+    const height = ui.actions.offsetHeight;
+    const half = width / 2 + 8;
+    const center = Math.min(view.innerWidth - half, Math.max(half, box.left + box.width / 2));
+    ui.actions.style.left = `${center}px`;
+    // Above the words: the box sits at the bottom of the screen. Right above
+    // the box are the hot keyword chips (and BTW), and a pill over them took
+    // the tap meant for a chip: 刪除 landed on 'deploy' (iPhone, 2026-11-01).
+    // So it climbs above any control it would cover.
+    let top = box.top - height - 12;
+    for (let i = 0; i < 4 && top > 56; i++) {
+      const covered = coveredControlTop(ui.actions, center - width / 2, top, width, height);
+      if (covered == null) break;
+      top = covered - height - 8;
+    }
+    ui.actions.style.top = `${top > 56 ? top : box.bottom + 12}px`;
+  }
+
+  const CONTROLS = 'button, a[href], input, select, textarea, summary, label, [role="button"]';
+
+  /** The top of the highest control a pill at this rect would cover, or null. */
+  function coveredControlTop(pill, left, top, width, height) {
+    if (!doc.elementsFromPoint) return null;
+    let highest = null;
+    for (const fx of [0.04, 0.5, 0.96]) {
+      for (const fy of [0.08, 0.5, 0.92]) {
+        for (const el of doc.elementsFromPoint(left + width * fx, top + height * fy)) {
+          const control = el.closest?.(CONTROLS);
+          if (!control || control === target || pill.contains(control)) continue;
+          const rect = control.getBoundingClientRect();
+          if (!rect.width || !rect.height) continue;
+          highest = highest == null ? rect.top : Math.min(highest, rect.top);
+        }
+      }
+    }
+    return highest;
   }
 
   function finishLasso() {

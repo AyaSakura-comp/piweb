@@ -651,6 +651,55 @@ test('a sideways stroke circles words in the box; the next sentence replaces the
   expect(errors).toEqual([]);
 });
 
+// Right above the box sit the hot keyword chips. The pill used to sit 12px
+// above the words, on top of them, and a tap meant for 'deploy' hit 刪除
+// (iPhone recording, 2026-11-01). It now climbs above any control it covers.
+test('the 刪除／取消 pill never covers the hot keyword chips', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await fakeKomorebi(page, ['npu 部署']);
+  await mockApi(page);
+  await page.route('**/media/piweb-shared/hot-keywords.json', (route) =>
+    route.fulfill({
+      json: { items: ['deploy', 'npu', 'push', 'merge', 'piweb', 'prefill'].map((word, i) => ({ word, count: 9 - i })) },
+    }),
+  );
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const chips = page.locator('#hot-keywords button');
+  await expect(chips).toHaveCount(6);
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('npu 部署');
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+
+  await stroke(page, await charPoint(page, 0), await charPoint(page, 2));
+  const actions = page.locator('.voice-lasso-actions');
+  await expect(actions).toBeVisible();
+  await page.waitForTimeout(700); // the pop settles
+  const pill = (await actions.boundingBox())!;
+  for (const chip of await chips.all()) {
+    const box = (await chip.boundingBox())!;
+    const overlaps =
+      pill.x < box.x + box.width && box.x < pill.x + pill.width && pill.y < box.y + box.height && box.y < pill.y + pill.height;
+    expect(overlaps, `pill over ${await chip.textContent()}`).toBe(false);
+  }
+  const row = (await page.locator('#hot-keywords').boundingBox())!;
+  expect(pill.y + pill.height).toBeLessThanOrEqual(row.y);
+  expect(pill.y).toBeGreaterThan(56);
+  await page.screenshot({ path: info.outputPath('pill-above-chips.png') });
+  await page.evaluate(() => (document.documentElement.dataset.theme = 'light'));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: info.outputPath('pill-above-chips-light.png') });
+
+  // The chip under where the pill used to be is a chip again.
+  await chips.first().tap();
+  await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+  await expect(input).not.toHaveValue('部署');
+  expect(errors).toEqual([]);
+});
+
 /** Where character `index` of a box's text is drawn, measured on a copy of the box. */
 async function boxCharPoint(box: Locator, index: number) {
   return box.evaluate((el: HTMLTextAreaElement, i) => {
