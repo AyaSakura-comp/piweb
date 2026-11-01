@@ -14,6 +14,9 @@ export function createSubagentsView({ api, getParent, buildEventNode }) {
   back.type = 'button';
   back.setAttribute('aria-label', 'Back to subagents');
   const title = make('h2', '', 'Subagents');
+  // Opening focuses the title, not the close button (no ring on iOS).
+  title.tabIndex = -1;
+  title.autofocus = true;
   const count = make('span', 'subagents-count');
   const heading = make('div', 'subagents-heading');
   heading.append(title, count);

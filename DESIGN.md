@@ -21,6 +21,13 @@ Subagents uses the inherited system font, a 20px/650-weight heading, 15px card
 names and 12–13px metadata. Use 16px horizontal content spacing, 12px card gaps
 and visible keyboard focus. Header buttons are at least 44×44px.
 
+A page opened with `showModal()` (Settings, Subagents, 背景命令, 圖片標註)
+focuses its title (`<h2 tabindex="-1" autofocus>`, no outline), never its back
+or close button: iOS Safari draws its focus ring round whatever button
+`showModal()` focuses, so opening Settings by touch boxed the back button
+(iPhone, 2026-11-01). Tab from the title reaches the controls, which keep
+their focus ring.
+
 ## Viewer layout
 
 - Mobile (below 768px; primary test viewport 390×844): Subagents occupies the
@@ -524,7 +531,8 @@ moving the page, reduced motion and the desktop card fade.
 
 Settings → Subscriptions has one card each for ChatGPT Plus / Pro (device code),
 Claude Pro / Max and Antigravity (open a link, paste the code back). The card's
-single action reads Connect, Cancel or Disconnect; status sits on its first line
+single action reads Connect, Cancel or Disconnect, a borderless accent text button
+(transparent, hover fill, 44px tall, like Recently deleted's Select); status sits on its first line
 and errors show under the code field in the error colour, never as a toast. The
 code or link panel scrolls into view when it opens.
 

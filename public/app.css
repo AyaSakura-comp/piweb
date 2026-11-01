@@ -3573,6 +3573,12 @@ html.keyboard-shell .life-edge-hint {
   font-weight: 650;
 }
 
+/* A page's title takes the focus when it opens (autofocus, tabindex -1), so
+   iOS does not ring the back or close button; Tab goes on to the controls. */
+dialog h2[tabindex='-1']:focus {
+  outline: none;
+}
+
 .settings-scroll {
   flex: 1;
   min-height: 0;
@@ -3797,11 +3803,16 @@ html.keyboard-shell .life-edge-hint {
 .subscription-action {
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
-  background: var(--bg-input);
-  color: var(--text-bright);
-  font-weight: 600;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.subscription-action:hover,
+.subscription-action:active {
+  background: var(--bg-hover);
 }
 
 .subscription-action:disabled {

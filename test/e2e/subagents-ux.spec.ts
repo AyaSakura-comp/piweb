@@ -71,6 +71,8 @@ test('Subagents readable cards, stable polling, animated navigation and reduced 
   await page.locator('#btn-more').click();
   await page.locator('#mi-subagents').click();
   const dialog = page.getByRole('dialog', { name: 'Subagents' });
+  // The title takes the focus, so iOS rings no button as the page opens.
+  await expect(dialog.getByRole('heading', { name: 'Subagents' })).toBeFocused();
   await expect(dialog.locator('.subagents-count')).toHaveText('12');
   const rows = dialog.locator('.subagent-row');
   await expect(rows).toHaveCount(12);

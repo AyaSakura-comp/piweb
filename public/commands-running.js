@@ -26,6 +26,9 @@ export function createCommandsRunningView({ api, getParent }) {
   heading.className = 'subagents-heading';
   const title = document.createElement('h2');
   title.textContent = '背景命令';
+  // Opening focuses the title, not the close button (no ring on iOS).
+  title.tabIndex = -1;
+  title.autofocus = true;
   const closeButton = document.createElement('button');
   closeButton.textContent = '×';
   closeButton.setAttribute('aria-label', '關閉背景命令');

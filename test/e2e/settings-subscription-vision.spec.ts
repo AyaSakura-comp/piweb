@@ -249,3 +249,56 @@ test('mobile Settings and OpenAI device-code workflow remains visually usable', 
   expect(consoleErrors).toEqual([]);
   expect(failedRequests).toEqual([]);
 });
+
+// iPhone 2026-11-01: opening Settings put Safari's focus ring round the back
+// button (showModal focuses the first button), and Disconnect was a boxed,
+// filled button. Opening by touch rings nothing; actions are borderless.
+for (const theme of ['dark', 'light'] as const) {
+  test(`Settings opens with no ring round a button and borderless actions (${theme})`, async ({
+    page,
+  }, testInfo) => {
+    const fixture = await installApi(page);
+    await page.addInitScript((value) => localStorage.setItem('piweb.theme', value), theme);
+    fixture.completeLogin();
+    await page.goto('/');
+    await expect(page.locator('#session-name')).toHaveText(SESSION.name);
+
+    await page.locator('#btn-menu').tap();
+    await expect(page.locator('#drawer')).toHaveClass(/open/);
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: 'Settings', exact: true }).tap();
+    const dialog = page.locator('#settings-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).not.toHaveAttribute('data-motion', /.+/);
+    await expect(page.locator('#subscription-action')).toHaveText('Disconnect');
+
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      const style = el ? getComputedStyle(el) : null;
+      return {
+        id: el?.id,
+        button: el instanceof HTMLButtonElement,
+        outline: style ? style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0 : false,
+      };
+    });
+    expect(focused).toEqual({ id: 'settings-title', button: false, outline: false });
+
+    const action = page.locator('#subscription-action');
+    const box = await action.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        border: style.borderTopWidth,
+        background: style.backgroundColor,
+      };
+    });
+    expect(box).toEqual({ border: '0px', background: 'rgba(0, 0, 0, 0)' });
+    await expectReachable(action);
+    await page.screenshot({ path: testInfo.outputPath(`settings-open-${theme}.png`) });
+    await page.locator('#subscription-agy').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`settings-subscriptions-${theme}.png`) });
+
+    // The keyboard still sees where it is: Tab from the title rings a row.
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#btn-trash')).toBeFocused();
+  });
+}

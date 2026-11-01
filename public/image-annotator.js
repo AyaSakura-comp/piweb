@@ -8,7 +8,7 @@ export function createImageAnnotator({ onConfirm, onError }) {
       <button type="button" class="icon-btn" data-action="cancel" aria-label="取消" title="取消標註">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
-      <h2 id="annotation-title">圖片標註</h2>
+      <h2 id="annotation-title" tabindex="-1" autofocus>圖片標註</h2>
       <button type="button" data-action="confirm" class="icon-btn annotation-confirm" aria-label="確定加入附件" title="確定加入附件" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
       </button>
