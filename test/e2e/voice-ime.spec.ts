@@ -193,7 +193,7 @@ test('the mic button streams speech into the chat composer, keeps the keyboard a
   await expect(composer).toHaveClass(/voice-listening/);
   await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
   expect(server.sessions[0]).toMatchObject({
-    audio: { input: { transcription: { model: 'komorebi-smart-cpu-e2b' } } },
+    audio: { input: { transcription: { model: 'komorebi-tea-cpu-e2b' } } },
     komorebi: { refine: 'cpu-e2b' },
   });
 

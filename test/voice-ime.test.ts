@@ -22,13 +22,13 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe('voice input settings', () => {
-  it('defaults to the Komorebi server and its Gemma 4 E2B on the CPU', () => {
+  it('defaults to the Komorebi server, TEA for the sentences and its Gemma 4 E2B on the CPU', () => {
     const settings = readVoiceSettings(memoryStorage());
     expect(settings).toEqual(DEFAULT_VOICE_SETTINGS);
     expect(dictationOptions(settings)).toEqual({
       url: 'wss://komorebi.crayfish-monitor.ts.net/v1/realtime',
       processing: true,
-      model: 'komorebi-smart-cpu-e2b',
+      model: 'komorebi-tea-cpu-e2b',
       refine: 'cpu-e2b',
     });
   });
@@ -44,7 +44,7 @@ describe('voice input settings', () => {
     expect(dictationOptions(settings)).toEqual({
       url: 'wss://voice.example/v1/realtime',
       processing: true,
-      model: 'komorebi-smart',
+      model: 'komorebi-tea',
       refine: { provider: 'openai', base_url: 'https://api.example/v1', model: 'tidy', api_key: 'k' },
     });
   });
@@ -54,7 +54,7 @@ describe('voice input settings', () => {
     saveVoiceSettings({ ...DEFAULT_VOICE_SETTINGS, tidy: false }, storage);
     const settings = readVoiceSettings(storage);
     expect(settings.tidy).toBe(false);
-    expect(dictationOptions(settings)).toMatchObject({ model: 'komorebi-smart-cpu-e2b', refine: false });
+    expect(dictationOptions(settings)).toMatchObject({ model: 'komorebi-tea-cpu-e2b', refine: false });
     // Off wins over a custom clean-up API too; on by default.
     expect(
       dictationOptions({ ...settings, refineUrl: 'https://api.example/v1' }).refine,

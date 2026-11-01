@@ -119,18 +119,23 @@ export function saveVoiceSettings(settings, storage = globalThis.localStorage) {
   }
 }
 
-/** The Dictation model and refine options for these settings. */
+/**
+ * The Dictation model and refine options for these settings. Finished sentences are recognized
+ * by TEA-ASR (`komorebi-tea*`, as on the Komorebi IME page since 2026-11-01: about half
+ * SenseVoice's errors on Taiwanese speech, ~0.4 s more a sentence); the live text while
+ * speaking still comes from SenseVoice.
+ */
 export function dictationOptions(settings) {
   const url = settings.url || DEFAULT_VOICE_SETTINGS.url;
   const processing = settings.callAudio !== false;
   if (settings.tidy === false) {
-    return { url, processing, model: settings.refineUrl ? 'komorebi-smart' : 'komorebi-smart-cpu-e2b', refine: false };
+    return { url, processing, model: settings.refineUrl ? 'komorebi-tea' : 'komorebi-tea-cpu-e2b', refine: false };
   }
-  if (!settings.refineUrl) return { url, processing, model: 'komorebi-smart-cpu-e2b', refine: 'cpu-e2b' };
+  if (!settings.refineUrl) return { url, processing, model: 'komorebi-tea-cpu-e2b', refine: 'cpu-e2b' };
   return {
     url,
     processing,
-    model: 'komorebi-smart',
+    model: 'komorebi-tea',
     refine: {
       provider: 'openai',
       base_url: settings.refineUrl,

@@ -74,7 +74,7 @@ Komorebi directly.
 - **Komorebi's services** (2026-10-31). The user: 「怎麼講都沒有用」, as if
   switching voice input on had not started the service behind it. Komorebi
   (`app/backends.py`, its commit `46d49cd`) now checks the speech recognizer
-  (SenseVoice) and the clean-up model (Gemma E2B on the CPU) each session uses
+  (TEA since 2026-11-01, SenseVoice before) and the clean-up model (Gemma E2B on the CPU) each session uses
   when the session starts, starts a systemd unit that is down, and sends
   `komorebi.backends` (`{state, backends: [{role: asr|refine, name, state,
   reason}]}`). The box reads 語音服務啟動中… while the recognizer starts (the
@@ -197,12 +197,18 @@ stop so iOS does not ask for permission again.
 
 Per browser (`localStorage` `piweb.voiceIme.settings`; `tidy` added 2026-10-26, `callAudio` 2026-10-27):
 
+The recognizer is not a setting: finished sentences are recognized by **TEA-ASR-1.1-mini**
+(`komorebi-tea*`; 2026-11-01, the user: 「Piweb 也一起調整」 after Komorebi's IME page made it the
+default). On Taiwanese speech it makes about half SenseVoice's errors and takes ~0.4 s more a
+sentence; the live text while speaking still comes from SenseVoice. When the host cannot start
+TEA (memory), the box says 語音辨識無法啟動（…）.
+
 | field | default | meaning |
 |---|---|---|
 | 語音伺服器 | `wss://komorebi.crayfish-monitor.ts.net/v1/realtime` | the Komorebi realtime endpoint |
 | 整理草稿 (switch) | on | off = the SDK's `refine: false` (the Komorebi IME page's 整理全文 switch): sentences go in as heard, nothing is rewritten, fastest and unaffected by a busy host; the clean-up API fields grey out. `setRefine` applies it from the next sentence |
 | 通話模式收音 (switch) | on | the SDK's `processing`: the browser's echo cancellation, noise suppression and auto gain (`getUserMedia`). On an iPhone that is the voice processing used for calls; off records the microphone as is and leaves the cleaning to Komorebi's DeepFilterNet 3. A change reopens the microphone |
-| 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the CPU** (`model: komorebi-smart-cpu-e2b`, `refine: 'cpu-e2b'`); a URL = any OpenAI-compatible API (`refine: {provider: 'openai', base_url, model, api_key}`) |
+| 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the CPU** (`model: komorebi-tea-cpu-e2b`, `refine: 'cpu-e2b'`); a URL = any OpenAI-compatible API (`model: komorebi-tea`, `refine: {provider: 'openai', base_url, model, api_key}`) |
 | 模型 / API key | — | shown only with a custom URL |
 
 A change applies at once: a new server reconnects, a new clean-up model applies
