@@ -825,17 +825,18 @@ html.keyboard-shell .life-edge-hint {
 .host-metric { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; }
 .host-metric strong { font-size: 12px; font-weight: 500; color: var(--text-bright); white-space: nowrap; }
 .metrics-interval {
-  width: 76px;
+  width: 56px;
   min-height: 44px;
-  border: 1px solid var(--bg-dark);
-  border-radius: 8px;
-  padding: 8px;
-  background: var(--bg-input);
-  color: var(--text-bright);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
   font: inherit;
   font-size: 16px;
+  text-align: right;
+  outline: none;
 }
-.metrics-interval:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.metrics-interval:focus { color: var(--text-bright); }
 
 .drawer-title {
   font-weight: 700;
@@ -3599,8 +3600,7 @@ dialog h2[tabindex='-1']:focus {
   text-transform: uppercase;
 }
 
-.settings-group,
-.subscription-card {
+.settings-group {
   overflow: hidden;
   background: var(--bg-alt);
   border: 1px solid var(--border);
@@ -3655,11 +3655,11 @@ dialog h2[tabindex='-1']:focus {
 }
 
 .settings-select {
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
-  padding: 6px 10px;
-  background: var(--bg-input);
-  color: var(--text-bright);
+  padding: 6px 0;
+  background: transparent;
+  color: var(--text-dim);
   font: inherit;
   font-size: 14px;
   outline: none;
@@ -3673,35 +3673,49 @@ dialog h2[tabindex='-1']:focus {
   opacity: 0.45;
 }
 
-/* A text setting too long for the row's end (URLs): label above, full width. */
+/* A text setting too long for the row's end (URLs): icon and label on the
+   first line, the value as a second line under the label, no box of its own
+   (the whole row is the tap target). */
 .settings-row.settings-field {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
 }
 
 .settings-input {
+  grid-column: 2;
   width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--bg-input);
-  color: var(--text-bright);
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
   font: inherit;
-  font-size: 16px;
+  font-size: 16px; /* < 16px makes iOS zoom on focus */
+  line-height: 1.35;
   outline: none;
+  text-overflow: ellipsis;
 }
 
-.settings-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.settings-input:focus {
+  color: var(--text-bright);
 }
 
-.settings-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.settings-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
 }
+
+/* Values are plain text at the row's end or under its label, like
+   Appearance's, never a box inside the group. Editing shows on the row (a ring
+   round a boxless value reads as a stray frame); the caret and brighter text
+   mark the field itself. */
+label.settings-row:focus-within {
+  background: var(--bg-hover);
+}
+
 
 .settings-chevron {
   color: var(--text-dim);
@@ -3764,24 +3778,29 @@ dialog h2[tabindex='-1']:focus {
   color: #f28b8d;
 }
 
+/* Subscriptions are rows of one group, like General: the provider's glyph
+   where a row's icon goes, the name over its status, the action at the end. */
+.subscription-card + .subscription-card {
+  border-top: 1px solid var(--border);
+}
+
 .subscription-summary {
-  min-height: 72px;
+  min-height: 54px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 8px 14px;
 }
 
 .subscription-logo {
-  width: 38px;
-  height: 38px;
+  width: 22px;
+  height: 22px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: var(--bg-input);
-  color: var(--text-bright);
-  font-size: 26px;
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
 }
 
 .subscription-summary > div:nth-child(2) {
@@ -3794,15 +3813,22 @@ dialog h2[tabindex='-1']:focus {
   display: block;
 }
 
+.subscription-summary strong {
+  color: var(--text);
+  font-weight: 400;
+}
+
 .subscription-summary span {
-  margin-top: 3px;
+  margin-top: 1px;
   color: var(--text-dim);
   font-size: 12px;
 }
 
 .subscription-action {
   min-height: 44px;
-  padding: 0 12px;
+  /* The text lines up with the row's end, as a value or chevron does. */
+  margin-right: -8px;
+  padding: 0 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -3810,9 +3836,23 @@ dialog h2[tabindex='-1']:focus {
   font-weight: 650;
 }
 
-.subscription-action:hover,
-.subscription-action:active {
+/* Sign-in actions are borderless accent text (Connect, Open, Submit) and the
+   device code is plain large text, tapped to copy. Hover fill only where a
+   pointer hovers: iOS keeps :hover on the last tapped button. */
+.subscription-action:active,
+.subscription-open:active,
+.subscription-code-submit:active,
+.device-code:active {
   background: var(--bg-hover);
+}
+
+@media (hover: hover) {
+  .subscription-action:hover,
+  .subscription-open:hover,
+  .subscription-code-submit:hover,
+  .device-code:hover {
+    background: var(--bg-hover);
+  }
 }
 
 .subscription-action:disabled {
@@ -3836,9 +3876,9 @@ dialog h2[tabindex='-1']:focus {
   display: block;
   width: 100%;
   padding: 12px;
-  border: 1px dashed var(--accent);
+  border: 0;
   border-radius: 9px;
-  background: var(--bg-input);
+  background: transparent;
   color: var(--text-bright);
   font: 700 24px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.09em;
@@ -3848,12 +3888,11 @@ dialog h2[tabindex='-1']:focus {
   display: grid;
   place-items: center;
   min-height: 44px;
-  margin-top: 12px;
+  margin-top: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 650;
   text-decoration: none;
-}
-
-.subscription-card + .subscription-card {
-  margin-top: 10px;
 }
 
 .subscription-logo-claude {
@@ -3891,6 +3930,9 @@ dialog h2[tabindex='-1']:focus {
 .subscription-code-submit {
   flex: none;
   min-height: 44px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .subscription-code-submit:disabled {

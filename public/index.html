@@ -701,6 +701,7 @@
             <h3 id="settings-monitor-title">主機監控</h3>
             <div class="settings-group">
               <label class="settings-row" for="metrics-interval">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg></span>
                 <span class="settings-row-label">數字更新間隔（秒）</span>
                 <input class="metrics-interval" id="metrics-interval" type="number" min="1" max="60" step="1" value="1" inputmode="numeric" aria-describedby="metrics-help">
               </label>
@@ -710,58 +711,60 @@
 
           <section class="settings-section" aria-labelledby="settings-subscriptions-title">
             <h3 id="settings-subscriptions-title">Pi agent subscriptions</h3>
-            <div class="subscription-card" id="subscription-openai">
-              <div class="subscription-summary">
-                <div class="subscription-logo" aria-hidden="true">◎</div>
-                <div>
-                  <strong>OpenAI Codex</strong>
-                  <span id="subscription-status">Checking…</span>
+            <div class="settings-group subscription-group">
+              <div class="subscription-card" id="subscription-openai">
+                <div class="subscription-summary">
+                  <div class="subscription-logo" aria-hidden="true">◎</div>
+                  <div>
+                    <strong>OpenAI Codex</strong>
+                    <span id="subscription-status">Checking…</span>
+                  </div>
+                  <button class="subscription-action" id="subscription-action" type="button">Connect</button>
                 </div>
-                <button class="subscription-action" id="subscription-action" type="button">Connect</button>
-              </div>
-              <div class="subscription-device" id="subscription-device" hidden>
-                <p>Enter this one-time code on OpenAI. Piweb will keep checking until sign-in finishes.</p>
-                <button class="device-code" id="subscription-device-code" type="button" aria-label="Copy device code"></button>
-                <a class="btn-primary subscription-open" id="subscription-verification-link" target="_blank" rel="noopener noreferrer">Open OpenAI</a>
-                <span class="subscription-progress" id="subscription-progress" aria-live="polite">Waiting for authorization…</span>
-              </div>
-            </div>
-            <div class="subscription-card" id="subscription-anthropic">
-              <div class="subscription-summary">
-                <div class="subscription-logo subscription-logo-claude" aria-hidden="true">✳</div>
-                <div>
-                  <strong>Claude</strong>
-                  <span id="subscription-anthropic-status">Checking…</span>
+                <div class="subscription-device" id="subscription-device" hidden>
+                  <p>Enter this one-time code on OpenAI. Piweb will keep checking until sign-in finishes.</p>
+                  <button class="device-code" id="subscription-device-code" type="button" aria-label="Copy device code"></button>
+                  <a class="btn-primary subscription-open" id="subscription-verification-link" target="_blank" rel="noopener noreferrer">Open OpenAI</a>
+                  <span class="subscription-progress" id="subscription-progress" aria-live="polite">Waiting for authorization…</span>
                 </div>
-                <button class="subscription-action" id="subscription-anthropic-action" type="button">Connect</button>
               </div>
-              <div class="subscription-device" id="subscription-anthropic-auth" hidden>
-                <p>Open Claude and approve. Claude then shows a code — copy it and paste it below.</p>
-                <a class="btn-primary subscription-open" id="subscription-anthropic-link" target="_blank" rel="noopener noreferrer">Open Claude</a>
-                <form class="subscription-code-form" id="subscription-anthropic-code-form">
-                  <input class="subscription-code-input" id="subscription-anthropic-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code" aria-label="Claude authorization code">
-                  <button class="btn-primary subscription-code-submit" id="subscription-anthropic-submit" type="submit">Submit</button>
-                </form>
-                <span class="subscription-progress" id="subscription-anthropic-progress" aria-live="polite">Waiting for authorization code…</span>
-              </div>
-            </div>
-            <div class="subscription-card" id="subscription-agy">
-              <div class="subscription-summary">
-                <div class="subscription-logo subscription-logo-agy" aria-hidden="true">▲</div>
-                <div>
-                  <strong>Antigravity (agy)</strong>
-                  <span id="subscription-agy-status">Checking…</span>
+              <div class="subscription-card" id="subscription-anthropic">
+                <div class="subscription-summary">
+                  <div class="subscription-logo subscription-logo-claude" aria-hidden="true">✳</div>
+                  <div>
+                    <strong>Claude</strong>
+                    <span id="subscription-anthropic-status">Checking…</span>
+                  </div>
+                  <button class="subscription-action" id="subscription-anthropic-action" type="button">Connect</button>
                 </div>
-                <button class="subscription-action" id="subscription-agy-action" type="button">Connect</button>
+                <div class="subscription-device" id="subscription-anthropic-auth" hidden>
+                  <p>Open Claude and approve. Claude then shows a code — copy it and paste it below.</p>
+                  <a class="btn-primary subscription-open" id="subscription-anthropic-link" target="_blank" rel="noopener noreferrer">Open Claude</a>
+                  <form class="subscription-code-form" id="subscription-anthropic-code-form">
+                    <input class="subscription-code-input" id="subscription-anthropic-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code" aria-label="Claude authorization code">
+                    <button class="btn-primary subscription-code-submit" id="subscription-anthropic-submit" type="submit">Submit</button>
+                  </form>
+                  <span class="subscription-progress" id="subscription-anthropic-progress" aria-live="polite">Waiting for authorization code…</span>
+                </div>
               </div>
-              <div class="subscription-device" id="subscription-agy-auth" hidden>
-                <p>Open Google and approve. Antigravity then shows a code — copy it and paste it below.</p>
-                <a class="btn-primary subscription-open" id="subscription-agy-link" target="_blank" rel="noopener noreferrer">Open Google</a>
-                <form class="subscription-code-form" id="subscription-agy-code-form">
-                  <input class="subscription-code-input" id="subscription-agy-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code" aria-label="Antigravity authorization code">
-                  <button class="btn-primary subscription-code-submit" id="subscription-agy-submit" type="submit">Submit</button>
-                </form>
-                <span class="subscription-progress" id="subscription-agy-progress" aria-live="polite">Waiting for authorization code…</span>
+              <div class="subscription-card" id="subscription-agy">
+                <div class="subscription-summary">
+                  <div class="subscription-logo subscription-logo-agy" aria-hidden="true">▲</div>
+                  <div>
+                    <strong>Antigravity (agy)</strong>
+                    <span id="subscription-agy-status">Checking…</span>
+                  </div>
+                  <button class="subscription-action" id="subscription-agy-action" type="button">Connect</button>
+                </div>
+                <div class="subscription-device" id="subscription-agy-auth" hidden>
+                  <p>Open Google and approve. Antigravity then shows a code — copy it and paste it below.</p>
+                  <a class="btn-primary subscription-open" id="subscription-agy-link" target="_blank" rel="noopener noreferrer">Open Google</a>
+                  <form class="subscription-code-form" id="subscription-agy-code-form">
+                    <input class="subscription-code-input" id="subscription-agy-code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste code" aria-label="Antigravity authorization code">
+                    <button class="btn-primary subscription-code-submit" id="subscription-agy-submit" type="submit">Submit</button>
+                  </form>
+                  <span class="subscription-progress" id="subscription-agy-progress" aria-live="polite">Waiting for authorization code…</span>
+                </div>
               </div>
             </div>
             <p class="settings-footnote">Credentials are stored on the host — by Pi, and by the agy CLI for Antigravity. Piweb only displays the temporary device code or sign-in link, and passes the pasted code straight on.</p>
@@ -771,26 +774,32 @@
             <h3 id="settings-voice-title">語音輸入（Komorebi）</h3>
             <div class="settings-group">
               <label class="settings-row settings-field" for="voice-url">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3" /></svg></span>
                 <span class="settings-row-label">語音伺服器</span>
                 <input class="settings-input" id="voice-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="wss://komorebi.crayfish-monitor.ts.net/v1/realtime">
               </label>
               <button class="settings-row" id="btn-voice-tidy" type="button" role="switch" aria-checked="true" aria-label="整理草稿，開啟" aria-describedby="voice-help">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l9-9M17 3v2M17 9v2M13 7h2M19 7h2" /></svg></span>
                 <span class="settings-row-label">整理草稿</span>
                 <span class="settings-toggle" data-state="on" aria-hidden="true"></span>
               </button>
               <button class="settings-row" id="btn-voice-call-audio" type="button" role="switch" aria-checked="true" aria-label="通話模式收音，開啟" aria-describedby="voice-help">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 0 0 6 6L16 13l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2z" /></svg></span>
                 <span class="settings-row-label">通話模式收音</span>
                 <span class="settings-toggle" data-state="on" aria-hidden="true"></span>
               </button>
               <label class="settings-row settings-field" for="voice-refine-url">
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg></span>
                 <span class="settings-row-label">整理草稿用的 API URL</span>
                 <input class="settings-input" id="voice-refine-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="留空：Gemma 4 E2B（CPU）" aria-describedby="voice-help">
               </label>
               <label class="settings-row settings-field" for="voice-refine-model" id="voice-refine-model-row" hidden>
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3zM4 7.5l8 4.5 8-4.5M12 12v9" /></svg></span>
                 <span class="settings-row-label">模型</span>
                 <input class="settings-input" id="voice-refine-model" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="例如 gpt-4.1-mini">
               </label>
               <label class="settings-row settings-field" for="voice-refine-key" id="voice-refine-key-row" hidden>
+                <span class="settings-row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M16 7l3 3" /></svg></span>
                 <span class="settings-row-label">API key</span>
                 <input class="settings-input" id="voice-refine-key" type="password" autocomplete="off" placeholder="不需要就留空">
               </label>

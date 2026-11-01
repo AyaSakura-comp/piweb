@@ -296,6 +296,19 @@ for (const theme of ['dark', 'light'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`settings-open-${theme}.png`) });
     await page.locator('#subscription-agy').scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`settings-subscriptions-${theme}.png`) });
+    // Subscriptions and 語音輸入 are rows of one group each, as General is.
+    const rows = await page.evaluate(() =>
+      ['#subscription-openai', '#subscription-agy', '#btn-trash', '#btn-voice-tidy'].map((id) => {
+        const row = document.querySelector(id)!;
+        const group = row.closest('.settings-group')!;
+        const icon = row.querySelector('.subscription-logo, .settings-row-icon')!.getBoundingClientRect();
+        return { grouped: Boolean(group), iconLeft: Math.round(icon.left), iconWidth: icon.width };
+      }),
+    );
+    expect(new Set(rows.map((row) => JSON.stringify(row))).size).toBe(1);
+    expect(rows[0]).toMatchObject({ grouped: true, iconWidth: 22 });
+    await page.locator('#btn-voice-call-audio').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`settings-voice-${theme}.png`) });
 
     // The keyboard still sees where it is: Tab from the title rings a row.
     await page.keyboard.press('Tab');

@@ -200,9 +200,8 @@ something to show. Status goes in the placeholder (語音輸入開啟中… / �
 可說話，整理模型啟動中 / 說話即可輸入… / 點一下畫面開始收音… / 語音輸入：<error> /
 語音辨識無法啟動（<reason>）), never a toast; it stays on one line, and a phone shows
 about 11 characters of it, so what matters comes first and the mic's title has the rest.
-A recognizer that cannot start turns the mic `--danger` like an error. Settings → 語音輸入（Komorebi） uses stacked
-rows (label above a full-width 16px input, `.settings-field`) for the server and
-clean-up API URLs. A 整理草稿 switch (the standard `.settings-toggle`, on by default)
+A recognizer that cannot start turns the mic `--danger` like an error. Settings → 語音輸入（Komorebi） gives the server and
+clean-up API URLs two-line rows (`.settings-field`, see "Settings layout"). A 整理草稿 switch (the standard `.settings-toggle`, on by default)
 turns the clean-up off; while off the clean-up API rows are disabled at 45%
 opacity. A 通話模式收音 switch (same toggle, on by default) turns the browser's
 call-style mic processing off. While voice input is on, a sideways finger
@@ -473,6 +472,25 @@ slim header change. Keyboard/screen-reader users get the same actions as touch.
   same flick rule as Subagents (≥60px, ≥0.5px/ms, 180ms projection, velocity
   expires after 100ms). Reduced motion skips automatic animation.
 
+## Settings layout
+
+Every Settings section is one `.settings-group` (rounded `--bg-alt` card,
+`--border` lines between rows), never a stack of separate cards. A row is
+54px+: a 22px `--text-dim` outline icon, the label, and at the end a value, a
+switch, a chevron or one borderless accent text action. Values are plain
+`--text-dim` text (Appearance's Dark mode, the 熱門關鍵字 select, the refresh seconds),
+never a box inside the group. A URL too long for the row's end goes on a second
+line under the label (`.settings-field`: 16px, `--text-dim`, no border). Tapping
+the row edits the value and the row takes the `--bg-hover` fill while it does.
+Subscriptions are rows too: the provider glyph in the icon's place, the name
+over its 12px status, Connect/Cancel/Disconnect at the end; the sign-in panel
+opens inside the group under its row. Its actions (Open …, Submit) are
+borderless accent text and the device code is large plain monospace text; only
+the paste field keeps a box, being something to type into. Hover fills apply
+under `@media (hover: hover)` only, since iOS keeps `:hover` on the last
+tapped button. iPhone, 2026-11-01: separate bordered cards with boxed logos, a
+boxed URL input inside a row, and a filled Disconnect were called ugly.
+
 ## Settings motion
 
 Settings (`#settings-dialog`) is a pushed page on a phone and a centred card
@@ -532,7 +550,8 @@ moving the page, reduced motion and the desktop card fade.
 Settings → Subscriptions has one card each for ChatGPT Plus / Pro (device code),
 Claude Pro / Max and Antigravity (open a link, paste the code back). The card's
 single action reads Connect, Cancel or Disconnect, a borderless accent text button
-(transparent, hover fill, 44px tall, like Recently deleted's Select); status sits on its first line
+(transparent, hover fill, 44px tall, like Recently deleted's Select; see "Settings
+layout" for the rows); status sits under the name
 and errors show under the code field in the error colour, never as a toast. The
 code or link panel scrolls into view when it opens.
 
