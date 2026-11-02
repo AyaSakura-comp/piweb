@@ -2961,6 +2961,31 @@ export function isPiModelRef(ref: string): boolean {
   return provider !== 'agy' && provider !== 'claude-code';
 }
 
+/** Refs of the model catalog the worker last published; [] when unreadable. */
+function publishedModelRefs(): string[] {
+  try {
+    const catalog: unknown = JSON.parse(getMeta('models') ?? '[]');
+    return Array.isArray(catalog)
+      ? catalog.flatMap((item) => (typeof item?.ref === 'string' ? [item.ref] : []))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The model a mode's sessions with no model of their own actually run on, for
+ * the web tier (badge, BTW, usage): Settings' choice while the published
+ * catalog offers it, else '' (Pi's default). The worker applies the same rule
+ * to its live catalog (modeDefaultModel in channel-settings.ts); an empty
+ * catalog (worker still starting) cannot tell, so the choice stands.
+ */
+export function effectiveModeModelDefault(kind: ChannelKind): string {
+  const ref = getModeModelDefault(kind);
+  const refs = publishedModelRefs();
+  return ref && (refs.length === 0 || refs.includes(ref)) ? ref : '';
+}
+
 /**
  * Settings' choice for one mode: '' follows Pi's default again; anything else
  * must be a model the worker currently publishes (and a Pi model for Life).
@@ -2970,13 +2995,8 @@ export function setModeModelDefault(kind: unknown, model: unknown): boolean {
   if ((kind !== 'life' && kind !== 'standard') || typeof model !== 'string') return false;
   const ref = model.trim();
   if (ref) {
-    let catalog: Array<{ ref?: unknown }> = [];
-    try {
-      catalog = JSON.parse(getMeta('models') ?? '[]');
-    } catch {
-      // Unreadable catalog: nothing can be checked, so nothing is stored.
-    }
-    if (!Array.isArray(catalog) || !catalog.some((item) => item?.ref === ref)) return false;
+    // An unreadable catalog checks nothing, so nothing is stored.
+    if (!publishedModelRefs().includes(ref)) return false;
     if (kind === 'life' && !isPiModelRef(ref)) return false;
   }
   setMeta(`model.default.${kind}`, ref);

@@ -42,7 +42,7 @@ import {
   getFirstUserMessageContent,
   getMeta,
   setMeta,
-  getModeModelDefault,
+  effectiveModeModelDefault,
   getModelDefaults,
   getThinkingDefaults,
   setModeModelDefault,
@@ -853,6 +853,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (path === '/api/sessions' && method === 'GET') {
     const modelDefaults = getModelDefaults();
+    // What the worker runs a session with no model of its own on: the default
+    // only while its catalog still offers it (else Pi's own, unknown here).
+    const standardDefault = effectiveModeModelDefault('standard');
     const sessions = listWebSessions().map((s) => {
       // The badge must track the model the session is *set to*, so picking a
       // model in the sheet is reflected immediately.
@@ -865,7 +868,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // passed the same way. With neither (following Pi's default) the session
       // file is the only honest source, so fall back to it.
       const running = getSessionModel(s.folder);
-      const configured = s.modelOverride || modelDefaults.standard;
+      const configured = s.modelOverride || standardDefault;
       const overrideProvider = providerFromRef(configured);
       const provider = overrideProvider || running?.provider || '';
       // For the Codex GPT-5.6 variants the badge is the codename (Terra/Sol/Luna),
@@ -1172,7 +1175,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // Pi sessions use pi-btw, Claude Code sessions Claude's own /btw (the
       // worker picks); AGY has none. Prefix spelled inline: the web tier must
       // not import src/agent (invariant 2).
-      const override = (channel.modelOverride || getModeModelDefault('standard'))
+      const override = (channel.modelOverride || effectiveModeModelDefault('standard'))
         .trim()
         .toLowerCase();
       if (override.startsWith('agy/')) {
@@ -1623,7 +1626,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
         const command = resolveWebUsageCommand(
           (body.command ?? '').trim(),
-          channel.modelOverride || getModeModelDefault(channel.kind ?? 'standard') || config.piModel || '',
+          channel.modelOverride || effectiveModeModelDefault(channel.kind ?? 'standard') || config.piModel || '',
           body.source,
         );
         if (

@@ -28,8 +28,8 @@ const MODELS = [
   reasoning: true,
 }));
 
-async function installApi(page: Page, theme: string, life = '') {
-  const defaults = { life, standard: '', piDefault: 'local-strata/qwen3.8-flash' };
+async function installApi(page: Page, theme: string, life = '', standard = '') {
+  const defaults = { life, standard, piDefault: 'local-strata/qwen3.8-flash' };
   const posted: unknown[] = [];
   let sessionLoads = 0;
   await page.addInitScript((value) => {
@@ -226,11 +226,19 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 test('a default model the catalog no longer offers stays visible, marked', async ({ page }) => {
-  await installApi(page, 'dark', 'local-gone/old-model');
+  await installApi(page, 'dark', 'local-gone/old-model', 'local-gone/old-model');
   await openSettings(page);
   const life = page.locator('#model-default-life');
   await expect(life).toHaveValue('local-gone/old-model');
   await expect(life.locator('option:checked')).toHaveText(
     'local-gone/old-model（目前不能用，先用 Pi 預設）',
+  );
+
+  // The session runs on Pi's default meanwhile, and its model sheet says so.
+  await page.locator('#btn-settings-close').tap();
+  await expect(page.locator('#settings-dialog')).toBeHidden();
+  await page.locator('#btn-model').tap();
+  await expect(page.locator('#model-note')).toHaveText(
+    'This session follows the default, local-strata/qwen3.8-flash.',
   );
 });

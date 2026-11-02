@@ -2480,7 +2480,7 @@ function isBtwSession(targetJid = state.activeJid) {
   // Hide only a KNOWN AGY session. Right after load the session list can
   // lag the selection; the web and worker still refuse AGY BTW requests.
   const session = state.sessions.find((item) => item.jid === targetJid);
-  const model = String(session?.model || state.modelDefaults.standard || '').trim().toLowerCase();
+  const model = String(session?.model || effectiveStandardDefault()).trim().toLowerCase();
   return !model.startsWith('agy/');
 }
 function syncBtwAvailability() {
@@ -2734,7 +2734,7 @@ function renderModelList(query) {
   const matches = state.models.filter((m) => modelMatches(m, q));
 
   // No model of its own: Settings' default for ordinary sessions, else Pi's.
-  const fallback = state.modelDefaults.standard || state.modelDefaults.piDefault;
+  const fallback = effectiveStandardDefault() || state.modelDefaults.piDefault;
   $('model-note').textContent = q
     ? `${matches.length} of ${state.models.length} models`
     : current
@@ -3019,6 +3019,17 @@ let modelDefaultsRendered = '';
 /** Life runs on Pi only: agy and Claude Code models hand the turn to another CLI. */
 function isPiModelRef(ref) {
   return !/^(agy|claude-code)\//i.test(String(ref || '').trim());
+}
+
+/**
+ * The model an ordinary session with no model of its own runs on, as the
+ * worker decides: Settings' default while the catalog offers it (an empty
+ * catalog cannot tell), else '' = Pi's default.
+ */
+function effectiveStandardDefault() {
+  const { standard } = state.modelDefaults;
+  const offered = state.models.length === 0 || state.models.some((m) => m.ref === standard);
+  return standard && offered ? standard : '';
 }
 
 function modelLabel(ref) {

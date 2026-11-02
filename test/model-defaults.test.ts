@@ -256,5 +256,18 @@ describe('default model per mode', () => {
       model: 'local-strata/qwen3.8-flash',
       provider: 'local-strata',
     });
+
+    // A default the worker's catalog no longer offers (a signed-out
+    // subscription) runs on Pi's default, so the badge stops claiming it,
+    // while Settings still shows the choice.
+    webDb.setMeta(
+      'models',
+      JSON.stringify(MODELS.filter((model) => model.provider !== 'openai-codex')),
+    );
+    const fallen = (await get('/api/sessions')).sessions.find(
+      (session: { jid: string }) => session.jid === 'web:follows',
+    );
+    expect(fallen).toMatchObject({ provider: '', runningModel: '', pending: true, badge: null });
+    expect((await get('/api/model-defaults')).defaults.standard).toBe('openai-codex/gpt-5.6-sol');
   });
 });
