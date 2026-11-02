@@ -1206,7 +1206,11 @@ Consequences worth knowing:
   runs on `model.default.standard` (else `PI_MODEL`, else Pi's default), Life
   on `model.default.life` (else its runtime probe); a chosen model the
   worker's catalog no longer offers falls back to Pi's default
-  (`configuredModelRef` in `src/agent/channel-settings.ts`).
+  (`configuredModelRef` in `src/agent/channel-settings.ts`); the web tier's
+  badge, BTW and usage routing apply the same rule to the published catalog
+  (`effectiveModeModelDefault` in `src/db.ts`), so the badge never names a
+  default the worker is not running. A worker still on older code ignores the
+  defaults entirely, so restart it (when idle) after deploying.
 - To send images to a local model, `qwen-mtp` must be the one running. It is
   `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
   standalone `llama-server` on 8001.
