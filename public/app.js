@@ -1462,11 +1462,48 @@ function activityAgo(stamp) {
   return `${then.getMonth() + 1}/${then.getDate()}`;
 }
 
+// What the rendered rows show, so the 5s poll can leave an unchanged list alone.
+let renderedSessionRows = '';
+
+function sessionRowsKey(sessions) {
+  return JSON.stringify([
+    state.activeJid,
+    rowMenuJid,
+    state.selectionPending,
+    state.renamingJid,
+    sessions.map((s) => {
+      const badge = sessionBadge(s);
+      return [s.jid, s.name, s.kind, Boolean(s.busy), Boolean(s.subagentsBusy), isUnread(s),
+        badge?.label, badge?.kind, s.runningModel || s.provider];
+    }),
+  ]);
+}
+
+/** The hover/long-press hint's "Active 5m ago": refreshed in place, no rebuild. */
+function sessionRowTitle(session) {
+  const when = activityAgo(session.lastActivity);
+  const active = when === 'now' ? 'just now' : when.includes('/') ? when : `${when} ago`;
+  return `${when ? `Active ${active} · ` : ''}Press and hold for Rename / Delete`;
+}
+
 function renderSessions(force = false) {
   const list = $('session-list');
   // The 5s session poll and busy-state updates must not replace an input while
   // someone is typing into it. The next render happens when the edit finishes.
   if (!force && state.renamingJid && list.querySelector('.session-name-edit')) return;
+  // Rebuilding every row on each 5s poll, with nothing changed, cost a dropped
+  // frame or more mid-scroll on a phone. Same rows: only the hints move on.
+  const displayed = sessionsForDisplay();
+  const key = sessionRowsKey(displayed);
+  if (!force && key === renderedSessionRows && list.childElementCount === displayed.length) {
+    for (const session of displayed) {
+      const item = list.querySelector(`.session-item[data-jid="${CSS.escape(session.jid)}"]`);
+      if (item && !state.renamingJid) item.title = sessionRowTitle(session);
+    }
+    if (typeof sessionDashboard !== 'undefined') sessionDashboard.syncSessions();
+    return;
+  }
+  renderedSessionRows = key;
   list.textContent = '';
 
   if (state.sessions.length === 0) {
@@ -1475,7 +1512,7 @@ function renderSessions(force = false) {
     return;
   }
 
-  for (const session of sessionsForDisplay()) {
+  for (const session of displayed) {
     const busy = Boolean(session.busy || session.subagentsBusy);
     const unread = !busy && isUnread(session);
     const item = el('div', 'session-item');
@@ -1535,9 +1572,7 @@ function renderSessions(force = false) {
         body.append(badge);
       }
       // Rename (and delete again) also live behind a hold or right-click.
-      const when = activityAgo(session.lastActivity);
-      const active = when === 'now' ? 'just now' : when.includes('/') ? when : `${when} ago`;
-      item.title = `${when ? `Active ${active} · ` : ''}Press and hold for Rename / Delete`;
+      item.title = sessionRowTitle(session);
       bindLongPress(
         item,
         () => {
@@ -6403,51 +6438,67 @@ document.addEventListener(
   { passive: true },
 );
 
-document.addEventListener(
-  'touchmove',
-  (e) => {
-    if (!drawerDrag) return;
-    if (e.touches.length !== 1 || e.touches[0].identifier !== drawerDrag.touchId) {
-      cancelDrawerDrag();
-      return;
-    }
-    const touch = e.touches[0];
-    const dx = touch.clientX - drawerDrag.x;
-    const dy = touch.clientY - drawerDrag.y;
+// An edge drag claims its touch (preventDefault) once it turns sideways, so a
+// table or the transcript does not move under it. That takes a non-passive
+// touchmove listener, and a browser must run every such listener before it may
+// scroll the touch: on the document it held the session list's scroll to the
+// main thread, which a streaming reply keeps busy, so the list fell short of the
+// display's 120Hz. The blocking listener therefore sits only on the views an
+// edge drag can start in (the main view, the scrim); the drawer's is passive, so
+// its list scrolls on the compositor. The drawer needs no claim: `touch-action:
+// pan-y` (app.css) already keeps a sideways drag from scrolling it.
+function onEdgeTouchMove(handler) {
+  document.querySelector('.main').addEventListener('touchmove', handler, { passive: false });
+  $('scrim').addEventListener('touchmove', handler, { passive: false });
+  $('drawer').addEventListener('touchmove', handler, { passive: true });
+}
 
-    if (!drawerDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
-      drawerDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-      // Vertical wins: it is a scroll, so bow out entirely.
-      if (drawerDrag.axis === 'y') drawerDrag = null;
-    }
-    if (!drawerDrag || drawerDrag.axis !== 'x') return;
+/** preventDefault where it is allowed: never in the drawer's passive listener. */
+function claimTouch(e) {
+  if (e.cancelable && e.currentTarget !== $('drawer')) e.preventDefault();
+}
 
-    // Only now claim the gesture, so a vertical scroll was never blocked.
-    if (e.cancelable) e.preventDefault();
+onEdgeTouchMove((e) => {
+  if (!drawerDrag) return;
+  if (e.touches.length !== 1 || e.touches[0].identifier !== drawerDrag.touchId) {
+    cancelDrawerDrag();
+    return;
+  }
+  const touch = e.touches[0];
+  const dx = touch.clientX - drawerDrag.x;
+  const dy = touch.clientY - drawerDrag.y;
 
-    if (drawerDrag.life) {
-      updateLifeBackDrag(touch.clientX);
-      return;
-    }
+  if (!drawerDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
+    drawerDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    // Vertical wins: it is a scroll, so bow out entirely.
+    if (drawerDrag.axis === 'y') drawerDrag = null;
+  }
+  if (!drawerDrag || drawerDrag.axis !== 'x') return;
 
-    const width = drawerWidth();
-    const base = drawerDrag.open ? 0 : -width;
-    const offset = Math.max(-width, Math.min(0, base + dx));
-    // Remembered rather than re-read from getComputedStyle on release: the
-    // computed value depends on a style flush having happened, so a fast burst
-    // of events can report the stale CSS position and drop the gesture.
-    drawerDrag.offset = offset;
-    const drawer = $('drawer');
-    drawer.style.transition = 'none';
-    drawer.style.transform = `translateX(${offset}px)`;
+  // Only now claim the gesture, so a vertical scroll was never blocked.
+  claimTouch(e);
 
-    const scrim = $('scrim');
-    scrim.hidden = false;
-    scrim.style.transition = 'none';
-    scrim.style.opacity = String((offset + width) / width);
-  },
-  { passive: false },
-);
+  if (drawerDrag.life) {
+    updateLifeBackDrag(touch.clientX);
+    return;
+  }
+
+  const width = drawerWidth();
+  const base = drawerDrag.open ? 0 : -width;
+  const offset = Math.max(-width, Math.min(0, base + dx));
+  // Remembered rather than re-read from getComputedStyle on release: the
+  // computed value depends on a style flush having happened, so a fast burst
+  // of events can report the stale CSS position and drop the gesture.
+  drawerDrag.offset = offset;
+  const drawer = $('drawer');
+  drawer.style.transition = 'none';
+  drawer.style.transform = `translateX(${offset}px)`;
+
+  const scrim = $('scrim');
+  scrim.hidden = false;
+  scrim.style.transition = 'none';
+  scrim.style.opacity = String((offset + width) / width);
+});
 
 function updateLifeBackDrag(clientX) {
   if (!drawerDrag?.life) return;
@@ -6705,55 +6756,51 @@ document.addEventListener(
   { passive: true },
 );
 
-document.addEventListener(
-  'touchmove',
-  (e) => {
-    if (!lifeDrag || e.touches.length !== 1) return;
-    const touch = e.touches[0];
-    const dx = touch.clientX - lifeDrag.x;
-    const dy = touch.clientY - lifeDrag.y;
-    if (!lifeDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
-      lifeDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-      if (lifeDrag.axis === 'y' && !lifeDrag.forwardVerticalScroll) {
-        lifeDrag = null;
-        return;
-      }
-    }
-    if (!lifeDrag) return;
-    if (lifeDrag.axis === 'y') {
-      // The fixed button is not a descendant of the transcript scroller, so
-      // native touch panning cannot discover it. Forward only the locked
-      // vertical gesture; horizontal motion continues through Life physics.
-      if (e.cancelable) e.preventDefault();
-      $('messages').scrollTop = lifeDrag.initialScrollTop - dy;
+onEdgeTouchMove((e) => {
+  if (!lifeDrag || e.touches.length !== 1) return;
+  const touch = e.touches[0];
+  const dx = touch.clientX - lifeDrag.x;
+  const dy = touch.clientY - lifeDrag.y;
+  if (!lifeDrag.axis && Math.hypot(dx, dy) > DRAWER_AXIS_LOCK_PX) {
+    lifeDrag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (lifeDrag.axis === 'y' && !lifeDrag.forwardVerticalScroll) {
+      lifeDrag = null;
       return;
     }
-    if (lifeDrag.axis !== 'x') return;
-    if (e.cancelable) e.preventDefault();
+  }
+  if (!lifeDrag) return;
+  if (lifeDrag.axis === 'y') {
+    // The fixed button is not a descendant of the transcript scroller, so
+    // native touch panning cannot discover it. Forward only the locked
+    // vertical gesture; horizontal motion continues through Life physics.
+    claimTouch(e);
+    $('messages').scrollTop = lifeDrag.initialScrollTop - dy;
+    return;
+  }
+  if (lifeDrag.axis !== 'x') return;
+  claimTouch(e);
 
-    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-    lifeDrag.distance = Math.max(0, Math.min(viewportWidth, -dx));
-    const now = performance.now();
-    const elapsed = now - lifeDrag.lastTime;
-    if (elapsed > 0) {
-      const distanceDelta = lifeDrag.distance - lifeDrag.lastDistance;
-      const instantaneous = Math.max(-3, Math.min(3, distanceDelta / elapsed));
-      lifeDrag.velocity = lifeDrag.velocity * 0.35 + instantaneous * 0.65;
-      if (distanceDelta < 0) {
-        lifeDrag.reversed = true;
-        lifeDrag.forwardDistanceSinceReverse = 0;
-      } else if (distanceDelta > 0) {
-        lifeDrag.forwardDistanceSinceReverse += distanceDelta;
-      }
-      if (distanceDelta !== 0) lifeDrag.lastDirection = Math.sign(distanceDelta);
-      lifeDrag.lastDistance = lifeDrag.distance;
-      lifeDrag.lastTime = now;
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  lifeDrag.distance = Math.max(0, Math.min(viewportWidth, -dx));
+  const now = performance.now();
+  const elapsed = now - lifeDrag.lastTime;
+  if (elapsed > 0) {
+    const distanceDelta = lifeDrag.distance - lifeDrag.lastDistance;
+    const instantaneous = Math.max(-3, Math.min(3, distanceDelta / elapsed));
+    lifeDrag.velocity = lifeDrag.velocity * 0.35 + instantaneous * 0.65;
+    if (distanceDelta < 0) {
+      lifeDrag.reversed = true;
+      lifeDrag.forwardDistanceSinceReverse = 0;
+    } else if (distanceDelta > 0) {
+      lifeDrag.forwardDistanceSinceReverse += distanceDelta;
     }
-    showLifeUnderlay('life');
-    setLifePageOffset(-lifeDrag.distance);
-  },
-  { passive: false },
-);
+    if (distanceDelta !== 0) lifeDrag.lastDirection = Math.sign(distanceDelta);
+    lifeDrag.lastDistance = lifeDrag.distance;
+    lifeDrag.lastTime = now;
+  }
+  showLifeUnderlay('life');
+  setLifePageOffset(-lifeDrag.distance);
+});
 
 async function settleLifeDrag(drag, shouldEnter, viewportWidth) {
   const generation = ++lifePreviewGeneration;

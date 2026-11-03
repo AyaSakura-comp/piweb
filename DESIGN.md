@@ -369,6 +369,25 @@ the table; a finger catching a glide; a pinch past 6×; reduced motion; frames
 in both themes). Headless Chromium draws at 60Hz, so the 120Hz rate itself is
 not measured there.
 
+## Scrolling at the display's rate
+
+Every list and transcript scrolls on the browser's compositor, at the screen's
+own rate (120Hz on ProMotion), whatever the main thread is doing. So no
+non-passive `touchstart`, `touchmove` or `wheel` listener goes on `window`,
+`document`, `body` or anything above a scroller that does not need it: a
+browser must run such a listener before it may scroll the touch, and a
+streaming reply keeps the main thread busy. A gesture that must claim its touch
+(`preventDefault`) listens on the element the touch starts in (a touch's moves
+go there): the edge drags on `.main` and the scrim, the text selection on its
+transcript and handles. The drawer's listener is passive and its sideways drag
+needs no claim, as it has `touch-action: pan-y pinch-zoom`. A periodic refresh
+leaves unchanged rows alone: the 5s session poll rebuilds the list only when
+what it shows changed, and otherwise only refreshes the rows' hints. The user
+reported "Session list scroll has no 120fps" (2026-11-03): six window listeners
+from the text selection and two document ones from the edge drags held the
+list. `test/e2e/session-list-scroll.spec.ts` checks the listeners, the
+gestures and the poll.
+
 ## Full-screen reading
 
 A tap on the chat's transcript gives the conversation the whole screen

@@ -675,7 +675,10 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     }, { passive: false });
 
     const targetWindow = window || document.defaultView || document;
-    targetWindow?.addEventListener?.('touchmove', (e) => {
+    // On the handle, not the window: a touch's moves go to the element it
+    // started on, so nothing is lost, and a blocking listener on the window
+    // would hold every scroll on the page (the session list's too) for script.
+    handleEl.addEventListener('touchmove', (e) => {
       if (touchId === null || !dragAnchor) return;
       const touch = [...e.touches].find((t) => t.identifier === touchId);
       if (!touch) return;
@@ -745,7 +748,10 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     selection.removeAllRanges();
   });
   const globalTarget = window || document.defaultView || document;
-  globalTarget?.addEventListener?.('touchmove', onTouchMove, { passive: false });
+  // A long press starts in `root`, and a touch's moves go to the element it
+  // started on, so `root` sees them all. On the window this blocking listener
+  // made every scroll on the page (the session list's too) wait for script.
+  root.addEventListener('touchmove', onTouchMove, { passive: false });
   globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: false });
   globalTarget?.addEventListener?.('touchcancel', onTouchEnd, { passive: true });
 

@@ -956,7 +956,11 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   after standard selection began, re-enter Life with a newer navigation generation
   before handoff—hiding the preview alone does not cancel that standard request.
   Both gestures track the finger, lock their axis after 8px, and abandon a vertical lock before
-  calling `preventDefault`, so transcript scrolling is never stolen. Life's
+  calling `preventDefault`, so transcript scrolling is never stolen. Their
+  blocking `touchmove` listeners sit on `.main` and the scrim (`onEdgeTouchMove`),
+  never the document: a non-passive touch listener on `window`/`document` holds
+  every scroll on the page, the session list's included, for the main thread
+  (DESIGN.md "Scrolling at the display's rate"). Life's
   left-edge back drag follows the finger, commits after 22%, and requires the
   release direction to remain rightward; shallow drags ease home, while committed
   drags and the Sessions button settle right over a Sessions underlay before the

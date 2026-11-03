@@ -697,6 +697,10 @@ html.keyboard-shell .life-edge-hint {
   transform: translateX(-100%);
   transition: transform 0.18s ease;
   padding-top: env(safe-area-inset-top);
+  /* Its list scrolls up and down only; a sideways drag is the drawer's own
+     (pushing it back), so the browser never starts a scroll for it and the
+     drag needs no blocking touch listener (app.js onEdgeTouchMove). */
+  touch-action: pan-y pinch-zoom;
 }
 
 .drawer.open {
@@ -2999,6 +3003,7 @@ html.keyboard-shell .life-edge-hint {
   .drawer {
     position: relative;
     transform: none;
+    touch-action: auto;
     width: 260px;
     max-width: none;
     border-right: 1px solid var(--bg-dark);

@@ -320,8 +320,11 @@ describe('transcript text selection', () => {
 
     expect(onSelection).toHaveBeenLastCalledWith('first', expect.anything(), root);
 
-    // Drag finger forward to offset 22 ("first line\nsecond line")
-    globalListeners.get('touchmove')?.({
+    // Drag finger forward to offset 22 ("first line\nsecond line"). The moves
+    // go to where the touch started, so `root` listens, not the window (a
+    // blocking window listener held every scroll on the page for script).
+    expect(globalListeners.has('touchmove')).toBe(false);
+    rootListeners.get('touchmove')?.({
       touches: [{ identifier: 1, clientX: 22, clientY: 45 }],
       cancelable: true,
       preventDefault: vi.fn(),
