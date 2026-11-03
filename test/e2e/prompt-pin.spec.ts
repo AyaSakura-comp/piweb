@@ -323,3 +323,104 @@ test('a dashboard pane, holding only the newest page, looks up the prompt of a t
   await page.waitForTimeout(300);
   expect(befores.filter((value) => value === '151')).toHaveLength(1);
 });
+
+/** A finger held on the middle of `locator` for `ms`, then lifted. */
+async function hold(page: import('playwright').Page, locator: import('playwright').Locator, ms = 800) {
+  const box = (await locator.boundingBox())!;
+  const touch = await page.context().newCDPSession(page);
+  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+  await page.waitForTimeout(ms);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+}
+
+/** The prompt row's top against the transcript's top edge, and whether it flashes. */
+const promptRow = (page: import('playwright').Page, prompt: string) =>
+  page.locator('#messages .msg.msg-user').evaluateAll((rows, text) => {
+    const row = rows.find((node) => (node as HTMLElement).dataset.prompt === text)!;
+    const top = document.getElementById('messages')!.getBoundingClientRect().top;
+    return { offset: row.getBoundingClientRect().top - top, flashing: row.classList.contains('jump-target') };
+  }, prompt);
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`a long press on the folded pin jumps back to its prompt (${theme})`, async ({ page }, info) => {
+    await page.addInitScript((value) => localStorage.setItem('piweb.theme', value), theme);
+    routes(page);
+    await page.goto('/');
+    await expect(page.getByText('First question about the build')).toBeVisible();
+    await scrollTo(page, 0.9);
+    const pin = page.locator('#prompt-pin');
+    await expect(pin).toHaveText('Second question: why is the cache cold?');
+    await expect(pin).toHaveAttribute('aria-description', '長按跳到這則提問');
+
+    await hold(page, pin);
+    // Its own row, at the top edge where the turn began, flashed like a
+    // search hit; the hold neither expands the bar nor leaves it covering the row.
+    const jumped = await promptRow(page, prompts[1]);
+    expect(Math.abs(jumped.offset)).toBeLessThan(1);
+    expect(jumped.flashing).toBe(true);
+    await expect(pin).toHaveAttribute('aria-expanded', 'false');
+    await expect.poll(() => pin.evaluate((node) => (node as HTMLElement).inert)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`prompt-pin-jumped-${theme}.png`) });
+
+    // A tap still expands; expanded, a hold is left to selecting the text.
+    await scrollTo(page, 0.9);
+    await expect(pin).toBeVisible();
+    await pin.tap();
+    await expect(pin).toHaveAttribute('aria-expanded', 'true');
+    const before = await page.locator('#messages').evaluate((node) => node.scrollTop);
+    await page.waitForTimeout(2300); // the first jump's flash is over
+    await hold(page, pin.locator('.prompt-pin-text'));
+    expect(await page.locator('#messages').evaluate((node) => node.scrollTop)).toBe(before);
+    expect((await promptRow(page, prompts[1])).flashing).toBe(false);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).toBe(true);
+  });
+}
+
+test('a long press on a pin from an older, unloaded page loads the page around its prompt', async ({ page }) => {
+  const tools = Array.from({ length: 30 }, (_, i) => ({
+    id: 100 + i,
+    kind: 'message',
+    role: 'assistant',
+    content: `Tool loop step ${i + 1}\n\n${longReply.slice(0, 200)}`,
+    files: [],
+    createdAt: '2026-01-01T00:00:02Z',
+  }));
+  const older = [
+    { id: 10, kind: 'message', role: 'user', content: 'Old prompt\nsecond line', files: [], createdAt: '2026-01-01T00:00:00Z' },
+    { id: 11, kind: 'message', role: 'assistant', content: 'early reply', files: [], createdAt: '2026-01-01T00:00:01Z' },
+    { id: 12, kind: 'message', role: 'user', content: 'Long tool loop prompt\nwith detail', files: [], createdAt: '2026-01-01T00:00:01Z' },
+    { id: 13, kind: 'message', role: 'user', content: '/pi model openai-codex/gpt-6-luna', files: [], createdAt: '2026-01-01T00:00:02Z' },
+  ];
+  const arounds: string[] = [];
+  routes(page);
+  await page.route('**/api/sessions/*/events**', async (route) => {
+    const url = new URL(route.request().url());
+    const around = url.searchParams.get('around');
+    if (around) {
+      arounds.push(around);
+      return route.fulfill({
+        json: { events: [...older, ...tools.slice(0, 20)], busy: false, hasMore: false, hasMoreNewer: true, session },
+      });
+    }
+    if (url.searchParams.get('before'))
+      return route.fulfill({ json: { events: older, hasMore: false, session } });
+    return route.fulfill({ json: { events: tools, busy: false, hasMore: true, session } });
+  });
+  await page.goto('/');
+  await expect(page.getByText('Tool loop step 30')).toBeVisible();
+  await page.locator('#messages').evaluate((node) => {
+    node.scrollTop = node.scrollHeight - node.clientHeight - 300;
+  });
+  const pin = page.locator('#prompt-pin');
+  await expect(pin).toHaveText('Long tool loop prompt');
+
+  await hold(page, pin);
+  await expect.poll(() => arounds).toEqual(['12']);
+  await expect.poll(async () => (await promptRow(page, older[2].content)).flashing).toBe(true);
+  expect(Math.abs((await promptRow(page, older[2].content)).offset)).toBeLessThan(1);
+  await expect(pin).toHaveAttribute('aria-expanded', 'false');
+  // The previous prompt's pin is pushed fully out by the row, not left as a sliver.
+  await expect.poll(() => pin.evaluate((node) => (node as HTMLElement).inert)).toBe(true);
+});

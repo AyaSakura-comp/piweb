@@ -440,6 +440,13 @@ the top of the transcript, directly under the header (`public/prompt-pin.js`).
   The bar is a `role="button"` div (Enter/Space too), not a `<button>`, because
   iOS does not scroll content inside a native button. Reaching another turn's
   prompt folds it again.
+- **Long press** (folded): jumps back to where the turn began. The prompt's
+  own row is scrolled to the top edge (rounded up, so no sliver of the pin is
+  left over it, the same rounding as a just-sent prompt) and flashes like a
+  search hit (`jump-target`). A prompt on an older page that is not loaded is
+  loaded around first (`/events?around=`, its row at the top). The click a
+  hold ends with is swallowed, so it does not also expand. Expanded, a hold
+  on the prompt's text selects it (to copy) instead.
 - Pressed, the translucent `--bg-hover` tint is layered over `--bg`, never in
   place of it, so the transcript cannot show through a held bar. The clip sits
   on its own compositing layer (`translateZ(0)`) for iOS momentum scrolling.

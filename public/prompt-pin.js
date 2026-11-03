@@ -1,6 +1,7 @@
 // Pins the prompt of the turn being read to the top of the transcript once it
 // has scrolled away. Collapsed it shows only its first line; a tap expands the
-// whole prompt in place, and another tap folds it again.
+// whole prompt in place, and another tap folds it again. A long press on the
+// folded bar jumps back to that prompt's own row, at the top of the transcript.
 //
 // It behaves like a sticky section header: the next prompt's own row pushes the
 // pinned bar up and out as it reaches the top, and its own bar slides down in
@@ -8,11 +9,21 @@
 //
 // A long tool loop can push its prompt onto an older page that is not loaded.
 // `getEarlier()` then names that boundary ({ key, load }) and `load()` fetches
-// the latest prompt before it, once per boundary.
+// the latest prompt before it, once per boundary, as { prompt, id }; a long
+// press then asks `jumpToEvent(id)` to load the page around it.
 // A slash command (`/claude-usage`, typed or from a header button) is stored as
 // a user message too, but it is not the prompt of the turn around it;
 // `isCommand(text)` says which user messages are such command echoes.
-export function createPromptPin({ scroller, getEarlier = () => null, isCommand = () => false }) {
+import { bindLongPress } from './session-ui.js';
+
+const JUMP_FLASH_MS = 2200;
+
+export function createPromptPin({
+  scroller,
+  getEarlier = () => null,
+  isCommand = () => false,
+  jumpToEvent = () => {},
+}) {
   // A div, not a <button>: the expanded prompt scrolls inside it, and iOS does
   // not scroll content inside a native button.
   const bar = document.createElement('div');
@@ -37,6 +48,7 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   scroller.before(clip);
 
   let current = null;
+  let currentEventId = 0;
   let prompt = '';
   let expanded = false;
   let frame = 0;
@@ -48,6 +60,7 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     bar.classList.toggle('expanded', next);
     bar.setAttribute('aria-expanded', String(next));
     bar.setAttribute('aria-label', next ? '收合目前的提問' : '展開目前的提問');
+    bar.setAttribute('aria-description', next ? '' : '長按跳到這則提問');
     // Folded shows the first non-empty line only; expanded, the whole prompt.
     text.textContent = next ? prompt : prompt.split('\n').find((line) => line.trim()) || '';
   }
@@ -78,22 +91,29 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
 
   /** Prompt (and identity) of the turn being read, or null when unknown yet. */
   function resolve(row) {
-    if (row) return { id: row, prompt: row.dataset.prompt?.trim() || '' };
+    if (row) return { id: row, eventId: 0, prompt: row.dataset.prompt?.trim() || '' };
     const boundary = getEarlier();
     if (!boundary) return null;
     let entry = earlier.get(boundary.key);
     if (!entry) {
-      entry = { prompt: null };
+      entry = { prompt: null, eventId: 0 };
       earlier.set(boundary.key, entry);
       Promise.resolve()
         .then(boundary.load)
         .then(
-          (prompt) => (entry.prompt = typeof prompt === 'string' ? prompt.trim() : ''),
+          (found) => {
+            // A plain string is a prompt with nowhere to jump (a dashboard pane).
+            const text = typeof found === 'string' ? found : found?.prompt;
+            entry.prompt = typeof text === 'string' ? text.trim() : '';
+            entry.eventId = Number(found?.id) || 0;
+          },
           () => earlier.delete(boundary.key),
         )
         .finally(schedule);
     }
-    return entry.prompt == null ? null : { id: boundary.key, prompt: entry.prompt };
+    return entry.prompt == null
+      ? null
+      : { id: boundary.key, eventId: entry.eventId, prompt: entry.prompt };
   }
 
   function update() {
@@ -104,9 +124,11 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
     const next = found?.prompt || '';
     if (!row || !next) {
       current = null;
+      currentEventId = 0;
       clip.hidden = true;
       return;
     }
+    currentEventId = found.eventId;
     if (row !== current || next !== prompt) {
       current = row;
       prompt = next;
@@ -149,6 +171,29 @@ export function createPromptPin({ scroller, getEarlier = () => null, isCommand =
   scroller.addEventListener('toggle', schedule, true);
   new ResizeObserver(schedule).observe(scroller);
   document.fonts?.addEventListener?.('loadingdone', schedule);
+  /**
+   * Back to where the turn began: the prompt's own row at the top edge,
+   * flashed like a search hit. One on an unloaded page is loaded around first.
+   */
+  function jump() {
+    if (current instanceof Element) {
+      if (!current.isConnected) return;
+      // Rounded up, as a just-sent prompt is placed: a row edge a fraction
+      // below the top edge would leave a sliver of the pin over it.
+      scroller.scrollTop += Math.ceil(
+        current.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+      );
+      current.classList.remove('jump-target');
+      void current.offsetWidth; // restart the flash on a second press
+      current.classList.add('jump-target');
+      const row = current;
+      setTimeout(() => row.classList.remove('jump-target'), JUMP_FLASH_MS);
+    } else if (currentEventId) {
+      jumpToEvent(currentEventId);
+    }
+  }
+  // Expanded, a hold on the prompt's text selects it (to copy) instead.
+  bindLongPress(bar, jump, { shouldStart: () => !expanded });
   bar.addEventListener('click', () => setExpanded(!expanded));
   bar.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;

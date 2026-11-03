@@ -2036,7 +2036,7 @@ function highlight(container, text, q) {
 }
 
 /** Load a window centred on an event, scroll to it and flash it. */
-async function jumpTo(id) {
+async function jumpTo(id, { block = 'center' } = {}) {
   if (state.selectionPending || !state.activeJid) return;
   const selection = sessionSelectionGeneration;
   const jid = state.activeJid;
@@ -2070,7 +2070,13 @@ async function jumpTo(id) {
 
   const target = nodes.get(id);
   if (target) {
-    target.scrollIntoView({ block: 'center' });
+    // At the top edge, rounded up as the pinned prompt places a row: a
+    // fraction below would leave a sliver of the pin over it.
+    if (block === 'start') {
+      messages.scrollTop += Math.ceil(
+        target.getBoundingClientRect().top - messages.getBoundingClientRect().top,
+      );
+    } else target.scrollIntoView({ block });
     target.classList.add('jump-target');
     setTimeout(() => target.classList.remove('jump-target'), 2200);
   }
@@ -2269,6 +2275,8 @@ function isCommandEchoText(text) {
 createPromptPin({
   scroller: $('messages'),
   isCommand: isCommandEchoText,
+  // A long press on a prompt that is not loaded: its page, prompt at the top.
+  jumpToEvent: (id) => jumpTo(id, { block: 'start' }),
   // The turn being read began before the oldest loaded page: find its prompt.
   getEarlier: () => {
     if (!state.activeJid || state.selectionPending || !state.hasMore || !state.oldest) return null;
@@ -2288,11 +2296,11 @@ createPromptPin({
           const prompt = events.findLast(
             (event) => event.kind === 'message' && event.role === 'user' && !isCommandEchoText(event.content),
           );
-          if (prompt) return prompt.content || '';
+          if (prompt) return { prompt: prompt.content || '', id: prompt.id };
           if (!hasMore || !events.length) break;
           before = Math.min(...events.map((event) => event.id));
         }
-        return '';
+        return { prompt: '', id: 0 };
       },
     };
   },
