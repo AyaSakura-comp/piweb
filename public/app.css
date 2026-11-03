@@ -3470,6 +3470,12 @@ html.keyboard-shell .life-edge-hint {
   padding: 12px;
 }
 
+/* A table is a sheet, not a dark figure: one surface, the bar above it divided
+   by a hairline rather than a grey band. */
+.mermaid-modal[data-kind='table'] .mm-modal-head {
+  background: var(--bg-alt);
+}
+
 .table-viewer-sheet {
   white-space: normal;
 }
@@ -3478,24 +3484,68 @@ html.keyboard-shell .life-edge-hint {
 .msg-text.table-viewer-sheet td {
   white-space: normal;
   overflow-wrap: normal;
+  padding: 9px 10px;
+  line-height: 1.45;
 }
 
+/* There a value may wrap, so one long command does not starve the other
+   columns. */
+.msg-text.table-viewer-sheet td code {
+  white-space: normal;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* In the viewer the sheet lifts off the card a little. */
+.msg-text.table-viewer-sheet table {
+  background: var(--bg);
+}
+
+/* A rounded frame with hairline rows and no column rules: the gaps between
+   columns separate them, as in a native list. The header sits on a faint tint
+   in a quieter voice, so the rows read first. */
 .msg-text table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .msg-text th,
 .msg-text td {
-  border: 1px solid var(--border);
-  padding: 5px 9px;
+  padding: 7px 12px;
   text-align: left;
+  vertical-align: top;
   white-space: nowrap;
 }
 
+.msg-text td {
+  border-top: 1px solid var(--border);
+}
+
 .msg-text th {
-  background: var(--bg-alt);
-  color: var(--text-bright);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+/* The tinted header follows the frame's rounded corners. */
+.msg-text thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--radius) - 1px);
+}
+
+.msg-text thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--radius) - 1px);
+}
+
+/* A command or value in a cell stays in one piece (no break after a hyphen). */
+.msg-text td code {
+  white-space: nowrap;
+  font-size: 12.5px;
 }
 
 /* ── math ────────────────────────────────────────────────────────────── */
@@ -5797,7 +5847,7 @@ dialog.sheet::backdrop {
 }
 
 :root[data-theme='light'] .mermaid-modal[data-kind='table'] .mm-modal-head {
-  background: var(--bg-dark);
+  background: var(--bg-alt);
   border-color: var(--border);
 }
 

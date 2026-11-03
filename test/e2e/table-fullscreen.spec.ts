@@ -101,6 +101,24 @@ for (const theme of ['light', 'dark'] as const) {
       expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(32);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    // A sheet, not a grid (DESIGN.md "Tables"): a rounded frame, rules between
+    // rows only, the bar above it in the card's own colour.
+    const look = await page.evaluate(() => {
+      const table = document.querySelector('#mermaid-modal table')!;
+      const cell = table.querySelector('tbody tr:nth-child(2) td:nth-child(2)')!;
+      const css = (n: Element) => getComputedStyle(n);
+      return {
+        radius: parseFloat(css(table).borderTopLeftRadius),
+        left: parseFloat(css(cell).borderLeftWidth),
+        top: parseFloat(css(cell).borderTopWidth),
+        head: css(document.querySelector('#mermaid-modal .mm-modal-head')!).backgroundColor,
+        card: css(document.querySelector('#mermaid-modal .mm-modal-content')!).backgroundColor,
+      };
+    });
+    expect(look.radius).toBeGreaterThan(0);
+    expect(look.left).toBe(0);
+    expect(look.top).toBe(1);
+    expect(look.head).toBe(look.card);
     await page.screenshot({ path: info.outputPath(`table-full-screen-${theme}.png`) });
 
     await viewer(page).getByRole('button', { name: 'Close' }).tap();

@@ -283,7 +283,15 @@ component/state ownership, the live-to-final workflow, buffering and evidence li
 ## Tables
 
 A reply's table keeps its in-transcript form (13.5px, cells on one line,
-scrolling sideways inside `.table-wrap`). A tap on it opens it full screen in
+scrolling sideways inside `.table-wrap`). It is drawn as a sheet, not a grid:
+a rounded frame (`--radius`, 1px `--border`), hairline rules between rows and
+none between columns (12px cell padding keeps them apart), tabular figures,
+and a header row on a faint tint (5% of `--text`) in a quieter 12.5px
+`--text-2`, so the rows read first. A command in a cell stays in one piece
+(no break after its hyphen). The full-screen copy sits on `--bg` above the
+card, with roomier rows (9px/10px, line height 1.45); there a value may wrap
+so one long command does not starve the other columns, and the bar above it
+is the card's own colour with a hairline, not a grey band. A tap on it opens it full screen in
 the same pan/zoom viewer as Mermaid (`openTableViewer()` in
 `public/markdown.js`): a copy, first shrunk to the viewer's width so every
 column is in view (never below half size; a wider table pans), placed at its
