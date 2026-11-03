@@ -783,7 +783,14 @@ export function createVoiceIme({
         stroke = null;
         return;
       }
-      if (lasso) dropLasso();
+      if (lasso) {
+        // The old circle goes, not this stroke: dropLasso() clears `stroke`, and
+        // without it the pill came up for the empty range below and this
+        // stroke threw (iPhone, 2026-11-03).
+        const current = stroke;
+        dropLasso();
+        stroke = current;
+      }
       lasso = { start: 0, end: 0, text: '', item: null }; // draws the layer to measure
       decorate();
       const anchor = charAtPoint(stroke.x, stroke.y);

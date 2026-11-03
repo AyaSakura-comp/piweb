@@ -845,6 +845,57 @@ test('刪除 takes the circled words out; 取消 and a tap put the circle away',
   await expect(input).toBeFocused({ timeout: 100 }).catch(() => {}); // focus is not required
 });
 
+// 2026-11-03, an iPhone recording: with 不知道 circled, a second stroke across
+// the box dropped the circle, then left the 刪除／取消 pill up with nothing
+// circled, slid to the left edge, popping again at every touch. Starting the
+// new circle put the old one away and the stroke with it (dropLasso cleared
+// `stroke`), so the pill showed for an empty range and the stroke threw.
+test('a new stroke over circled words circles the new words, not an empty pill', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const server = await fakeKomorebi(page, ['明天下午三點開會。']);
+  await mockApi(page);
+  await page.addInitScript(() => localStorage.setItem('piweb.mode', 'sessions'));
+  await page.goto('/');
+  await expect(page.locator('#session-name')).toHaveText('Voice');
+  const input = page.locator('#input');
+  await page.locator('#composer .voice-ime-btn').click();
+  await expect(input).toHaveValue('明天下午三點開會。');
+  await expect(page.locator('#composer .voice-mirror .voice-preedit')).toHaveCount(0);
+  const actions = page.locator('.voice-lasso-actions');
+
+  await stroke(page, await charPoint(page, 2), await charPoint(page, 3));
+  await expect.poll(() => server.selections.at(-1)?.text).toBe('下午');
+  await expect(actions).toBeVisible();
+
+  // Again, over other words, while 下午 is circled.
+  const pillChanges = () => page.evaluate(() => (window as any).__pillShown);
+  await actions.evaluate((el) => {
+    (window as any).__pillShown = 0;
+    new MutationObserver(() => !el.hidden && (window as any).__pillShown++).observe(el, {
+      attributes: true,
+      attributeFilter: ['hidden'],
+    });
+  });
+  const three = await charPoint(page, 4);
+  await stroke(page, three, await charPoint(page, 5));
+  await expect.poll(() => server.selections.at(-1)).toEqual({ before: '明天下午', text: '三點', after: '開會。' });
+  await expect(actions).toBeVisible();
+  await expect(page.locator('.voice-lasso-layer .sel-bubble')).toHaveCount(1);
+  // The pill came back once, for 三點, not while the finger was still circling.
+  expect(await pillChanges()).toBe(1);
+  await page.waitForTimeout(700); // the pop and the bubble settle
+  const pill = (await actions.boundingBox())!;
+  expect(Math.abs(pill.x + pill.width / 2 - three.x)).toBeLessThan(40);
+  await page.screenshot({ path: info.outputPath('lasso-recircle.png') });
+
+  // And the new circle still works: 刪除 takes 三點 out.
+  await actions.getByRole('button', { name: '刪除' }).click();
+  await expect(input).toHaveValue('明天下午開會。');
+  await expect(actions).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
 test('a finger on 刪除 / 取消 acts even when the browser withholds the click', async ({ page }) => {
   // iOS Safari can withhold the click after a tap; the iPad's 刪除 / 取消 often
   // did nothing (2026-10-27). Here every click is swallowed.
