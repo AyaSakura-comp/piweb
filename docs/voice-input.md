@@ -74,7 +74,7 @@ Komorebi directly.
 - **Komorebi's services** (2026-10-31). The user: 「怎麼講都沒有用」, as if
   switching voice input on had not started the service behind it. Komorebi
   (`app/backends.py`, its commit `46d49cd`) now checks the speech recognizer
-  (TEA since 2026-11-01, SenseVoice before) and the clean-up model (Gemma E2B on the CPU) each session uses
+  (TEA since 2026-11-01, SenseVoice before) and the clean-up model (Gemma E2B on the NPU; the CPU until 2026-11-03) each session uses
   when the session starts, starts a systemd unit that is down, and sends
   `komorebi.backends` (`{state, backends: [{role: asr|refine, name, state,
   reason}]}`). The box reads 語音服務啟動中… while the recognizer starts (the
@@ -210,7 +210,7 @@ TEA (memory), the box says 語音辨識無法啟動（…）.
 | 語音伺服器 | `wss://komorebi.crayfish-monitor.ts.net/v1/realtime` | the Komorebi realtime endpoint |
 | 整理草稿 (switch) | on | off = the SDK's `refine: false` (the Komorebi IME page's 整理全文 switch): sentences go in as heard, nothing is rewritten, fastest and unaffected by a busy host; the clean-up API fields grey out. `setRefine` applies it from the next sentence |
 | 通話模式收音 (switch) | on | the SDK's `processing`: the browser's echo cancellation, noise suppression and auto gain (`getUserMedia`). On an iPhone that is the voice processing used for calls; off records the microphone as is and leaves the cleaning to Komorebi's DeepFilterNet 3. A change reopens the microphone |
-| 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the CPU** (`model: komorebi-tea-cpu-e2b`, `refine: 'cpu-e2b'`); a URL = any OpenAI-compatible API (`model: komorebi-tea`, `refine: {provider: 'openai', base_url, model, api_key}`) |
+| 整理草稿用的 API URL | empty | empty = Komorebi's **Gemma 4 E2B on the NPU** (`model: komorebi-tea-npu-e2b`, `refine: 'npu-e2b'`; the CPU E2B was turned off 2026-11-03); a URL = any OpenAI-compatible API (`model: komorebi-tea`, `refine: {provider: 'openai', base_url, model, api_key}`) |
 | 模型 / API key | — | shown only with a custom URL |
 
 A change applies at once: a new server reconnects, a new clean-up model applies

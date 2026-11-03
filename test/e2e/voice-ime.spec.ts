@@ -193,8 +193,8 @@ test('the mic button streams speech into the chat composer, keeps the keyboard a
   await expect(composer).toHaveClass(/voice-listening/);
   await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
   expect(server.sessions[0]).toMatchObject({
-    audio: { input: { transcription: { model: 'komorebi-tea-cpu-e2b' } } },
-    komorebi: { refine: 'cpu-e2b' },
+    audio: { input: { transcription: { model: 'komorebi-tea-npu-e2b' } } },
+    komorebi: { refine: 'npu-e2b' },
   });
 
   // The sentence streams in while it is being said, then lands rewritten.
@@ -417,7 +417,7 @@ for (const theme of ['dark', 'light']) {
       state: asr === 'unavailable' ? 'unavailable' : [asr, refine].includes('starting') ? 'starting' : 'ready',
       backends: [
         { role: 'asr', name: 'sensevoice', state: asr, reason: asr === 'unavailable' ? reason : '' },
-        { role: 'refine', name: 'cpu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
+        { role: 'refine', name: 'npu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
       ],
     });
 

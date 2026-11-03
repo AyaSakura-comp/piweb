@@ -85,7 +85,7 @@ export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   // (getUserMedia). On an iPhone they record like a phone call; off, the mic
   // records as is and Komorebi's own denoiser does the cleaning.
   callAudio: true,
-  // Empty: Komorebi's own Gemma 4 E2B on the CPU cleans the draft up.
+  // Empty: Komorebi's own Gemma 4 E2B on the NPU cleans the draft up.
   refineUrl: '',
   refineModel: '',
   refineKey: '',
@@ -123,15 +123,16 @@ export function saveVoiceSettings(settings, storage = globalThis.localStorage) {
  * The Dictation model and refine options for these settings. Finished sentences are recognized
  * by TEA-ASR (`komorebi-tea*`, as on the Komorebi IME page since 2026-11-01: about half
  * SenseVoice's errors on Taiwanese speech, ~0.4 s more a sentence); the live text while
- * speaking still comes from SenseVoice.
+ * speaking still comes from SenseVoice. Komorebi's own clean-up is Gemma 4 E2B on the NPU
+ * (XDNA-vLLM); its CPU E2B was turned off on 2026-11-03.
  */
 export function dictationOptions(settings) {
   const url = settings.url || DEFAULT_VOICE_SETTINGS.url;
   const processing = settings.callAudio !== false;
   if (settings.tidy === false) {
-    return { url, processing, model: settings.refineUrl ? 'komorebi-tea' : 'komorebi-tea-cpu-e2b', refine: false };
+    return { url, processing, model: settings.refineUrl ? 'komorebi-tea' : 'komorebi-tea-npu-e2b', refine: false };
   }
-  if (!settings.refineUrl) return { url, processing, model: 'komorebi-tea-cpu-e2b', refine: 'cpu-e2b' };
+  if (!settings.refineUrl) return { url, processing, model: 'komorebi-tea-npu-e2b', refine: 'npu-e2b' };
   return {
     url,
     processing,

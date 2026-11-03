@@ -28,8 +28,8 @@ describe('voice input settings', () => {
     expect(dictationOptions(settings)).toEqual({
       url: 'wss://komorebi.crayfish-monitor.ts.net/v1/realtime',
       processing: true,
-      model: 'komorebi-tea-cpu-e2b',
-      refine: 'cpu-e2b',
+      model: 'komorebi-tea-npu-e2b',
+      refine: 'npu-e2b',
     });
   });
 
@@ -54,7 +54,7 @@ describe('voice input settings', () => {
     saveVoiceSettings({ ...DEFAULT_VOICE_SETTINGS, tidy: false }, storage);
     const settings = readVoiceSettings(storage);
     expect(settings.tidy).toBe(false);
-    expect(dictationOptions(settings)).toMatchObject({ model: 'komorebi-tea-cpu-e2b', refine: false });
+    expect(dictationOptions(settings)).toMatchObject({ model: 'komorebi-tea-npu-e2b', refine: false });
     // Off wins over a custom clean-up API too; on by default.
     expect(
       dictationOptions({ ...settings, refineUrl: 'https://api.example/v1' }).refine,
@@ -173,7 +173,7 @@ describe('voice status', () => {
     type: 'komorebi.backends',
     backends: [
       { role: 'asr', name: 'sensevoice', state: asr, reason: asr === 'unavailable' ? reason : '' },
-      { role: 'refine', name: 'cpu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
+      { role: 'refine', name: 'npu-e2b', state: refine, reason: refine === 'unavailable' ? reason : '' },
     ],
   });
 
