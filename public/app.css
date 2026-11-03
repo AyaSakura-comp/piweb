@@ -2451,6 +2451,16 @@ html.keyboard-shell .life-edge-hint {
   color: var(--danger);
 }
 
+/* Listening, but the clean-up model is down: sentences go in as heard. Amber,
+   not red: voice input itself works (voiceStatus `warn`). */
+.voice-ime-btn.voice-warn:not(.voice-error) {
+  color: #d9902f;
+}
+
+.composer.voice-listening:has(.voice-ime-btn.voice-warn) {
+  --voice-ring: color-mix(in srgb, #d9902f calc(55% + var(--voice-level, 0) * 45%), transparent);
+}
+
 @media (pointer: coarse) {
   .voice-ime-btn {
     min-width: 44px;

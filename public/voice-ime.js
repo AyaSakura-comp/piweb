@@ -262,8 +262,18 @@ export function voiceStatus({ error = '', connecting = false, listening = false,
   if (refine?.state === 'starting') {
     return { placeholder: '可說話，整理模型啟動中', title: '整理模型啟動中，先照原句輸入（點一下關閉）', failed: false };
   }
-  const raw = refine?.state === 'unavailable' ? `：整理模型無法啟動${why(refine)}，照原句輸入` : '';
-  return { placeholder: '說話即可輸入…', title: `語音輸入中${raw}（點一下關閉）`, failed: false };
+  if (refine?.state === 'unavailable') {
+    // Said in the box and on the mic (`warn`), not only in the title, which a
+    // phone never shows: on 2026-11-03 every sentence went in as heard for half
+    // an hour while the box read 說話即可輸入….
+    return {
+      placeholder: '整理沒開，照原句輸入',
+      title: `語音輸入中：整理模型無法啟動${why(refine)}，照原句輸入（點一下關閉）`,
+      failed: false,
+      warn: true,
+    };
+  }
+  return { placeholder: '說話即可輸入…', title: '語音輸入中（點一下關閉）', failed: false };
 }
 
 /**
@@ -363,6 +373,7 @@ export function createVoiceIme({
       entry.button.setAttribute('aria-pressed', String(on));
       entry.button.classList.toggle('voice-on', on);
       entry.button.classList.toggle('voice-error', on && state.failed);
+      entry.button.classList.toggle('voice-warn', on && mine && Boolean(state.warn));
       entry.button.title = on ? state.title : '語音輸入';
       entry.button.setAttribute('aria-label', on ? '關閉語音輸入' : '開啟語音輸入');
       // No on-screen keyboard while voice input is on; the box still takes a

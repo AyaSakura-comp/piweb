@@ -446,6 +446,20 @@ for (const theme of ['dark', 'light']) {
     await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
     await expect(mic).toHaveAttribute('title', '語音輸入中（點一下關閉）');
 
+    // The clean-up model down (2026-11-03: half an hour of sentences as heard
+    // behind 說話即可輸入…): said in the box, the mic amber, still listening.
+    server.send(backends('ready', 'unavailable', '主機記憶體不足'));
+    await expect(input).toHaveAttribute('placeholder', '整理沒開，照原句輸入');
+    await expect(mic).toHaveClass(/voice-warn/);
+    await expect(mic).not.toHaveClass(/voice-error/);
+    await expect(composer).toHaveClass(/voice-listening/);
+    expect(await mic.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(217, 144, 47)');
+    expect(await height()).toBe(oneLine);
+    await page.screenshot({ path: info.outputPath(`3b-refine-unavailable-${theme}.png`) });
+    server.send(backends('ready', 'ready'));
+    await expect(input).toHaveAttribute('placeholder', '說話即可輸入…');
+    await expect(mic).not.toHaveClass(/voice-warn/);
+
     server.send(backends('unavailable', 'ready', '主機記憶體不足'));
     await expect(input).toHaveAttribute('placeholder', '語音辨識無法啟動（主機記憶體不足）');
     await expect(mic).toHaveClass(/voice-error/);

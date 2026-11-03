@@ -194,12 +194,18 @@ describe('voice status', () => {
     expect(voiceStatus({ listening: true, service: backends('ready', 'starting') }).placeholder).toBe(
       '可說話，整理模型啟動中',
     );
+    // A missing clean-up model is said in the box and on the mic, not only in
+    // a tooltip a phone never shows: on 2026-11-03 every sentence went in as
+    // heard for half an hour and the box still read 說話即可輸入….
     const missing = voiceStatus({ listening: true, service: backends('ready', 'unavailable', '主機記憶體不足') });
     expect(missing).toEqual({
-      placeholder: '說話即可輸入…',
+      placeholder: '整理沒開，照原句輸入',
       title: '語音輸入中：整理模型無法啟動（主機記憶體不足），照原句輸入（點一下關閉）',
       failed: false,
+      warn: true,
     });
+    expect(voiceStatus({ listening: true, service: backends('ready', 'ready') }).warn).toBeFalsy();
+    expect(voiceStatus({ listening: true, service: backends('ready', 'starting') }).warn).toBeFalsy();
   });
 
   it('a recognizer that cannot start reads as a failure, with the reason', () => {
