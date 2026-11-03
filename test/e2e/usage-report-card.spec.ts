@@ -14,6 +14,15 @@ const claude = formatClaudeUsage(
     five_hour: { utilization: 2, resets_at: '2026-10-31T16:29:00Z' },
     seven_day: { utilization: 62, resets_at: '2026-11-03T05:59:00Z' },
     seven_day_opus: { utilization: 94, resets_at: '2026-11-03T05:59:00Z' },
+    // Per-model weekly limits the endpoint now reports only here.
+    limits: [
+      {
+        kind: 'weekly_scoped',
+        percent: 41,
+        resets_at: '2026-11-03T05:59:00Z',
+        scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+      },
+    ],
   },
   now,
 );
@@ -97,7 +106,8 @@ for (const theme of ['dark', 'light']) {
 
     // One meter per window, its fill the share used; 90 % and up in the danger colour.
     const claudeRows = cards.nth(0).locator('.usage-row');
-    await expect(claudeRows).toHaveCount(3);
+    await expect(claudeRows).toHaveCount(4);
+    await expect(claudeRows.nth(3).locator('.usage-label')).toHaveText('Fable 週窗');
     await expect(claudeRows.nth(1).locator('[role=meter]')).toHaveAttribute('aria-valuenow', '62');
     await expect(claudeRows.nth(1).locator('[role=meter]')).toHaveAttribute('aria-valuetext', '已用 62%，剩 38%');
     await expect(claudeRows.nth(1)).toContainText('11/03 13:59 重置 · 還有 2 天 18 小時');
@@ -107,7 +117,7 @@ for (const theme of ['dark', 'light']) {
         colour: getComputedStyle(n).backgroundColor,
       })),
     );
-    expect(fills.map((f) => f.share)).toEqual([2, 62, 94]);
+    expect(fills.map((f) => f.share)).toEqual([2, 62, 94, 41]);
     expect(fills[0].colour).toBe(fills[1].colour);
     expect(fills[2].colour).not.toBe(fills[1].colour);
     await expect(claudeRows.nth(2)).toHaveAttribute('data-level', 'high');

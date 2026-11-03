@@ -52,19 +52,37 @@ function light(percent: number): string {
   return '🟢';
 }
 
+type Bucket = { utilization?: unknown; resets_at?: unknown } | null | undefined;
+
+/**
+ * Every window, labelled: the fixed fields, then the per-model weekly limits
+ * that only `limits` carries (Fable's, while seven_day_opus/_sonnet are null).
+ * A model with both keeps the fixed field's reading.
+ */
+function windows(data: any): Array<[string, Bucket]> {
+  const rows: Array<[string, Bucket]> = [
+    ['5 小時窗', data?.five_hour],
+    ['週窗', data?.seven_day],
+    ['Sonnet 週窗', data?.seven_day_sonnet],
+    ['Opus 週窗', data?.seven_day_opus],
+  ];
+  for (const limit of Array.isArray(data?.limits) ? data.limits : []) {
+    const name = limit?.kind === 'weekly_scoped' ? limit.scope?.model?.display_name : undefined;
+    if (typeof name !== 'string' || !name.trim()) continue;
+    const label = `${name.trim().replace(/\s+/g, ' ')} 週窗`;
+    if (rows.some(([known, bucket]) => known === label && bucket)) continue;
+    rows.push([label, { utilization: limit.percent, resets_at: limit.resets_at }]);
+  }
+  return rows;
+}
+
 export function formatClaudeUsage(data: unknown, now = Date.now()): string {
   const lines = ['🤖 Claude Code 用量（主機登入帳號，非單一對話）', ''];
-  const labels = [
-    ['five_hour', '5 小時窗'],
-    ['seven_day', '週窗'],
-    ['seven_day_sonnet', 'Sonnet 週窗'],
-    ['seven_day_opus', 'Opus 週窗'],
-  ];
-  const present = labels.filter(([key]) => Number.isFinite((data as any)?.[key]?.utilization));
-  const width = Math.max(0, ...present.map(([, label]) => cells(label)));
+  const labels = windows(data);
+  const present = labels.filter(([, bucket]) => Number.isFinite(bucket?.utilization));
+  const width = Math.max(0, ...present.map(([label]) => cells(label)));
   let found = false;
-  for (const [key, label] of labels) {
-    const bucket = (data as any)?.[key];
+  for (const [label, bucket] of labels) {
     if (
       typeof bucket?.utilization !== 'number' ||
       !Number.isFinite(bucket.utilization) ||

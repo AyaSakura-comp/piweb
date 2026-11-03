@@ -30,6 +30,27 @@ describe('usage report card', () => {
     expect(report.footer).toMatch(/^查詢 10\/31 19:54 台北時間/);
   });
 
+  it('reads /claude-usage per-model weekly limits as their own rows (Fable)', () => {
+    const text = formatClaudeUsage(
+      {
+        seven_day: { utilization: 77, resets_at: '2026-11-03T06:00:00Z' },
+        limits: [
+          {
+            kind: 'weekly_scoped',
+            percent: 1,
+            resets_at: '2026-11-03T06:00:00Z',
+            scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+          },
+        ],
+      },
+      now,
+    );
+    expect(parseUsageReport('claude-usage', fence(text))!.sections[0].rows).toEqual([
+      expect.objectContaining({ label: '週窗', used: 77, left: 23 }),
+      expect.objectContaining({ label: 'Fable 週窗', used: 1, left: 99, reset: '11/03 14:00' }),
+    ]);
+  });
+
   it('reads /claude-usage with no readings as a note, never as zero', () => {
     const report = parseUsageReport('claude-usage', fence(formatClaudeUsage({}, now)))!;
     expect(report.sections[0].rows).toEqual([]);

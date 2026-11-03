@@ -17,6 +17,45 @@ describe('Claude account usage', () => {
     expect(text).not.toContain('Sonnet');
     expect(formatClaudeUsage({}, 0)).toContain('未提供');
   });
+  it('shows per-model weekly limits that only `limits` carries (Fable)', () => {
+    // The shape the endpoint returns since the model limits moved into
+    // `limits`: seven_day_opus/_sonnet null, Fable a scoped weekly limit.
+    const text = formatClaudeUsage(
+      {
+        five_hour: { utilization: 8, resets_at: '2026-09-23T02:00:00Z' },
+        seven_day: { utilization: 77, resets_at: '2026-09-25T06:00:00Z' },
+        seven_day_opus: null,
+        seven_day_sonnet: null,
+        limits: [
+          { kind: 'session', percent: 8, resets_at: '2026-09-23T02:00:00Z', scope: null },
+          { kind: 'weekly_all', percent: 77, resets_at: '2026-09-25T06:00:00Z', scope: null },
+          {
+            kind: 'weekly_scoped',
+            percent: 41,
+            resets_at: '2026-09-25T06:00:00Z',
+            scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+          },
+          // A model the fixed field already reports is not shown twice.
+          {
+            kind: 'weekly_scoped',
+            percent: 99,
+            resets_at: null,
+            scope: { model: { id: null, display_name: 'Opus' }, surface: null },
+          },
+        ],
+      },
+      Date.parse('2026-09-23T00:15:00Z'),
+    );
+    expect(text).toMatch(/🟢 Fable 週窗 {2,}已用 41%  剩 59%  ████░░░░░░/);
+    expect(text).toMatch(/🔴 Opus 週窗 {2,}已用 99%/);
+    expect(text.match(/週窗/g)).toHaveLength(3);
+    expect(
+      formatClaudeUsage({
+        seven_day_opus: { utilization: 5, resets_at: null },
+        limits: [{ kind: 'weekly_scoped', percent: 99, scope: { model: { display_name: 'Opus' } } }],
+      }),
+    ).not.toContain('99%');
+  });
   it('shows a full red bar near the limit', () => {
     const text = formatClaudeUsage({ seven_day: { utilization: 94, resets_at: null } }, 0);
     expect(text).toContain('🔴 週窗');
