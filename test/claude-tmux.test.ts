@@ -19,6 +19,7 @@ import {
   extractConfirmationPrompt,
   isCatastrophicPrompt,
   isClaudeTmuxModelRef,
+  stayOnModelMenu,
   invokeClaudeTmux,
   listClaudeTmuxModels,
   tmuxSessionName,
@@ -221,6 +222,57 @@ describe('Claude tmux invocation', () => {
     expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(true);
   });
 
+  // 2026-11-03: Fable 5.1's safeguards flagged a message; Claude Code's menu
+  // sat on the pane and every later message failed "did not become ready".
+  it('stays on the model when its safeguards flag the turn, and says so', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    let menuShown = true;
+    let down = false;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && menuShown) return MODEL_SWITCH_MENU;
+      if (args[0] === 'send-keys' && fixture.submissionCount) {
+        if (args.at(-1) === 'Down') down = true;
+        if (args.at(-1) === 'Enter' && down) menuShown = false;
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain('Fable 5.1 的安全機制');
+    expect(result.error).toContain('Stay on Fable 5.1');
+    expect(result.error).not.toContain('timed out');
+    expect(menuShown).toBe(false);
+    const after = fixture.sentKeys.slice(fixture.sentKeys.findIndex((keys) => keys.at(-1) === 'Down'));
+    expect(after.map((keys) => keys.at(-1))).toEqual(['Down', 'Enter']);
+    expect(fixture.sentKeys.some((keys) => keys.includes('Escape') || keys.includes('C-c'))).toBe(false);
+  });
+
+  it('answers a model-switch menu left on the pane before sending the next message', async () => {
+    const fixture = createRuntimeFixture();
+    let menuShown = true;
+    let down = false;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await tmux(args);
+      if (args[0] === 'capture-pane' && menuShown && screen.includes('❯')) return MODEL_SWITCH_MENU;
+      if (args[0] === 'send-keys' && menuShown) {
+        if (args.at(-1) === 'Down') down = true;
+        if (args.at(-1) === 'Enter' && down) menuShown = false;
+      }
+      return screen;
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'next message', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(menuShown).toBe(false);
+    expect(fixture.loadedPrompts).toEqual(['next message']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
   it('auto-approves non-catastrophic confirmation prompts and continues the turn', async () => {
     const fixture = createRuntimeFixture({ completeTurns: true });
     let promptShown = true;
@@ -362,6 +414,18 @@ describe('Claude tmux invocation', () => {
       role: 'claude-command',
       state: 'running',
     });
+  });
+
+  it('reads the model-switch menu: the keys to Stay on the model, wherever the cursor is', () => {
+    expect(stayOnModelMenu(MODEL_SWITCH_MENU)).toEqual({ model: 'Fable 5.1', keys: ['Down', 'Enter'] });
+    const onStay = MODEL_SWITCH_MENU.replace('❯ 1. Switch', '  1. Switch').replace('  2. Stay on Fable', '❯ 2. Stay on Fable');
+    expect(stayOnModelMenu(onStay)).toEqual({ model: 'Fable 5.1', keys: ['Enter'] });
+    const onType = MODEL_SWITCH_MENU.replace('❯ 1. Switch', '  1. Switch').replace('  3. Type', '❯ 3. Type');
+    expect(stayOnModelMenu(onType)?.keys).toEqual(['Up', 'Enter']);
+    // A reply quoting the menu has the input box under it, not the menu.
+    const quoted = `${MODEL_SWITCH_MENU}\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
+    expect(stayOnModelMenu(quoted)).toBeNull();
+    expect(stayOnModelMenu('Do you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel')).toBeNull();
   });
 
   it('detects catastrophic prompts accurately', () => {
@@ -1339,6 +1403,29 @@ async function runTimeoutScenario(
     watcher?.kill('SIGKILL');
   }
 }
+
+/** Claude Code's menu as the pane showed it on 2026-11-03 (an earlier numbered list above it). */
+const MODEL_SWITCH_MENU = [
+  '● Plan:',
+  '  1. Rerun the monthly case',
+  '  2. Stay on the trailing case',
+  '● Monitor event: collect: CASE 0 monthly collect completed 218 FAILED',
+  '─'.repeat(80),
+  ' ☐ Model switch',
+  "│ Fable 5.1's safeguards flagged this message. Our intentionally broad",
+  '│ safeguards allow us to deliver more capabilities faster, but can sometimes',
+  '│ flag legitimate coding and cybersecurity tasks. Switch to Opus 4.8 and keep',
+  '│ going whenever this happens? You can change this later in /config.',
+  '❯ 1. Switch automatically',
+  '     Continue on Opus 4.8 now, and switch without asking from now on',
+  '  2. Stay on Fable 5.1',
+  '     Stop here without switching, and ask me each time a message is flagged',
+  '  3. Type something.',
+  '─'.repeat(80),
+  '  4. Chat about this',
+  'Enter to select · ↑/↓ to navigate · Esc to cancel',
+  '✻ Waiting for API response · will retry in 2m 40s · check your network',
+].join('\n');
 
 function createRuntimeFixture(
   options: { completeTurns?: boolean; runningScreen?: boolean; pasteLineCount?: boolean } = {},

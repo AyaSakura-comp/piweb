@@ -647,6 +647,20 @@ export async function invokeClaudeTmux(
         if (Date.now() >= nextPromptCheckAt) {
           const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
           ensureNotAborted();
+          const flagged = stayOnModelMenu(screen);
+          if (flagged) {
+            // The flagged message stops here; the turn has no reply to wait for.
+            await pressKeys(pane, flagged.keys, deps).catch(() => undefined);
+            logger.info({ model: flagged.model, channelFolder }, 'Claude Code safeguards flagged the turn; stayed on the model');
+            return {
+              ok: false,
+              text: '',
+              error:
+                `${flagged.model} 的安全機制把這則訊息標記起來（可能是誤判），Claude Code 停在這裡，沒有回覆。` +
+                `piweb 選了「Stay on ${flagged.model}」，不會自動換成別的模型。` +
+                '要繼續，可以在模型選單把這個對話換成 Opus 再送，或換個說法重送。',
+            };
+          }
           if (requiresManualConfirmation(screen)) {
             const promptDetail = extractConfirmationPrompt(screen);
             const promptSuffix = promptDetail ? ` (${promptDetail})` : '';
@@ -797,6 +811,58 @@ async function ensurePaneAlive(pane: string, deps: ClaudeTmuxDependencies): Prom
   if (dead.trim() === '1') throw new Error('Claude Code tmux pane exited');
 }
 
+/**
+ * Claude Code's own "Model switch" menu: a model's safeguards flagged a
+ * message (Fable 5.1's, 2026-11-03) and it asks whether to switch to another
+ * model from now on, or to stay. Returns the model it would stay on and the
+ * keys that pick "Stay on <model>" from where the cursor (❯) is, or null when
+ * the menu is not on screen. Read from the screen's tail, not its history.
+ *
+ * piweb always stays: "Switch automatically" is a lasting choice in Claude
+ * Code's /config that would run every flagged turn on another model while the
+ * session's badge still names the one the user picked.
+ */
+export function stayOnModelMenu(screen: string): { model: string; keys: string[] } | null {
+  const tail = screen.trimEnd().slice(-2000);
+  const flagged = tail.toLowerCase().lastIndexOf('safeguards flagged this message');
+  const footer = tail.lastIndexOf('Enter to select');
+  if (flagged < 0 || footer < flagged) return null;
+  // The open menu is the bottom of the screen (at most a status line under it,
+  // "✻ Waiting for API response…"). A reply that merely quotes the menu has
+  // the input box and its "bypass permissions on" bar below it instead.
+  const [footerLine, ...below] = tail.slice(footer).split(/\r?\n/u);
+  const rest = below.filter((line) => line.trim());
+  if (!/Esc to cancel/u.test(footerLine) || rest.length > 2 || rest.some((line) => /bypass permissions/iu.test(line))) {
+    return null;
+  }
+  let cursor = 0;
+  let stay = 0;
+  let model = '';
+  // Only the menu's own options, not numbered lines higher up the history.
+  for (const line of tail.slice(flagged, footer).split(/\r?\n/u)) {
+    const option = /^[\s│]*(❯)?\s*(\d+)\.\s+(.+?)\s*$/u.exec(line);
+    if (!option) continue;
+    const number = Number(option[2]);
+    if (option[1]) cursor = number;
+    const named = /^Stay on (.+)$/u.exec(option[3]);
+    if (named) {
+      stay = number;
+      model = named[1];
+    }
+  }
+  if (!cursor || !stay) return null;
+  const step = stay > cursor ? 'Down' : 'Up';
+  return { model, keys: [...Array(Math.abs(stay - cursor)).fill(step), 'Enter'] };
+}
+
+/** One key at a time: Ink reads keys that arrive together as one unknown input. */
+async function pressKeys(pane: string, keys: string[], deps: ClaudeTmuxDependencies): Promise<void> {
+  for (const key of keys) {
+    await deps.tmux(['send-keys', '-t', pane, key]);
+    await deps.sleep(deps.pollMs);
+  }
+}
+
 function requiresManualConfirmation(screen: string): boolean {
   // Check the dialog footer, not prior terminal history or model/tool output.
   // The footer grows "· hint" items as they apply (Tab to amend; with
@@ -852,7 +918,14 @@ async function waitForReadyPane(
     await ensurePaneAlive(pane, deps);
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
-    if (/Yes, I trust this folder/i.test(lastScreen) && !acceptedTrust) {
+    const flagged = stayOnModelMenu(lastScreen);
+    if (flagged) {
+      // Left by an earlier message nobody was waiting on (an interrupted turn,
+      // a background notification): answered as the in-turn check would, so
+      // the new message is not blocked behind it.
+      await pressKeys(pane, flagged.keys, deps);
+      logger.info({ model: flagged.model }, 'Answered a model-switch menu left on the Claude Code pane');
+    } else if (/Yes, I trust this folder/i.test(lastScreen) && !acceptedTrust) {
       acceptedTrust = true;
       await deps.tmux(['send-keys', '-t', pane, 'Enter']);
     } else if (requiresManualConfirmation(lastScreen)) {

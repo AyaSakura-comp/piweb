@@ -100,6 +100,18 @@ needs its next approved safe restart to pick up a changed launch policy.
   items as they apply and may wrap in the 80-column pane. On 2026-10-28 the
   "· ctrl+x ctrl+k twice to stop background agents" hint hid one from the
   matcher, and Torch NPU's subagent waited on it for ten hours.
+- A model's safeguards can flag a message (Fable 5.1's, 2026-11-03). Claude Code
+  then opens its own **Model switch** menu: "Switch automatically" (to Opus,
+  and without asking from now on, a lasting /config choice) or "Stay on
+  <model>" (stop this message, ask again next time). The bridge always picks
+  Stay (`stayOnModelMenu`, arrow keys one at a time): switching would run every
+  flagged turn on another model while the session's badge still names the one
+  the user picked. In a turn it then ends the turn with an error saying so (the
+  user can switch the session to Opus, or rephrase); a menu left on the pane is
+  answered before the next message is sent. The menu counts only while it is
+  the bottom of the screen, so a reply quoting it never triggers keys. Before
+  this, the menu sat on the pane and every later message failed with "Claude
+  Code did not become ready".
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.
