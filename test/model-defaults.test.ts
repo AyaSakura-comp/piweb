@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createProbeServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -111,6 +111,43 @@ function channel(kind: 'life' | 'standard', modelOverride = '') {
 
 const lifeDefaults = { modelRef: 'local-strata/qwen3.8-flash', thinking: 'low' as const };
 
+/** The web tier on a free port, logged in; PI_MODEL unset. */
+async function startWeb() {
+  const probe = createProbeServer();
+  await new Promise<void>((done) => probe.listen(0, '127.0.0.1', done));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((done) => probe.close(() => done()));
+  Object.assign(process.env, {
+    WEB_AUTH_TOKEN: 'model-defaults-token',
+    WEB_HOST: '127.0.0.1',
+    WEB_PORT: String(port),
+    WEB_TRUST_TAILSCALE_IDENTITY: 'false',
+  });
+  vi.resetModules();
+  const webDb = await import('../src/db.js');
+  webDb.initDb();
+  const { startWebServer } = await import('../src/web/server.js');
+  const server = startWebServer();
+  servers.push(server);
+  if (!server.listening) await new Promise<void>((done) => server.once('listening', done));
+  const origin = `http://127.0.0.1:${port}`;
+  const login = await fetch(`${origin}/api/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: 'model-defaults-token' }),
+  });
+  const cookie = login.headers.get('set-cookie')!.split(';')[0];
+  const get = async (path: string) =>
+    (await fetch(`${origin}${path}`, { headers: { cookie } })).json();
+  const postTo = (path: string, body: unknown) =>
+    fetch(`${origin}${path}`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  return { webDb, get, postTo };
+}
+
 describe('default model per mode', () => {
   it('runs each mode on its Settings model unless the session picked one', async () => {
     const { db, settings } = await freshModules();
@@ -180,38 +217,8 @@ describe('default model per mode', () => {
 
   it('serves and saves the defaults over the API and badges sessions that follow them', async () => {
     await freshModules();
-    const probe = createProbeServer();
-    await new Promise<void>((done) => probe.listen(0, '127.0.0.1', done));
-    const port = (probe.address() as { port: number }).port;
-    await new Promise<void>((done) => probe.close(() => done()));
-    Object.assign(process.env, {
-      WEB_AUTH_TOKEN: 'model-defaults-token',
-      WEB_HOST: '127.0.0.1',
-      WEB_PORT: String(port),
-      WEB_TRUST_TAILSCALE_IDENTITY: 'false',
-    });
-    vi.resetModules();
-    const webDb = await import('../src/db.js');
-    webDb.initDb();
-    const { startWebServer } = await import('../src/web/server.js');
-    const server = startWebServer();
-    servers.push(server);
-    if (!server.listening) await new Promise<void>((done) => server.once('listening', done));
-    const origin = `http://127.0.0.1:${port}`;
-    const login = await fetch(`${origin}/api/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: 'model-defaults-token' }),
-    });
-    const cookie = login.headers.get('set-cookie')!.split(';')[0];
-    const get = async (path: string) =>
-      (await fetch(`${origin}${path}`, { headers: { cookie } })).json();
-    const post = (body: unknown) =>
-      fetch(`${origin}/api/model-defaults`, {
-        method: 'POST',
-        headers: { cookie, 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+    const { webDb, get, postTo } = await startWeb();
+    const post = (body: unknown) => postTo('/api/model-defaults', body);
 
     // The worker publishes what "Pi 預設" means; the web tier cannot read it.
     webDb.setMeta('model.pi_default', 'local-strata/qwen3.8-flash');
@@ -269,5 +276,51 @@ describe('default model per mode', () => {
     );
     expect(fallen).toMatchObject({ provider: '', runningModel: '', pending: true, badge: null });
     expect((await get('/api/model-defaults')).defaults.standard).toBe('openai-codex/gpt-5.6-sol');
+  });
+
+  it('New Life session keeps the model the conversation ran on, not the 開發模式 default', async () => {
+    await freshModules();
+    const { webDb, get, postTo } = await startWeb();
+    webDb.setMeta('model.pi_default', 'local-strata/qwen3.8-flash');
+    expect(webDb.setModeModelDefault('standard', 'claude-code/opus')).toBe(true);
+
+    /** Promote the current Life, after its Pi session recorded `ran` (if any). */
+    const promote = async (ran?: string) => {
+      const life = await (await postTo('/api/life-session', {})).json();
+      if (ran) {
+        const dir = resolve(process.env.SESSIONS_DIR!, life.generation);
+        mkdirSync(dir, { recursive: true });
+        const [provider, modelId] = ran.split('/');
+        writeFileSync(
+          join(dir, '2026-11-05T00-00-00-000Z_life.jsonl'),
+          [
+            { type: 'session', version: 3, id: 'life', cwd: '/tmp' },
+            { type: 'model_change', provider, modelId },
+          ]
+            .map((line) => JSON.stringify(line))
+            .join('\n') + '\n',
+        );
+      }
+      const response = await postTo('/api/life-session/new', { generation: life.generation });
+      expect(response.status).toBe(200);
+      const { archived } = await response.json();
+      return (await get('/api/sessions')).sessions.find(
+        (session: { jid: string }) => session.jid === archived.jid,
+      );
+    };
+
+    // It ran on Pi's default: it stays there, not on Claude Code.
+    expect(await promote('local-strata/qwen3.8-flash')).toMatchObject({
+      model: 'local-strata/qwen3.8-flash',
+      provider: 'local-strata',
+    });
+    // Nothing run yet: Life's own default, else Pi's.
+    expect(webDb.setModeModelDefault('life', 'openai-codex/gpt-5.6-sol')).toBe(true);
+    expect(await promote()).toMatchObject({ model: 'openai-codex/gpt-5.6-sol' });
+    // A model the catalog no longer offers is not kept.
+    expect(webDb.setModeModelDefault('life', '')).toBe(true);
+    expect(await promote('local-gone/old-model')).toMatchObject({
+      model: 'local-strata/qwen3.8-flash',
+    });
   });
 });

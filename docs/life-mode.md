@@ -38,6 +38,11 @@ Sessions list, then replaces Life with a brand-new empty channel and Pi folder.
   catalog no longer offers the chosen one, every Life turn asks the configured
   `PI_BIN` for its exact current runtime model. It never trusts stale values
   from `pi --continue`.
+- **New Life session** gives the conversation it promotes the model it ran on
+  as its own (`lifeArchiveModel` in `src/db.ts`): the one its Pi session file
+  last recorded while the catalog offers it, else Life's default, else Pi's.
+  Left without one, an ordinary session follows the 開發模式 default, so a
+  Life chat moved onto, say, Claude Code the moment it was promoted.
 - Life thinking defaults to **`low`** (`LIFE_DEFAULT_THINKING` in
   `src/agent/channel-settings.ts`), not Pi's runtime default, so everyday chat
   stays fast. Settings → 預設 thinking sets a different default for Life and

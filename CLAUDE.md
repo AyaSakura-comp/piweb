@@ -1214,7 +1214,9 @@ Consequences worth knowing:
   badge, BTW and usage routing apply the same rule to the published catalog
   (`effectiveModeModelDefault` in `src/db.ts`), so the badge never names a
   default the worker is not running. A worker still on older code ignores the
-  defaults entirely, so restart it (when idle) after deploying.
+  defaults entirely, so restart it (when idle) after deploying. New Life
+  session gives the conversation it promotes the model it ran on in Life as its
+  own (`lifeArchiveModel`), or it would follow the 開發模式 default.
 - To send images to a local model, `qwen-mtp` must be the one running. It is
   `enable`d for boot; `gemma-mtp` is disabled. Switch with the skill, never a
   standalone `llama-server` on 8001.

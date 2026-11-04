@@ -2644,6 +2644,8 @@ export function archiveLifeSessionAndStartNew(options: {
   archivedJid: string;
   archivedName: string;
   expectedFolder: string;
+  /** The model the promoted conversation keeps as its own (lifeArchiveModel). */
+  archivedModel?: string;
 }): { archived: RegisteredChannel; life: RegisteredChannel } {
   const archivedJid = options.archivedJid.trim();
   const archivedName = options.archivedName.trim().slice(0, 80) || 'Life';
@@ -2731,9 +2733,9 @@ export function archiveLifeSessionAndStartNew(options: {
 
       db.prepare(
         `update channels
-          set jid = ?, name = ?, kind = 'standard', deleted_at = null
+          set jid = ?, name = ?, kind = 'standard', deleted_at = null, model_override = ?
         where jid = 'web:life' and kind = 'life'`,
-      ).run(archivedJid, archivedName);
+      ).run(archivedJid, archivedName, (options.archivedModel ?? '').trim());
 
       for (const table of [
         'web_events',
@@ -2984,6 +2986,19 @@ export function effectiveModeModelDefault(kind: ChannelKind): string {
   const ref = getModeModelDefault(kind);
   const refs = publishedModelRefs();
   return ref && (refs.length === 0 || refs.includes(ref)) ? ref : '';
+}
+
+/**
+ * The model a Life conversation keeps as its own when New Life session makes
+ * it an ordinary session: with none it would follow the 開發模式 default, not
+ * the model it ran on. The one it last ran on (`lastRun`, from its Pi session
+ * file) while the catalog offers it, else Life's default, else Pi's.
+ */
+export function lifeArchiveModel(lastRun: string): string {
+  const refs = publishedModelRefs();
+  const ran = lastRun.trim();
+  if (ran && (refs.length === 0 || refs.includes(ran))) return ran;
+  return effectiveModeModelDefault('life') || getModelDefaults().piDefault;
 }
 
 /**

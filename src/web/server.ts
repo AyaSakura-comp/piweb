@@ -27,6 +27,7 @@ import { sampleSystemMetrics } from './system-metrics.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
   archiveLifeSessionAndStartNew,
+  lifeArchiveModel,
   beginChannelOperation,
   CHANNEL_GENERATION_CHANGED_ERROR,
   claimDeletedSessionsForPurge,
@@ -799,11 +800,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
     const firstPrompt = getFirstUserMessageContent('web:life')?.trim() ?? '';
     const id = randomUUID().slice(0, 8);
+    // It keeps the model it ran on in Life rather than following the 開發模式
+    // default, as an ordinary session with no model of its own would.
+    const ran = getSessionModel(generation);
     try {
       const { archived, life } = archiveLifeSessionAndStartNew({
         archivedJid: webJid(id),
         archivedName: firstPrompt ? extractSessionTitle(firstPrompt) : 'Life',
         expectedFolder: generation,
+        archivedModel: lifeArchiveModel(ran ? `${ran.provider}/${ran.modelId}` : ''),
       });
       sendJson(res, 200, {
         archived: { jid: archived.jid, name: archived.name, kind: 'standard' },
