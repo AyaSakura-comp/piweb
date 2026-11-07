@@ -1059,8 +1059,8 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
 - **Apple-style Text Selection & Quoting (`public/text-selection.js`, `public/selection-bubble.js`)**:
   Custom selection UI overlays iOS-style teardrop lollipop handle pins (`.sel-handle-line` + `.sel-handle-knob`)
   and a glass floating action pill (`Quote`, `Copy`, `Dismiss`). The selection itself is one rounded
-  translucent bubble (`.sel-bubble`) that follows the finger on a spring, not per-line boxes; a finished
-  selection quotes itself (chat and Dashboard panes); the `touchend` ending a long press cancels its
+  translucent bubble (`.sel-bubble`) that follows the finger on a spring, not per-line boxes, and a mouse's
+  native selection is drawn as the same bubble; a finished selection quotes itself (chat and Dashboard panes); the `touchend` ending a long press cancels its
   default so the lift never clicks the pill. Contract in `DESIGN.md` "Text selection and quoting".
   - Uses `getFilteredLineRects()` to strip out container bounding boxes (such as `<ul>` or `<div>` wrapper blocks)
     that distort table/markdown highlights.

@@ -132,6 +132,14 @@ same rules hold in the chat and in a Dashboard pane.
   slightly under-damped spring (stiffness 340, damping 25), so it flows and
   settles instead of jumping box to box. Line rects come from the selected text
   nodes only; Chrome's per-paragraph-break boxes drew stray tabs.
+- **A mouse selection looks the same.** On a computer the transcript keeps the
+  browser's own selection (drag, double/triple click, shift-click, ⌘C, and the
+  pill), drawn as the same bubble following the pointer: transcript text has no
+  `::selection` tint (`[data-selection-bubble]`, set once the bubble layer
+  exists), and every selected line of it gets the outline. No handles: a mouse
+  extends a selection by dragging or shift-clicking. The bubble layer is clipped
+  to the transcript, so text scrolled under the header or the message box is not
+  drawn over them. `test/e2e/mouse-selection-bubble.spec.ts`.
 - **Handles stay on the line under the finger.** A dragged handle resolves only
   to drawn text; LobeHub's `"\n"` text nodes between blocks used to resolve
   above the whole list and flip the selection upward. The fallback picks the

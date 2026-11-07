@@ -2171,6 +2171,14 @@ html.keyboard-shell .life-edge-hint {
   background-color: transparent;
 }
 
+/* A mouse selection in the transcript is the browser's own, and the bubble
+   draws it too (bindCustomSelection sets the attribute once it can). `:root`
+   outranks the light theme's ::selection tint further down. */
+:root [data-selection-bubble] :is(.msg-text, .event-body)::selection,
+:root [data-selection-bubble] :is(.msg-text, .event-body) *::selection {
+  background-color: transparent;
+}
+
 .custom-selection-overlay {
   position: fixed;
   inset: 0;

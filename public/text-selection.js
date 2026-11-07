@@ -329,7 +329,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   const bubble = createSelectionBubble(boxesContainer, {
     window,
     scroller: { get scrollTop() { return scroller.scrollTop; } },
+    clip: () => scroller.getBoundingClientRect?.(),
   });
+  // The bubble draws the selection in this transcript, a mouse's too: its text
+  // gets no `::selection` tint of its own (app.css), so set this only once the
+  // bubble can be drawn, or a mouse selection there would not show at all.
+  if (boxesContainer) root.setAttribute?.('data-selection-bubble', '');
   const self = { clear: () => clearSelection() };
 
   let currentRange = null;
@@ -755,9 +760,75 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   globalTarget?.addEventListener?.('touchend', onTouchEnd, { passive: false });
   globalTarget?.addEventListener?.('touchcancel', onTouchEnd, { passive: true });
 
+  // ── Mouse: the browser's own selection, drawn as the same bubble ─────────
+  // A fine pointer keeps the native selection (drag, double/triple click,
+  // shift-click, ⌘C, and the quote pill app.js shows for it); only its look is
+  // ours. Every selected line of transcript text in `root` is drawn, wherever
+  // the selection began, since that text has no tint of its own.
+  let nativeShown = false;
+  let nativeFrame = 0;
+
+  function nativeSelectionRange() {
+    const selection = window?.getSelection?.();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (!range.intersectsNode?.(root)) return null;
+    return range;
+  }
+
+  function rootLineRects(range) {
+    const parts = selectedTextParts(range);
+    if (!parts) return [];
+    const piece = document.createRange();
+    const rects = [];
+    for (const { node, start, end, block } of parts) {
+      if (!root.contains(block)) continue;
+      piece.setStart(node, start);
+      piece.setEnd(node, end);
+      const box = block.getBoundingClientRect();
+      for (const rect of piece.getClientRects()) {
+        const left = Math.max(rect.left, box.left);
+        const right = Math.min(rect.right, box.right);
+        if (right > left && rect.height > 0) rects.push({ left, right, top: rect.top, bottom: rect.bottom, width: right - left, height: rect.height });
+      }
+    }
+    return rects;
+  }
+
+  function syncNativeBubble() {
+    nativeFrame = 0;
+    // A long-press selection draws its own bubble.
+    if (pendingGesture || currentRange || isDragging) {
+      nativeShown = false;
+      return;
+    }
+    const range = nativeSelectionRange();
+    const rects = range ? rootLineRects(range) : [];
+    if (!rects.length) {
+      if (nativeShown) bubble.clear();
+      nativeShown = false;
+      return;
+    }
+    // The transcript the selection ends in scrolls the bubble (a pane's own list).
+    const focus = elementForNode(window.getSelection().focusNode);
+    const transcript = (scope ? focus?.closest?.(scope) : root) ?? scroller;
+    if (transcript && root.contains(transcript)) scroller = transcript;
+    nativeShown = true;
+    bubble.set(rects);
+  }
+
+  function scheduleNativeBubble() {
+    if (!nativeFrame) nativeFrame = window.requestAnimationFrame(syncNativeBubble);
+  }
+
+  if (boxesContainer && window?.requestAnimationFrame) {
+    document.addEventListener?.('selectionchange', scheduleNativeBubble);
+  }
+
   // Captured: a pane's transcript scrolls inside `root`, and scroll does not bubble.
   root.addEventListener('scroll', (event) => {
     if (currentRange && event.target === scroller) updateHandlesAndHighlight();
+    else if (nativeShown) scheduleNativeBubble();
   }, { passive: true, capture: true });
 
   return clearSelection;

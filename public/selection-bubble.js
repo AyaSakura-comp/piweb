@@ -127,7 +127,7 @@ export function bubblePath(chains, radius = RADIUS) {
  * Positions are kept in the scroller's content coordinates, so scrolling moves
  * the bubble rigidly while only selection changes spring.
  */
-export function createSelectionBubble(container, { window, scroller } = {}) {
+export function createSelectionBubble(container, { window, scroller, clip } = {}) {
   const document = container?.ownerDocument;
   if (!document?.createElementNS) return { set() {}, clear() {} };
 
@@ -163,6 +163,13 @@ export function createSelectionBubble(container, { window, scroller } = {}) {
     const offset = scrollTop();
     const live = lines.map((line) => ({ l: line.l, r: line.r, t: line.t - offset, b: line.b - offset }));
     path.setAttribute('d', bubblePath(bubbleChains(live)));
+    // The layer covers the whole window; text scrolled out of its transcript
+    // (under the header or the message box) must not be drawn over them.
+    const box = clip?.();
+    if (svg.style) svg.style.clipPath =
+      box && box.width > 0 && box.height > 0
+        ? `inset(${box.top}px ${window.innerWidth - box.right}px ${window.innerHeight - box.bottom}px ${box.left}px)`
+        : '';
   }
 
   function settled(line) {
