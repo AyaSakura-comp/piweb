@@ -120,8 +120,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || '',
-      icon: '/icons/piweb/icon-192.png',
-      badge: '/icons/piweb/icon-192.png',
+      icon: '/icons/piweb-mini/full-192.png',
+      badge: '/icons/piweb-mini/full-192.png',
       // Collapse per session: ten replies in one session should not stack ten
       // notifications, but a different session must still be its own.
       tag: data.jid || 'piweb',

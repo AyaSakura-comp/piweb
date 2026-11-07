@@ -77,7 +77,10 @@ public/          index.html, app.css, app.js — no framework, no build step
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  vendor/highlight/ = highlight.js browser build (no CDN)
-                 icons/piweb/  = home-screen icon set; manifest.webmanifest
+                 icons/piweb-mini/ = home-screen + install icons (Mac mini); manifest.webmanifest
+                                 (apple-* opaque for iOS, maskable-* full-bleed, icon-* macOS squircle;
+                                 icons/ is served immutable, so a new icon needs a new path)
+                 icons/piweb/  = previous set (icon-32 favicon still used)
 third_party/komorebi-voice/  git submodule (Komorebi voice IME); only sdk/js is used. Push the
                              Komorebi commit to GitHub BEFORE committing the pointer here
 scripts/history.py  read-only history query CLI (stdlib only)

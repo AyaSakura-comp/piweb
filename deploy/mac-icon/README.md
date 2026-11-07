@@ -8,12 +8,23 @@ its top, under a sakura branch on washi paper. Drawn on the macOS icon grid
 | --- | --- |
 | `piweb-mac.svg` | source, 64 px and up |
 | `piweb-mac-small.svg` | simplified source (no branch, bigger mini) used for 16/32 px |
+| `piweb-full-ios.svg`, `piweb-full-maskable.svg` | full-bleed sources for iOS and maskable icons |
 | `piweb.icns` | built iconset, 16–1024 px |
 | `piweb-mac-512.png` | preview |
 | `apply.sh` | installs it on the Chrome app shim and re-signs it |
 
-It is deliberately not in `manifest.webmanifest`: the manifest also serves
-Android and the Linux deployment, which keep the original mark.
+It is also the web app's icon everywhere (`public/icons/piweb-mini/`):
+
+| variant | source | used by |
+| --- | --- | --- |
+| `icon-*.png` (transparent, macOS squircle) | `piweb-mac.svg` | manifest `any`: Chrome install on macOS/Windows |
+| `maskable-*.png` (full-bleed, content in the 80% safe circle) | `piweb-full-maskable.svg` | manifest `maskable`: Android, Chrome masking |
+| `apple-*.png`, `/apple-touch-icon.png` (opaque, full-bleed) | `piweb-full-ios.svg` | iPhone/iPad Add to Home Screen |
+| `full-*.png` | `piweb-full-ios.svg` | push notification icon, media player artwork |
+
+`icons/` is served `immutable` for a year, so a changed icon must get a new
+file name or directory, never be overwritten in place. A home-screen icon
+already on an iPhone does not update: remove it and Add to Home Screen again.
 
 Rebuild the `.icns` from the SVGs (Chrome renders them, `sips` scales, `iconutil` packs):
 
