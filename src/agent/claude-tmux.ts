@@ -752,6 +752,16 @@ export async function invokeClaudeTmux(
       }
       return { ok: false, text: '', aborted: true };
     }
+    if (pasted && !submitted && pane) {
+      // An unacknowledged paste may still have landed; left in the box it
+      // would be prepended to the next message. Ctrl-C clears a non-empty
+      // prompt (C-u clears only its last line); on an empty one it would arm
+      // "press again to exit", so it is sent only when text is there.
+      const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+      if (currentPrompt(screen)) {
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      }
+    }
     logger.warn({ err: err.message, channelFolder }, 'Claude Code tmux bridge failed');
     return { ok: false, text: '', error: `Claude Code tmux bridge failed: ${err.message}` };
   } finally {
@@ -991,6 +1001,20 @@ function currentPrompt(screen: string): string {
     .trim();
 }
 
+/** Terminal wrapping inserts breaks and indents anywhere, even inside a word or CJK run. */
+function compactText(text: string): string {
+  return text.replace(/\s+/gu, '');
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  for (let i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length)) {
+    count += 1;
+  }
+  return count;
+}
+
 async function waitForPastedPrompt(
   pane: string,
   promptText: string,
@@ -998,7 +1022,14 @@ async function waitForPastedPrompt(
   deps: ClaudeTmuxDependencies,
   signal?: AbortSignal,
 ): Promise<void> {
-  const sample = promptText.replace(/\s+/gu, ' ').trim().slice(0, 32);
+  // The prompt box shows only its last rows once the text outgrows the pane,
+  // so the opening words can scroll away while the end stays visible: accept
+  // either end of the prompt. Whitespace is dropped because wrapping reflows it.
+  const compactPrompt = compactText(promptText);
+  const samples = [...new Set([compactPrompt.slice(0, 24), compactPrompt.slice(-24)])].filter(
+    Boolean,
+  );
+  const inputBefore = compactText(currentPrompt(beforePaste));
   const previousMarkers = pasteMarkers(beforePaste);
   const deadline = Date.now() + deps.startupTimeoutMs;
   let lastScreen = '';
@@ -1006,15 +1037,19 @@ async function waitForPastedPrompt(
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
-    const input = currentPrompt(lastScreen);
-    const normalizedInput = input.replace(/\s+/gu, ' ');
+    const input = compactText(currentPrompt(lastScreen));
     const hasNewMarker = [...pasteMarkers(lastScreen)].some(
       (marker) => !previousMarkers.has(marker),
     );
     // Match ordinary text only inside the editable prompt, never in stale pane
-    // history. A paste marker must be new even inside the editable prompt:
-    // unchanged markers can survive a failed acknowledgement or merely reflow.
-    if ((sample && normalizedInput.includes(sample)) || hasNewMarker) {
+    // history, and only text the paste added: an identical prompt left
+    // unsubmitted in the box must not acknowledge this one. A paste marker must
+    // be new even inside the editable prompt: unchanged markers can survive a
+    // failed acknowledgement or merely reflow.
+    const hasNewText = samples.some(
+      (sample) => countOccurrences(input, sample) > countOccurrences(inputBefore, sample),
+    );
+    if (hasNewText || hasNewMarker) {
       return;
     }
     await deps.sleep(deps.pollMs);

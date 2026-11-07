@@ -1051,6 +1051,56 @@ describe('Claude tmux invocation', () => {
     },
   );
 
+  it('accepts a long paste whose opening rows scrolled out of the prompt box', async () => {
+    // Live failure: an 80x23 pane showed only the prompt's last rows, wrapped
+    // mid-sentence and through CJK text, so the opening words never appeared.
+    const fixture = createRuntimeFixture();
+    const prompt =
+      '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. Follow only the latest instruction below.] [Web user: web] 用中文，你有sudo 都幫我做行';
+    const originalTmux = fixture.dependencies.tmux;
+    let scrolled = false;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      if (args[0] === 'capture-pane' && screen.includes(`❯ ${prompt}`)) {
+        scrolled = true;
+        return screen.replace(
+          `❯ ${prompt}`,
+          '❯ interrupted the previous task. Do not resume or continue the previous task.\n  Follow only the latest instruction below.] [Web user: web] 用中文，你有sudo 都\n  幫我做行',
+        );
+      }
+      return screen;
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', prompt, {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(scrolled).toBe(true);
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it('does not acknowledge a paste by an identical prompt already left in the box', async () => {
+    const fixture = createRuntimeFixture();
+    const prompt = 'same request text that was left unsubmitted earlier';
+    const originalTmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      if (args[0] !== 'capture-pane') return screen;
+      // The paste never lands: the box keeps showing only the stale copy.
+      return screen.replace(/❯ [^\n]*/u, `❯ ${prompt}`);
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', prompt, {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Claude Code did not accept the pasted prompt');
+    expect(fixture.submissionCount).toBe(0);
+    expect(fixture.sentKeys.some((keys) => keys.at(-1) === 'C-c')).toBe(true);
+  });
+
   it('does not acknowledge an incomplete terminal-wrapped paste marker', async () => {
     const fixture = createRuntimeFixture({ pasteLineCount: true });
     const originalTmux = fixture.dependencies.tmux;
