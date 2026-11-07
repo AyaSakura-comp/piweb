@@ -1,7 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { readClaudeCodeCredentials } from './claude-code-credentials.js';
 
 // Used by Claude Code /usage. Internal endpoint: fail closed on auth/schema changes.
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -110,15 +108,7 @@ export function createClaudeUsageReader(
     now?: () => number;
   } = {},
 ) {
-  const readAuth =
-    options.readAuth ??
-    (async () =>
-      JSON.parse(
-        await readFile(
-          join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), '.credentials.json'),
-          'utf8',
-        ),
-      ));
+  const readAuth = options.readAuth ?? readClaudeCodeCredentials;
   const fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now;
   let cache: { key: string; until: number; promise: Promise<string> } | undefined;

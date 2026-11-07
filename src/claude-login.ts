@@ -11,9 +11,6 @@
  * copy — and stores the tokens in pi's auth.json exactly as pi's login would.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { Credential } from '@earendil-works/pi-ai';
 import {
   cleanPastedCode,
@@ -24,6 +21,7 @@ import {
   unreachableError,
   withPastedCode,
 } from './subscription-login.js';
+import { readClaudeCodeCredentials } from './claude-code-credentials.js';
 import { logger } from './logger.js';
 
 export const CLAUDE_PROVIDER = 'anthropic';
@@ -89,13 +87,7 @@ const DEFAULT_DEPENDENCIES: ClaudeLoginDependencies = {
   fetchImpl: fetch,
   now: Date.now,
   saveCredential: savePiCredential,
-  readClaudeCodeAuth: async () =>
-    JSON.parse(
-      await readFile(
-        join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), '.credentials.json'),
-        'utf8',
-      ),
-    ),
+  readClaudeCodeAuth: readClaudeCodeCredentials,
 };
 
 /**
@@ -158,10 +150,14 @@ export function parseClaudeAuthorizationCode(
     try {
       url = new URL(value);
     } catch {
-      throw retry('That address is incomplete. Copy the whole code Claude shows and paste it again.');
+      throw retry(
+        'That address is incomplete. Copy the whole code Claude shows and paste it again.',
+      );
     }
     if (url.pathname.endsWith('/oauth/authorize')) {
-      throw retry('That is the sign-in link itself. Open it, approve, then paste the code Claude shows.');
+      throw retry(
+        'That is the sign-in link itself. Open it, approve, then paste the code Claude shows.',
+      );
     }
     const declined = url.searchParams.get('error');
     if (declined) {
@@ -180,7 +176,8 @@ export function parseClaudeAuthorizationCode(
   } else {
     [code, state] = value.split('#', 2);
   }
-  if (!code) throw retry('No code found in what was pasted. Copy the code Claude shows and paste it.');
+  if (!code)
+    throw retry('No code found in what was pasted. Copy the code Claude shows and paste it.');
   if (state && state !== expectedState) {
     throw retry(
       'That code is from an older sign-in link. Use Open Claude on this card, then paste the code it shows.',
@@ -229,7 +226,9 @@ export async function exchangeClaudeCode(
     !result.access_token ||
     !result.refresh_token
   ) {
-    throw retry('Claude answered without a usable token. Open Claude again and paste the new code.');
+    throw retry(
+      'Claude answered without a usable token. Open Claude again and paste the new code.',
+    );
   }
   const credential: Credential = {
     type: 'oauth',
@@ -243,8 +242,13 @@ export async function exchangeClaudeCode(
   try {
     await dependencies.saveCredential(credential);
   } catch (error: unknown) {
-    logger.warn({ err: (error as Error)?.name ?? 'Error' }, 'Could not store the Claude credential');
-    throw new PublicLoginError("Signed in, but the host couldn't save pi's credentials (auth.json). Check its disk and permissions, then connect again.");
+    logger.warn(
+      { err: (error as Error)?.name ?? 'Error' },
+      'Could not store the Claude credential',
+    );
+    throw new PublicLoginError(
+      "Signed in, but the host couldn't save pi's credentials (auth.json). Check its disk and permissions, then connect again.",
+    );
   }
   return credential;
 }
@@ -257,21 +261,39 @@ export function claudeSubscriptionRuntime(
   pi: PiCredentialRuntime,
   overrides: Partial<ClaudeLoginDependencies> = {},
 ) {
-  const readClaudeCodeAuth = overrides.readClaudeCodeAuth ?? DEFAULT_DEPENDENCIES.readClaudeCodeAuth;
+  const readClaudeCodeAuth =
+    overrides.readClaudeCodeAuth ?? DEFAULT_DEPENDENCIES.readClaudeCodeAuth;
   return {
-    async login(_provider: string, _type: 'oauth', interaction: CodeLoginInteraction): Promise<Credential> {
+    async login(
+      _provider: string,
+      _type: 'oauth',
+      interaction: CodeLoginInteraction,
+    ): Promise<Credential> {
       const authorization = createClaudeAuthorization();
       interaction.notify({ type: 'auth_url', url: authorization.url });
-      const credential = await withPastedCode(interaction, 'Paste the code Claude shows', async (pasted) => {
-        const { code, state } = parseClaudeAuthorizationCode(pasted, authorization.state);
-        interaction.notify({ type: 'progress', message: 'Exchanging authorization code' });
-        return exchangeClaudeCode(code, state, authorization.verifier, interaction.signal, overrides);
-      });
+      const credential = await withPastedCode(
+        interaction,
+        'Paste the code Claude shows',
+        async (pasted) => {
+          const { code, state } = parseClaudeAuthorizationCode(pasted, authorization.state);
+          interaction.notify({ type: 'progress', message: 'Exchanging authorization code' });
+          return exchangeClaudeCode(
+            code,
+            state,
+            authorization.verifier,
+            interaction.signal,
+            overrides,
+          );
+        },
+      );
       // The credential is stored; a reload that fails only delays the models.
       await Promise.resolve()
         .then(() => pi.refresh({ providers: [CLAUDE_PROVIDER], allowNetwork: false }))
         .catch((error: unknown) =>
-          logger.warn({ err: (error as Error)?.name ?? 'Error' }, 'pi did not reload the Claude provider'),
+          logger.warn(
+            { err: (error as Error)?.name ?? 'Error' },
+            'pi did not reload the Claude provider',
+          ),
         );
       return credential;
     },
@@ -289,7 +311,9 @@ export function claudeSubscriptionRuntime(
     async checkAuth(provider: string, options?: { signal?: AbortSignal }): Promise<unknown> {
       const check = await pi.checkAuth(provider, options);
       if (isOauth(check)) return check;
-      return (await claudeCodeSignedIn(readClaudeCodeAuth)) ? { type: 'oauth', via: 'claude-code' } : check;
+      return (await claudeCodeSignedIn(readClaudeCodeAuth))
+        ? { type: 'oauth', via: 'claude-code' }
+        : check;
     },
   };
 }
