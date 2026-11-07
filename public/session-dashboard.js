@@ -1185,6 +1185,18 @@ export function createSessionDashboard({
         const typing = pressTyping;
         const typingHere = pressTypingHere;
         selectComposerPane(jid);
+        // A computer has no keyboard to pop up: a mouse click on the pane puts
+        // the cursor in its input at once, as a session-list click does
+        // (revealSession). Controls and the card itself keep their own job.
+        if (
+          pressPointer === 'mouse' &&
+          window.matchMedia?.('(pointer: fine)')?.matches &&
+          !e.target.closest(PANE_TAP_KEEPS_FOCUS) &&
+          !dock.contains(e.target)
+        ) {
+          dock.querySelector('.dashboard-pane-composer textarea')?.focus({ preventScroll: true });
+          return;
+        }
         // iPhone / iPad: a finger tap on the transcript itself (not a control,
         // image or video, not ending a text selection) toggles the keyboard.
         // focus() must run inside the tap for iOS to raise the keyboard.
