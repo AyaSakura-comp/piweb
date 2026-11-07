@@ -1,5 +1,5 @@
 import { parse } from 'dotenv';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 
@@ -32,6 +32,73 @@ export function defaultDataDir(): string {
       return resolve(homedir(), '.local/share', 'piweb');
   }
 }
+
+/**
+ * Defaults that differ between the two hosts this checkout runs on. An explicit
+ * value in config.env or the environment always wins; these only fill gaps.
+ *
+ * - Linux (the original host): web tier in Docker + worker under systemd,
+ *   Tailscale identity headers from the sidecar, Breeze ASR and agy installed.
+ * - macOS (Mac mini): `piweb.js all` under launchd (SQLite locks do not cross
+ *   Docker Desktop/OrbStack's VM bind mount, so web and worker must be one host
+ *   process), Tailscale in a container that proxies in without identity
+ *   headers, no Breeze ASR or agy, Homebrew binaries that launchd's PATH lacks,
+ *   and the Mac mini home-screen icon.
+ */
+export interface PlatformDefaults {
+  embeddedWorker: boolean;
+  trustTailscaleIdentity: boolean;
+  voiceAsrEnabled: boolean;
+  agyEnabled: boolean;
+  iconSet: string;
+  tmuxBin: string;
+  claudeBin: string;
+  agyBin: string;
+}
+
+/** First candidate that exists, else the bare name (resolved through PATH). */
+function firstExisting(
+  candidates: string[],
+  fallback: string,
+  exists: (path: string) => boolean,
+): string {
+  return candidates.find((candidate) => exists(candidate)) ?? fallback;
+}
+
+export function platformDefaults(
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+  exists: (path: string) => boolean = existsSync,
+): PlatformDefaults {
+  // systemd and launchd both start without ~/.local/bin, where the Claude Code
+  // and agy installers put their binaries.
+  const claudeBin = firstExisting([resolve(home, '.local/bin/claude')], 'claude', exists);
+  const agyBin = firstExisting([resolve(home, '.local/bin/agy')], 'agy', exists);
+  if (platform === 'darwin') {
+    return {
+      embeddedWorker: true,
+      trustTailscaleIdentity: false,
+      voiceAsrEnabled: false,
+      agyEnabled: false,
+      iconSet: 'piweb-mini',
+      tmuxBin: firstExisting(['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux'], 'tmux', exists),
+      claudeBin,
+      agyBin,
+    };
+  }
+  return {
+    embeddedWorker: false,
+    trustTailscaleIdentity: true,
+    voiceAsrEnabled: true,
+    agyEnabled: true,
+    iconSet: '',
+    tmuxBin: 'tmux',
+    claudeBin,
+    agyBin,
+  };
+}
+
+const PLATFORM = platformDefaults();
 
 export function resolveConfigPath(): string {
   const configuredPath = process.env.PIDG_CONFIG?.trim() ?? '';
@@ -142,8 +209,8 @@ export const config = {
    * enabled on the host worker.
    */
   claudeTmuxEnabled: envBool('CLAUDE_TMUX_ENABLED', false),
-  claudeTmuxBin: env('CLAUDE_TMUX_BIN', 'claude'),
-  claudeTmuxTmuxBin: env('CLAUDE_TMUX_TMUX_BIN', 'tmux'),
+  claudeTmuxBin: env('CLAUDE_TMUX_BIN', PLATFORM.claudeBin),
+  claudeTmuxTmuxBin: env('CLAUDE_TMUX_TMUX_BIN', PLATFORM.tmuxBin),
   claudeTmuxPollMs: envInt('CLAUDE_TMUX_POLL_MS', 150, { min: 10 }),
   claudeTmuxStartupTimeoutMs: envInt('CLAUDE_TMUX_STARTUP_TIMEOUT_MS', 30_000, {
     min: 1_000,
@@ -157,10 +224,10 @@ export const config = {
    * as `agy/<id>` refs and every turn on such a model is delegated to the agy
    * CLI instead of pi.
    */
-  agyEnabled: envBool('AGY_ENABLED', true),
+  agyEnabled: envBool('AGY_ENABLED', PLATFORM.agyEnabled),
 
   /** agy binary path */
-  agyBin: env('AGY_BIN', 'agy'),
+  agyBin: env('AGY_BIN', PLATFORM.agyBin),
 
   /** Timeout for the `agy models` catalog probe */
   agyModelsTimeoutMs: envInt('AGY_MODELS_TIMEOUT_MS', 20000, { min: 1000 }),
@@ -289,7 +356,7 @@ export const config = {
   maxEventChars: envInt('MAX_EVENT_CHARS', 1800, { min: 200 }),
 
   /** Auto-transcribe Discord voice/audio attachments with a local Breeze ASR HTTP server. */
-  voiceAsrEnabled: envBool('VOICE_ASR_ENABLED', true),
+  voiceAsrEnabled: envBool('VOICE_ASR_ENABLED', PLATFORM.voiceAsrEnabled),
   voiceAsrUrl: env('VOICE_ASR_URL', 'http://127.0.0.1:8025'),
   voiceAsrTimeoutMs: envInt('VOICE_ASR_TIMEOUT_MS', 30_000, { min: 1000 }),
   voiceAsrRetries: envInt('VOICE_ASR_RETRIES', 1, { min: 0 }),
@@ -348,7 +415,10 @@ export const config = {
    * the token. Trusted ONLY for connections arriving on loopback, because any
    * client that can open the port directly can simply set the header itself.
    */
-  webTrustTailscaleIdentity: envBool('WEB_TRUST_TAILSCALE_IDENTITY', true),
+  webTrustTailscaleIdentity: envBool(
+    'WEB_TRUST_TAILSCALE_IDENTITY',
+    PLATFORM.trustTailscaleIdentity,
+  ),
 
   /**
    * Comma-separated Tailscale logins allowed in (e.g. "you@github"). Empty =>
@@ -383,21 +453,21 @@ export const config = {
   webTrashRetentionDays: envInt('WEB_TRASH_RETENTION_DAYS', 30, { min: 0 }),
 
   /**
-   * Run the pi worker loop inside the web process. Off by default: the worker
-   * normally runs on the host (full host access) while the web server runs in
-   * Docker. Turn on for an all-in-one container.
+   * Run the pi worker loop inside the web process. Off by default on Linux:
+   * the worker runs on the host (full host access) while the web server runs
+   * in Docker. On by default on macOS, where both must be one host process.
    */
-  webEmbeddedWorker: envBool('WEB_EMBEDDED_WORKER', false),
+  webEmbeddedWorker: envBool('WEB_EMBEDDED_WORKER', PLATFORM.embeddedWorker),
 
   /**
    * This deployment's home-screen / install icon set. Empty = the default
    * icons (public/apple-touch-icon*.png, public/manifest.webmanifest). A name
    * makes the server answer the apple-touch-icon URLs from
    * public/icons/<name>/apple-<size>.png and /manifest.webmanifest from
-   * public/manifest.<name>.webmanifest (src/web/icon-set.ts). The Mac mini
-   * host sets `piweb-mini`.
+   * public/manifest.<name>.webmanifest (src/web/icon-set.ts). Defaults to
+   * `piweb-mini` on macOS (the Mac mini), the default icons on Linux.
    */
-  webIconSet: env('WEB_ICON_SET', ''),
+  webIconSet: env('WEB_ICON_SET', PLATFORM.iconSet),
 } as const;
 
 export type Config = typeof config;

@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { readFile, readdir, statfs } from 'node:fs/promises';
+import { cpus, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { config } from '../config.js';
@@ -33,9 +35,60 @@ function npuPowerFromGpuMetrics(data: Buffer | undefined): number | undefined {
 }
 
 type DiskStats = { bsize: number; blocks: number; bfree: number; bavail: number };
+type CpuTimes = { user: number; nice: number; sys: number; idle: number; irq: number };
+
+/** Runs a fixed system binary (no shell), resolving its stdout or '' on any failure. */
+export function runReadOnly(file: string, args: string[]): Promise<string> {
+  return new Promise((resolveOutput) => {
+    execFile(file, args, { timeout: 2000, maxBuffer: 1 << 20 }, (error, stdout) =>
+      resolveOutput(error ? '' : String(stdout)),
+    );
+  });
+}
 
 /**
- * Read-only, best-effort Linux host telemetry. No commands, elevated access or client paths.
+ * macOS memory as Activity Monitor's "Memory Used" counts it: app memory
+ * (anonymous pages minus purgeable) + wired + what the compressor occupies.
+ * `vm_stat` prints counts in pages of the size given in its header line.
+ */
+export function macMemoryFromVmStat(
+  vmStat: string,
+  totalBytes: number,
+): { used: number; total: number } | undefined {
+  const pageSize = Number(vmStat.match(/page size of (\d+) bytes/)?.[1]);
+  const pages = (label: string) => {
+    const match = new RegExp(`^${label}:\\s+(\\d+)\\.?$`, 'm').exec(vmStat);
+    return match ? Number(match[1]) : undefined;
+  };
+  const anonymous = pages('Anonymous pages');
+  const purgeable = pages('Pages purgeable');
+  const wired = pages('Pages wired down');
+  const compressed = pages('Pages occupied by compressor');
+  if (!(pageSize > 0) || !(totalBytes > 0)) return undefined;
+  if ([anonymous, purgeable, wired, compressed].some((n) => n === undefined)) return undefined;
+  const used = (Math.max(0, anonymous! - purgeable!) + wired! + compressed!) * pageSize;
+  return used <= totalBytes ? { used, total: totalBytes } : undefined;
+}
+
+/**
+ * Apple GPU utilization from the IOAccelerator's PerformanceStatistics
+ * ("Device Utilization %"), readable without root. The highest across GPUs.
+ */
+export function macGpuPercentFromIoreg(ioreg: string): number | undefined {
+  let best: number | undefined;
+  for (const match of ioreg.matchAll(/"Device Utilization %"=(\d+)/g)) {
+    const value = Number(match[1]);
+    if (value >= 0 && value <= 100) best = Math.max(best ?? 0, value);
+  }
+  return best;
+}
+
+/**
+ * Read-only, best-effort host telemetry; never elevated access or client paths.
+ * Linux reads /proc and /sys with no commands. macOS has neither, so it reads
+ * CPU times from the kernel (os.cpus) and runs two fixed read-only binaries,
+ * `vm_stat` (memory) and `ioreg` (GPU); temperatures and power need root there
+ * (powermetrics) and are not shown.
  * `diskPath` is a server-chosen directory whose filesystem the Disk reading describes.
  */
 export function createSystemMetricsSampler({
@@ -43,11 +96,19 @@ export function createSystemMetricsSampler({
   now = () => performance.now(),
   diskPath,
   statDisk = (path: string): Promise<DiskStats> => statfs(path),
+  platform = 'linux',
+  run = runReadOnly,
+  cpuTimes = () => cpus().map((cpu) => cpu.times),
+  totalMemory = totalmem,
 }: {
   root?: string;
   now?: () => number;
   diskPath?: string;
   statDisk?: (path: string) => Promise<DiskStats>;
+  platform?: NodeJS.Platform;
+  run?: (file: string, args: string[]) => Promise<string>;
+  cpuTimes?: () => CpuTimes[];
+  totalMemory?: () => number;
 } = {}) {
   let previousCpu: { total: number; idle: number } | undefined;
   let previousEnergy: { path: string; energy: number; time: number } | undefined;
@@ -85,6 +146,61 @@ export function createSystemMetricsSampler({
     }
     installed = { memTotal, bytes };
     return bytes;
+  }
+
+  function applyDisk(result: SystemMetrics, disk: DiskStats | undefined): void {
+    if (disk) {
+      // As df counts it: used = blocks − free; the percent is of what users can
+      // fill (used + available), so root's reserved blocks are not counted as room.
+      const { bsize, blocks, bfree, bavail } = disk;
+      const valid = [bsize, blocks, bfree, bavail].every((n) => Number.isSafeInteger(n) && n >= 0);
+      if (valid && bsize > 0 && blocks > 0 && bfree <= blocks && bavail <= bfree) {
+        const used = (blocks - bfree) * bsize;
+        const free = bavail * bsize;
+        result.diskTotalBytes = blocks * bsize;
+        result.diskUsedBytes = used;
+        result.diskFreeBytes = free;
+        result.diskPercent = used + free > 0 ? (100 * used) / (used + free) : 0;
+      }
+    }
+  }
+
+  async function collectMac(): Promise<SystemMetrics> {
+    const result: SystemMetrics = {};
+    const time = now();
+    const [vmStat, ioreg, disk] = await Promise.all([
+      run('/usr/bin/vm_stat', []),
+      run('/usr/sbin/ioreg', ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator']),
+      diskPath ? statDisk(diskPath).catch(() => undefined) : undefined,
+    ]);
+    // Aggregate CPU time across cores, as /proc/stat's first line is on Linux.
+    const times = cpuTimes();
+    if (times.length > 0) {
+      const sum = (pick: (t: CpuTimes) => number) => times.reduce((a, t) => a + pick(t), 0);
+      const cpu = {
+        total: sum((t) => t.user + t.nice + t.sys + t.idle + t.irq),
+        idle: sum((t) => t.idle),
+      };
+      if (previousCpu) {
+        const delta = cpu.total - previousCpu.total;
+        const idle = cpu.idle - previousCpu.idle;
+        if (delta > 0 && idle >= 0 && idle <= delta)
+          result.cpuPercent = (100 * (delta - idle)) / delta;
+      }
+      previousCpu = cpu;
+    } else previousCpu = undefined;
+    const memory = macMemoryFromVmStat(vmStat, totalMemory());
+    if (memory) {
+      result.memoryTotalBytes = memory.total;
+      result.memoryUsedBytes = memory.used;
+      result.memoryPercent = (100 * memory.used) / memory.total;
+    }
+    applyDisk(result, disk);
+    const gpu = macGpuPercentFromIoreg(ioreg);
+    if (gpu !== undefined) result.gpuPercent = gpu;
+    cached = result;
+    sampledAt = time;
+    return result;
   }
 
   async function collect(): Promise<SystemMetrics> {
@@ -125,20 +241,7 @@ export function createSystemMetricsSampler({
       result.memoryUsedBytes = capacity - available;
       result.memoryPercent = (100 * (capacity - available)) / capacity;
     }
-    if (disk) {
-      // As df counts it: used = blocks − free; the percent is of what users can
-      // fill (used + available), so root's reserved blocks are not counted as room.
-      const { bsize, blocks, bfree, bavail } = disk;
-      const valid = [bsize, blocks, bfree, bavail].every((n) => Number.isSafeInteger(n) && n >= 0);
-      if (valid && bsize > 0 && blocks > 0 && bfree <= blocks && bavail <= bfree) {
-        const used = (blocks - bfree) * bsize;
-        const free = bavail * bsize;
-        result.diskTotalBytes = blocks * bsize;
-        result.diskUsedBytes = used;
-        result.diskFreeBytes = free;
-        result.diskPercent = used + free > 0 ? (100 * used) / (used + free) : 0;
-      }
-    }
+    applyDisk(result, disk);
     // Discover sensor indices on every sample: hot removal/permission changes naturally disappear.
     await Promise.all(
       hwmons
@@ -211,7 +314,7 @@ export function createSystemMetricsSampler({
   return function sample(): Promise<SystemMetrics> {
     if (pending) return pending;
     if (now() - sampledAt < 500) return Promise.resolve(cached);
-    pending = collect().finally(() => {
+    pending = (platform === 'darwin' ? collectMac() : collect()).finally(() => {
       pending = undefined;
     });
     return pending;
@@ -220,4 +323,7 @@ export function createSystemMetricsSampler({
 
 // The disk that holds piweb's data: in the container it is the host's disk,
 // bind-mounted (the container's own `/` is an overlay).
-export const sampleSystemMetrics = createSystemMetricsSampler({ diskPath: dirname(config.dbPath) });
+export const sampleSystemMetrics = createSystemMetricsSampler({
+  diskPath: dirname(config.dbPath),
+  platform: process.platform,
+});

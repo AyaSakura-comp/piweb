@@ -576,6 +576,22 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `MAX_ATTACHMENT_BYTES`                               | worker | Discord upload cap (host config: 10 MB)          |
 | `WEB_MAX_ATTACHMENT_BYTES`                           | web    | per-file web upload cap (default 100 MB)         |
 
+**Per-platform defaults** (`platformDefaults()` in `src/config.ts`): one
+checkout runs on the Linux host and the Mac mini, so unset values follow the
+OS; an explicit value in config.env or the environment always wins.
+
+| setting                        | Linux                 | macOS                                        |
+| ------------------------------ | --------------------- | -------------------------------------------- |
+| config / data dir              | `~/.config/piweb`, `~/.local/share/piweb` | `~/Library/Application Support/piweb` (both) |
+| `WEB_EMBEDDED_WORKER`          | false (web in Docker, worker on host) | true (`piweb.js all` under launchd; SQLite locks do not cross the VM bind mount) |
+| `WEB_TRUST_TAILSCALE_IDENTITY` | true (sidecar headers) | false (Tailscale container proxies in without identity) |
+| `VOICE_ASR_ENABLED`, `AGY_ENABLED` | true              | false (no Breeze ASR / agy on the Mac)       |
+| `WEB_ICON_SET`                 | default icons         | `piweb-mini`                                 |
+| `CLAUDE_TMUX_TMUX_BIN`         | `tmux`                | `/opt/homebrew/bin/tmux` (or `/usr/local/bin`) if present |
+| `CLAUDE_TMUX_BIN`, `AGY_BIN`   | `~/.local/bin/<name>` if present, else the bare name (both) | same |
+
+Host metrics also branch on the OS (`docs/system-metrics.md`, macOS section).
+
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
 from piscord and unused by the web transport.
 

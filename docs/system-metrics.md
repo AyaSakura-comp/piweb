@@ -4,7 +4,7 @@ The Sessions drawer displays a compact live host-telemetry panel beneath its hea
 
 ## Data and fault handling
 
-Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No subprocesses, elevated permissions or user-supplied filesystem paths are used (the disk path is the server's own data directory).
+Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No elevated permissions or user-supplied filesystem paths are used (the disk path is the server's own data directory). On Linux no subprocesses are run either; macOS has no `/proc` or `/sys`, so there it runs two fixed read-only binaries (see below).
 
 - CPU utilization: deltas of the aggregate `/proc/stat` CPU counters (guest counters excluded). The first sample has no CPU percentage.
 - RAM: total is the installed memory as `lsmem` counts it — online blocks in
@@ -32,6 +32,16 @@ Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads 
 - GPU utilization: discovered DRM `gpu_busy_percent` counters (maximum on multi-GPU hosts).
 - NPU power: discovered DRM `card*/device/gpu_metrics`, using the same `average_ipu_power` field as power-monitor. Accepts only the known `gpu_metrics_v3_0` layout (header format 3, content revision 0, structure size 264 bytes); reads uint16 LE at byte offset 116, in milliwatts. `0xffff` is unavailable and omitted; an actual zero is displayed as `NPU power 0.00 W`. Unknown/truncated layouts or unreadable files are omitted, not estimated or replaced by zero. Multiple valid tables use the highest reading, not a sum that might double-count the same integrated NPU.
 - NPU utilization: `accel*/device/npu_busy_percent` only if provided by the driver. Device presence or runtime active status is never shown as utilization. The current XDNA driver on this host does not provide this counter, so its utilization percentage is hidden independently of NPU watts. `average_ipu_activity` is not exposed by this change.
+
+### macOS (the Mac mini)
+
+The sampler picks the platform from `process.platform` (`sampleSystemMetrics`); everything else above is the Linux path.
+
+- CPU utilization: deltas of the summed per-core times from `os.cpus()` (user + nice + sys + irq vs idle).
+- RAM: total is `os.totalmem()`; used is Activity Monitor's "Memory Used" from `/usr/bin/vm_stat`: app memory (anonymous − purgeable pages) + wired + pages occupied by the compressor, × the page size in vm_stat's header.
+- GPU utilization: `"Device Utilization %"` from the IOAccelerator's `PerformanceStatistics` (`/usr/sbin/ioreg -r -d 1 -w 0 -c IOAccelerator`), readable without root; the highest across GPUs.
+- Disk: the same `statfs` reading as Linux.
+- Not shown: CPU/GPU temperatures and power need root on macOS (`powermetrics`), and the NPU has no counters. Both commands run with `execFile` (no shell), a 2 s timeout and no client input; a failure or unparseable output omits that reading.
 
 The current Docker runtime exposes the host `/proc/stat`, `/proc/meminfo` and relevant `/sys/class` sensors. No additional mounts or privileged container mode are required on this host. Other platforms without these Linux files simply show no telemetry. For multiple CPU/GPU temperature sensors, the highest temperature is shown; telemetry is a host overview, not a per-device inventory.
 
