@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -49,6 +50,7 @@ export const STOP_REQUESTED = 'piweb-stop';
  * children inherit them, so the path names exactly this task's processes.
  */
 export function commandProcessIds(outputFile: string, procRoot = '/proc'): number[] {
+  if (process.platform === 'darwin' && procRoot === '/proc') return lsofWriters(outputFile);
   let pids: string[];
   try {
     pids = readdirSync(procRoot).filter((name) => /^\d+$/.test(name));
@@ -74,6 +76,26 @@ export function commandProcessIds(outputFile: string, procRoot = '/proc'): numbe
     .map(Number);
 }
 
+/**
+ * macOS has no /proc: lsof names the processes holding the file on stdout or
+ * stderr (it exits 1, so this returns [], when there are none or no file).
+ */
+function lsofWriters(outputFile: string): number[] {
+  try {
+    const out = execFileSync('/usr/sbin/lsof', ['-t', '-a', '-d', '1,2', '--', outputFile], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    });
+    return out
+      .split('\n')
+      .filter((line) => /^\d+$/.test(line))
+      .map(Number);
+  } catch {
+    return [];
+  }
+}
+
 /** End a background command: SIGTERM its processes (see commandProcessIds). */
 export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): number[] {
   const stopped: number[] = [];
@@ -89,7 +111,8 @@ export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): nu
 }
 
 export function findTaskOutputFile(sessionId: string, taskId: string, cwd?: string): string | undefined {
-  const claudeTmp = '/tmp/claude-1000';
+  // Claude Code keeps task output under /tmp/claude-<uid> (1000 on the Linux host, 501 on a Mac).
+  const claudeTmp = `/tmp/claude-${process.getuid?.() ?? 1000}`;
   if (!existsSync(claudeTmp)) return undefined;
 
   // 1. If cwd is specified, try the direct slug
