@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, statfs } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -158,4 +158,57 @@ it('shares cached and in-flight samples across clients', async () => {
   expect(await f.sample()).toBe(a);
   f.advance();
   expect(await f.sample()).toMatchObject({ gpuPercent: 50 });
+});
+
+it('reports the disk that holds the data as df does, and nothing when it cannot be read', async () => {
+  // This box's root disk, from statfs on the data directory.
+  const disk = { bsize: 4096, blocks: 961092611, bfree: 594549384, bavail: 589713414 };
+  const asked: string[] = [];
+  const { createSystemMetricsSampler } = await import('../src/web/system-metrics.js');
+  const read = (stats: unknown, diskPath: string | null = '/data') =>
+    createSystemMetricsSampler({
+      root: '/nonexistent-metrics-root',
+      diskPath: diskPath ?? undefined,
+      statDisk: async (path) => {
+        asked.push(path);
+        if (stats instanceof Error) throw stats;
+        return stats as typeof disk;
+      },
+    })();
+  const reading = await read(disk);
+  expect(asked).toEqual(['/data']);
+  expect(reading).toEqual({
+    diskTotalBytes: 961092611 * 4096,
+    diskUsedBytes: (961092611 - 594549384) * 4096,
+    diskFreeBytes: 589713414 * 4096,
+    // df's Use%: used of used + available (root's reserve is not room).
+    diskPercent: (100 * (961092611 - 594549384)) / (961092611 - 594549384 + 589713414),
+  });
+  expect(reading.diskPercent).toBeCloseTo(38.3, 1);
+  expect(await read(new Error('EACCES'))).toEqual({});
+  expect(await read({ ...disk, bfree: disk.blocks + 1 })).toEqual({});
+  expect(await read({ ...disk, bavail: disk.bfree + 1 })).toEqual({});
+  expect(await read({ ...disk, bsize: 0 })).toEqual({});
+  asked.length = 0;
+  expect(await read(disk, null)).toEqual({});
+  expect(asked).toEqual([]);
+});
+
+it('the server reads the disk of its data directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'piweb-metrics-disk-'));
+  roots.push(dir);
+  const env = process.env.DB_PATH;
+  process.env.DB_PATH = join(dir, 'gateway.db');
+  try {
+    vi.resetModules();
+    const { sampleSystemMetrics } = await import('../src/web/system-metrics.js');
+    const reading = await sampleSystemMetrics();
+    const stats = await statfs(dir);
+    expect(reading.diskTotalBytes).toBe(stats.blocks * stats.bsize);
+    expect(reading.diskUsedBytes).toBeGreaterThan(0);
+  } finally {
+    if (env === undefined) delete process.env.DB_PATH;
+    else process.env.DB_PATH = env;
+    vi.resetModules();
+  }
 });

@@ -1,6 +1,7 @@
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, readdir, statfs } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { config } from '../config.js';
 
 export interface SystemMetrics {
   cpuPercent?: number;
@@ -10,6 +11,10 @@ export interface SystemMetrics {
   memoryUsedBytes?: number;
   memoryTotalBytes?: number;
   memoryPercent?: number;
+  diskUsedBytes?: number;
+  diskTotalBytes?: number;
+  diskFreeBytes?: number;
+  diskPercent?: number;
   cpuTemperatureC?: number;
   gpuTemperatureC?: number;
   powerWatts?: number;
@@ -27,8 +32,23 @@ function npuPowerFromGpuMetrics(data: Buffer | undefined): number | undefined {
   return milliwatts === 0xffff ? undefined : milliwatts / 1000;
 }
 
-/** Read-only, best-effort Linux host telemetry. No commands, elevated access or client paths. */
-export function createSystemMetricsSampler({ root = '/', now = () => performance.now() } = {}) {
+type DiskStats = { bsize: number; blocks: number; bfree: number; bavail: number };
+
+/**
+ * Read-only, best-effort Linux host telemetry. No commands, elevated access or client paths.
+ * `diskPath` is a server-chosen directory whose filesystem the Disk reading describes.
+ */
+export function createSystemMetricsSampler({
+  root = '/',
+  now = () => performance.now(),
+  diskPath,
+  statDisk = (path: string): Promise<DiskStats> => statfs(path),
+}: {
+  root?: string;
+  now?: () => number;
+  diskPath?: string;
+  statDisk?: (path: string) => Promise<DiskStats>;
+} = {}) {
   let previousCpu: { total: number; idle: number } | undefined;
   let previousEnergy: { path: string; energy: number; time: number } | undefined;
   let cached: SystemMetrics = {};
@@ -70,13 +90,14 @@ export function createSystemMetricsSampler({ root = '/', now = () => performance
   async function collect(): Promise<SystemMetrics> {
     const result: SystemMetrics = {};
     const time = now();
-    const [stat, meminfo, hwmons, cards, accels, powercaps] = await Promise.all([
+    const [stat, meminfo, hwmons, cards, accels, powercaps, disk] = await Promise.all([
       text('proc/stat'),
       text('proc/meminfo'),
       entries('sys/class/hwmon'),
       entries('sys/class/drm'),
       entries('sys/class/accel'),
       entries('sys/class/powercap'),
+      diskPath ? statDisk(diskPath).catch(() => undefined) : undefined,
     ]);
     const rawCpu = stat
       .match(/^cpu\s+(.+)$/m)?.[1]
@@ -103,6 +124,20 @@ export function createSystemMetricsSampler({ root = '/', now = () => performance
       result.memoryTotalBytes = capacity;
       result.memoryUsedBytes = capacity - available;
       result.memoryPercent = (100 * (capacity - available)) / capacity;
+    }
+    if (disk) {
+      // As df counts it: used = blocks − free; the percent is of what users can
+      // fill (used + available), so root's reserved blocks are not counted as room.
+      const { bsize, blocks, bfree, bavail } = disk;
+      const valid = [bsize, blocks, bfree, bavail].every((n) => Number.isSafeInteger(n) && n >= 0);
+      if (valid && bsize > 0 && blocks > 0 && bfree <= blocks && bavail <= bfree) {
+        const used = (blocks - bfree) * bsize;
+        const free = bavail * bsize;
+        result.diskTotalBytes = blocks * bsize;
+        result.diskUsedBytes = used;
+        result.diskFreeBytes = free;
+        result.diskPercent = used + free > 0 ? (100 * used) / (used + free) : 0;
+      }
     }
     // Discover sensor indices on every sample: hot removal/permission changes naturally disappear.
     await Promise.all(
@@ -183,4 +218,6 @@ export function createSystemMetricsSampler({ root = '/', now = () => performance
   };
 }
 
-export const sampleSystemMetrics = createSystemMetricsSampler();
+// The disk that holds piweb's data: in the container it is the host's disk,
+// bind-mounted (the container's own `/` is an overlay).
+export const sampleSystemMetrics = createSystemMetricsSampler({ diskPath: dirname(config.dbPath) });

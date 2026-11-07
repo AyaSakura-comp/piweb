@@ -41,6 +41,23 @@ export function metricsRows(data = {}) {
       `${data.memoryPercent.toFixed(0)}% used`,
     ]);
   }
+  if (
+    valid(data.diskTotalBytes, Number.MAX_SAFE_INTEGER) &&
+    data.diskTotalBytes > 0 &&
+    valid(data.diskUsedBytes, data.diskTotalBytes) &&
+    valid(data.diskFreeBytes, data.diskTotalBytes) &&
+    valid(data.diskPercent, 100)
+  ) {
+    // The disk that holds piweb's data (on this box, the only one): TiB once it
+    // is a terabyte or more, like df's 3.6T, else GiB like RAM.
+    const unit = data.diskTotalBytes >= 2 ** 40 ? ['TiB', 2 ** 40] : ['GiB', 2 ** 30];
+    const amount = (bytes) => (bytes / unit[1]).toFixed(1);
+    rows.push([
+      'Disk',
+      `${amount(data.diskUsedBytes)} / ${amount(data.diskTotalBytes)} ${unit[0]}`,
+      `${data.diskPercent.toFixed(0)}% used, ${amount(data.diskFreeBytes)} ${unit[0]} free`,
+    ]);
+  }
   for (const [key, label] of [
     ['cpuPercent', 'CPU'],
     ['gpuPercent', 'GPU'],
@@ -55,7 +72,18 @@ export function metricsRows(data = {}) {
 /** The Dashboard header's order: the readings that go first when room runs out come last. */
 // The NPU comes right after the drawer's three summary readings: last, it was the
 // one the iPad's header had no room for (2026-11-01, 「神經網路加速器不見了」).
-export const STRIP_ORDER = ['GPU', 'CPU', 'Power', 'NPU power', 'NPU', 'RAM', 'GPU temp', 'CPU temp'];
+// Disk changes slowest, so it goes first when room runs out.
+export const STRIP_ORDER = [
+  'GPU',
+  'CPU',
+  'Power',
+  'NPU power',
+  'NPU',
+  'RAM',
+  'GPU temp',
+  'CPU temp',
+  'Disk',
+];
 
 /**
  * How many of `widths` (in order) fit in `room` px with `gap` between them:

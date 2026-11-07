@@ -174,9 +174,39 @@ it('the Dashboard header shows a leading run of readings that fits, never one af
   expect(metricsRows({ memoryUsedBytes: 2 ** 30, memoryTotalBytes: 122.8 * 2 ** 30, memoryPercent: 1 }).at(0)?.[1]).toBe(
     '1.0 / 122.8 GiB',
   );
-  for (const [label] of metricsRows({
+  const labels = metricsRows({
     powerWatts: 1, npuPowerWatts: 1, cpuTemperatureC: 1, gpuTemperatureC: 1,
     memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, cpuPercent: 1, gpuPercent: 1, npuPercent: 1,
-  }))
-    expect(STRIP_ORDER).toContain(label);
+    diskUsedBytes: 1, diskTotalBytes: 2, diskFreeBytes: 1, diskPercent: 50,
+  }).map(([label]) => label);
+  expect(labels).toContain('Disk');
+  for (const label of labels) expect(STRIP_ORDER).toContain(label);
+  // Disk changes slowest: the first reading to go when room runs out.
+  expect(STRIP_ORDER.at(-1)).toBe('Disk');
+});
+
+it('shows the disk after RAM, in TiB from a terabyte up, and leaves out an impossible reading', () => {
+  const TiB = 2 ** 40;
+  const GiB = 2 ** 30;
+  // This box: 3.58 TiB, 1.37 used, 2.20 free to users (df: 3.6T 1.4T 2.2T).
+  const box = {
+    memoryUsedBytes: 87 * GiB,
+    memoryTotalBytes: 128 * GiB,
+    memoryPercent: 68,
+    diskTotalBytes: 961092611 * 4096,
+    diskUsedBytes: 366543227 * 4096,
+    diskFreeBytes: 589713414 * 4096,
+    diskPercent: 38.33,
+  };
+  expect(metricsRows(box)).toEqual([
+    ['RAM', '87.0 / 128 GiB', '68% used'],
+    ['Disk', '1.4 / 3.6 TiB', '38% used, 2.2 TiB free'],
+  ]);
+  expect(
+    metricsRows({ diskTotalBytes: 500 * GiB, diskUsedBytes: 120 * GiB, diskFreeBytes: 355 * GiB, diskPercent: 25.3 }),
+  ).toEqual([['Disk', '120.0 / 500.0 GiB', '25% used, 355.0 GiB free']]);
+  expect(metricsRows({ ...box, diskUsedBytes: 4 * TiB })).toHaveLength(1);
+  expect(metricsRows({ ...box, diskTotalBytes: 0 })).toHaveLength(1);
+  expect(metricsRows({ ...box, diskPercent: NaN })).toHaveLength(1);
+  expect(metricsRows({ ...box, diskFreeBytes: undefined })).toHaveLength(1);
 });

@@ -4,7 +4,7 @@ The Sessions drawer displays a compact live host-telemetry panel beneath its hea
 
 ## Data and fault handling
 
-Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No subprocesses, elevated permissions or user-supplied filesystem paths are used.
+Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No subprocesses, elevated permissions or user-supplied filesystem paths are used (the disk path is the server's own data directory).
 
 - CPU utilization: deltas of the aggregate `/proc/stat` CPU counters (guest counters excluded). The first sample has no CPU percentage.
 - RAM: total is the installed memory as `lsmem` counts it — online blocks in
@@ -16,6 +16,16 @@ Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads 
   available = installed. Displayed as used / total GiB, the total without a
   decimal when it is whole (`108.3 / 128 GiB`: room in the Dashboard header). The blocks are read
   again only when `MemTotal` changes.
+- Disk: `statfs` on the directory holding the database (`dirname(DB_PATH)`),
+  chosen by the server, never by the client. In the container that is the
+  bind-mounted data directory, so it is the host's disk (the container's own
+  `/` is an overlay); on this box it is the only disk, the 3.6 TiB root. Counted
+  as df counts it: used = (blocks − free) × block size, percent = used ÷
+  (used + available), so root's reserved blocks are not counted as room.
+  Displayed as used / total in TiB from a terabyte up (`1.4 / 3.6 TiB`, like
+  df's `3.6T`), else GiB; the tooltip gives the percent and what is free. It
+  sits under RAM in the drawer's expanded readings, and is last in the
+  Dashboard header (it changes slowest, so it is the first to go).
 - CPU temperature: `k10temp` or `coretemp` hwmon `temp1_input`.
 - GPU temperature/power: discovered `amdgpu` hwmon `temp1_input`, `power1_average` (fallback `power1_input`).
 - Package power: RAPL package `energy_uj` deltas with wrap handling when readable; takes precedence over GPU power rather than adding overlapping power domains. Tooltip identifies the source; this is not wall/socket power.
@@ -31,6 +41,6 @@ The current Docker runtime exposes the host `/proc/stat`, `/proc/meminfo` and re
 - Maintained mobile E2E: `npx playwright test test/e2e/system-metrics.spec.ts`; Dashboard header: `test/e2e/dashboard-host-metrics.spec.ts` (iPad landscape/portrait, drawer hidden, phone, no sensors, both themes)
 - No special credentials required: E2E uses loopback fixture server and API interception, not live account data.
 - Evidence: `artifacts/playwright/test-results/system-metrics-*/` (screenshots and one continuous walkthrough video).
-- Covered: native NPU milliwatt conversion and correct field offset, malformed/unsupported/truncated binary layouts, sentinel omission, disappearance after a valid reading becomes invalid; drawer numbers and overflow, default interval, reachable 44px input, saving/reloading preference, invalid input reset, disappearing unavailable metrics, recovery preserving GPU 0% and NPU 0.00 W.
+- Covered: native NPU milliwatt conversion and correct field offset, malformed/unsupported/truncated binary layouts, sentinel omission, disappearance after a valid reading becomes invalid; drawer numbers and overflow, default interval, reachable 44px input, saving/reloading preference, invalid input reset, disappearing unavailable metrics, recovery preserving GPU 0% and NPU 0.00 W; the disk reading against df's numbers, an unreadable or impossible statfs omitted, the server's data directory as the path, and the drawer's Disk row under RAM in both themes.
 - Typecheck: `npx tsc --noEmit`
-- Deployment: `public/` hot-deploys by `docker cp`; the API lives in the web image, so it needs an image rebuild (ask first, see CLAUDE.md §3).
+- Deployment: `public/` hot-deploys by `docker cp`; the API is web-tier code (`dist/web/system-metrics.js`): copy the compiled file into the container and restart it, or rebuild the image (ask first, see CLAUDE.md §3).
