@@ -900,6 +900,21 @@ export function isCatastrophicPrompt(text: string): boolean {
   );
 }
 
+/**
+ * Which trust-dialog option the cursor is on. Claude Code 2.1.304 lists
+ * "No, exit" first with the cursor on it, so pressing Enter blindly quits
+ * Claude and the pane disappears. Older builds listed Yes first without a
+ * visible cursor, so a dialog with no cursor glyph keeps the old behaviour.
+ */
+function trustDialogSelection(screen: string): 'yes' | 'no' | undefined {
+  if (!/Yes, I trust this folder/i.test(screen)) return undefined;
+  const selected = screen
+    .split(/\r?\n/u)
+    .find((line) => /^\s*❯/u.test(line) && /Yes, I trust this folder|No, exit/iu.test(line));
+  if (!selected) return 'yes';
+  return /Yes, I trust this folder/i.test(selected) ? 'yes' : 'no';
+}
+
 function isReadyPaneScreen(screen: string): boolean {
   return /bypass permissions on/i.test(screen) && /(?:^|\n)\s*❯/u.test(screen);
 }
@@ -912,6 +927,7 @@ async function waitForReadyPane(
   const pane = await getClaudePane(name, deps);
   const deadline = Date.now() + deps.startupTimeoutMs;
   let acceptedTrust = false;
+  let trustMoves = 0;
   let lastScreen = '';
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
@@ -919,15 +935,20 @@ async function waitForReadyPane(
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     const flagged = stayOnModelMenu(lastScreen);
+    const trust = acceptedTrust ? undefined : trustDialogSelection(lastScreen);
     if (flagged) {
       // Left by an earlier message nobody was waiting on (an interrupted turn,
       // a background notification): answered as the in-turn check would, so
       // the new message is not blocked behind it.
       await pressKeys(pane, flagged.keys, deps);
       logger.info({ model: flagged.model }, 'Answered a model-switch menu left on the Claude Code pane');
-    } else if (/Yes, I trust this folder/i.test(lastScreen) && !acceptedTrust) {
+    } else if (trust === 'yes') {
       acceptedTrust = true;
       await deps.tmux(['send-keys', '-t', pane, 'Enter']);
+    } else if (trust === 'no') {
+      // Never confirm "No, exit": move the cursor and re-read the dialog.
+      if (++trustMoves > 4) throw new Error('Claude Code trust dialog cursor did not move');
+      await deps.tmux(['send-keys', '-t', pane, 'Down']);
     } else if (requiresManualConfirmation(lastScreen)) {
       // Clear any stale confirmation dialog left from a previous turn.
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);

@@ -133,6 +133,24 @@ describe('Claude tmux launch contract', () => {
 });
 
 describe('Claude tmux invocation', () => {
+  it('moves the trust dialog cursor to Yes before confirming instead of choosing No, exit', async () => {
+    const fixture = createRuntimeFixture({ trustCursorOnNo: true });
+
+    const result = await invokeClaudeTmux('web_claude1', 'fix the tests', {
+      channelJid: 'web:claude1',
+      model: 'claude-code/opus',
+      cwd: fixture.cwd,
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.exitedFromTrust).toBe(false);
+    expect(fixture.trustAccepted).toBe(true);
+    const keys = fixture.sentKeys.map((args) => args.at(-1));
+    expect(keys.indexOf('Down')).toBeGreaterThanOrEqual(0);
+    expect(keys.indexOf('Down')).toBeLessThan(keys.indexOf('Enter'));
+  });
+
   it('launches once, accepts workspace trust, sends through a tmux buffer, and reads the structured result', async () => {
     const fixture = createRuntimeFixture();
     const onEvent = vi.fn();
@@ -1428,7 +1446,12 @@ const MODEL_SWITCH_MENU = [
 ].join('\n');
 
 function createRuntimeFixture(
-  options: { completeTurns?: boolean; runningScreen?: boolean; pasteLineCount?: boolean } = {},
+  options: {
+    completeTurns?: boolean;
+    runningScreen?: boolean;
+    pasteLineCount?: boolean;
+    trustCursorOnNo?: boolean;
+  } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'piweb-claude-tmux-test-'));
   tempDirs.push(root);
@@ -1442,6 +1465,8 @@ function createRuntimeFixture(
   const pastes: string[][] = [];
   let live = false;
   let trustAccepted = false;
+  let trustCursorOnYes = !options.trustCursorOnNo;
+  let exitedFromTrust = false;
   const stateAtSubmissions: any[] = [];
   const seenPasteMarkers: string[] = [];
   let readyCaptures = 0;
@@ -1508,6 +1533,11 @@ function createRuntimeFixture(
       }
       if (args[0] === 'list-panes') return '%42\n';
       if (args[0] === 'capture-pane') {
+        if (!trustAccepted && options.trustCursorOnNo) {
+          return trustCursorOnYes
+            ? '  No, exit\n❯ Yes, I trust this folder\n\nEnter to confirm · Esc to cancel'
+            : '❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel';
+        }
         if (!trustAccepted) return '1. Yes, I trust this folder\n2. No, exit';
         readyCaptures += 1;
         if (options.runningScreen) {
@@ -1534,7 +1564,13 @@ function createRuntimeFixture(
       }
       if (args[0] === 'send-keys') {
         sentKeys.push(args);
-        if (args.at(-1) === 'Enter' && !trustAccepted) {
+        if (args.at(-1) === 'Down' && !trustAccepted) {
+          trustCursorOnYes = true;
+        } else if (args.at(-1) === 'Enter' && !trustAccepted && !trustCursorOnYes) {
+          exitedFromTrust = true;
+          live = false;
+          throw new Error(`can't find pane: ${args[2]}`);
+        } else if (args.at(-1) === 'Enter' && !trustAccepted) {
           trustAccepted = true;
         } else if (args.at(-1) === 'Enter' && currentInput) {
           submissionCount += 1;
@@ -1589,6 +1625,9 @@ function createRuntimeFixture(
     },
     get trustAccepted() {
       return trustAccepted;
+    },
+    get exitedFromTrust() {
+      return exitedFromTrust;
     },
   };
 }
