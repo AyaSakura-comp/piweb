@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Root LaunchDaemon: forwards 127.0.0.1:18090 to the LAN model server
+  (Strata / qwen3.8-flash at 192.168.50.84:8090). See lan-proxy.mjs for why.
+
+  Install:
+    sudo mkdir -p "/Library/Application Support/piweb-lan-proxy"
+    sudo cp lan-proxy.mjs "/Library/Application Support/piweb-lan-proxy/"
+    sudo cp com.piweb.lan-proxy.plist /Library/LaunchDaemons/
+    sudo chown -R root:wheel "/Library/Application Support/piweb-lan-proxy" /Library/LaunchDaemons/com.piweb.lan-proxy.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.piweb.lan-proxy.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.piweb.lan-proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/node@22/bin/node</string>
+    <string>/Library/Application Support/piweb-lan-proxy/lan-proxy.mjs</string>
+    <string>18090</string>
+    <string>192.168.50.84</string>
+    <string>8090</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/var/log/piweb-lan-proxy.log</string>
+  <key>StandardErrorPath</key><string>/var/log/piweb-lan-proxy.log</string>
+</dict>
+</plist>
