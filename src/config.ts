@@ -25,10 +25,7 @@ function defaultConfigPath(): string {
 export function defaultDataDir(): string {
   switch (process.platform) {
     case 'win32':
-      return resolve(
-        process.env.LOCALAPPDATA || resolve(homedir(), 'AppData/Local'),
-        'piweb',
-      );
+      return resolve(process.env.LOCALAPPDATA || resolve(homedir(), 'AppData/Local'), 'piweb');
     case 'darwin':
       return resolve(homedir(), 'Library/Application Support/piweb');
     default:
@@ -391,6 +388,16 @@ export const config = {
    * Docker. Turn on for an all-in-one container.
    */
   webEmbeddedWorker: envBool('WEB_EMBEDDED_WORKER', false),
+
+  /**
+   * This deployment's home-screen / install icon set. Empty = the default
+   * icons (public/apple-touch-icon*.png, public/manifest.webmanifest). A name
+   * makes the server answer the apple-touch-icon URLs from
+   * public/icons/<name>/apple-<size>.png and /manifest.webmanifest from
+   * public/manifest.<name>.webmanifest (src/web/icon-set.ts). The Mac mini
+   * host sets `piweb-mini`.
+   */
+  webIconSet: env('WEB_ICON_SET', ''),
 } as const;
 
 export type Config = typeof config;

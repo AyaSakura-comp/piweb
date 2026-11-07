@@ -65,12 +65,14 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/piweb/icon-32.png" />
     <!-- Home-screen icon. iOS ignores the manifest for this and needs an opaque
-         square it can apply its own corner mask to, hence a PNG per size. -->
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=mini-sakura" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/piweb-mini/apple-180.png" />
-    <link rel="apple-touch-icon" sizes="167x167" href="/icons/piweb-mini/apple-167.png" />
-    <link rel="apple-touch-icon" sizes="152x152" href="/icons/piweb-mini/apple-152.png" />
-    <link rel="apple-touch-icon" sizes="120x120" href="/icons/piweb-mini/apple-120.png" />
+         square it can apply its own corner mask to, hence a PNG per size. They
+         are root-level (no-cache) URLs so a deployment's WEB_ICON_SET can answer
+         them with its own icon set (src/web/icon-set.ts). -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167x167.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png" />
+    <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="/app.css" />

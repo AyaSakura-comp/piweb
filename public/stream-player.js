@@ -241,7 +241,7 @@ export function createStreamPlayer(doc = document, runtime = globalThis, options
           title: item.name,
           artist: 'Piweb',
           album: item.type === 'video' ? 'Video' : 'Audio',
-          artwork: [{ src: '/icons/piweb-mini/full-512.png', sizes: '512x512', type: 'image/png' }],
+          artwork: [{ src: '/icons/piweb/icon-512.png', sizes: '512x512', type: 'image/png' }],
         });
       }
     } catch {

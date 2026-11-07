@@ -18,9 +18,15 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { extractSessionTitle } from '../agent/session-title.js';
 import { readOutputTail } from '../agent/claude-commands.js';
-import { readSubagents, hasRunningSubagents, subagentParentScope, SubagentReadError } from '../session/subagents.js';
+import {
+  readSubagents,
+  hasRunningSubagents,
+  subagentParentScope,
+  SubagentReadError,
+} from '../session/subagents.js';
 import { resolveChannelSessionDir } from '../session/path.js';
 import { config } from '../config.js';
+import { iconSetTarget } from './icon-set.js';
 import { logger } from '../logger.js';
 import { parseUploadMetrics } from './upload-metrics.js';
 import { sampleSystemMetrics } from './system-metrics.js';
@@ -203,6 +209,7 @@ export function serveStatic(
   res: ServerResponse,
   root: string,
   relPath: string,
+  cacheControlOverride?: string,
 ): boolean {
   const cleanRel = cleanStaticRelativePath(relPath);
   const target = join(root, cleanRel);
@@ -217,7 +224,8 @@ export function serveStatic(
     cleanRel.startsWith('icons/') ||
     cleanRel.startsWith('favicon');
 
-  const cacheControl = isImmutable ? 'public, max-age=31536000, immutable' : 'no-cache';
+  const cacheControl =
+    cacheControlOverride ?? (isImmutable ? 'public, max-age=31536000, immutable' : 'no-cache');
 
   const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
   const lastModified = stat.mtime.toUTCString();
@@ -567,6 +575,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     !path.startsWith('/api/') &&
     !path.startsWith('/media/')
   ) {
+    // This deployment's own home-screen/install icons (WEB_ICON_SET).
+    const iconTarget = iconSetTarget(path, config.webIconSet);
+    if (iconTarget && serveStatic(req, res, PUBLIC_DIR, iconTarget, 'no-cache')) return;
     if (serveStatic(req, res, PUBLIC_DIR, path)) return;
   }
 
@@ -605,8 +616,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     // Route belongs to this telemetry request; it cannot establish direct vs DERP.
-    const route = isFunnelRequest(req.headers) ? 'funnel'
-      : tailscaleIdentity(req.headers, req.socket.remoteAddress) ? 'tailscale' : 'unknown';
+    const route = isFunnelRequest(req.headers)
+      ? 'funnel'
+      : tailscaleIdentity(req.headers, req.socket.remoteAddress)
+        ? 'tailscale'
+        : 'unknown';
     logger.info({ ...metrics, route, source: 'browser' }, 'Upload metrics');
     sendJson(res, 200, { ok: true });
     return;
@@ -908,17 +922,28 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (!channel) continue;
       const owner = `${channel.storageToken}:${channel.folder}:${channel.ownershipEpoch}`;
       const running = await hasRunningSubagents(
-        resolveChannelSessionDir(channel.folder), owner, channel.cwdOverride || config.piCwd,
+        resolveChannelSessionDir(channel.folder),
+        owner,
+        channel.cwdOverride || config.piCwd,
       ).catch(() => false);
       const current = getChannel(session.jid);
-      if (current && current.storageToken === channel.storageToken &&
-          current.folder === channel.folder && current.ownershipEpoch === channel.ownershipEpoch) {
+      if (
+        current &&
+        current.storageToken === channel.storageToken &&
+        current.folder === channel.folder &&
+        current.ownershipEpoch === channel.ownershipEpoch
+      ) {
         activity.set(session.jid, running);
       }
     }
-    sendJson(res, 200, { sessions: sessions.map((session) => ({
-      ...session, subagentsBusy: activity.get(session.jid) ?? false,
-    })), thinkingDefaults: getThinkingDefaults(), modelDefaults });
+    sendJson(res, 200, {
+      sessions: sessions.map((session) => ({
+        ...session,
+        subagentsBusy: activity.get(session.jid) ?? false,
+      })),
+      thinkingDefaults: getThinkingDefaults(),
+      modelDefaults,
+    });
     return;
   }
 
@@ -1190,7 +1215,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const generation = channel.folder;
       let args: Record<string, string> = { generation, action: 'snapshot' };
       if (method === 'POST') {
-        const body = await readJson<{ text?: unknown; generation?: unknown; action?: unknown }>(req);
+        const body = await readJson<{ text?: unknown; generation?: unknown; action?: unknown }>(
+          req,
+        );
         if (body?.generation !== generation) {
           sendJson(res, 409, { error: 'BTW 對話世代已變更；未送出訊息' });
           return;
@@ -1199,7 +1226,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           args = { generation, action: 'clear' };
         } else {
           if (body.action !== undefined && body.action !== 'send') {
-            sendJson(res, 400, { error: 'Invalid BTW action' }); return;
+            sendJson(res, 400, { error: 'Invalid BTW action' });
+            return;
           }
           if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) {
             sendJson(res, 400, { error: 'BTW 訊息必須為 1–20000 字元' });
@@ -1214,9 +1242,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const row = getControl(rowid);
         if (row?.status === 'done' || row?.status === 'failed') {
           const current = getChannel(jid);
-          if (!current || current.folder !== generation ||
-              current.storageToken !== channel.storageToken ||
-              current.ownershipEpoch !== channel.ownershipEpoch) {
+          if (
+            !current ||
+            current.folder !== generation ||
+            current.storageToken !== channel.storageToken ||
+            current.ownershipEpoch !== channel.ownershipEpoch
+          ) {
             sendJson(res, 409, { error: 'BTW 對話世代已變更；請重新開啟' });
           } else if (row.status === 'failed') {
             sendJson(res, 409, { error: row.result || 'BTW 執行失敗，草稿已保留' });
@@ -1232,7 +1263,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      if (!res.destroyed) sendJson(res, 504, { error: 'BTW 等待逾時；請重新開啟查看側聊再決定是否重送' });
+      if (!res.destroyed)
+        sendJson(res, 504, { error: 'BTW 等待逾時；請重新開啟查看側聊再決定是否重送' });
       return;
     }
 
@@ -1286,12 +1318,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const rows = getRecentWebEvents(jid, 1000);
       const commands = new Map<string, any>();
       for (const row of rows) {
-        if (row.kind !== 'system' || (row.role !== 'agy-command' && row.role !== 'claude-command')) continue;
+        if (row.kind !== 'system' || (row.role !== 'agy-command' && row.role !== 'claude-command'))
+          continue;
         try {
           const command = JSON.parse(row.content);
           if (typeof command.id !== 'string') continue;
           commands.set(command.id, command);
-        } catch { /* Ignore malformed historic records. */ }
+        } catch {
+          /* Ignore malformed historic records. */
+        }
       }
       const busy = isChannelBusy(jid);
       sendJson(res, 200, {
@@ -1305,8 +1340,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           const timeoutMs = command.timeoutMs || (isClaude ? 1800000 : 120000);
           const stale = Date.now() - command.updatedAt > timeoutMs;
           const markUnknown = isClaude
-            ? (command.state === 'running' && stale)
-            : (command.state === 'running' && (!busy || stale));
+            ? command.state === 'running' && stale
+            : command.state === 'running' && (!busy || stale);
           return {
             ...command,
             output,
@@ -1631,7 +1666,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
         const command = resolveWebUsageCommand(
           (body.command ?? '').trim(),
-          channel.modelOverride || effectiveModeModelDefault(channel.kind ?? 'standard') || config.piModel || '',
+          channel.modelOverride ||
+            effectiveModeModelDefault(channel.kind ?? 'standard') ||
+            config.piModel ||
+            '',
           body.source,
         );
         if (

@@ -77,10 +77,11 @@ public/          index.html, app.css, app.js — no framework, no build step
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  vendor/highlight/ = highlight.js browser build (no CDN)
-                 icons/piweb-mini/ = home-screen + install icons (Mac mini); manifest.webmanifest
-                                 (apple-* opaque for iOS, maskable-* full-bleed, icon-* macOS squircle;
-                                 icons/ is served immutable, so a new icon needs a new path)
-                 icons/piweb/  = previous set (icon-32 favicon still used)
+                 icons/piweb/  = default home-screen icon set; manifest.webmanifest
+                 icons/piweb-mini/ = the Mac mini host's set (WEB_ICON_SET=piweb-mini): the server answers
+                                 /apple-touch-icon*.png and /manifest.webmanifest from it and
+                                 manifest.piweb-mini.webmanifest (src/web/icon-set.ts); icons/ is
+                                 served immutable, so a changed icon needs a new path
 third_party/komorebi-voice/  git submodule (Komorebi voice IME); only sdk/js is used. Push the
                              Komorebi commit to GitHub BEFORE committing the pointer here
 scripts/history.py  read-only history query CLI (stdlib only)
@@ -565,6 +566,7 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `WEB_PUBLIC_ORIGIN`                                  | web    | CSRF origin check (invariant 4)                  |
 | `WEB_SESSION_TTL_SEC`                                | web    | cookie lifetime                                  |
 | `WEB_EMBEDDED_WORKER`                                | web    | run the worker in-process (all-in-one)           |
+| `WEB_ICON_SET`                                       | web    | home-screen/install icon set ('' = default; Mac mini: `piweb-mini`) |
 | `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING`        | worker | pi invocation                                    |
 | `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed                               |
 | `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE`              | worker | mid-run steering / pre-emption                   |

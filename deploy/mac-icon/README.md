@@ -13,14 +13,19 @@ its top, under a sakura branch on washi paper. Drawn on the macOS icon grid
 | `piweb-mac-512.png` | preview |
 | `apply.sh` | installs it on the Chrome app shim and re-signs it |
 
-It is also the web app's icon everywhere (`public/icons/piweb-mini/`):
+It is also this host's web app icon, and only this host's: the Mac mini's
+`config.env` sets `WEB_ICON_SET=piweb-mini`, so the server answers the
+`/apple-touch-icon*.png` URLs and `/manifest.webmanifest` from
+`public/icons/piweb-mini/` and `public/manifest.piweb-mini.webmanifest`
+(`src/web/icon-set.ts`). Other deployments (no `WEB_ICON_SET`) keep the
+default icons.
 
 | variant | source | used by |
 | --- | --- | --- |
 | `icon-*.png` (transparent, macOS squircle) | `piweb-mac.svg` | manifest `any`: Chrome install on macOS/Windows |
 | `maskable-*.png` (full-bleed, content in the 80% safe circle) | `piweb-full-maskable.svg` | manifest `maskable`: Android, Chrome masking |
-| `apple-*.png`, `/apple-touch-icon.png` (opaque, full-bleed) | `piweb-full-ios.svg` | iPhone/iPad Add to Home Screen |
-| `full-*.png` | `piweb-full-ios.svg` | push notification icon, media player artwork |
+| `apple-*.png` (opaque, full-bleed) | `piweb-full-ios.svg` | iPhone/iPad Add to Home Screen |
+| `full-*.png` | `piweb-full-ios.svg` | spare full-bleed art (notification/artwork use the default set) |
 
 `icons/` is served `immutable` for a year, so a changed icon must get a new
 file name or directory, never be overwritten in place. A home-screen icon
