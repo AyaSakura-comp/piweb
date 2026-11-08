@@ -73,6 +73,7 @@ public/          index.html, app.css, app.js — no framework, no build step
                  viewer-physics.js = glide/rubber band/spring for the table & diagram viewer
                  usage-report.js = the usage commands' text drawn as a card
                  clipboard-paste.js = the 貼上 button's clipboard read (chat and panes)
+                 file-drop.js = Finder file drops: a Dashboard pane attaches to itself, else the chat composer; never lets Chrome open the file
                  sw.js       = service worker (Web Push + reconnect page for a launch that cannot load)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)

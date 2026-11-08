@@ -602,6 +602,11 @@
     contain: size layout;
   }
 
+  /* Files dragged from Finder hover over this pane (file-drop.js). */
+  .dashboard-pane.file-drag-over {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
   /* Compact density adaptations for 6–12 concurrent session panes */
   .dashboard-grid.density-compact .dashboard-pane-header {
     height: 36px;

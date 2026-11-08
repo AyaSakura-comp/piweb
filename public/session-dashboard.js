@@ -8,6 +8,7 @@
 
 import { bindTypingLabel, shouldLoadOlderHistory } from './session-ui.js';
 import { readClipboard } from './clipboard-paste.js';
+import { bindFileDropTarget } from './file-drop.js';
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const PANE_PAGE_SIZE = 50;
@@ -1828,6 +1829,9 @@ export function createSessionDashboard({
       }
       if (added > 0) renderPaneAttachments();
     };
+
+    // Files dragged in from Finder attach to this pane (file-drop.js).
+    bindFileDropTarget(paneEl, (files) => addPaneFiles(files));
 
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => {
