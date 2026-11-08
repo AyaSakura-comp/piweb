@@ -1,41 +1,136 @@
-.image-annotator {
-  position: fixed;
-  inset: 0;
-  box-sizing: border-box;
-  width: 100%;
-  max-width: none;
-  height: 100dvh;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: #0b0b0d;
-  color: #fff;
-  overflow: hidden;
-  touch-action: none;
+/*
+ * Drawing happens in the image viewer itself (#lightbox, a bar / stage / strip
+ * grid): the bar, stage and tools below take the viewer's own rows, so the
+ * picture stays where it was. The viewer is always dark, in both themes.
+ */
+.lightbox > .lb-bar,
+.lightbox > .lb-stage,
+.lightbox > .lb-strip,
+.annotation-bar,
+.annotation-stage,
+.annotation-tools {
+  grid-column: 1;
 }
-.image-annotator[open] {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+.lightbox.annotating .lb-bar {
+  visibility: hidden;
 }
-.image-annotator::backdrop {
-  background: rgb(0 0 0 / 0.8);
+.lightbox.annotating .lb-strip,
+.lightbox.annotating .lb-nav {
+  display: none;
 }
-.annotation-header {
+/* The canvas draws the same picture on top; the photo underneath would only
+   show through its corners. */
+.lightbox.annotation-ready #lb-img {
+  visibility: hidden;
+}
+.annotation-bar {
+  grid-row: 1;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
-  border-bottom: 0;
+  gap: 10px;
+  /* The viewer bar's padding: the row keeps its height. */
+  padding: calc(10px + env(safe-area-inset-top)) 10px 10px 12px;
 }
-.annotation-header h2 {
+.annotation-bar .icon-btn,
+.annotation-tools .icon-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgb(255 255 255 / 0.9);
+  transition: background 0.15s ease;
+  touch-action: manipulation;
+}
+.annotation-bar .icon-btn svg,
+.annotation-tools .icon-btn svg {
+  width: 22px;
+  height: 22px;
+}
+@media (hover: hover) {
+  .annotation-bar .icon-btn:hover:not(:disabled),
+  .annotation-tools .icon-btn:hover:not(:disabled) {
+    background: rgb(255 255 255 / 0.1);
+  }
+}
+.annotation-bar .icon-btn:active,
+.annotation-tools .icon-btn:active {
+  background: rgb(255 255 255 / 0.18);
+}
+.annotation-bar button:disabled,
+.annotation-tools button:disabled {
+  opacity: 0.4;
+}
+.annotation-bar button:focus-visible,
+.annotation-tools button:focus-visible,
+.annotation-tools select:focus-visible {
+  outline: 3px solid #a5b4fc;
+  outline-offset: 2px;
+}
+.annotation-stage {
+  grid-row: 2;
+  z-index: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The viewer stage's padding: the canvas lands exactly on the photo. */
+  padding: 8px 12px;
+  overflow: hidden;
+  touch-action: none;
+}
+.annotation-loading {
   margin: 0;
-  font-size: 16px;
-  white-space: nowrap;
+  color: rgb(255 255 255 / 0.72);
+  font-size: 14px;
 }
-.image-annotator button,
-.image-annotator select {
+#annotation-canvas {
+  flex: none;
+  transform-origin: center;
+  touch-action: none;
+  cursor: crosshair;
+  will-change: transform;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.6);
+  background: rgb(255 255 255 / 0.03);
+}
+#annotation-canvas.zoomed {
+  max-width: none;
+  max-height: none;
+}
+.annotation-tools {
+  grid-row: 3;
+  z-index: 2;
+  padding: 6px 12px calc(10px + env(safe-area-inset-bottom));
+  color: #fff;
+}
+/* One row when it fits (tablet, desktop); colours over edit tools on a phone. */
+.annotation-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px 20px;
+}
+.annotation-colours,
+.annotation-edit-tools {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+.annotation-edit-tools label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+  font-size: 14px;
+  color: rgb(255 255 255 / 0.85);
+}
+.annotation-tools select {
   min-width: 44px;
   min-height: 44px;
   border: 0;
@@ -44,80 +139,23 @@
   background: #292929;
   color: #fff;
   font: inherit;
-  font-size: 14px;
+  /* 16px: iOS zooms the page into a smaller select. */
+  font-size: 16px;
   touch-action: manipulation;
 }
-.image-annotator button:disabled {
-  opacity: 0.4;
-}
-.image-annotator button:focus-visible,
-.image-annotator select:focus-visible {
-  outline: 3px solid #a5b4fc;
-  outline-offset: 2px;
-}
-.image-annotator .icon-btn {
+.annotation-tools [data-colour] {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 44px;
   height: 44px;
-  padding: 10px;
-  background: transparent;
-  color: #fff;
-}
-.image-annotator .icon-btn:active {
-  background: rgb(255 255 255 / 0.1);
-}
-.image-annotator .icon-btn svg {
-  width: 24px;
-  height: 24px;
-}
-.annotation-stage {
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  touch-action: none;
-}
-#annotation-canvas {
-  flex: none;
-  transform-origin: center;
-  touch-action: none;
-  cursor: crosshair;
-  will-change: transform;
-  background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 / 16px 16px;
-}
-#annotation-canvas.zoomed {
-  max-width: none;
-  max-height: none;
-}
-.annotation-tools {
-  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
-  border-top: 0;
-}
-.annotation-colours,
-.annotation-edit-tools {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-}
-.annotation-edit-tools {
-  margin-top: 10px;
-}
-.annotation-edit-tools label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-.image-annotator [data-colour] {
-  position: relative;
-  width: 44px;
-  padding: 8px;
+  padding: 0;
   border: 2px solid transparent;
+  border-radius: 999px;
   background: transparent;
+  touch-action: manipulation;
 }
-.image-annotator [data-colour]::before {
+.annotation-tools [data-colour]::before {
   content: '';
   display: block;
   width: 24px;
@@ -126,24 +164,14 @@
   background: var(--pen-colour);
   box-shadow: 0 0 0 1px #777;
 }
-.image-annotator [data-colour][aria-pressed='true'] {
+.annotation-tools [data-colour][aria-pressed='true'] {
   border-color: #fff;
 }
 .annotation-note {
-  margin: 10px 0 0;
+  margin: 4px 0 0;
   color: #c3c5ca;
   font-size: 12px;
   text-align: center;
-}
-@media (min-width: 768px) {
-  .image-annotator {
-    inset: 24px;
-    width: min(100% - 48px, 1100px);
-    height: calc(100dvh - 48px);
-    margin: auto;
-    border: 1px solid #444;
-    border-radius: 16px;
-  }
 }
 
 .chip-preview {

@@ -1,50 +1,66 @@
-/** Draw onto a copy of an image; confirmed PNG Files use the normal composer upload path. */
-export function createImageAnnotator({ onConfirm, onError }) {
-  const dialog = document.createElement('dialog');
-  dialog.className = 'image-annotator';
-  dialog.setAttribute('aria-labelledby', 'annotation-title');
-  dialog.innerHTML = `
-    <header class="annotation-header">
+/**
+ * Draw on the image the viewer is showing, in place: the pencil turns the
+ * viewer's picture into a canvas at the same spot and zoom, the top bar becomes
+ * Cancel / Confirm and the filmstrip becomes the pen tools. No second window,
+ * and no second download: a same-origin picture is drawn from the viewer's own
+ * <img>. Confirmed PNG Files use the normal composer upload path.
+ *
+ * host     the viewer (`#lightbox`, a three-row grid: bar, stage, strip)
+ * media()  the viewer's <img>
+ * fitSize() the picture's fitted size at 1× ({ w, h }), measured from the viewer
+ * onClose(view, rect) the zoom and on-screen rect to hand back to the viewer
+ */
+export function createImageAnnotator({ host, media, fitSize, onConfirm, onError, onClose }) {
+  const bar = document.createElement('div');
+  bar.className = 'annotation-bar';
+  bar.hidden = true;
+  bar.innerHTML = `
       <button type="button" class="icon-btn" data-action="cancel" aria-label="取消" title="取消標註">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
-      <h2 id="annotation-title" tabindex="-1" autofocus>圖片標註</h2>
-      <button type="button" data-action="confirm" class="icon-btn annotation-confirm" aria-label="確定加入附件" title="確定加入附件" disabled>
+      <button type="button" data-action="confirm" class="icon-btn annotation-confirm" aria-label="確定加入附件" title="確定加入附件（不會自動送出）" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
-      </button>
-    </header>
-    <div class="annotation-stage">
+      </button>`;
+  const stage = document.createElement('div');
+  stage.className = 'annotation-stage';
+  stage.hidden = true;
+  stage.innerHTML = `
       <p class="annotation-loading" role="status">載入圖片…</p>
-      <canvas id="annotation-canvas" aria-label="圖片畫布，單指、滑鼠或觸控筆畫畫，雙指縮放與移動" hidden></canvas>
-    </div>
-    <footer class="annotation-tools">
-      <div class="annotation-colours" role="group" aria-label="畫筆顏色">
-        <button type="button" aria-label="紅色" data-colour="#ef4444" style="--pen-colour:#ef4444" aria-pressed="true"></button>
-        <button type="button" aria-label="藍色" data-colour="#3b82f6" style="--pen-colour:#3b82f6" aria-pressed="false"></button>
-        <button type="button" aria-label="黃色" data-colour="#facc15" style="--pen-colour:#facc15" aria-pressed="false"></button>
-        <button type="button" aria-label="黑色" data-colour="#111111" style="--pen-colour:#111111" aria-pressed="false"></button>
-        <button type="button" aria-label="白色" data-colour="#ffffff" style="--pen-colour:#ffffff" aria-pressed="false"></button>
+      <canvas id="annotation-canvas" aria-label="圖片畫布，單指、滑鼠或觸控筆畫畫，雙指縮放與移動" hidden></canvas>`;
+  const tools = document.createElement('div');
+  tools.className = 'annotation-tools';
+  tools.setAttribute('role', 'group');
+  tools.setAttribute('aria-label', '圖片標註');
+  tools.hidden = true;
+  tools.innerHTML = `
+      <div class="annotation-row">
+        <div class="annotation-colours" role="group" aria-label="畫筆顏色">
+          <button type="button" aria-label="紅色" data-colour="#ef4444" style="--pen-colour:#ef4444" aria-pressed="true"></button>
+          <button type="button" aria-label="藍色" data-colour="#3b82f6" style="--pen-colour:#3b82f6" aria-pressed="false"></button>
+          <button type="button" aria-label="黃色" data-colour="#facc15" style="--pen-colour:#facc15" aria-pressed="false"></button>
+          <button type="button" aria-label="黑色" data-colour="#111111" style="--pen-colour:#111111" aria-pressed="false"></button>
+          <button type="button" aria-label="白色" data-colour="#ffffff" style="--pen-colour:#ffffff" aria-pressed="false"></button>
+        </div>
+        <div class="annotation-edit-tools">
+          <label>粗細 <select aria-label="筆畫粗細"><option value="3">細</option><option value="5" selected>中</option><option value="8">粗</option></select></label>
+          <button type="button" class="icon-btn" data-action="undo" aria-label="復原" title="復原上一筆" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5-5 5 5 5"/><path d="M4 10h10a6 6 0 0 1 0 12"/></svg>
+          </button>
+          <button type="button" class="icon-btn" data-action="clear" aria-label="清除" title="清除所有筆畫" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+          </button>
+        </div>
       </div>
-      <div class="annotation-edit-tools">
-        <label>粗細 <select aria-label="筆畫粗細"><option value="3">細</option><option value="5" selected>中</option><option value="8">粗</option></select></label>
-        <button type="button" class="icon-btn" data-action="undo" aria-label="復原" title="復原上一筆" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5-5 5 5 5"/><path d="M4 10h10a6 6 0 0 1 0 12"/></svg>
-        </button>
-        <button type="button" class="icon-btn" data-action="clear" aria-label="清除" title="清除所有筆畫" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
-        </button>
-      </div>
-      <p class="annotation-note">單指畫畫，雙指縮放／移動。按 ✓ 加入附件，不會自動送出。</p>
-    </footer>`;
-  document.body.append(dialog);
-  const canvas = dialog.querySelector('canvas');
-  const stage = dialog.querySelector('.annotation-stage');
-  const loading = dialog.querySelector('.annotation-loading');
-  const confirm = dialog.querySelector('[data-action="confirm"]');
-  const undo = dialog.querySelector('[data-action="undo"]');
-  const clear = dialog.querySelector('[data-action="clear"]');
-  const widthSelect = dialog.querySelector('select');
+      <p class="annotation-note">單指畫畫，雙指縮放／移動。按 ✓ 加入附件，不會自動送出。</p>`;
+  host.append(bar, stage, tools);
+  const canvas = stage.querySelector('canvas');
+  const loading = stage.querySelector('.annotation-loading');
+  const confirm = bar.querySelector('[data-action="confirm"]');
+  const undo = tools.querySelector('[data-action="undo"]');
+  const clear = tools.querySelector('[data-action="clear"]');
+  const widthSelect = tools.querySelector('select');
   const ctx = canvas.getContext('2d');
+  let isOpen = false;
   let generation = 0;
   let controller;
   let image;
@@ -69,39 +85,56 @@ export function createImageAnnotator({ onConfirm, onError }) {
   }
 
   function nativeScale() {
-    return (canvas.width || fittedWidth) / (fittedWidth * Math.max(1, window.devicePixelRatio || 1));
+    return (
+      (canvas.width || fittedWidth) / (fittedWidth * Math.max(1, window.devicePixelRatio || 1))
+    );
+  }
+
+  function transformFor(dx = 0, dy = 0, k = 1) {
+    return `translate3d(${view.x + dx}px, ${view.y + dy}px, 0) scale(${(view.scale / view.committed) * k})`;
   }
 
   function setCommitted(target) {
-    if (!image || !dialog.open) return;
+    if (!image || !isOpen) return;
     view.committed = target;
     canvas.classList.toggle('zoomed', target > 1.01);
     canvas.style.width = `${fittedWidth * target}px`;
     canvas.style.height = `${fittedHeight * target}px`;
+    // The viewer's picture has 14px corners that grow with a baked zoom.
+    canvas.style.borderRadius = `${14 * target}px`;
     canvas.style.transition = 'none';
-    canvas.style.transform = `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale / view.committed})`;
+    canvas.style.transform = transformFor();
     void canvas.offsetWidth;
   }
 
   function scheduleCommit(delay = 140) {
     clearTimeout(commitTimer);
     commitTimer = setTimeout(() => {
-      if (navigating || !image || !dialog.open) return;
-      const target = view.scale > 1.01 ? Math.min(view.scale, Math.max(1, nativeScale(), view.scale)) : 1;
+      if (navigating || !image || !isOpen) return;
+      const target =
+        view.scale > 1.01 ? Math.min(view.scale, Math.max(1, nativeScale(), view.scale)) : 1;
       if (Math.abs(target - view.committed) > 0.01) setCommitted(target);
     }, delay);
   }
 
   function fit() {
-    if (!image || !dialog.open) return;
-    const ratio = Math.min(
-      (stage.clientWidth - 24) / canvas.width,
-      (stage.clientHeight - 24) / canvas.height,
-    );
-    fittedWidth = Math.max(1, canvas.width * ratio);
-    fittedHeight = Math.max(1, canvas.height * ratio);
+    if (!image || !isOpen) return;
+    // Exactly where the viewer lays the picture out, so the swap is invisible.
+    const measured = fitSize?.();
+    if (measured?.w > 1 && measured?.h > 1) {
+      fittedWidth = measured.w;
+      fittedHeight = measured.h;
+    } else {
+      const ratio = Math.min(
+        (stage.clientWidth - 24) / canvas.width,
+        (stage.clientHeight - 16) / canvas.height,
+      );
+      fittedWidth = Math.max(1, canvas.width * ratio);
+      fittedHeight = Math.max(1, canvas.height * ratio);
+    }
     canvas.style.width = `${fittedWidth * view.committed}px`;
     canvas.style.height = `${fittedHeight * view.committed}px`;
+    canvas.style.borderRadius = `${14 * view.committed}px`;
     applyView(false);
     if (navigating && touches.size >= 2) beginGesture();
   }
@@ -129,7 +162,23 @@ export function createImageAnnotator({ onConfirm, onError }) {
   function applyView(animate = false, clamp = true) {
     if (clamp) clampView();
     canvas.style.transition = animate ? 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
-    canvas.style.transform = `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale / view.committed})`;
+    canvas.style.transform = transformFor();
+  }
+
+  /** Grow or shrink from where the viewer's picture was (the tools take a row). */
+  function settleFrom(rect) {
+    if (!rect?.width || !rect?.height) return;
+    const now = canvas.getBoundingClientRect();
+    if (!now.width) return;
+    const k = rect.width / now.width;
+    const dx = rect.left + rect.width / 2 - (now.left + now.width / 2);
+    const dy = rect.top + rect.height / 2 - (now.top + now.height / 2);
+    if (Math.abs(k - 1) < 0.005 && Math.hypot(dx, dy) < 0.5) return;
+    canvas.style.transition = 'none';
+    canvas.style.transform = transformFor(dx, dy, k);
+    void canvas.offsetWidth;
+    canvas.style.transition = 'transform 0.24s cubic-bezier(0.2, 0, 0.2, 1)';
+    canvas.style.transform = transformFor();
   }
 
   function gesturePoints() {
@@ -194,8 +243,14 @@ export function createImageAnnotator({ onConfirm, onError }) {
 
   function point(event, rect = canvas.getBoundingClientRect()) {
     return {
-      x: Math.max(0, Math.min(canvas.width, ((event.clientX - rect.left) * canvas.width) / rect.width)),
-      y: Math.max(0, Math.min(canvas.height, ((event.clientY - rect.top) * canvas.height) / rect.height)),
+      x: Math.max(
+        0,
+        Math.min(canvas.width, ((event.clientX - rect.left) * canvas.width) / rect.width),
+      ),
+      y: Math.max(
+        0,
+        Math.min(canvas.height, ((event.clientY - rect.top) * canvas.height) / rect.height),
+      ),
     };
   }
   stage.addEventListener('pointerdown', (event) => {
@@ -243,7 +298,8 @@ export function createImageAnnotator({ onConfirm, onError }) {
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
     const rect = canvas.getBoundingClientRect();
-    const samples = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
+    const samples =
+      typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
     const events = samples.length ? samples : [event];
     const segment = [active.stroke.points.at(-1)];
     for (const sample of events) {
@@ -285,7 +341,7 @@ export function createImageAnnotator({ onConfirm, onError }) {
   stage.addEventListener(
     'wheel',
     (event) => {
-      if (!image || saving || !dialog.open) return;
+      if (!image || saving || !isOpen) return;
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
         const r = stage.getBoundingClientRect();
@@ -315,10 +371,10 @@ export function createImageAnnotator({ onConfirm, onError }) {
     { passive: false },
   );
 
-  for (const button of dialog.querySelectorAll('[data-colour]')) {
+  for (const button of tools.querySelectorAll('[data-colour]')) {
     button.addEventListener('click', () => {
       colour = button.dataset.colour;
-      for (const item of dialog.querySelectorAll('[data-colour]'))
+      for (const item of tools.querySelectorAll('[data-colour]'))
         item.setAttribute('aria-pressed', String(item === button));
     });
   }
@@ -336,7 +392,19 @@ export function createImageAnnotator({ onConfirm, onError }) {
     }
   });
 
+  function show(on) {
+    isOpen = on;
+    bar.hidden = stage.hidden = tools.hidden = !on;
+    host.classList.toggle('annotating', on);
+    if (!on) host.classList.remove('annotation-ready');
+  }
+
   function close() {
+    const wasOpen = isOpen;
+    // What the viewer takes back: the zoom, scaled to its own fit, and where
+    // the picture is now, so it can glide back instead of jumping.
+    const handBack = image ? { scale: view.scale, x: view.x, y: view.y, fitW: fittedWidth } : null;
+    const rect = image && !canvas.hidden ? canvas.getBoundingClientRect() : null;
     generation++;
     clearTimeout(commitTimer);
     controller?.abort();
@@ -349,26 +417,35 @@ export function createImageAnnotator({ onConfirm, onError }) {
     canvas.classList.remove('zoomed');
     canvas.style.transition = '';
     canvas.style.transform = '';
+    canvas.hidden = true;
     image = null;
     context = null;
     strokes = [];
     saving = false;
     canvas.width = canvas.height = 1; // release large bitmap storage
-    if (dialog.open) dialog.close();
-  }
-  dialog.querySelector('[data-action="cancel"]').addEventListener('click', close);
-  dialog.addEventListener('cancel', (event) => {
-    event.preventDefault();
-    close();
-  });
-  dialog.addEventListener('keydown', (event) => {
-    // Escape belongs to this editor, not the image viewer underneath it.
-    event.stopPropagation();
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-      event.preventDefault();
-      if (!undo.disabled) undo.click();
+    if (wasOpen) {
+      show(false);
+      onClose?.(handBack, rect);
     }
-  });
+  }
+  bar.querySelector('[data-action="cancel"]').addEventListener('click', close);
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (!isOpen) return;
+      // Escape leaves drawing, not the viewer underneath it.
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!undo.disabled) undo.click();
+      }
+    },
+    { capture: true },
+  );
 
   confirm.addEventListener('click', async () => {
     if (!image || saving) return;
@@ -380,7 +457,7 @@ export function createImageAnnotator({ onConfirm, onError }) {
     const destination = context;
     try {
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-      if (token !== generation || !dialog.open) return;
+      if (token !== generation || !isOpen) return;
       if (!blob) throw new Error('圖片匯出失敗，請再試一次。');
       const file = new File([blob], filename, { type: 'image/png' });
       if (onConfirm(file, destination) === false)
@@ -394,7 +471,51 @@ export function createImageAnnotator({ onConfirm, onError }) {
     }
   });
 
-  async function open(url, destination) {
+  /** A picture a canvas may export: same origin (or inline), not a tainting one. */
+  function readable(url) {
+    try {
+      const u = new URL(url, location.href);
+      return u.protocol === 'data:' || u.origin === location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The viewer's own <img> when it shows this picture; else fetch a copy. */
+  async function load(url, token) {
+    const element = media?.();
+    let href = '';
+    try {
+      href = new URL(url, location.href).href;
+    } catch {
+      /* fetched below */
+    }
+    if (element && readable(url) && element.src === href) {
+      if (!element.complete || !element.naturalWidth) await element.decode().catch(() => {});
+      if (token !== generation) return null;
+      if (element.naturalWidth && element.src === href) return element;
+    }
+    controller = new AbortController();
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error('無法載入圖片。');
+    const blob = await response.blob();
+    if (token !== generation) return null;
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const decoded = new Image();
+      decoded.src = objectUrl;
+      await decoded.decode();
+      return decoded;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  /**
+   * `start.view` is the viewer's zoom ({ scale, x, y, fitW }) and `start.from`
+   * the picture's on-screen rect, so drawing starts where the user was looking.
+   */
+  async function open(url, destination, start = {}) {
     close();
     const token = generation;
     context = destination;
@@ -412,20 +533,11 @@ export function createImageAnnotator({ onConfirm, onError }) {
     }
     canvas.hidden = true;
     loading.hidden = false;
+    show(true);
     sync();
-    dialog.showModal();
-    controller = new AbortController();
-    let objectUrl;
     try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) throw new Error('無法載入圖片。');
-      const blob = await response.blob();
-      if (token !== generation) return;
-      objectUrl = URL.createObjectURL(blob);
-      const decoded = new Image();
-      decoded.src = objectUrl;
-      await decoded.decode();
-      if (token !== generation || !dialog.open) return;
+      const decoded = await load(url, token);
+      if (!decoded || token !== generation || !isOpen) return;
       // Bound memory for phone cameras; normal images keep their original size.
       const scale = Math.min(1, 4096 / Math.max(decoded.naturalWidth, decoded.naturalHeight));
       canvas.width = Math.max(1, Math.round(decoded.naturalWidth * scale));
@@ -433,21 +545,30 @@ export function createImageAnnotator({ onConfirm, onError }) {
       image = decoded;
       canvas.hidden = false;
       loading.hidden = true;
+      host.classList.add('annotation-ready');
       redraw();
       fit();
+      const from = start.view;
+      if (from && from.scale > 1.01) {
+        const k = from.fitW > 0 ? fittedWidth / from.fitW : 1;
+        view.scale = Math.min(8, from.scale);
+        view.x = from.x * k;
+        view.y = from.y * k;
+        applyView(false);
+        scheduleCommit(0);
+      }
+      settleFrom(start.from);
     } catch (error) {
       if (token !== generation) return;
       close();
       onError(error.message || '無法載入圖片；外部圖片可能不允許跨來源存取。');
-    } finally {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     }
   }
   return {
     open,
     close,
     get active() {
-      return dialog.open;
+      return isOpen;
     },
   };
 }

@@ -19,7 +19,18 @@ async function present(page: Page, ms = 1000) {
   if (recordWalkthrough) await page.waitForTimeout(ms);
 }
 
-async function setup(page: Page, { openFromChat = true } = {}) {
+async function setup(
+  page: Page,
+  {
+    openFromChat = true,
+    chart = svg,
+    album = [{ url: source, type: 'image', name: 'chart.svg' }],
+  }: {
+    openFromChat?: boolean;
+    chart?: string;
+    album?: { url: string; type: string; name: string }[];
+  } = {},
+) {
   const requests: any[] = [];
   const events: any[] = [
     {
@@ -43,7 +54,7 @@ async function setup(page: Page, { openFromChat = true } = {}) {
     route.fulfill({ json: { items: [] } }),
   );
   await page.route('**/media/web_annotation/chart.svg', (route) =>
-    route.fulfill({ contentType: 'image/svg+xml', body: svg }),
+    route.fulfill({ contentType: 'image/svg+xml', body: chart }),
   );
   await page.route('**/api/**', async (route) => {
     const path = decodeURIComponent(new URL(route.request().url()).pathname);
@@ -73,10 +84,7 @@ async function setup(page: Page, { openFromChat = true } = {}) {
           partial: null,
         },
       });
-    if (path.endsWith('/media'))
-      return route.fulfill({
-        json: { items: [{ url: source, type: 'image', name: 'chart.svg' }] },
-      });
+    if (path.endsWith('/media')) return route.fulfill({ json: { items: album } });
     if (path.endsWith('/stream'))
       return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
     return route.fulfill({ json: { commands: [], models: [], sessions: [] } });
@@ -140,29 +148,42 @@ async function centerPixel(canvas: Locator) {
   ]);
 }
 
-test('cancel fences a delayed image load and a delayed PNG export', async ({ page }) => {
-  const requests = await setup(page);
-  const edit = page.getByRole('button', { name: '畫筆標註', exact: true });
-  const dialog = page.getByRole('dialog', { name: '圖片標註' });
+test('cancel fences a picture still loading and a delayed PNG export', async ({ page }) => {
+  // The second album picture is still loading in the viewer when the pencil
+  // is tapped: drawing waits for it, and a cancel before it lands stays cancelled.
+  const slow = '/media/web_annotation/slow.svg';
   let releaseLoad!: () => void;
   let reachedLoad = false;
   const held = new Promise<void>((resolve) => {
     releaseLoad = resolve;
   });
-  const delayedLoad = async (route: import('playwright/test').Route) => {
+  await page.route('**/media/web_annotation/slow.svg', async (route) => {
     reachedLoad = true;
     await held;
     await route.fulfill({ contentType: 'image/svg+xml', body: svg }).catch(() => undefined);
-  };
-  await page.route('**/media/web_annotation/chart.svg', delayedLoad);
-  await edit.click();
+  });
+  const requests = await setup(page, {
+    // The API lists newest first.
+    album: [
+      { url: slow, type: 'image', name: 'slow.svg' },
+      { url: source, type: 'image', name: 'chart.svg' },
+    ],
+  });
+  await expect(page.locator('#lb-count')).toHaveText('1 / 2');
+  await page.keyboard.press('ArrowRight');
   await expect.poll(() => reachedLoad).toBe(true);
-  await expect(dialog).toBeVisible();
+  const edit = page.getByRole('button', { name: '畫筆標註', exact: true });
+  const tools = page.getByRole('group', { name: '圖片標註' });
+  await edit.click();
+  await expect(tools).toBeVisible();
+  await expect(page.locator('.annotation-loading')).toBeVisible();
   await expect(page.getByRole('button', { name: '確定加入附件' })).toBeDisabled();
   await page.getByRole('button', { name: '取消', exact: true }).click();
   releaseLoad();
-  await page.unroute('**/media/web_annotation/chart.svg', delayedLoad);
-  await expect(dialog).not.toBeVisible();
+  await expect(tools).toBeHidden();
+  await expect(page.locator('#lb-img')).toHaveJSProperty('complete', true);
+  await expect(page.locator('#annotation-canvas')).toBeHidden();
+  await expect(page.locator('#lb-count')).toBeVisible();
   await expect(page.locator('#attachments .chip')).toHaveCount(0);
   await edit.click();
   await expect(page.getByRole('button', { name: '確定加入附件' })).toBeEnabled();
@@ -185,7 +206,8 @@ test('cancel fences a delayed image load and a delayed PNG export', async ({ pag
     .toBe('function');
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.evaluate(() => (window as any).releaseAnnotationExport());
-  await expect(dialog).not.toBeVisible();
+  await expect(tools).toBeHidden();
+  await expect(page.locator('#lightbox')).toBeVisible();
   await expect(page.locator('#attachments .chip')).toHaveCount(0);
   await expect(page.locator('#input')).toHaveValue('Please check my marks.');
   expect(requests).toHaveLength(0);
@@ -315,7 +337,7 @@ test('two-finger zoom preserves strokes and resumes drawing only after every fin
   await page.screenshot({ path: info.outputPath('05-full-image-export.png') });
 });
 
-test('pinch zoom is bounded and a cancelled gesture does not survive reopening the editor', async ({
+test('pinch zoom is bounded, Cancel hands the zoom back, and a cancelled gesture does not survive reopening', async ({
   page,
 }) => {
   await setup(page);
@@ -345,8 +367,34 @@ test('pinch zoom is bounded and a cancelled gesture does not survive reopening t
     .toBe(Math.round(base.width * 8));
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   await page.getByRole('button', { name: '取消', exact: true }).click();
+  // The viewer takes the zoom back, within its own limit (4× for this picture),
+  // and the pencil starts from it again; the cancelled fingers are gone.
+  const img = page.locator('#lb-img');
+  const viewerZoom = () =>
+    img.evaluate((node: HTMLImageElement) => node.getBoundingClientRect().width / node.offsetWidth);
+  await expect.poll(async () => Math.round(await viewerZoom())).toBe(4);
   await edit.click();
   await expect(canvas).toBeVisible();
+  await expect
+    .poll(async () => Math.round((await canvas.boundingBox())!.width))
+    .toBe(Math.round(base.width * 4));
+  const stage = (await page.locator('.annotation-stage').boundingBox())!;
+  const mid = stage.y + stage.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: 100, y: mid, id: 1 },
+      { x: 290, y: mid, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: 190, y: mid, id: 1 },
+      { x: 200, y: mid, id: 2 },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect
     .poll(async () => Math.round((await canvas.boundingBox())!.width))
     .toBe(Math.round(base.width));
@@ -385,13 +433,10 @@ test('Undo during an active touch cannot erase the previous completed stroke on 
 });
 
 test('large images export with a bounded bitmap and preserved aspect ratio', async ({ page }) => {
-  await setup(page);
-  await page.route('**/media/web_annotation/chart.svg', (route) =>
-    route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="8192" height="1024"><rect width="8192" height="1024" fill="white"/></svg>',
-    }),
-  );
+  await setup(page, {
+    chart:
+      '<svg xmlns="http://www.w3.org/2000/svg" width="8192" height="1024"><rect width="8192" height="1024" fill="white"/></svg>',
+  });
   await page.getByRole('button', { name: '畫筆標註', exact: true }).click();
   await expect(page.getByRole('button', { name: '確定加入附件' })).toBeEnabled();
   expect(
@@ -407,6 +452,43 @@ test('large images export with a bounded bitmap and preserved aspect ratio', asy
       return [img.naturalWidth, img.naturalHeight];
     }),
   ).toEqual([4096, 512]);
+});
+
+test.describe('zoom', () => {
+  test.use({ viewport: { width: 1280, height: 900 }, isMobile: false, hasTouch: false });
+  test('the pencil keeps the viewer zoom, and Cancel hands it back', async ({ page }) => {
+    await setup(page);
+    const img = page.locator('#lb-img');
+    const canvas = page.locator('#annotation-canvas');
+    const settled = (locator: Locator) =>
+      expect.poll(() => locator.evaluate((node) => node.getAnimations().length)).toBe(0);
+    const fit = (await img.boundingBox())!;
+    await img.dblclick({ position: { x: fit.width * 0.3, y: fit.height * 0.3 } });
+    await expect.poll(async () => (await img.boundingBox())!.width).toBeGreaterThan(fit.width * 2);
+    await settled(img);
+    const zoomed = (await img.boundingBox())!;
+    const viewerStage = (await page.locator('#lb-stage').boundingBox())!;
+    await page.getByRole('button', { name: '畫筆標註', exact: true }).click();
+    await expect(canvas).toBeVisible();
+    await settled(canvas);
+    // Same zoom, same spot in the stage: drawing starts on what the user was
+    // looking at. The tools take the bottom row, so the stage centre rises by
+    // half their height and the picture with it.
+    const drawStage = (await page.locator('.annotation-stage').boundingBox())!;
+    const rise = drawStage.y + drawStage.height / 2 - (viewerStage.y + viewerStage.height / 2);
+    const start = (await canvas.boundingBox())!;
+    expect(Math.abs(start.width - zoomed.width)).toBeLessThan(2);
+    expect(Math.abs(start.height - zoomed.height)).toBeLessThan(2);
+    expect(Math.abs(start.x - zoomed.x)).toBeLessThan(2);
+    expect(Math.abs(start.y - (zoomed.y + rise))).toBeLessThan(2);
+    await draw(page, false);
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(canvas).toBeHidden();
+    await settled(img);
+    const back = (await img.boundingBox())!;
+    for (const key of ['x', 'y', 'width', 'height'] as const)
+      expect(Math.abs(back[key] - zoomed[key])).toBeLessThan(2);
+  });
 });
 
 for (const desktop of [false, true]) {
@@ -435,39 +517,74 @@ for (const desktop of [false, true]) {
         path: info.outputPath('01-image-viewer.png'),
         animations: 'disabled',
       });
+      const imageFetches: string[] = [];
+      page.on('request', (request) => {
+        if (request.url().includes('/media/web_annotation/chart.svg'))
+          imageFetches.push(request.url());
+      });
       await edit.click();
-      const dialog = page.getByRole('dialog', { name: '圖片標註' });
+      // Drawing happens in the viewer itself: no second window, no second
+      // download of the picture it is already showing (iPad 2026-11-08: the
+      // pencil opened 「圖片標註」 over the viewer, stuck on 載入圖片…).
+      const viewer = page.locator('#lightbox');
+      const tools = page.getByRole('group', { name: '圖片標註' });
       const canvas = page.locator('#annotation-canvas');
-      await expect(dialog).toBeVisible();
+      await expect(tools).toBeVisible();
       await expect(canvas).toBeVisible();
+      await expect(page.locator('dialog[open]')).toHaveCount(0);
+      await expect(page.locator('#lightbox')).toBeVisible();
+      await expect(page.locator('.annotation-loading')).toBeHidden();
+      expect(imageFetches).toEqual([]);
+      // The canvas lies exactly on the viewer's photo (hidden under it), and the
+      // filmstrip row is the pen tools now.
+      await expect(page.locator('#lb-img')).toHaveCSS('visibility', 'hidden');
+      await expect(page.locator('#lb-count')).not.toBeVisible();
+      await expect
+        .poll(async () => {
+          const [a, b] = await Promise.all([
+            canvas.boundingBox(),
+            page.locator('#lb-img').boundingBox(),
+          ]);
+          return Math.max(
+            Math.abs(a!.x - b!.x),
+            Math.abs(a!.y - b!.y),
+            Math.abs(a!.width - b!.width),
+            Math.abs(a!.height - b!.height),
+          );
+        })
+        .toBeLessThan(1);
       // Editor actions share the viewer's ghost, monochrome outline-icon language.
       for (const name of ['取消', '確定加入附件', '復原', '清除']) {
-        const action = dialog.getByRole('button', { name, exact: true });
+        const action = viewer.getByRole('button', { name, exact: true });
         await expect(action.locator('svg')).toHaveCount(1);
         await expect(action).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
         await expect(action).toHaveCSS('border-top-width', '0px');
         await expect(action.locator('svg')).toHaveAttribute('stroke', 'currentColor');
         await expect(action.locator('svg')).toHaveAttribute('fill', 'none');
       }
-      await expect(dialog.locator('select')).toHaveCSS('border-radius', '999px');
+      await expect(viewer.locator('select')).toHaveCSS('border-radius', '999px');
       await expect(page.getByRole('button', { name: '確定加入附件' })).toBeEnabled();
       expect(
-        await dialog.evaluate((element) => {
-          const r = element.getBoundingClientRect();
-          return (
-            r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1
-          );
-        }),
+        await viewer.locator('.annotation-bar, .annotation-tools').evaluateAll((elements) =>
+          elements.every((element) => {
+            const r = element.getBoundingClientRect();
+            return (
+              r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1
+            );
+          }),
+        ),
       ).toBe(true);
       expect(
-        await dialog.locator('button, select').evaluateAll((elements) =>
-          elements
-            .filter((element) => {
-              const r = element.getBoundingClientRect();
-              return r.width > 0 && r.height > 0 && (r.width < 44 || r.height < 44);
-            })
-            .map((element) => element.getAttribute('aria-label') || element.textContent),
-        ),
+        await viewer
+          .locator('.annotation-bar button, .annotation-tools button, .annotation-tools select')
+          .evaluateAll((elements) =>
+            elements
+              .filter((element) => {
+                const r = element.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 && (r.width < 44 || r.height < 44);
+              })
+              .map((element) => element.getAttribute('aria-label') || element.textContent),
+          ),
       ).toEqual([]);
       await present(page);
       await page.screenshot({ path: info.outputPath('02-editor.png'), animations: 'disabled' });
@@ -483,9 +600,11 @@ for (const desktop of [false, true]) {
       expect(await centerPixel(canvas)).toEqual([255, 255, 255, 255]);
       await present(page);
       await page.getByRole('button', { name: '取消', exact: true }).click();
-      await expect(dialog).not.toBeVisible();
+      await expect(tools).toBeHidden();
       await expect(page.locator('#attachments .chip')).toHaveCount(0);
       await expect(page.locator('#lightbox')).toBeVisible();
+      await expect(page.locator('#lb-img')).toHaveCSS('visibility', 'visible');
+      await expect(page.locator('#lb-count')).toBeVisible();
       await present(page);
       await edit.click();
       await expect(page.getByRole('button', { name: '確定加入附件' })).toBeEnabled();
@@ -500,7 +619,7 @@ for (const desktop of [false, true]) {
       const confirm = page.getByRole('button', { name: '確定加入附件' });
       await reachable(confirm);
       await confirm.click();
-      await expect(dialog).not.toBeVisible();
+      await expect(tools).toBeHidden();
       await expect(page.locator('#lightbox')).toBeHidden();
       await expect(page.locator('#attachments .chip-image')).toHaveCount(1);
       await expect(page.locator('#input')).toHaveValue('Please check my marks.');
@@ -532,7 +651,7 @@ for (const desktop of [false, true]) {
       await expect(confirm).toBeEnabled();
       await present(page);
       await page.keyboard.press('Escape');
-      await expect(dialog).not.toBeVisible();
+      await expect(tools).toBeHidden();
       await expect(page.locator('#lightbox')).toBeVisible();
       await page.locator('#lb-close').click();
       await expect(page.locator('#attachments .chip-image')).toHaveCount(1);
@@ -549,7 +668,7 @@ for (const desktop of [false, true]) {
       expect(redrawn[0]).toBeGreaterThan(redrawn[2]);
       await reachable(confirm);
       await confirm.click();
-      await expect(dialog).not.toBeVisible();
+      await expect(tools).toBeHidden();
       await expect(page.locator('#lightbox')).toBeHidden();
       await expect(page.locator('#attachments .chip-image')).toHaveCount(1);
       expect(await page.locator('#attachments img').getAttribute('src')).not.toBe(before);

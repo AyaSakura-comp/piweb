@@ -5184,7 +5184,52 @@ function canAnnotateImage() {
     !state.uploading && !input.disabled && !btwWorkspace.isSide());
 }
 
+/** Move the picture from `rect` (where drawing left it) to its viewer spot. */
+function glideLightboxFrom(rect) {
+  const img = $('lb-img');
+  if (!rect?.width || !rect?.height) return;
+  const now = img.getBoundingClientRect();
+  if (!now.width) return;
+  const k = rect.width / now.width;
+  const dx = rect.left + rect.width / 2 - (now.left + now.width / 2);
+  const dy = rect.top + rect.height / 2 - (now.top + now.height / 2);
+  if (Math.abs(k - 1) < 0.005 && Math.hypot(dx, dy) < 0.5) return;
+  img.style.transition = 'none';
+  img.style.transform = `translate3d(${lb.x + dx}px, ${lb.y + dy}px, 0) scale(${(lb.scale / lb.committed) * k})`;
+  void img.offsetWidth;
+  applyLightboxTransform(true);
+}
+
+// The pencil draws on the viewer's own picture, in place (no second window):
+// the canvas takes the photo's spot and zoom, and hands them back on Cancel.
 const imageAnnotator = createImageAnnotator({
+  host: $('lightbox'),
+  media: () => $('lb-img'),
+  fitSize: () => {
+    const img = $('lb-img');
+    return img.naturalWidth && lb.committed === 1
+      ? { w: img.offsetWidth, h: img.offsetHeight }
+      : null;
+  },
+  onClose: (view, rect) => {
+    if ($('lightbox').hidden || lbMedia() !== $('lb-img')) return;
+    if (lb.committed !== 1) setLightboxCommitted(1);
+    if (view && view.scale > 1.01) {
+      const { w } = lbFitSize();
+      const k = view.fitW > 0 ? w / view.fitW : 1;
+      lb.scale = Math.min(lbMaxScale(), view.scale);
+      lb.x = view.x * k * (lb.scale / view.scale);
+      lb.y = view.y * k * (lb.scale / view.scale);
+      clampLightboxPan();
+    } else {
+      lb.scale = 1;
+      lb.x = 0;
+      lb.y = 0;
+    }
+    applyLightboxTransform(false);
+    glideLightboxFrom(rect);
+    if (lb.scale > 1.01) scheduleLightboxCommit(260);
+  },
   onError: showToast,
   onConfirm: (file, destination) => {
     if (destination.target) {
@@ -5207,13 +5252,26 @@ const imageAnnotator = createImageAnnotator({
 $('lb-annotate').addEventListener('click', () => {
   const url = lb.urls[lb.index];
   if (!url || isLightboxVideo(url) || !canAnnotateImage()) return;
-  resetLightboxTransform(false);
-  void imageAnnotator.open(url, {
-    jid: state.activeJid,
-    selection: sessionSelectionGeneration,
-    source: url,
-    target: lb.target,
-  });
+  // Drawing starts where the user was looking: same spot, same zoom. The
+  // photo's layout goes back to its fit (the transform keeps the zoom), so the
+  // canvas can be measured against it.
+  const from = $('lb-img').getBoundingClientRect();
+  clearTimeout(lb.commitTimer);
+  lb.drag = null;
+  lb.isPinching = false;
+  lb.isPanning = false;
+  const fitW = lbFitSize().w;
+  if (lb.committed !== 1) setLightboxCommitted(1);
+  void imageAnnotator.open(
+    url,
+    {
+      jid: state.activeJid,
+      selection: sessionSelectionGeneration,
+      source: url,
+      target: lb.target,
+    },
+    { view: { scale: lb.scale, x: lb.x, y: lb.y, fitW }, from },
+  );
 });
 
 function openLightbox(url, urls, target = null) {
@@ -5463,6 +5521,7 @@ $('lb-download')?.addEventListener('click', async (e) => {
 
 // Tapping the backdrop closes; tapping the image itself must not.
 $('lightbox').addEventListener('click', (e) => {
+  if (imageAnnotator.active) return;
   if (e.target === $('lightbox') || e.target === $('lb-stage')) closeLightbox();
 });
 
@@ -5482,6 +5541,8 @@ const SWIPE_DISMISS_PX = 110;
 lightboxEl.addEventListener(
   'touchstart',
   (e) => {
+    // While drawing, the canvas owns every touch: no paging, no dismiss.
+    if (imageAnnotator.active) return;
     if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip'))
       return;
 
@@ -5569,6 +5630,7 @@ lightboxEl.addEventListener(
 lightboxEl.addEventListener(
   'touchmove',
   (e) => {
+    if (imageAnnotator.active) return;
     if (e.target.closest('.lb-bar') || e.target.closest('.lb-nav') || e.target.closest('.lb-strip'))
       return;
 
@@ -5636,6 +5698,7 @@ lightboxEl.addEventListener(
 );
 
 function endLightboxTouch(e) {
+  if (imageAnnotator.active) return;
   if (lb.isPinching) {
     lb.isPinching = false;
     if (lb.scale < 1.05) {
@@ -5701,7 +5764,9 @@ function endLightboxTouch(e) {
 }
 
 lightboxEl.addEventListener('touchend', endLightboxTouch);
-lightboxEl.addEventListener('touchcancel', () => resetLightboxTransform(true));
+lightboxEl.addEventListener('touchcancel', () => {
+  if (!imageAnnotator.active) resetLightboxTransform(true);
+});
 
 let mousePanning = false;
 let mouseStartX = 0;
@@ -6286,6 +6351,10 @@ function closeLayerForBack() {
   const mermaid = document.getElementById('mermaid-modal');
   if (mermaid && !mermaid.hidden) {
     mermaid.querySelector('.mm-modal-close')?.click();
+    return true;
+  }
+  if (imageAnnotator.active) {
+    imageAnnotator.close(); // Back leaves drawing first, then the viewer
     return true;
   }
   if (!$('lightbox').hidden) {

@@ -1,8 +1,8 @@
 # Image annotation
 
-Open a chat/Media image or a pending image thumbnail, then tap the pencil (**畫筆標註**). Draw with a finger, mouse or pen; select a colour and brush width, undo (**復原**), or clear (**清除**). **取消** / Escape discards the edit and returns to the original viewer. **確定加入附件** flattens the image plus marks into a new PNG File and queues it in the existing composer. It preserves the draft and existing attachments; it never sends automatically. Send/remove/compression use the ordinary image attachment path. The original file is never modified.
+Open a chat/Media image or a pending image thumbnail, then tap the pencil (**畫筆標註**). Drawing happens in the image viewer itself, not in a second window (2026-11-08): the picture becomes a canvas at the same spot and zoom, the viewer's top bar becomes **×** / **✓**, and its filmstrip row becomes the pen tools. A same-origin picture is drawn from the viewer's own `<img>`, so nothing is downloaded again — the old modal re-fetched the image and showed 載入圖片… until that download finished (iPad recording 2026-11-08: still loading when closed after about 2 s). Draw with a finger, mouse or pen; select a colour and brush width, undo (**復原**), or clear (**清除**). **取消** / Escape / Android Back discards the edit and leaves the viewer as it was, at the zoom the drawing ended on. **確定加入附件** flattens the image plus marks into a new PNG File and queues it in the existing composer. It preserves the draft and existing attachments; it never sends automatically. Send/remove/compression use the ordinary image attachment path. The original file is never modified.
 
-The editor is available for images in writable main conversations, not videos, deleted-session previews, or the BTW side composer. Pending image thumbnails now open in the same viewer. A confirmed edit of a pending image adds a new copy rather than replacing the pending original.
+The editor is available for images in writable main conversations, not videos, deleted-session previews, or the BTW side composer. Pending image thumbnails now open in the same viewer. A confirmed edit of a pending image replaces it in place (same position); an image from the transcript is added as a new attachment.
 
 ## Button style and accessibility
 
@@ -14,15 +14,17 @@ Inside the editor, a single finger, mouse or pen draws; two fingers pinch to zoo
 
 Starting a two-finger gesture discards its unfinished initial stroke, preventing accidental marks. Completed strokes remain unchanged. Lift **both** fingers before starting the next drawing stroke; the last remaining pinch finger never becomes a drawing pointer. Brush coordinates follow the zoomed image, with the selected width measured on screen for detailed work. Undo continues to affect strokes, not view transforms.
 
-The view transform never changes the canvas bitmap. Confirm always exports the **complete** image plus marks, including content outside the zoomed viewport, with the same output-size limits. Cancel/reopen resets zoom and pan. The native modal continues to isolate drawing/navigation from the viewer beneath.
+The view transform never changes the canvas bitmap. Confirm always exports the **complete** image plus marks, including content outside the zoomed viewport, with the same output-size limits.
+
+The pencil keeps the viewer's zoom: drawing starts on the part of the picture that was on screen, and Cancel hands the zoom back to the viewer (bounded by the viewer's own maximum). The tools take the bottom row, so the picture's fit can shrink a little; zoom and pan offsets are scaled by the fit change and the canvas glides from the photo's old rect to its new one (and back on Cancel). While drawing, the viewer's swipe-to-page, swipe-to-dismiss, backdrop tap, arrow keys, filmstrip and arrows are off; the canvas owns every gesture.
 
 ## Limits and safety
 
 - Canvas output preserves aspect ratio and natural dimensions up to a 4096px longest edge; larger camera photos are downscaled to bound phone bitmap memory.
 - Animated images export one decoded still frame. Transparent areas remain transparent in the PNG.
-- Remote image URLs must permit browser CORS fetch; a blocked/invalid image shows a load failure without adding a file.
-- Cancel/close aborts fetching and invalidates delayed decode/export results. The original JID plus selection generation must still own the composer before a file can be queued.
-- Editing uses a native modal, preventing viewer swipe/pinch and background controls from competing with drawing. Pointer capture keeps strokes continuous outside the image; pointercancel discards the interrupted stroke.
+- A picture from another origin is fetched instead (a canvas drawn from a cross-origin `<img>` cannot export); it must permit browser CORS fetch, and a blocked/invalid image shows a load failure without adding a file.
+- If the pencil is tapped while the viewer's picture is still loading, drawing waits for it (**✓** stays disabled). Cancel/close aborts fetching and invalidates delayed decode/export results. The original JID plus selection generation must still own the composer before a file can be queued.
+- The viewer's gesture handlers stand down while drawing (`imageAnnotator.active`), so swipe/pinch and background taps cannot compete with drawing. Pointer capture keeps strokes continuous outside the image; pointercancel discards the interrupted stroke.
 
 ## Verification
 
@@ -35,7 +37,7 @@ PIWEB_ANNOTATION_VIDEO=1 PIWEB_E2E_PORT=4194 npx playwright test \
   --output=artifacts/image-annotation-style/recording
 ```
 
-Tests render production HTML/JS/CSS with isolated API/media fixtures. Mobile CDP touch and desktop mouse paths cover open, draw, colour/width, undo, clear, cancel, confirm, preview the resulting attachment, Escape, and normal Send. Assertions include source dimensions, changed/exported pixels, normal PNG/base64 request payload, preserved draft, no automatic send, original file untouched, modal viewport containment, touch targets, hit-testing, and unexpected browser errors. The API fixture retains accepted uploads; reloading the real UI verifies the sent PNG renders in the transcript with the same marked pixels. Additional cancellation coverage protects delayed loads/exports, and a touch-plus-keyboard regression verifies that Undo during an active touch followed by pointer cancellation preserves the previous completed stroke. CDP multi-touch regressions cover pinch enlargement, two-finger panning, no accidental pinch marks, the all-fingers-up drawing boundary, drawing/Undo after zoom, 1×/8× bounds, cancellation/reopen reset, and full-image PNG export while zoomed.
+Tests render production HTML/JS/CSS with isolated API/media fixtures. In-place drawing (2026-11-08) is asserted directly: no `dialog[open]`, the viewer stays up, the picture is not requested again, the canvas lies on the viewer photo's box (within 1px) with the photo hidden under it, the viewer zoom carries into drawing (same size, same spot in the stage) and back out on Cancel, and a picture still loading when the pencil is tapped holds ✓ disabled and stays cancelled. Mobile CDP touch and desktop mouse paths cover open, draw, colour/width, undo, clear, cancel, confirm, preview the resulting attachment, Escape, and normal Send. Assertions include source dimensions, changed/exported pixels, normal PNG/base64 request payload, preserved draft, no automatic send, original file untouched, tool-row viewport containment, touch targets, hit-testing, and unexpected browser errors. The API fixture retains accepted uploads; reloading the real UI verifies the sent PNG renders in the transcript with the same marked pixels. Additional cancellation coverage protects delayed loads/exports, and a touch-plus-keyboard regression verifies that Undo during an active touch followed by pointer cancellation preserves the previous completed stroke. CDP multi-touch regressions cover pinch enlargement, two-finger panning, no accidental pinch marks, the all-fingers-up drawing boundary, drawing/Undo after zoom, 1×/8× bounds, Cancel handing the zoom back (clamped to the viewer's maximum) with no cancelled finger surviving the reopen, and full-image PNG export while zoomed.
 
 Record just the zoom/draw workflow:
 
