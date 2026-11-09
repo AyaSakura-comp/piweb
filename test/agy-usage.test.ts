@@ -230,17 +230,99 @@ describe('agy OAuth refresh', () => {
 });
 
 describe('fetchAgyQuota', () => {
-  // The endpoint 403s with SUBSCRIPTION_REQUIRED unless a client User-Agent is
-  // sent; that header is the entire gate, so guard it against being dropped.
-  it('sends the antigravity client User-Agent', async () => {
-    let seen: any;
-    const fake = (async (_url: string, init: any) => {
-      seen = init;
-      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: GROUPS }) };
+  type Reply = { status: number; body: unknown };
+  interface Call {
+    url: string;
+    init: any;
+  }
+  // A fake Code Assist backend: loadCodeAssist names the project, and the quota
+  // RPC answers like the real one did on 2026-11-09 — 403 unless the body
+  // carries that project.
+  function codeAssist(
+    opts: {
+      load?: (call: Call, index: number) => Reply;
+      quota?: (call: Call, index: number) => Reply;
+    } = {},
+  ) {
+    const calls: Call[] = [];
+    let loads = 0;
+    let quotas = 0;
+    const fake = (async (url: string, init: any) => {
+      const call = { url: String(url), init };
+      calls.push(call);
+      let reply: Reply;
+      if (call.url.endsWith(':loadCodeAssist')) {
+        reply = opts.load?.(call, loads) ?? {
+          status: 200,
+          body: { cloudaicompanionProject: 'aicode-consumers' },
+        };
+        loads += 1;
+      } else if (call.url.endsWith(':retrieveUserQuotaSummary')) {
+        reply =
+          opts.quota?.(call, quotas) ??
+          (JSON.parse(init.body).project === 'aicode-consumers'
+            ? { status: 200, body: { groups: GROUPS } }
+            : { status: 403, body: { error: { status: 'PERMISSION_DENIED' } } });
+        quotas += 1;
+      } else {
+        throw new Error(`unexpected URL ${url}`);
+      }
+      const text = typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body);
+      return {
+        ok: reply.status >= 200 && reply.status < 300,
+        status: reply.status,
+        text: async () => text,
+      };
     }) as unknown as typeof fetch;
+    return { fake, calls };
+  }
 
-    await fetchAgyQuota(fake, 'test-token').catch(() => undefined);
-    if (seen) expect(String(seen.headers['User-Agent'])).toMatch(/^antigravity\/cli\//);
+  // Since agy 1.5.3 the quota RPC refuses `{}`: agy asks loadCodeAssist for the
+  // account's project and sends it. Without it /agy-usage read "拒絕存取".
+  it('asks for quota with the project loadCodeAssist names', async () => {
+    const { fake, calls } = codeAssist();
+
+    await expect(fetchAgyQuota(fake, 'test-token')).resolves.toEqual(GROUPS);
+
+    expect(calls.map((call) => call.url.split(':').pop())).toEqual([
+      'loadCodeAssist',
+      'retrieveUserQuotaSummary',
+    ]);
+    expect(JSON.parse(calls[0].init.body)).toEqual({ metadata: { ideType: 'ANTIGRAVITY' } });
+    expect(JSON.parse(calls[1].init.body)).toEqual({ project: 'aicode-consumers' });
+  });
+
+  it('uses whichever project the account has, not a fixed name', async () => {
+    const { fake, calls } = codeAssist({
+      load: () => ({ status: 200, body: { cloudaicompanionProject: 'acme-workspace-123' } }),
+      quota: () => ({ status: 200, body: { groups: [] } }),
+    });
+
+    await fetchAgyQuota(fake, 'test-token');
+
+    expect(JSON.parse(calls[1].init.body)).toEqual({ project: 'acme-workspace-123' });
+  });
+
+  it('says the project is missing instead of sending a quota request that will 403', async () => {
+    const { fake, calls } = codeAssist({
+      load: () => ({ status: 200, body: { currentTier: {} } }),
+    });
+
+    await expect(fetchAgyQuota(fake, 'test-token')).rejects.toThrow(/專案/);
+    expect(calls).toHaveLength(1);
+  });
+
+  // The endpoint 403s with SUBSCRIPTION_REQUIRED unless a client User-Agent is
+  // sent, project or not; guard the header against being dropped.
+  it('sends the antigravity client User-Agent on both calls', async () => {
+    const { fake, calls } = codeAssist();
+
+    await fetchAgyQuota(fake, 'test-token');
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(String(call.init.headers['User-Agent'])).toMatch(/^antigravity\/cli\//);
+    }
   });
 
   // The control loop is serial and schedules its next tick only after the
@@ -279,24 +361,18 @@ describe('fetchAgyQuota', () => {
   }, 20_000);
 
   it('passes an abort signal so the timeout can fire', async () => {
-    let seen: any;
-    const fake = (async (_url: string, init: any) => {
-      seen = init;
-      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: [] }) };
-    }) as unknown as typeof fetch;
+    const { fake, calls } = codeAssist();
     await fetchAgyQuota(fake, 'test-token');
-    expect(seen.signal).toBeDefined();
+    for (const call of calls) expect(call.init.signal).toBeDefined();
   });
 
-  it('refreshes once and retries quota lookup after an authentication error', async () => {
-    const authorizations: string[] = [];
-    const fake = (async (_url: string, init: any) => {
-      authorizations.push(init.headers.Authorization);
-      if (authorizations.length === 1) {
-        return { ok: false, status: 401, text: async () => 'expired' };
-      }
-      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: GROUPS }) };
-    }) as unknown as typeof fetch;
+  it('refreshes once and retries after loadCodeAssist rejects the token', async () => {
+    const { fake, calls } = codeAssist({
+      load: (_call, index) =>
+        index === 0
+          ? { status: 401, body: 'expired' }
+          : { status: 200, body: { cloudaicompanionProject: 'aicode-consumers' } },
+    });
     const refreshFlags: boolean[] = [];
 
     const result = await fetchAgyQuota(fake, undefined, async (forceRefresh) => {
@@ -306,15 +382,33 @@ describe('fetchAgyQuota', () => {
 
     expect(result).toEqual(GROUPS);
     expect(refreshFlags).toEqual([false, true]);
-    expect(authorizations).toEqual(['Bearer stale-token', 'Bearer fresh-token']);
+    expect(calls.map((call) => call.init.headers.Authorization)).toEqual([
+      'Bearer stale-token',
+      'Bearer fresh-token',
+      'Bearer fresh-token',
+    ]);
+  });
+
+  it('refreshes once and retries after the quota call rejects the token', async () => {
+    const { fake } = codeAssist({
+      quota: (_call, index) =>
+        index === 0 ? { status: 401, body: 'expired' } : { status: 200, body: { groups: GROUPS } },
+    });
+    const refreshFlags: boolean[] = [];
+
+    const result = await fetchAgyQuota(fake, undefined, async (forceRefresh) => {
+      refreshFlags.push(forceRefresh);
+      return forceRefresh ? 'fresh-token' : 'stale-token';
+    });
+
+    expect(result).toEqual(GROUPS);
+    expect(refreshFlags).toEqual([false, true]);
   });
 
   it('explains an expired login when a refreshed credential is also rejected', async () => {
-    const fake = (async () => ({
-      ok: false,
-      status: 401,
-      text: async () => '{"error":{"status":"UNAUTHENTICATED"}}',
-    })) as unknown as typeof fetch;
+    const { fake } = codeAssist({
+      load: () => ({ status: 401, body: { error: { status: 'UNAUTHENTICATED' } } }),
+    });
     await expect(fetchAgyQuota(fake, undefined, async () => 'still-invalid')).rejects.toThrow(
       /重新登入/,
     );
@@ -322,11 +416,9 @@ describe('fetchAgyQuota', () => {
 
   it('does not misreport a permission-denied response as an expired login', async () => {
     const refreshFlags: boolean[] = [];
-    const fake = (async () => ({
-      ok: false,
-      status: 403,
-      text: async () => '{"error":{"status":"PERMISSION_DENIED"}}',
-    })) as unknown as typeof fetch;
+    const { fake } = codeAssist({
+      quota: () => ({ status: 403, body: { error: { status: 'PERMISSION_DENIED' } } }),
+    });
 
     await expect(
       fetchAgyQuota(fake, undefined, async (forceRefresh) => {
@@ -338,12 +430,15 @@ describe('fetchAgyQuota', () => {
   });
 
   it('surfaces an HTTP failure as an AgyUsageError', async () => {
-    const fake = (async () => ({
-      ok: false,
-      status: 500,
-      text: async () => 'boom',
-    })) as unknown as typeof fetch;
+    const { fake } = codeAssist({ quota: () => ({ status: 500, body: 'boom' }) });
 
     await expect(fetchAgyQuota(fake, 'test-token')).rejects.toBeInstanceOf(AgyUsageError);
+  });
+
+  it('surfaces a loadCodeAssist failure as an AgyUsageError', async () => {
+    const { fake, calls } = codeAssist({ load: () => ({ status: 500, body: 'boom' }) });
+
+    await expect(fetchAgyQuota(fake, 'test-token')).rejects.toThrow(/帳號方案.*HTTP 500/);
+    expect(calls).toHaveLength(1);
   });
 });

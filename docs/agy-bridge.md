@@ -73,6 +73,24 @@ in [AGY command manager](agy-command-manager.md).
 | outbound media | agy emits markdown (`![c](/abs/chart.png)`); `convertLocalMediaLinks()` rewrites links that resolve to a real local file into pi's `[[file: …]]` marker so the existing attachment pipeline delivers them                     |
 | `/until goal`  | agy has no `--until-done` loop, so `unwrapUntilDoneGoal()` strips the SOH-wrapped sentinel and restates the goal as an autonomous instruction instead of leaking it into the prompt                                           |
 
+### `/agy-usage` quota lookup
+
+agy has no usage subcommand, so `src/agy-usage.ts` makes the same two Code
+Assist calls agy makes, with agy's own OAuth token:
+
+1. `v1internal:loadCodeAssist` with `{"metadata":{"ideType":"ANTIGRAVITY"}}`.
+   The reply's `cloudaicompanionProject` names the account's project
+   (`aicode-consumers` for a personal Google account).
+2. `v1internal:retrieveUserQuotaSummary` with `{"project": <that name>}`.
+
+Both calls need the `antigravity/cli/… (aidev_client; …)` User-Agent. Missing
+either the header or the project gets the same misleading
+`403 SUBSCRIPTION_REQUIRED "You do not have a valid license"`. The project
+became required with agy 1.5.3 (2026-11-09); until then `/agy-usage` sent `{}`
+and reported 「agy 額度 API 拒絕存取」. If it breaks again, run agy through a
+local HTTPS proxy and compare its own request with ours. A 401 on either call
+refreshes the token once and retries.
+
 ### Background-task notices are not assistant prose
 
 AGY can emit `<SYSTEM_MESSAGE>[Task Completed] … Stdout: …` as the text of

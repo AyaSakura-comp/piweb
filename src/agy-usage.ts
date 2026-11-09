@@ -5,13 +5,21 @@
  * RPC that returns the account's quota buckets, and it authenticates with the
  * OAuth token agy already stores on disk. This module reuses both.
  *
- * The endpoint is gated on **client identity sent as a User-Agent header**, not
- * on the request body: the same token with no User-Agent returns
+ * The endpoint has two gates, and failing either one returns the same
  *   403 PERMISSION_DENIED / SUBSCRIPTION_REQUIRED "You do not have a valid
  *   license of this product"
- * which reads like an account problem and is not one. Sending
- * `antigravity-cli/<version>` makes the identical request succeed. Do not
- * "simplify" the header away.
+ * which reads like an account problem and is not one:
+ *
+ * 1. **Client identity as a User-Agent header.** Without
+ *    `antigravity/cli/<version> (…)` the request is refused.
+ * 2. **The account's Code Assist project in the body.** Since agy 1.5.3
+ *    (2026-11-09) an empty `{}` body is refused even with the header. agy first
+ *    calls `loadCodeAssist`, takes `cloudaicompanionProject` from the reply
+ *    (`aicode-consumers` for a personal Google account), and sends
+ *    `{"project": …}`. This module does the same. It does not hard-code the
+ *    name, because a Workspace or paid account gets its own project.
+ *
+ * Do not "simplify" either one away.
  */
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -19,7 +27,11 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
 
-const QUOTA_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
+const CODE_ASSIST_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal';
+const LOAD_URL = `${CODE_ASSIST_URL}:loadCodeAssist`;
+const QUOTA_URL = `${CODE_ASSIST_URL}:retrieveUserQuotaSummary`;
+/** The body agy itself sends to loadCodeAssist. */
+const LOAD_BODY = { metadata: { ideType: 'ANTIGRAVITY' } };
 const USER_AGENT =
   'antigravity/cli/1.3.6 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)';
 
@@ -32,7 +44,10 @@ const USER_AGENT =
 const QUOTA_TIMEOUT_MS = 10_000;
 
 export function agyTokenPath(): string {
-  return process.env.AGY_TOKEN_PATH || join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+  return (
+    process.env.AGY_TOKEN_PATH ||
+    join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token')
+  );
 }
 
 export interface AgyQuotaBucket {
@@ -89,7 +104,9 @@ export async function readAgyAuth(): Promise<AgyAuth> {
   try {
     raw = await readFile(agyTokenPath(), 'utf8');
   } catch {
-    throw new AgyUsageError('找不到 agy 的登入憑證，請到 Piweb Settings 連接 Antigravity（或在終端機跑一次 agy 登入）。');
+    throw new AgyUsageError(
+      '找不到 agy 的登入憑證，請到 Piweb Settings 連接 Antigravity（或在終端機跑一次 agy 登入）。',
+    );
   }
 
   let parsed: any;
@@ -303,6 +320,62 @@ export async function readAgyAccessToken(): Promise<string> {
   return (await readAgyAuth()).token.access_token;
 }
 
+/** One Code Assist RPC, bounded by its own timeout (headers and body both). */
+async function postCodeAssist(
+  fetchImpl: typeof fetch,
+  url: string,
+  token: string,
+  body: unknown,
+): Promise<{ status: number; ok: boolean; text: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    return { status: response.status, ok: response.ok, text: await response.text() };
+  } catch (err: any) {
+    throw new AgyUsageError(
+      err?.name === 'AbortError'
+        ? `查詢 agy 額度逾時（${QUOTA_TIMEOUT_MS / 1000} 秒）。`
+        : `查詢 agy 額度失敗：${err?.message ?? err}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Thrown inside one attempt when the token is rejected, so the caller can refresh once. */
+class AgyTokenRejected extends Error {}
+
+function checkCodeAssistStatus(
+  reply: { status: number; ok: boolean; text: string },
+  step: string,
+): void {
+  if (reply.status === 401) throw new AgyTokenRejected();
+  if (reply.status === 403) {
+    throw new AgyUsageError('agy 額度 API 拒絕存取；登入仍可能有效，請檢查帳號授權或方案權限。');
+  }
+  if (!reply.ok) {
+    throw new AgyUsageError(`${step}失敗 (HTTP ${reply.status})：${reply.text.slice(0, 200)}`);
+  }
+}
+
+function parseJson(text: string, what: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AgyUsageError(`${what}不是合法 JSON。`);
+  }
+}
+
 export async function fetchAgyQuota(
   fetchImpl: typeof fetch = fetch,
   tokenOverride?: string,
@@ -311,53 +384,28 @@ export async function fetchAgyQuota(
 ): Promise<AgyQuotaGroup[]> {
   let token = tokenOverride ?? (await tokenProvider(false));
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS);
-    let response: Awaited<ReturnType<typeof fetch>>;
-    let text: string;
     try {
-      response = await fetchImpl(QUOTA_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'User-Agent': USER_AGENT,
-        },
-        body: '{}',
-        signal: controller.signal,
-      });
-      text = await response.text();
-    } catch (err: any) {
-      throw new AgyUsageError(
-        err?.name === 'AbortError'
-          ? `查詢 agy 額度逾時（${QUOTA_TIMEOUT_MS / 1000} 秒）。`
-          : `查詢 agy 額度失敗：${err?.message ?? err}`,
-      );
-    } finally {
-      clearTimeout(timer);
-    }
+      // The quota RPC refuses a body without the account's project (see the
+      // header comment), and only loadCodeAssist says which project that is.
+      const load = await postCodeAssist(fetchImpl, LOAD_URL, token, LOAD_BODY);
+      checkCodeAssistStatus(load, '查詢 agy 帳號方案');
+      const project = parseJson(load.text, 'agy 帳號方案回應')?.cloudaicompanionProject;
+      if (typeof project !== 'string' || !project) {
+        throw new AgyUsageError('agy 沒有回報這個帳號的專案，查不到額度。');
+      }
 
-    if (response.status === 401 && attempt === 0 && !tokenOverride) {
-      token = await tokenProvider(true);
-      continue;
-    }
-    if (response.status === 401) {
+      const quota = await postCodeAssist(fetchImpl, QUOTA_URL, token, { project });
+      checkCodeAssistStatus(quota, '查詢 agy 額度');
+      const parsed = parseJson(quota.text, 'agy 額度回應');
+      return Array.isArray(parsed?.groups) ? parsed.groups : [];
+    } catch (err) {
+      if (!(err instanceof AgyTokenRejected)) throw err;
+      if (attempt === 0 && !tokenOverride) {
+        token = await tokenProvider(true);
+        continue;
+      }
       throw new AgyUsageError('agy 憑證自動換發後仍被拒絕，請重新登入。');
     }
-    if (response.status === 403) {
-      throw new AgyUsageError('agy 額度 API 拒絕存取；登入仍可能有效，請檢查帳號授權或方案權限。');
-    }
-    if (!response.ok) {
-      throw new AgyUsageError(`查詢 agy 額度失敗 (HTTP ${response.status})：${text.slice(0, 200)}`);
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new AgyUsageError('agy 額度回應不是合法 JSON。');
-    }
-    return Array.isArray(parsed?.groups) ? parsed.groups : [];
   }
   throw new AgyUsageError('查詢 agy 額度失敗。');
 }
