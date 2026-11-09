@@ -237,10 +237,12 @@ describe('transcript text selection', () => {
     expect(overlayEl.hidden).toBe(false);
     expect(startHandle.style.left).toBe('10px');
     expect(endHandle.style.left).toBe('60px');
-    expect(boxesContainer.appendChild).toHaveBeenCalledWith(bubbleSvg);
+    expect(boxesContainer.appendChild).toHaveBeenCalledWith(
+      expect.objectContaining({ className: 'sel-bubble-layer' }),
+    );
     // Without requestAnimationFrame the bubble lands at once around the word.
     expect(boxesContainer.dataset.bubble).toBe('settled');
-    expect(bubblePath.setAttribute).toHaveBeenLastCalledWith('d', expect.stringMatching(/^M.*Z$/));
+    expect(bubblePath.setAttribute).toHaveBeenCalledWith('d', expect.stringMatching(/^M.*Z$/));
 
     // Test backdrop touch clears selection
     backdropListeners.get('touchstart')?.({
@@ -329,6 +331,11 @@ describe('transcript text selection', () => {
       cancelable: true,
       preventDefault: vi.fn(),
     });
+
+    // While the finger drags, nothing is reported: the pill and the quote wait
+    // for the lift instead of re-quoting the composer on every move.
+    expect(onSelection).toHaveBeenLastCalledWith('first', expect.anything(), root);
+    globalListeners.get('touchend')?.({ cancelable: true, preventDefault: vi.fn() });
 
     // Start anchor should remain locked at 0; trailing pivot moved to 22!
     expect(onSelection).toHaveBeenLastCalledWith('first line\nsecond line', expect.anything(), root);

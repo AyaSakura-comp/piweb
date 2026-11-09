@@ -116,12 +116,19 @@ test('swipe selection keeps the anchor block when the finger is dragged back', a
       type,
       touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }],
     });
-  const selectedText = () => page.evaluate(() => (window as any).__selectedText ?? '');
+  // What the selection holds while the finger is still down (the drawn
+  // highlight); the page is told only once the finger lifts.
+  const selectedText = () =>
+    page.evaluate(
+      () => [...((CSS as any).highlights.get('piweb-selection') ?? [])][0]?.toString() ?? '',
+    );
+  const reportedText = () => page.evaluate(() => (window as any).__selectedText ?? '');
 
   await touch('touchStart', anchorBox.x + 40, anchorBox.y + 8);
   await page.waitForTimeout(400);
   const anchorText = await selectedText();
   expect(anchorText).toContain('特點');
+  expect(await reportedText()).toBe(anchorText.trim());
 
   // Forward: down to the end of the anchor paragraph.
   for (let y = anchorBox.y + 8; y <= anchorBox.y + anchorBox.height - 4; y += 8) {
@@ -137,8 +144,14 @@ test('swipe selection keeps the anchor block when the finger is dragged back', a
   expect(backwards).toContain('支援語言');
   // The long-pressed block must survive the reversal instead of being dropped.
   expect(backwards).toContain('特點');
+  // Nothing was reported (pill, quote) while the finger moved...
+  expect(await reportedText()).toBe(anchorText.trim());
+  await expect(page.getByRole('toolbar')).toBeHidden();
 
   await touch('touchEnd');
+  // ...and the lift reports the whole selection.
+  expect(await reportedText()).toBe(backwards.trim());
+  await expect(page.getByRole('toolbar')).toBeVisible();
   expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
 });
 

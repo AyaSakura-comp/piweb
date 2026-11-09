@@ -79,13 +79,19 @@ test('a handle dragged over collapsed tool cards quotes only the text on screen'
   const covered = await page.evaluate(() => {
     const path = document.querySelector('.sel-bubble path, path.sel-bubble') as SVGPathElement | null;
     const svg = path?.ownerSVGElement;
-    if (!path || !svg) return null;
+    const toPath = path?.getScreenCTM()?.inverse();
+    if (!path || !svg || !toPath) return null;
     const card = document.querySelectorAll('details.event.tool_result')[0].getBoundingClientRect();
-    const origin = svg.getBoundingClientRect();
-    const point = svg.createSVGPoint();
-    point.x = card.left + card.width / 2 - origin.left;
-    point.y = card.top + card.height / 2 - origin.top;
-    return path.isPointInFill(point);
+    const message = document.querySelector('.msg-text')!.getBoundingClientRect();
+    const inFill = (x: number, y: number) => {
+      const point = svg.createSVGPoint();
+      point.x = x;
+      point.y = y;
+      return path.isPointInFill(point.matrixTransform(toPath));
+    };
+    // The check must be able to fail: the selected message itself is inside.
+    if (!inFill(message.left + 20, message.top + message.height / 2)) return 'probe misses the bubble';
+    return inFill(card.left + card.width / 2, card.top + card.height / 2);
   });
   expect(covered).toBe(false);
   await page.screenshot({ path: info.outputPath('across-messages.png') });

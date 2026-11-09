@@ -2212,9 +2212,9 @@ html.keyboard-shell .life-edge-hint {
 .sel-bubble-layer {
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+  /* Pieces come and go on every drag move: keep that from dirtying the
+     transcript's layout, which the next move's caret lookup would pay for. */
+  contain: strict;
   pointer-events: none;
   opacity: 1;
   transition: opacity 0.22s ease;
@@ -2224,12 +2224,37 @@ html.keyboard-shell .life-edge-hint {
   opacity: 0;
 }
 
+/* The transcript's content coordinates: selection-bubble.js moves this with
+   the scroll. Inside it, the bubble at rest (.sel-bubble-static) and the
+   pieces of lines in motion (.sel-bubble-piece), which play the spring as
+   transform keyframes on the compositor. */
+.sel-bubble-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.sel-bubble-static,
+.sel-bubble-piece {
+  position: absolute;
+  overflow: hidden;
+}
+
+.sel-bubble-piece > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* One translucent bubble around the selection: a light top, a deeper base,
-   a bright rim and a soft glow, like a soap bubble resting on the text. */
-.sel-bubble {
+   a bright rim and a soft glow, like a soap bubble resting on the text. The
+   glow (a 0 6px 16px shadow) is .sel-bubble-glow's SVG filter, cast by the
+   bubble where it rests: see GLOWS in selection-bubble.js. */
+.sel-bubble,
+.sel-bubble-moving,
+.sel-bubble-glow {
   stroke-width: 1.25;
   stroke-linejoin: round;
-  filter: drop-shadow(0 6px 16px rgb(88 101 242 / 0.3));
 }
 
 .sel-bubble-fill-top { stop-color: rgb(186 196 255 / 0.34); }
@@ -5986,10 +6011,6 @@ dialog.sheet::backdrop {
 
 :root[data-theme='light'] ::selection {
   background: rgb(63 95 111 / 0.22);
-}
-
-:root[data-theme='light'] .sel-bubble {
-  filter: drop-shadow(0 6px 14px rgb(63 95 111 / 0.2));
 }
 
 :root[data-theme='light'] .sel-bubble-fill-top { stop-color: rgb(150 196 214 / 0.3); }

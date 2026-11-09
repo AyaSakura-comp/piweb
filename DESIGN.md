@@ -132,6 +132,28 @@ same rules hold in the chat and in a Dashboard pane.
   slightly under-damped spring (stiffness 340, damping 25), so it flows and
   settles instead of jumping box to box. Line rects come from the selected text
   nodes only; Chrome's per-paragraph-break boxes drew stray tabs.
+- **The spring runs at the display's rate.** It plays on the compositor, as in
+  "Viewer motion" below. A `requestAnimationFrame` loop redrawing the outline was
+  held to iOS's 60Hz page rate; the user reported "這個沒有120hz" (2026-11-09).
+  - At rest the bubble is one SVG outline.
+  - A line in motion is cut out of that outline and redrawn as up to three
+    pieces of the same drawing: two rounded ends that only move, and a middle
+    that also stretches. A line that moves only up or down is one piece.
+  - The pieces play the spring, solved in closed form, as `transform`
+    keyframes on a 120Hz grid. A frame is dropped only where the compositor's
+    straight line between its neighbours is within 0.1px of the spring.
+  - The glow (shadow 0 6px 16px) is cast once, by the outline where it will
+    rest, and is never cut: pieces casting their own showed seams.
+  - A line pouring out shows once it is 6px tall; squashed thinner, its rims
+    read as one bright line.
+  - At rest the drawing is the same as before (at most 8/255 apart, in the
+    glow). `test/e2e/selection-bubble-motion.spec.ts`,
+    `test/selection-bubble.test.ts`.
+- **The pill steps aside while the finger drags.** Long-press swipe or handle:
+  the quote/copy pill hides and the composer's quote waits; both come back with
+  the whole selection on the lift, as on iOS. Re-quoting on every move cost
+  several forced layouts per touchmove and moved the glass pill under the
+  finger.
 - **A mouse selection looks the same.** On a computer the transcript keeps the
   browser's own selection (drag, double/triple click, shift-click, ⌘C, and the
   pill), drawn as the same bubble following the pointer: transcript text has no

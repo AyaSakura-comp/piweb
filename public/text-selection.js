@@ -477,6 +477,12 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     overlayEl.hidden = false;
     overlayEl.classList.add('active');
 
+    // While a finger drags the selection, the pill stays hidden and the quote
+    // waits for the lift (onTouchEnd / endDrag report it). Reporting every move
+    // re-quoted the composer and re-placed the pill on each touchmove: several
+    // forced layouts per move, and a glass pill jumping along under the finger.
+    if (isDragging) return;
+
     const text = visibleRangeText(currentRange).trim().slice(0, MAX_SELECTION_LENGTH);
     if (text) {
       onSelection(text, currentRange.getBoundingClientRect(), scroller);
@@ -676,6 +682,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
       isDragging = true;
       overlayEl?.classList.add('dragging');
       handleEl.classList.add('dragging');
+      onClear(); // The pill steps aside while a handle is dragged, as on iOS.
       window.navigator?.vibrate?.(8);
     }, { passive: false });
 

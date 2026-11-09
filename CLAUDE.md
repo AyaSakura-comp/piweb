@@ -1061,7 +1061,9 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   and a glass floating action pill (`Quote`, `Copy`, `Dismiss`). The selection itself is one rounded
   translucent bubble (`.sel-bubble`) that follows the finger on a spring, not per-line boxes, and a mouse's
   native selection is drawn as the same bubble; a finished selection quotes itself (chat and Dashboard panes); the `touchend` ending a long press cancels its
-  default so the lift never clicks the pill. Contract in `DESIGN.md` "Text selection and quoting".
+  default so the lift never clicks the pill. The spring plays on the compositor: moving lines become
+  `.sel-bubble-piece` elements with `transform` keyframes, no `requestAnimationFrame` loop. While a finger drags,
+  `onSelection` is not called (no pill, no re-quote); the lift reports. Contract in `DESIGN.md` "Text selection and quoting".
   - Uses `getFilteredLineRects()` to strip out container bounding boxes (such as `<ul>` or `<div>` wrapper blocks)
     that distort table/markdown highlights.
   - Character-level alignment (`getHandlePointRect`) pins the lollipops precisely to the selection endpoints.
