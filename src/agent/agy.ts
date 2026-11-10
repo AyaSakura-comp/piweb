@@ -89,7 +89,7 @@ async function runAgy(args: string[], timeoutMs: number, allowRetry = true): Pro
 }
 
 /** agy exposes three reasoning efforts; Piweb's six thinking levels fold onto them. */
-const EFFORT_BY_THINKING: Record<ThinkingLevel, 'low' | 'medium' | 'high' | undefined> = {
+export const EFFORT_BY_THINKING: Record<ThinkingLevel, 'low' | 'medium' | 'high' | undefined> = {
   off: undefined,
   minimal: 'low',
   low: 'low',

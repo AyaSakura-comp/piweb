@@ -1177,16 +1177,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         sendJson(res, 200, { available: false, reason: '此對話未使用長駐 Pi RPC，BTW 未送出' });
         return;
       }
-      // Pi sessions use pi-btw, Claude Code sessions Claude's own /btw (the
-      // worker picks); AGY has none. Prefix spelled inline: the web tier must
-      // not import src/agent (invariant 2).
-      const override = (channel.modelOverride || effectiveModeModelDefault('standard'))
-        .trim()
-        .toLowerCase();
-      if (override.startsWith('agy/')) {
-        sendJson(res, 200, { available: false, reason: 'BTW 不支援 AGY 模型；此對話目前使用 AGY' });
-        return;
-      }
+      // Pi sessions use pi-btw, Claude Code sessions Claude's own /btw and AGY
+      // sessions agy's own /btw; the worker picks by the session's model.
       const generation = channel.folder;
       let args: Record<string, string> = { generation, action: 'snapshot' };
       if (method === 'POST') {

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- BTW in AGY sessions, answered by agy's own `/btw` (asked in agy's TUI beside the conversation; the main conversation never sees it)
 - Recently deleted now supports Select-button or touch/mouse long-press multi-selection, one-confirmation permanent deletion, Select all, and Delete all in responsive phone and desktop layouts
 - Life mode's New action now saves the current conversation into the ordinary Sessions list, including its transcript, media, and Pi context, before opening a fresh empty Life session
 - Syntax highlighting for fenced code blocks, including automatic language detection when the language tag is omitted or unknown

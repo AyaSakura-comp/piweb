@@ -91,6 +91,15 @@ and reported 「agy 額度 API 拒絕存取」. If it breaks again, run agy thro
 local HTTPS proxy and compare its own request with ours. A 401 on either call
 refreshes the token once and retries.
 
+### BTW: agy's own `/btw`
+
+BTW in an AGY session is agy's own `/btw`, which only agy's TUI runs: print
+mode refuses it, and `agy acp` / `agy -i "/btw …"` send it to the main
+conversation as an ordinary message. `src/agent/agy-btw.ts` pastes it into a
+TUI opened on the session's conversation in a private tmux server, and reads
+the side conversation agy forks for it through `agy acp` `session/load` before
+closing the TUI. See [BTW workspace](btw-workspace.md#agy-sessions-agys-own-btw-2026-11-10).
+
 ### Background-task notices are not assistant prose
 
 AGY can emit `<SYSTEM_MESSAGE>[Task Completed] … Stdout: …` as the text of

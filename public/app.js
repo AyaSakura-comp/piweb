@@ -2513,27 +2513,18 @@ function isAgyCommandSession(targetJid = state.activeJid) {
   if (model) return model.startsWith('agy/') || model.startsWith('claude-code/');
   return session.provider === 'agy' || session.provider === 'claude-code' || String(session.runningModel || '').toLowerCase().startsWith('agy/') || String(session.runningModel || '').toLowerCase().startsWith('claude-code/');
 }
-// BTW is pi-btw in the persistent Pi RPC session, or Claude Code's own /btw
-// for a Claude Code session (the worker picks). AGY has no side question: hide
-// the entry instead of offering a control the worker would refuse. No
-// override = Pi's own default model.
+// BTW is pi-btw in the persistent Pi RPC session, Claude Code's own /btw for
+// a Claude Code session, or agy's own /btw for an AGY session (the worker
+// picks by the model). Life, a pending selection and a trashed preview have none.
 function isBtwSession(targetJid = state.activeJid) {
   if (!targetJid) return false;
-  if (targetJid === state.activeJid && (state.mode === 'life' || state.selectionPending || state.previewingDeleted)) return false;
-  // Hide only a KNOWN AGY session. Right after load the session list can
-  // lag the selection; the web and worker still refuse AGY BTW requests.
-  const session = state.sessions.find((item) => item.jid === targetJid);
-  const model = String(session?.model || effectiveStandardDefault()).trim().toLowerCase();
-  return !model.startsWith('agy/');
+  return !(targetJid === state.activeJid && (state.mode === 'life' || state.selectionPending || state.previewingDeleted));
 }
 function syncBtwAvailability() {
   const available = isBtwSession();
   $('mi-btw').hidden = !available;
   btwWorkspace.refresh();
-  if (!available && btwWorkspace.isSide()) {
-    btwWorkspace.close();
-    showToast('BTW 不支援 AGY 模型，已回主對話');
-  }
+  if (!available && btwWorkspace.isSide()) btwWorkspace.close();
 }
 onMenuItem('mi-commands-running', () => {
   if (isAgyCommandSession()) {

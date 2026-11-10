@@ -165,6 +165,9 @@ export const config = {
   /** agy binary path */
   agyBin: env('AGY_BIN', 'agy'),
 
+  /** tmux for agy's own /btw, which only its TUI runs (src/agent/agy-btw.ts) */
+  agyTmuxBin: env('AGY_TMUX_BIN', 'tmux'),
+
   /** Timeout for the `agy models` catalog probe */
   agyModelsTimeoutMs: envInt('AGY_MODELS_TIMEOUT_MS', 20000, { min: 1000 }),
 

@@ -44,8 +44,7 @@ RPC snapshots add `pending`, an array of questions whose side send is still
 running. The client restores these on reload/session return and polls snapshots
 until completion; it does not resend the question. This pending tracker is
 in-memory: recovery after a host worker/RPC process restart is not guaranteed.
-An ordinary side answer does not grant BTW support to AGY; Claude Code sessions
-have their own backend (below).
+Claude Code and AGY sessions have their own backends (below).
 
 ## Streaming answers
 
@@ -70,8 +69,7 @@ An older `pi-btw` without `streaming` just shows the waiting dots as before.
 
 A session on a `claude-code/*` model uses the same BTW view, endpoint and thread
 shape; the worker answers it with Claude Code's side question instead of pi-btw
-(`src/agent/claude-btw.ts`). AGY sessions still have no BTW (entry hidden, web
-and worker refuse).
+(`src/agent/claude-btw.ts`). AGY sessions use agy's own `/btw` (next section).
 
 - **How Claude is asked.** The TUI's `/btw` shows its answer in a panel that is
   never written to the transcript, and `claude -p "/btw …"` answers "/btw isn't
@@ -130,6 +128,70 @@ production failure before it ("Claude BTW timed out" after 26 min on
 2026-10-29 00:22) was the host out of memory (swap full, every process
 stalled until the kernel OOM-killed a 4.5 GB python at 00:48), not BTW: the
 same question on that 182 MB conversation now answers in 4.5 s, 326 MB peak.
+
+## AGY sessions: agy's own /btw (2026-11-10)
+
+A session on an `agy/*` model uses the same view, endpoint and thread shape;
+the worker answers it with agy's own `/btw` (`src/agent/agy-btw.ts`, routed in
+`src/worker/control.ts`). Checked against agy 1.5.4.
+
+- **Only agy's TUI runs `/btw`.** `agy -p` refuses it ("/btw is not available
+  in print mode (a one-shot run has no in-flight turn to interject into)").
+  `agy acp` and `agy -i "/btw …"` do not refuse: they send the text to the main
+  conversation as an ordinary message, so they must never be used for this. In
+  the TUI, `/btw <question>` forks the conversation into a side conversation
+  (the history, a side-question boundary and a read-only guardrail prompt;
+  tools that would ask for permission are denied, hooks do not run), answers
+  there and never writes to the main conversation. agy deletes the fork when
+  the TUI exits.
+- **How Piweb asks.** Per question, the worker opens the session's
+  conversation in a TUI on a private tmux server (`tmux -L piweb-agy-btw -f
+  /dev/null`, never the user's server or the Claude Code bridge's), in the
+  session's cwd, with its model and effort, `--log-file` in a temporary
+  directory, and `--settings '{"trustedWorkspaces":[cwd]}'`, which skips the
+  "Do you trust the contents of this project?" screen for this run only and is
+  never saved to `settings.json`. It waits for the status line `? for
+  shortcuts`, pastes `/btw <question>` as a bracketed paste (newlines stay in
+  the question) and presses Enter. The TUI's own log names the fork when its
+  answer starts (`Starting conversation update stream for <fork>`, the first
+  id other than the main conversation's) and when it ends (`Stream goroutine
+  exited for <fork>`). The answer is read from the fork with `agy acp`
+  `session/load`, which replays its messages (the agent text after the last
+  user message, joined with blank lines), and only then is the TUI closed. The
+  TUI runs under `timeout --foreground`, so one orphaned by a worker restart
+  ends by itself.
+- **Beside a running turn.** The TUI only reads the main conversation; it
+  shows "Conversation already open" and nothing else happens to the running
+  print-mode turn. The fork is taken from the conversation as stored, so the
+  side answer sees the turn so far (in the live run: the command it was
+  running).
+- **The side thread is Piweb's.** Each `/btw` forks the main conversation
+  afresh, so the worker keeps `{ conversationId, entries }` in `agy-btw.json`
+  in the session directory and puts the earlier questions and answers in front
+  of a follow-up (newest first within 12 000 characters, each answer at most
+  4 000, shown oldest first). `/pi new` (a new agy conversation) starts empty.
+- **Before the first turn** there is no agy conversation, and agy's own `/btw`
+  fails there too ("plan model not specified"). The question is refused with
+  「agy 的 BTW 要等主對話開始後才能問」 rather than answered without context.
+- One question at a time per session, `pending` while in flight (in memory),
+  no `streaming` text (the waiting dots until the answer), clear refused while
+  a question is pending, as for Claude Code. A failed side question reports
+  the error from the `/btw` card; a TUI that exits at once reports its screen,
+  else the error lines of its log. A question unanswered after 570 s is given
+  up (the web route waits 610 s).
+
+```bash
+npx vitest run test/agy-btw.test.ts test/control-btw-routing.test.ts
+# Explicit opt-in, real Gemini quota (Flash Low): a side question beside a
+# running print-mode turn sees the conversation and the command, a follow-up
+# sees the first side answer, the main turn finishes and its conversation has
+# neither. Removes the one agy conversation it makes.
+PIWEB_AGY_LIVE=1 AGY_BIN=$HOME/.local/bin/agy npx vitest run test/agy-btw-live.test.ts
+```
+
+The unit test drives a stand-in agy (TUI half and ACP half) on a real tmux. It
+depends on agy's TUI status line, its log lines and `acp session/load`; an agy
+update that changes any of them breaks the live test first.
 
 ## Commands and verification
 

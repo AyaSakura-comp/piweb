@@ -1984,10 +1984,7 @@ export function createSessionDashboard({
     };
 
     const openPaneBtw = async () => {
-      if (!isBtwSession(jid)) {
-        showToast?.('BTW 不支援 AGY 模型');
-        return;
-      }
+      if (!isBtwSession(jid)) return;
       if (pane.attachments.length > 0 || pane.pendingQuote) {
         showToast?.('請先移除主對話附件或引用，再切到 BTW');
         return;

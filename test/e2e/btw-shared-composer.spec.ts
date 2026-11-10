@@ -231,16 +231,52 @@ test('a failed BTW send removes the pending question and puts the draft back', a
   await expect(page.locator('#btw-messages .btw-waiting')).toHaveCount(0);
 });
 
-test('BTW entry is hidden for an AGY model', async ({ page }) => {
-  const calls = routes(page, true, { ...session, model: 'agy/gemini-3-pro' });
-  await page.goto('/');
-  await expect(page.getByText('Main message')).toBeVisible();
-  await page.locator('#btn-more').click();
-  await expect(page.locator('#more-menu')).toBeVisible();
-  await expect(page.locator('#mi-btw')).toBeHidden();
-  await expect(page.getByRole('button', { name: '開啟 BTW' })).toBeHidden();
-  expect(calls.filter((p) => p.endsWith('/btw'))).toEqual([]);
-});
+// AGY sessions answer through agy's own /btw (worker side, in agy's TUI); the
+// page is the same BTW view and endpoint as for Pi and Claude Code.
+for (const scheme of ['dark', 'light'] as const) {
+  test(`an AGY session offers BTW and sends through the same endpoint (${scheme})`, async ({ page }, info) => {
+    await page.addInitScript((value) => localStorage.setItem('piweb.theme', value), scheme);
+    routes(page, true, { ...session, model: 'agy/gemini-3.8-flash-low', busy: true });
+    const sent: unknown[] = [];
+    await page.route('**/api/sessions/*/btw', async (route) => {
+      if (route.request().method() === 'POST') {
+        sent.push(route.request().postDataJSON());
+        return route.fulfill({
+          json: {
+            available: true,
+            generation: 'web_btw_test',
+            thread: {
+              messages: [
+                { role: 'user', content: '主對話現在在做什麼？' },
+                { role: 'assistant', content: '正在跑 `npm test`，還沒結束。' },
+              ],
+              pending: [],
+              streaming: [],
+            },
+          },
+        });
+      }
+      return route.fulfill({
+        json: { available: true, generation: 'web_btw_test', thread: { messages: [], pending: [], streaming: [] } },
+      });
+    });
+    await page.goto('/');
+    await expect(page.getByText('Main message')).toBeVisible();
+    // Both entries: the link above the composer and the ⋯ menu item.
+    const entry = page.getByRole('button', { name: '開啟 BTW' });
+    await expect(entry).toBeVisible();
+    await page.locator('#btn-more').click();
+    await expect(page.locator('#mi-btw')).toBeVisible();
+    await page.locator('#mi-btw').click();
+    await expect(page.locator('#btw-card')).toBeVisible();
+    await page.locator('#input').fill('主對話現在在做什麼？');
+    await page.locator('#btn-send').click();
+    await expect(page.locator('#btw-messages')).toContainText('還沒結束');
+    expect(sent).toEqual([{ text: '主對話現在在做什麼？', generation: 'web_btw_test' }]);
+    await page.waitForFunction(() => !document.querySelector('.main.btw-sliding'));
+    await page.screenshot({ path: info.outputPath(`agy-btw-${scheme}.png`) });
+  });
+}
 
 // Claude Code sessions answer through Claude Code's own /btw (worker side);
 // the page is the same BTW view and endpoint as for Pi.
@@ -322,7 +358,9 @@ for (const busy of [true, false]) {
   });
 }
 
-test('switching the session to a non-Pi model leaves BTW and hides its entry', async ({ page }) => {
+test('switching the session to an AGY model keeps BTW open, since AGY has its own /btw', async ({
+  page,
+}) => {
   const current = { ...session };
   routes(page, true, current);
   await page.goto('/');
@@ -331,16 +369,15 @@ test('switching the session to a non-Pi model leaves BTW and hides its entry', a
   await page.locator('#mi-btw').click();
   await expect(page.locator('#btw-card')).toBeVisible();
   current.model = 'agy/gemini-3-pro';
-  // The drawer poll (every 5s) delivers the new model.
-  await expect(page.locator('#btw-card')).toBeHidden({ timeout: 12_000 });
-  await expect(page.getByText('Main message')).toBeVisible();
-  await expect(page.locator('#input')).toHaveAttribute('placeholder', 'Message pi…');
-  await page.screenshot({ path: test.info().outputPath('left-btw-toast.png') });
+  // The drawer poll (every 5s) delivers the new model; BTW stays where it is.
+  await page.waitForTimeout(6_500);
+  await expect(page.locator('#btw-card')).toBeVisible();
+  await expect(page.locator('#input')).toHaveAttribute('placeholder', '問 BTW…');
+  await page.getByRole('button', { name: '返回主對話' }).click();
+  await expect(page.locator('#btw-card')).toBeHidden();
   await page.locator('#btn-more').click();
   await expect(page.locator('#more-menu')).toBeVisible();
-  await expect(page.locator('#mi-btw')).toBeHidden();
-  await page.waitForTimeout(400);
-  await page.screenshot({ path: test.info().outputPath('menu-without-btw.png') });
+  await expect(page.locator('#mi-btw')).toBeVisible();
 });
 
 test('switches freely during a BTW run and keeps main send usable', async ({ page }, info) => {

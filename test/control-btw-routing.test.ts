@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 // btw:web picks the side-question backend by the session's harness: pi-btw in
-// the Pi RPC, Claude Code's own /btw for claude-code/*, none for AGY.
+// the Pi RPC, Claude Code's own /btw for claude-code/*, agy's own /btw for agy/*.
 const m = vi.hoisted(() => {
   const models: Record<string, string> = {
     web_pi: '',
@@ -31,6 +31,11 @@ const m = vi.hoisted(() => {
     piBtw: vi.fn(async () => ({ messages: [{ role: 'assistant', content: 'pi side' }] })),
     claudeBtw: vi.fn(async () => ({
       messages: [{ role: 'assistant', content: 'claude side' }],
+      pending: [],
+      streaming: [],
+    })),
+    agyBtw: vi.fn(async () => ({
+      messages: [{ role: 'assistant', content: 'agy side' }],
       pending: [],
       streaming: [],
     })),
@@ -64,7 +69,8 @@ vi.mock('../src/agent/claude-tmux.js', () => ({
   isClaudeTmuxModelRef: (ref: string) => ref.startsWith('claude-code/'),
 }));
 vi.mock('../src/agent/claude-btw.js', () => ({ claudeBtw: m.claudeBtw }));
-vi.mock('../src/config.js', () => ({ config: { rpcSteer: true, claudeTmuxEnabled: true } }));
+vi.mock('../src/agent/agy-btw.js', () => ({ agyBtw: m.agyBtw }));
+vi.mock('../src/config.js', () => ({ config: { rpcSteer: true, claudeTmuxEnabled: true, agyEnabled: true } }));
 vi.mock('../src/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -74,7 +80,7 @@ afterEach(async () => {
   await stopControlLoop();
 });
 
-it('routes BTW to pi-btw, to Claude Code’s /btw, or refuses it for AGY', async () => {
+it('routes BTW to pi-btw, to Claude Code’s /btw, or to agy’s /btw', async () => {
   const { startControlLoop } = await import('../src/worker/control.js');
   startControlLoop();
   await expect.poll(() => m.finishControl.mock.calls.length).toBe(3);
@@ -97,5 +103,14 @@ it('routes BTW to pi-btw, to Claude Code’s /btw, or refuses it for AGY', async
     streaming: [],
   });
 
-  expect(finished['web:agy']).toEqual({ ok: false, text: 'BTW is not available with AGY' });
+  expect(m.agyBtw).toHaveBeenCalledExactlyOnceWith('web_agy', 'send', 'hi web_agy', {
+    modelRef: 'agy/gemini-3-pro',
+    thinking: 'high',
+    cwd: '/work',
+  });
+  expect(finished['web:agy'].ok).toBe(true);
+  expect(JSON.parse(finished['web:agy'].text).messages[0].content).toBe('agy side');
+  // Neither Claude Code's nor Pi's backend answered for it.
+  expect(m.claudeBtw).toHaveBeenCalledTimes(1);
+  expect(m.piBtw).toHaveBeenCalledTimes(1);
 });

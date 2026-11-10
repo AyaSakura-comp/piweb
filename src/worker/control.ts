@@ -28,6 +28,7 @@ import { computeEffectiveChannelSettings } from '../agent/channel-settings.js';
 import { isAgyModelRef } from '../agent/agy.js';
 import { isClaudeTmuxModelRef } from '../agent/claude-tmux.js';
 import { claudeBtw } from '../agent/claude-btw.js';
+import { agyBtw } from '../agent/agy-btw.js';
 import { config } from '../config.js';
 
 const CONTROL_POLL_MS = 250;
@@ -159,11 +160,18 @@ async function runControl(row: ControlRow): Promise<void> {
         throw new Error('Invalid BTW action');
       // Check the harness first: a warm Pi RPC can outlive a switch to AGY/Claude.
       const effective = await computeEffectiveChannelSettings(channel);
-      if (isAgyModelRef(effective.rawModelRef)) throw new Error('BTW is not available with AGY');
       if (!renewOwnership()) throw new Error('BTW session generation changed');
       const thinking = effective.hasManagedThinking ? effective.effectiveThinking : undefined;
       let value;
-      if (isClaudeTmuxModelRef(effective.rawModelRef)) {
+      if (isAgyModelRef(effective.rawModelRef)) {
+        // agy's own /btw, asked in its TUI beside the conversation (src/agent/agy-btw.ts).
+        if (!config.agyEnabled) throw new Error('AGY bridge is disabled');
+        value = await agyBtw(channel.folder, args.action, args.text, {
+          modelRef: effective.rawModelRef,
+          thinking,
+          cwd: effective.effectiveCwd,
+        });
+      } else if (isClaudeTmuxModelRef(effective.rawModelRef)) {
         // Claude Code's own /btw, asked beside the TUI (src/agent/claude-btw.ts).
         if (!config.claudeTmuxEnabled) throw new Error('Claude Code bridge is disabled');
         value = await claudeBtw(channel.folder, args.action, args.text, {
