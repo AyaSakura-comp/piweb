@@ -193,6 +193,11 @@ describe('config loading', () => {
     expect(found.tmuxBin).toBe('/opt/homebrew/bin/tmux');
     expect(found.claudeBin).toBe('/Users/u/.local/bin/claude');
     expect(found.agyBin).toBe('agy');
+    expect(found.agyEnabled).toBe(false);
+    // agy from Homebrew on the Mac: offered, by absolute path.
+    const brewAgy = platformDefaults('darwin', '/Users/u', (p) => p === '/opt/homebrew/bin/agy');
+    expect(brewAgy.agyEnabled).toBe(true);
+    expect(brewAgy.agyBin).toBe('/opt/homebrew/bin/agy');
   });
 
   it('lets config.env override a platform default', async () => {

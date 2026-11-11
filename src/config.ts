@@ -42,8 +42,9 @@ export function defaultDataDir(): string {
  * - macOS (Mac mini): `piweb.js all` under launchd (SQLite locks do not cross
  *   Docker Desktop/OrbStack's VM bind mount, so web and worker must be one host
  *   process), Tailscale in a container that proxies in without identity
- *   headers, no Breeze ASR or agy, Homebrew binaries that launchd's PATH lacks,
- *   and the Mac mini home-screen icon.
+ *   headers, no Breeze ASR, Homebrew binaries that launchd's PATH lacks, and
+ *   the Mac mini home-screen icon. agy (Homebrew cask or ~/.local/bin) is
+ *   offered whenever its binary is installed.
  */
 export interface PlatformDefaults {
   embeddedWorker: boolean;
@@ -73,19 +74,25 @@ export function platformDefaults(
   // systemd and launchd both start without ~/.local/bin, where the Claude Code
   // and agy installers put their binaries.
   const claudeBin = firstExisting([resolve(home, '.local/bin/claude')], 'claude', exists);
-  const agyBin = firstExisting([resolve(home, '.local/bin/agy')], 'agy', exists);
   if (platform === 'darwin') {
+    const macAgyCandidates = [
+      resolve(home, '.local/bin/agy'),
+      '/opt/homebrew/bin/agy',
+      '/usr/local/bin/agy',
+    ];
+    const macAgy = macAgyCandidates.find((candidate) => exists(candidate));
     return {
       embeddedWorker: true,
       trustTailscaleIdentity: false,
       voiceAsrEnabled: false,
-      agyEnabled: false,
+      agyEnabled: macAgy !== undefined,
       iconSet: 'piweb-mini',
       tmuxBin: firstExisting(['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux'], 'tmux', exists),
       claudeBin,
-      agyBin,
+      agyBin: macAgy ?? 'agy',
     };
   }
+  const agyBin = firstExisting([resolve(home, '.local/bin/agy')], 'agy', exists);
   return {
     embeddedWorker: false,
     trustTailscaleIdentity: true,
