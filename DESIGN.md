@@ -682,6 +682,18 @@ keyboard; a finger scroll moves nothing.
     reply preview bar (with `❝` quote buttons on every message and text-selection quote),
     image/multimedia attachment thumbnail preview strip with lightbox + image editor (`✎`),
     image compression toggle (`壓縮圖片`), and `createHotKeywords` quick-input chip bar.
+- **A tapped pane grows to reading size** (user request, 2026-11-12: 點 window 的時候自己展開
+  寬度 ≥ 80 字元，高度 ≥ 160): a tap on a pane's window (its transcript, not a header
+  control or the card) or on its session-list row, when the card comes to it, grows it to
+  an 80-column reply line (`80ch` in the reply font, measured with a hidden `.msg-text`
+  probe) and 160px of transcript above the card (`fitPaneForReading()`). The room comes
+  from the nearest split level first, then outer ones, and no neighbour goes below its
+  minimum (140×95px, nested splits summed), so on a stage too small it grows as far as it
+  can. It animates like any re-tiling, and the card flies to where the pane ends up. The
+  next pane tapped first gives the earlier one its old size back, so tapping around never
+  ratchets the layout; once a splitter, preset or pinch changes the layout by hand, that
+  layout is kept. A pane already that big, a zoomed pane or a lone pane changes nothing.
+  `test/e2e/dashboard-reading-fit.spec.ts`.
 - **Session list while tiled**: a tap on a session row does not leave the Dashboard. The
   session joins the tiles (or keeps its place if already there), takes the input card
   (focused for a mouse, no keyboard on touch), and its pane flashes (`pane-locating`: an
