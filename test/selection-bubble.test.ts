@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   bubbleChains,
+  bubbleParts,
   bubblePath,
+  drawingOf,
   FRAME_MS,
   keyframeFrames,
   lineSpans,
-  pieceMotion,
+  partMotion,
+  partPath,
   springAt,
 } from '../public/selection-bubble.js';
 
@@ -111,47 +114,6 @@ describe('selection bubble motion', () => {
     expect(Math.abs(springAt(0, 0, 300, 1.2).x - 300)).toBeLessThan(0.25);
   });
 
-  const drawn = { l: 100, r: 400, t: 50, b: 74 };
-  const place = (part: string, motion: { dx: number; dy: number; sx: number; sy: number }, x: number, y: number) => {
-    // transform-origin is where the piece is anchored: its left edge for the
-    // start and the whole line, its right edge for the end, past the start's
-    // cap for the middle.
-    const ox = part === 'end' ? drawn.r : part === 'middle' ? drawn.l + 13 : drawn.l;
-    return { x: ox + motion.dx + motion.sx * (x - ox), y: drawn.t + motion.dy + motion.sy * (y - drawn.t) };
-  };
-
-  it('moves each piece of a line onto where the line is now', () => {
-    const now = { l: 90, r: 250, t: 60, b: 80 };
-    const start = place('start', pieceMotion('start', drawn, now), drawn.l, drawn.t);
-    expect(start.x).toBeCloseTo(now.l);
-    expect(start.y).toBeCloseTo(now.t);
-    // The rounded ends only move: never squashed while the line is long enough.
-    expect(pieceMotion('start', drawn, now).sx).toBe(1);
-    expect(pieceMotion('end', drawn, now).sx).toBe(1);
-    const end = place('end', pieceMotion('end', drawn, now), drawn.r, drawn.b);
-    expect(end.x).toBeCloseTo(now.r);
-    expect(end.y).toBeCloseTo(now.b);
-    // The middle stretches to meet both ends.
-    const middle = pieceMotion('middle', drawn, now);
-    expect(place('middle', middle, drawn.l + 13, drawn.t).x).toBeCloseTo(now.l + 13);
-    expect(place('middle', middle, drawn.r - 13, drawn.t).x).toBeCloseTo(now.r - 13);
-    // At rest every piece sits exactly where it was drawn.
-    for (const part of ['start', 'middle', 'end', 'whole']) {
-      expect(pieceMotion(part, drawn, drawn)).toEqual({ dx: 0, dy: 0, sx: 1, sy: 1 });
-    }
-  });
-
-  it('narrows the ends of a line shorter than its two ends, and hides one too small to draw', () => {
-    const tiny = { l: 200, r: 210, t: 60, b: 70 };
-    const start = pieceMotion('start', drawn, tiny);
-    const end = pieceMotion('end', drawn, tiny);
-    expect(start.sx).toBeCloseTo(10 / 26);
-    expect(place('start', start, drawn.l + 13, drawn.t).x).toBeCloseTo(205);
-    expect(place('end', end, drawn.r - 13, drawn.t).x).toBeCloseTo(205);
-    expect(pieceMotion('middle', drawn, tiny).sx).toBe(0);
-    expect(pieceMotion('start', drawn, null)).toEqual({ dx: 0, dy: 0, sx: 0, sy: 0 });
-  });
-
   it('keeps a keyframe wherever leaving it out would move the line', () => {
     const frames = Array.from({ length: 61 }, (_, k) => springAt(0, 0, 300, (k * FRAME_MS) / 1000).x);
     const motions = frames.map((x) => ({ dx: x - 300, dy: 0, sx: 1, sy: 1 }));
@@ -169,5 +131,121 @@ describe('selection bubble motion', () => {
     }
     // The spring's long, gentle tail needs few of them.
     expect(kept.length).toBeLessThan(motions.length * 0.7);
+  });
+});
+
+// The bubble as parts that only move and scale (2026-11-11, 「120fps 泡泡看起來有點瑕疵」).
+describe('selection bubble parts', () => {
+  // Three lines: the middle one sticks out on the left, the last one on the
+  // right; then a line far below, a bubble of its own.
+  const lines = [
+    { l: 120, r: 300, t: 100, b: 120 },
+    { l: 10, r: 260, t: 124, b: 144 },
+    { l: 60, r: 340, t: 148, b: 168 },
+    { l: 40, r: 200, t: 260, b: 280 },
+  ];
+  const bands = bubbleChains(lines).flatMap((chain, c) =>
+    chain.map((band, position) => ({ ...band, first: position === 0, last: position === chain.length - 1, c })),
+  );
+  const parts = bubbleParts(bands);
+  const close = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+
+  it('rounds every corner exactly as the outline does', () => {
+    // bubblePath writes each corner as `a Q p b`: from where the curve leaves
+    // one edge, around the vertex, onto the next.
+    const outline = bubblePath(bubbleChains(lines));
+    const corners = [...outline.matchAll(/[ML]([\d.-]+) ([\d.-]+)Q([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+)/g)].map((m) =>
+      m.slice(1).map(Number),
+    );
+    const arcs = [...parts.values()].filter((part: any) => part.kind === 'arc' && part.r > 0.01);
+    expect(arcs).toHaveLength(corners.length);
+    for (const [ax, ay, px, py, bx, by] of corners) {
+      const arc: any = arcs.find((part: any) => close([part.x, part.y], [px, py]));
+      expect(arc).toBeTruthy();
+      const ends = [
+        [arc.x + arc.qx * arc.r, arc.y],
+        [arc.x, arc.y + arc.qy * arc.r],
+      ];
+      // bubblePath rounds to 0.1px.
+      for (const end of [[ax, ay], [bx, by]]) {
+        expect(ends.some((e) => Math.hypot(e[0] - end[0], e[1] - end[1]) < 0.11)).toBe(true);
+      }
+    }
+  });
+
+  it('closes the rim: every end of a rim piece meets the next one', () => {
+    const ends: number[][] = [];
+    for (const part of parts.values() as Iterable<any>) {
+      if (part.layer !== 'rim' || (part.kind === 'arc' && part.r <= 0.01)) continue;
+      if (part.kind === 'hseg') ends.push([part.x0, part.y], [part.x1, part.y]);
+      if (part.kind === 'vseg') ends.push([part.x, part.y0], [part.x, part.y1]);
+      if (part.kind === 'arc') ends.push([part.x + part.qx * part.r, part.y], [part.x, part.y + part.qy * part.r]);
+    }
+    for (const [i, end] of ends.entries()) {
+      expect(ends.some((other, j) => j !== i && close(other, end))).toBe(true);
+    }
+    // Two bubbles: one rim loop each, with no piece left over.
+    expect(ends.length % 2).toBe(0);
+  });
+
+  it('draws inner corners as fillets and outer ones as rounded insides, one per corner', () => {
+    const kinds = (key: string) => [...parts.entries()].filter(([k]) => k.startsWith(key)).map(([, p]: any) => p.kind);
+    // The middle line sticks out on the left above and below: two outer corners.
+    expect(kinds('1:ktl')).toEqual(['kept']);
+    expect(kinds('1:kbl')).toEqual(['kept']);
+    // The first line is narrower on the left: an inner corner where it meets the second.
+    expect(kinds('0:fbl')).toEqual(['fillet']);
+    // A fill path is one closed outline per part.
+    for (const part of parts.values() as Iterable<any>) {
+      if (part.layer !== 'fill') continue;
+      const d = partPath(part);
+      if (d) expect(d.match(/M/g)).toHaveLength(1);
+    }
+  });
+
+  it('moves each part onto where it is now', () => {
+    const map = (part: any, motion: any, x: number, y: number) => {
+      const origin = part.kind === 'rect' ? { x: part.x0, y: part.y0 } : { x: part.x, y: part.y };
+      return [origin.x + motion.dx + motion.sx * (x - origin.x), origin.y + motion.dy + motion.sy * (y - origin.y)];
+    };
+    const rect = { layer: 'fill', kind: 'rect', x0: 100, x1: 300, y0: 50, y1: 62 };
+    const later = { ...rect, x0: 110, x1: 210, y0: 60, y1: 70 };
+    const m = partMotion(rect, later);
+    expect(map(rect, m, 100, 50)).toEqual([110, 60]);
+    expect(map(rect, m, 300, 62).map((v) => +v.toFixed(6))).toEqual([210, 70]);
+    // A corner grows evenly about its vertex, and an edge turning around
+    // (an inner corner becoming an outer one, through nothing) mirrors it.
+    const arc = { layer: 'rim', kind: 'arc', x: 300, y: 100, r: 11, qx: -1, qy: 1 };
+    const turned = { ...arc, x: 320, r: 5.5, qx: 1 };
+    const t = partMotion(arc, turned);
+    expect(map(arc, t, 300 - 11, 100)).toEqual([320 + 5.5, 100]);
+    expect(map(arc, t, 300, 111)).toEqual([320, 105.5]);
+    // A part missing now is scaled to nothing.
+    expect(partMotion(rect, null)).toMatchObject({ sx: 0, sy: 0 });
+  });
+
+  it('fades a line\'s glow as the line drains to nothing', () => {
+    const glow = { layer: 'glow', kind: 'glow', side: 'm', l: 20, r: 300, t: 100, b: 126, a: 0.09 };
+    const strength = (b: number) => partMotion(glow, { ...glow, b }).o;
+    expect(strength(126)).toBeCloseTo(1, 6);
+    expect(strength(110)).toBeLessThan(strength(120));
+    expect(strength(100.5)).toBeLessThan(0.1);
+  });
+
+  it('draws a moving part as big as it gets, so it is only ever scaled down', () => {
+    const at = (x1: number) => ({ layer: 'rim', kind: 'hseg', x0: 100, x1, y: 50 });
+    // Growing to where it rests: drawn as it rests.
+    const rest = at(300);
+    expect(drawingOf(rest, [at(120), at(200), at(280)], undefined)).toBe(rest);
+    // Shrinking to rest (the end of the selection pulled back): drawn at its
+    // longest, not stretched 13 times from its rest length (the rim stuck out).
+    const short = at(113);
+    const drawn: any = drawingOf(short, [at(280), at(200), at(113)], undefined);
+    expect(drawn.x1 - drawn.x0).toBe(180);
+    expect(partMotion(drawn, at(113)).sx).toBeLessThanOrEqual(1);
+    // Draining away (no rest): kept as drawn before while it is big enough.
+    const before = at(290);
+    expect(drawingOf(undefined, [at(250), at(150)], before)).toBe(before);
+    expect(drawingOf(undefined, [], undefined)).toBe(null);
   });
 });

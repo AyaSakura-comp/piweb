@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The selection bubble's 120Hz spring draws the exact outline on every frame: a line in motion no longer shows seams, loses its rim and glow where it was cut, squashes its rounded ends or keeps the corners of where it will rest, and a line draining away no longer leaves its shadow behind
 - Send with the on-screen keyboard up is one upward motion while the keyboard goes down: the history no longer slides down with the keyboard, pauses and scrolls back up, and Jump to present no longer flashes up during a send
 - Run BTW side controls beside the serial worker control loop so a long answer does not block later snapshots or unrelated controls, while retaining ownership fencing
 - Keep Claude background Bash/Monitor work alive across yielded acknowledgements, publish intermediate replies to history and suppress an identical already-delivered final reply

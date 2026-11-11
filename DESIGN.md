@@ -135,20 +135,35 @@ same rules hold in the chat and in a Dashboard pane.
 - **The spring runs at the display's rate.** It plays on the compositor, as in
   "Viewer motion" below. A `requestAnimationFrame` loop redrawing the outline was
   held to iOS's 60Hz page rate; the user reported "這個沒有120hz" (2026-11-09).
-  - At rest the bubble is one SVG outline.
-  - A line in motion is cut out of that outline and redrawn as up to three
-    pieces of the same drawing: two rounded ends that only move, and a middle
-    that also stretches. A line that moves only up or down is one piece.
-  - The pieces play the spring, solved in closed form, as `transform`
-    keyframes on a 120Hz grid. A frame is dropped only where the compositor's
-    straight line between its neighbours is within 0.1px of the spring.
-  - The glow (shadow 0 6px 16px) is cast once, by the outline where it will
-    rest, and is never cut: pieces casting their own showed seams.
-  - A line pouring out shows once it is 6px tall; squashed thinner, its rims
-    read as one bright line.
-  - At rest the drawing is the same as before (at most 8/255 apart, in the
-    glow). `test/e2e/selection-bubble-motion.spec.ts`,
-    `test/selection-bubble.test.ts`.
+- **Every frame of the spring is the exact outline.** A compositor animation
+  can only move and scale a drawing, so the bubble is built from parts that
+  each keep one shape (2026-11-11, "120fps 泡泡看起來有點瑕疵"; the first cut
+  moved strips of the finished drawing and showed seams, a missing rim and glow
+  where a strip was cut, squashed ends and corners shaped for where the line
+  would rest):
+  - straight pieces of fill and rim, which stretch along their length only;
+  - rounded corners, outer ones and the inner fillets where lines of different
+    widths meet, which only move and grow or shrink evenly;
+  - each line's glow (shadow 0 6px 16px): two fixed blurred ends and a
+    stretching middle, fading as the line thins or narrows.
+  - Every 120Hz frame is worked out as the outline would be drawn whole, the
+    parts are placed on it, and each moving part (parts that move alike share
+    one) plays `transform` keyframes, a frame left out only where the
+    compositor's straight line is within 0.1px of the spring. Parts that hold
+    still are one outline per group.
+  - A moving part is drawn at its biggest in the motion and only scaled down:
+    scaled up, its soft edges and the runs that tuck its ends under its
+    neighbours grew with it.
+  - Parts overlap instead of touching edge to edge (that shows a hairline).
+    Translucent, every overlap would show darker, so the fill and the rim are
+    each drawn opaque and made translucent once, as a group, by a mask with the
+    alpha they always had, top to bottom.
+  - A drag re-plans on every move; a piece whose motion did not change (its
+    lines kept their targets) keeps playing.
+  - At rest the bubble looks as before (within antialiasing).
+    `test/e2e/selection-bubble-frames.spec.ts` freezes the spring on 120Hz
+    frames and compares every one with the outline drawn whole;
+    `test/e2e/selection-bubble-motion.spec.ts`, `test/selection-bubble.test.ts`.
 - **The pill steps aside while the finger drags.** Long-press swipe or handle:
   the quote/copy pill hides and the composer's quote waits; both come back with
   the whole selection on the lift, as on iOS. Re-quoting on every move cost

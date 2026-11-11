@@ -2234,17 +2234,21 @@ html.keyboard-shell .life-edge-hint {
 }
 
 /* The transcript's content coordinates: selection-bubble.js moves this with
-   the scroll. Inside it, the bubble at rest (.sel-bubble-static) and the
-   pieces of lines in motion (.sel-bubble-piece), which play the spring as
-   transform keyframes on the compositor. */
-.sel-bubble-content {
+   the scroll. Inside it, each line's glow, then the fill and the rim: parts
+   that keep one shape (.sel-bubble-piece) play the spring as transform
+   keyframes on the compositor, and the parts that hold still are one outline
+   per group (.sel-bubble-static). */
+.sel-bubble-content,
+.sel-bubble-glows {
   position: absolute;
   left: 0;
   top: 0;
 }
 
 .sel-bubble-static,
-.sel-bubble-piece {
+.sel-bubble-piece,
+.sel-bubble-fills,
+.sel-bubble-rims {
   position: absolute;
   overflow: hidden;
 }
@@ -2257,19 +2261,30 @@ html.keyboard-shell .life-edge-hint {
 
 /* One translucent bubble around the selection: a light top, a deeper base,
    a bright rim and a soft glow, like a soap bubble resting on the text. The
-   glow (a 0 6px 16px shadow) is .sel-bubble-glow's SVG filter, cast by the
-   bubble where it rests: see GLOWS in selection-bubble.js. */
-.sel-bubble,
-.sel-bubble-moving,
-.sel-bubble-glow {
+   parts overlap, so the fill and the rim are each drawn opaque and made
+   translucent once, as a group, by a mask (selection-bubble.js shade()) with
+   the alpha each always had, from the top of the bubble to its bottom. The
+   glow is each line's 0 6px 16px shadow (GLOWS in selection-bubble.js). */
+.sel-bubble-fills {
+  --sel-alpha-top: 0.34;
+  --sel-alpha-bottom: 0.24;
+}
+
+.sel-bubble-rims {
+  --sel-alpha-top: 0.7;
+  --sel-alpha-bottom: 0.38;
+}
+
+.sel-bubble-rim {
   stroke-width: 1.25;
+  stroke-linecap: butt;
   stroke-linejoin: round;
 }
 
-.sel-bubble-fill-top { stop-color: rgb(186 196 255 / 0.34); }
-.sel-bubble-fill-bottom { stop-color: rgb(99 102 241 / 0.24); }
-.sel-bubble-rim-top { stop-color: rgb(255 255 255 / 0.7); }
-.sel-bubble-rim-bottom { stop-color: rgb(165 180 252 / 0.38); }
+.sel-bubble-fill-top { stop-color: rgb(186 196 255); }
+.sel-bubble-fill-bottom { stop-color: rgb(99 102 241); }
+.sel-bubble-rim-top { stop-color: rgb(255 255 255); }
+.sel-bubble-rim-bottom { stop-color: rgb(165 180 252); }
 
 /* ── iOS-style sleek teardrop selection handles ────────────────────────── */
 
@@ -6027,10 +6042,12 @@ dialog.sheet::backdrop {
   background: rgb(63 95 111 / 0.22);
 }
 
-:root[data-theme='light'] .sel-bubble-fill-top { stop-color: rgb(150 196 214 / 0.3); }
-:root[data-theme='light'] .sel-bubble-fill-bottom { stop-color: rgb(63 95 111 / 0.2); }
-:root[data-theme='light'] .sel-bubble-rim-top { stop-color: rgb(255 255 255 / 0.95); }
-:root[data-theme='light'] .sel-bubble-rim-bottom { stop-color: rgb(63 95 111 / 0.4); }
+:root[data-theme='light'] .sel-bubble-fill-top { stop-color: rgb(150 196 214); }
+:root[data-theme='light'] .sel-bubble-fill-bottom { stop-color: rgb(63 95 111); }
+:root[data-theme='light'] .sel-bubble-rim-top { stop-color: rgb(255 255 255); }
+:root[data-theme='light'] .sel-bubble-rim-bottom { stop-color: rgb(63 95 111); }
+:root[data-theme='light'] .sel-bubble-fills { --sel-alpha-top: 0.3; --sel-alpha-bottom: 0.2; }
+:root[data-theme='light'] .sel-bubble-rims { --sel-alpha-top: 0.95; --sel-alpha-bottom: 0.4; }
 
 :root[data-theme='light'] .selection-actions {
   border-color: rgb(255 255 255 / 0.8);

@@ -21,7 +21,7 @@ async function watchBubble(page: Page) {
     w.__motion = [];
     const set = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function (name: string, value: string) {
-      if (name === 'd' && this.matches?.('.sel-bubble, .sel-bubble-moving')) w.__outlineWrites += 1;
+      if (name === 'd' && this.closest?.('.sel-bubble-layer')) w.__outlineWrites += 1;
       return set.call(this, name, value);
     };
     document.addEventListener('DOMContentLoaded', () => {
@@ -40,19 +40,20 @@ async function watchBubble(page: Page) {
           entry.pieces = animations.map((animation) => {
             const effect = animation.effect as KeyframeEffect;
             return {
+              glow: (effect.target as Element).matches('.sel-bubble-glow-piece'),
               duration: Number(effect.getTiming().duration),
               easing: effect.getTiming().easing,
               frames: effect
                 .getKeyframes()
                 .map(({ offset, computedOffset, easing, composite, ...rest }) => ({
                   offset: Number(computedOffset),
-                  properties: Object.keys(rest),
+                  properties: Object.keys(rest).sort(),
                 })),
             };
           });
-          // What each piece shows: its own box, cut to the outline it draws.
+          // What the fill shows: each piece's box, cut to the shape it draws.
           const span = () => {
-            const shown = [...document.querySelectorAll('.sel-bubble-piece')].map((piece) => {
+            const shown = [...document.querySelectorAll('.sel-bubble-fill-piece')].map((piece) => {
               const box = piece.getBoundingClientRect();
               const outline = piece.querySelector('path')!.getBoundingClientRect();
               return {
@@ -71,6 +72,8 @@ async function watchBubble(page: Page) {
             return span();
           });
           animations.forEach((animation, i) => (animation.currentTime = times[i]));
+        }
+        if (state === 'settled') {
           entry.rest = document
             .querySelector('#sel-highlight-boxes path.sel-bubble')!
             .getBoundingClientRect().width;
@@ -107,24 +110,30 @@ test('the bubble springs as compositor keyframes, not a frame-by-frame redraw', 
   await expect(page.locator('#sel-highlight-boxes')).toHaveAttribute('data-bubble', 'settled');
   const [moving, settled] = await motionLog(page);
 
-  // The fresh selection inflated: pieces playing transform keyframes.
+  // The fresh selection inflated: pieces playing transform keyframes (the
+  // glow also fading in, as its line grows).
   expect(moving.state).toBe('moving');
   expect(moving.pieces.length).toBeGreaterThan(0);
+  expect(moving.pieces.some((piece: any) => !piece.glow)).toBe(true);
   for (const piece of moving.pieces) {
     expect(piece.easing).toBe('linear');
     for (const frame of piece.frames) {
-      expect(frame.properties).toEqual(['transform']);
+      expect(frame.properties).toEqual(piece.glow ? ['opacity', 'transform'] : ['transform']);
       // Every keyframe sits on a 120Hz frame of the spring.
       const at = (frame.offset * piece.duration) / FRAME_MS;
       expect(Math.abs(at - Math.round(at))).toBeLessThan(1e-6);
     }
   }
-  // While it settled, nothing redrew the outline: only the final drawing at rest.
+  // While it settled, nothing redrew the outline: only the final drawing at
+  // rest, the still fill and rim once each.
   expect(settled.state).toBe('settled');
-  expect(settled.outlineWrites - moving.outlineWrites).toBeLessThanOrEqual(1);
-  // At rest one outline is drawn, and no pieces are left over.
-  await expect(page.locator('#sel-highlight-boxes .sel-bubble-piece')).toHaveCount(0);
+  expect(settled.outlineWrites - moving.outlineWrites).toBeLessThanOrEqual(2);
+  // At rest the fill and the rim are one still outline each, no pieces are
+  // left over, and nothing plays (each line's glow stays, still).
+  await expect(page.locator('#sel-highlight-boxes .sel-bubble-fill-piece, #sel-highlight-boxes .sel-bubble-rim-piece')).toHaveCount(0);
   await expect(page.locator('#sel-highlight-boxes path.sel-bubble')).toHaveCount(1);
+  await expect(page.locator('#sel-highlight-boxes path.sel-bubble-rim')).toHaveCount(1);
+  expect(await page.evaluate(() => document.getAnimations().filter((a) => (a.effect as KeyframeEffect)?.target?.matches?.('.sel-bubble-piece')).length)).toBe(0);
   await touch('touchEnd');
 });
 
@@ -134,7 +143,7 @@ test('mid-spring, the pieces grow from the pressed word to the selection and lan
   await watchBubble(page);
   await longPress(page);
   await expect(page.locator('#sel-highlight-boxes')).toHaveAttribute('data-bubble', 'settled');
-  const [{ widths, rest }] = await motionLog(page);
+  const [{ widths }, { rest }] = await motionLog(page);
   // From a sliver to the full word, never far past its overshoot, and at the
   // end exactly the drawing at rest.
   expect(widths[0]).toBeLessThan(rest * 0.5);

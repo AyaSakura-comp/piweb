@@ -10,15 +10,30 @@
  * Updates near 60fps", on by default). The user reported "這個沒有120hz" while
  * dragging a selection on 2026-11-09.
  *
- * So the bubble at rest is one SVG outline, drawn once per selection change.
- * Each line that moves is cut out of that drawing and drawn again as up to
- * three pieces:
- * - two rounded ends, which only move;
- * - the middle, which also stretches sideways and has no corners to squash.
- * The pieces play the spring as `transform` keyframes on a 120Hz grid. A frame
- * is left out only where the compositor's straight line between its neighbours
- * stays within 0.1px of the spring. The glow is cast once, by the outline where
- * it will rest, and is never cut: pieces casting their own showed seams.
+ * A compositor animation can only move and scale a drawing, never reshape it.
+ * So the bubble is built from parts that each keep one shape (2026-11-11,
+ * "120fps 泡泡看起來有點瑕疵"):
+ * - straight pieces of fill and rim, which stretch along their length;
+ * - rounded corners, outer ones and the inner fillets where two lines of
+ *   different widths meet, which only move and grow or shrink evenly.
+ * Every frame of the spring is worked out as the exact outline, the parts are
+ * placed on it, and each part that moves plays its own `transform` keyframes on
+ * a 120Hz grid (a frame is left out only where the compositor's straight line
+ * between its neighbours stays within 0.1px). Parts that do not move are drawn
+ * once, still.
+ *
+ * The parts overlap a little, so their edges never sit side by side (an edge
+ * against an edge shows a hairline). Translucent parts would show every overlap
+ * darker, so they are drawn opaque, the fill in one group and the rim in
+ * another, and each group is made translucent once, as a whole, by a mask with
+ * the bubble's top-to-bottom alpha. The first cut (f020396) moved strips of the
+ * finished, translucent drawing instead: seams showed as lines, a line that
+ * moved lost its rim and glow where it was cut, its rounded ends were squashed,
+ * and its corners kept the shape of where it would rest.
+ *
+ * The glow (a soft shadow under the bubble) is faint enough that overlapping
+ * parts simply add up: each line casts its own, blurred in CSS gradients, the
+ * ends as fixed ramps and the middle stretched.
  */
 
 const PAD_X = 5;
@@ -41,25 +56,28 @@ const OMEGA_D = OMEGA * Math.sqrt(1 - ZETA * ZETA);
 /** One keyframe per 120Hz frame; the compositor plays them at the screen's rate. */
 export const FRAME_MS = 1000 / 120;
 const MAX_MOTION_MS = 1500;
-/** A rounded end piece: the corner radius plus the rim. It moves but never stretches. */
-const CAP = RADIUS + 2;
-// How far the glow reaches past the outline (a 0 6px 16px shadow, so further
-// down than up), and the rim's half-width plus antialiasing.
-const GLOW_X = 26;
-const GLOW_UP = 20;
-const GLOW_DOWN = 32;
-const RIM = 2;
-/** A line is drawn once it is this tall (padding included). */
-const POUR_MIN = 6;
-// The glow, per theme: the shadow the bubble always cast (drop-shadow 0 6px 16px
-// / 0 6px 14px), as an SVG filter that draws the shadow alone.
+/** The rim's width (app.css strokes it this wide). */
+const RIM = 1.25;
+/** How far a part reaches past its inner edges into its neighbours. */
+const SEAM = 0.75;
+/**
+ * How far a piece may be from where a re-planned motion would put it and still
+ * keep playing: the old motion is read between its 120Hz frames, where it is a
+ * straight line (a fast spring bows up to ~0.3px off it), and parts overlap by
+ * SEAM, so a smaller miss never opens a gap.
+ */
+const KEEP = 0.35;
+/** How wide a line's end strip is: past its corners, into the stretching middle. */
+const END = RADIUS + 2;
+/** A rim piece runs on this far past its ends, under the next piece. */
+const RIM_RUN = 0.75;
+// The glow, per theme: the shadow the bubble always cast (a 0 6px 16px drop
+// shadow of the fill, at this opacity), now cast by each line.
 const GLOWS = {
-  dark: { deviation: 8, color: 'rgb(88 101 242)', opacity: 0.3 },
-  light: { deviation: 7, color: 'rgb(63 95 111)', opacity: 0.2 },
+  dark: { deviation: 8, color: [88, 101, 242], opacity: 0.3 },
+  light: { deviation: 7, color: [63, 95, 111], opacity: 0.2 },
 };
-// A piece draws the outline of the lines within this distance of it, so its
-// junction corners and glow come out as in the whole bubble.
-const NEIGHBOURHOOD = 56;
+const GLOW_DY = 6;
 
 /** Merge the range's client rects into one span per visual line, top to bottom. */
 export function lineSpans(rects) {
@@ -219,57 +237,376 @@ const fixed = (value, digits) => {
   return Math.round(value * scale) / scale;
 };
 
+// ---- the parts ----
+
+/** A corner of a line: what kind of vertex sits there and how round it is. */
+const NO_CORNER = { kind: '', r: 0 };
+const corner = (kind, r) => (r > 0.01 ? { kind, r } : NO_CORNER);
+
 /**
- * How a piece drawn for band `drawn` must move to sit where band `now` is:
- * translate (dx, dy), then scale (sx, sy) about its anchor. `part` is 'start'
- * or 'end' (a rounded end: moves, narrowed only when the line is shorter than
- * its two ends), 'middle' (stretches between the ends) or 'whole' (a short
- * line, scaled as one). A line too small to draw (`now` null) scales to 0.
+ * The bubble over `bands` (bandsOf) as parts that each keep one shape, keyed
+ * by what they are: `<line id>:<part>` for a line's own, `<upper>/<lower>:<part>`
+ * where two lines meet. Only lines in `only` (indices) and the meetings that
+ * touch them are listed, when given.
+ *
+ * Fill parts (`layer: 'fill'`): `rect` {x0, x1, y0, y1}; `kept`, the inside of
+ * a rounded outer corner, and `fillet`, the rounding added in an inner corner,
+ * both {x, y, r, qx, qy}: the vertex, the radius, and the directions its two
+ * edges leave it in. Rim parts (`layer: 'rim'`): `arc` {x, y, r, qx, qy},
+ * `hseg` {x0, x1, y}, `vseg` {x, y0, y1}. Glow parts (`layer: 'glow'`): `glow`
+ * {side: 'l' | 'm' | 'r', l, r, t, b, a}.
+ *
+ * The corners are rounded as bubblePath rounds them: a radius is at most half
+ * of either edge beside it. (bubblePath measures a vertical edge across lines
+ * that end flush; here it stops at the line, which only matters for a line
+ * under 22px tall.)
  */
-export function pieceMotion(part, drawn, now) {
-  if (!now) return { dx: 0, dy: 0, sx: 0, sy: 0 };
-  const width = now.r - now.l;
-  const sy = (now.b - now.t) / (drawn.b - drawn.t);
-  const dy = now.t - drawn.t;
-  if (part === 'whole') return { dx: now.l - drawn.l, dy, sx: width / (drawn.r - drawn.l), sy };
-  const squeeze = Math.min(1, Math.max(0, width / (2 * CAP)));
-  if (part === 'start') return { dx: now.l - drawn.l, dy, sx: squeeze, sy };
-  if (part === 'end') return { dx: now.r - drawn.r, dy, sx: squeeze, sy };
-  return {
-    dx: now.l + CAP * squeeze - (drawn.l + CAP),
-    dy,
-    sx: Math.max(0, width - 2 * CAP * squeeze) / (drawn.r - drawn.l - 2 * CAP),
-    sy,
-  };
+export function bubbleParts(bands, ids = bands.map((_, i) => i), only = null, glow = null) {
+  const parts = new Map();
+  const present = [];
+  bands.forEach((band, i) => {
+    if (!band) return;
+    present.push({
+      ...band,
+      i,
+      w: band.r - band.l,
+      h: band.b - band.t,
+      tl: NO_CORNER,
+      tr: NO_CORNER,
+      br: NO_CORNER,
+      bl: NO_CORNER,
+      up: null,
+      down: null,
+    });
+  });
+  present.sort((a, b) => a.t - b.t);
+  for (let n = 0; n < present.length; n++) {
+    const line = present[n];
+    const next = present[n + 1];
+    if (next && !next.first) {
+      line.down = next;
+      next.up = line;
+    }
+  }
+  // Where two lines meet, the wider one turns an outer corner and the
+  // narrower an inner one, on each side.
+  for (const line of present) {
+    const outer = Math.min(RADIUS, line.w / 2, line.h / 2);
+    if (!line.up) line.tl = line.tr = corner('convex', outer);
+    if (!line.down) line.bl = line.br = corner('convex', outer);
+    const below = line.down;
+    if (!below) continue;
+    const right = Math.abs(below.r - line.r);
+    const wider = line.r > below.r;
+    line.br = corner(wider ? 'convex' : 'concave', Math.min(RADIUS, right / 2, line.h / 2));
+    below.tr = corner(wider ? 'concave' : 'convex', Math.min(RADIUS, right / 2, below.h / 2));
+    const left = Math.abs(below.l - line.l);
+    const widerLeft = line.l < below.l;
+    line.bl = corner(widerLeft ? 'convex' : 'concave', Math.min(RADIUS, left / 2, line.h / 2));
+    below.tl = corner(widerLeft ? 'concave' : 'convex', Math.min(RADIUS, left / 2, below.h / 2));
+  }
+
+  const wanted = (line) => !only || only.has(line.i);
+  for (const line of present) {
+    const id = ids[line.i];
+    if (wanted(line)) {
+      const { l, r, t, b } = line;
+      const cy = (t + b) / 2;
+      const outer = (c) => (c.kind === 'convex' ? c.r : 0);
+      const [tl, tr, br, bl] = [line.tl, line.tr, line.br, line.bl].map(outer);
+      // The body: four overlapping rects, clear of the rounded outer corners.
+      // The upper and lower halves stretch between the ends; each end's strip
+      // keeps its width, so it slides with that end's corners as one piece.
+      parts.set(`${id}:ht`, { layer: 'fill', kind: 'rect', x0: l + tl, x1: r - tr, y0: t, y1: cy + SEAM });
+      parts.set(`${id}:hb`, { layer: 'fill', kind: 'rect', x0: l + bl, x1: r - br, y0: cy - SEAM, y1: b });
+      parts.set(`${id}:vl`, { layer: 'fill', kind: 'rect', x0: l, x1: Math.min(r, l + END), y0: t + tl, y1: b - bl });
+      parts.set(`${id}:vr`, { layer: 'fill', kind: 'rect', x0: Math.max(l, r - END), x1: r, y0: t + tr, y1: b - br });
+      // Each corner: which way its edges leave it. A side runs along the
+      // line; the other edge runs into the line (outer) or away from it (inner).
+      const corners = [
+        ['tl', l, t, 1, 1],
+        ['tr', r, t, -1, 1],
+        ['br', r, b, -1, -1],
+        ['bl', l, b, 1, -1],
+      ];
+      for (const [name, x, y, inward, down] of corners) {
+        const c = line[name];
+        if (!c.kind) continue;
+        const qx = c.kind === 'convex' ? inward : -inward;
+        const shape = { x, y, r: c.r, qx, qy: down };
+        parts.set(`${id}:${c.kind === 'convex' ? 'k' : 'f'}${name}`, {
+          layer: 'fill',
+          kind: c.kind === 'convex' ? 'kept' : 'fillet',
+          ...shape,
+        });
+        parts.set(`${id}:a${name}`, { layer: 'rim', kind: 'arc', ...shape });
+      }
+      parts.set(`${id}:sl`, { layer: 'rim', kind: 'vseg', x: l, y0: t + line.tl.r, y1: b - line.bl.r });
+      parts.set(`${id}:sr`, { layer: 'rim', kind: 'vseg', x: r, y0: t + line.tr.r, y1: b - line.br.r });
+      if (!line.up) parts.set(`${id}:st`, { layer: 'rim', kind: 'hseg', x0: l + tl, x1: r - tr, y: t });
+      if (!line.down) parts.set(`${id}:sb`, { layer: 'rim', kind: 'hseg', x0: l + bl, x1: r - br, y: b });
+      if (glow) {
+        const a = glow(line);
+        for (const side of ['l', 'm', 'r']) parts.set(`${id}:g${side}`, { layer: 'glow', kind: 'glow', side, l, r, t, b, a });
+      }
+    }
+    const below = line.down;
+    if (!below || !(wanted(line) || wanted(below))) continue;
+    // Where the two meet: the steps between their ends, and a bridge over the
+    // edge they share, so the two bodies overlap instead of touching.
+    const key = `${id}/${ids[below.i]}`;
+    const meet = line.b;
+    const steps = [
+      ['sr', Math.min(line.r, below.r), Math.max(line.r, below.r), line.r < below.r ? [line.br, below.tr] : [below.tr, line.br]],
+      ['sl', Math.min(line.l, below.l), Math.max(line.l, below.l), line.l < below.l ? [line.bl, below.tl] : [below.tl, line.bl]],
+    ];
+    for (const [name, from, to, [first, second]] of steps) {
+      if (to - from > 0.01) parts.set(`${key}:${name}`, { layer: 'rim', kind: 'hseg', x0: from + first.r, x1: to - second.r, y: meet });
+    }
+    parts.set(`${key}:br`, {
+      layer: 'fill',
+      kind: 'rect',
+      x0: Math.max(line.l, below.l),
+      x1: Math.min(line.r, below.r),
+      y0: meet - SEAM,
+      y1: meet + SEAM,
+    });
+  }
+  return parts;
+}
+
+/** A canonical corner (vertex at 0,0, edges along +x and +y) placed at a part. */
+function placeCorner(part, segments) {
+  const map = ([X, Y]) => [part.x + part.qx * X, part.y + part.qy * Y];
+  let points = segments.map(([type, ...xy]) => [type, ...xy.flatMap((_, k) => (k % 2 ? [] : map([xy[k], xy[k + 1]])))]);
+  // A mirror turns the outline around; fills keep one direction, so
+  // overlapping ones add up under the nonzero rule instead of cancelling.
+  if (part.qx * part.qy < 0 && segments[0][0] === 'M' && part.layer === 'fill') points = reverse(points);
+  return points;
+}
+
+/** Reverse a closed path of M/L/Q segments. */
+function reverse(segments) {
+  const ends = segments.map((segment) => segment.slice(-2));
+  const out = [['M', ...ends[ends.length - 1]]];
+  for (let k = segments.length - 1; k >= 1; k--) {
+    const [type, ...xy] = segments[k];
+    out.push(type === 'Q' ? ['Q', xy[0], xy[1], ...ends[k - 1]] : ['L', ...ends[k - 1]]);
+  }
+  return out;
+}
+
+const pathOf = (segments, close) =>
+  segments.map(([type, ...xy]) => `${type}${xy.map((v) => fixed(v, 2)).join(' ')}`).join('') + (close ? 'Z' : '');
+
+/** The SVG path a fill or rim part draws, in content coordinates. */
+export function partPath(part) {
+  const r = part.r;
+  const e = SEAM;
+  switch (part.kind) {
+    case 'rect': {
+      const { x0, y0, x1, y1 } = part;
+      if (!(x1 - x0 > 0.001 && y1 - y0 > 0.001)) return '';
+      return `M${fixed(x0, 2)} ${fixed(y0, 2)}H${fixed(x1, 2)}V${fixed(y1, 2)}H${fixed(x0, 2)}Z`;
+    }
+    case 'kept':
+      // The corner square without the cap the curve cuts off, reaching on
+      // into the line along its two inner sides.
+      return pathOf(
+        placeCorner(part, [['M', r, 0], ['L', r + e, 0], ['L', r + e, r + e], ['L', 0, r + e], ['L', 0, r], ['Q', 0, 0, r, 0]]),
+        true,
+      );
+    case 'fillet':
+      // The cap between the vertex and the curve, reaching back into the two
+      // lines that meet there.
+      return pathOf(
+        placeCorner(part, [['M', -e, -e], ['L', r, -e], ['L', r, 0], ['Q', 0, 0, 0, r], ['L', -e, r]]),
+        true,
+      );
+    case 'arc':
+      return pathOf(placeCorner(part, [['M', r + RIM_RUN, 0], ['L', r, 0], ['Q', 0, 0, 0, r], ['L', 0, r + RIM_RUN]]), false);
+    case 'hseg':
+      return `M${fixed(part.x0 - RIM_RUN, 2)} ${fixed(part.y, 2)}H${fixed(part.x1 + RIM_RUN, 2)}`;
+    case 'vseg':
+      return `M${fixed(part.x, 2)} ${fixed(part.y0 - RIM_RUN, 2)}V${fixed(part.y1 + RIM_RUN, 2)}`;
+    default:
+      return '';
+  }
+}
+
+/** A glow column's reach past the line: three deviations of its blur. */
+const glowReach = (glow) => glow.deviation * 3;
+
+/** The box a part draws in (content coordinates), before any motion. */
+function partBox(part, glow) {
+  switch (part.kind) {
+    case 'rect':
+      return { x0: part.x0, y0: part.y0, x1: part.x1, y1: part.y1 };
+    case 'kept':
+    case 'fillet':
+    case 'arc': {
+      const reach = part.r + SEAM + RIM;
+      const xs = [part.x - part.qx * SEAM * 2, part.x + part.qx * reach];
+      const ys = [part.y - part.qy * SEAM * 2, part.y + part.qy * reach];
+      return { x0: Math.min(...xs) - RIM, x1: Math.max(...xs) + RIM, y0: Math.min(...ys) - RIM, y1: Math.max(...ys) + RIM };
+    }
+    case 'hseg':
+      return { x0: part.x0 - RIM_RUN - RIM, x1: part.x1 + RIM_RUN + RIM, y0: part.y - RIM, y1: part.y + RIM };
+    case 'vseg':
+      return { x0: part.x - RIM, x1: part.x + RIM, y0: part.y0 - RIM_RUN - RIM, y1: part.y1 + RIM_RUN + RIM };
+    case 'glow': {
+      const reach = glowReach(glow);
+      const [x0, x1] =
+        part.side === 'l'
+          ? [part.l - reach, part.l + reach]
+          : part.side === 'r'
+            ? [part.r - reach, part.r + reach]
+            : [part.l + reach, Math.max(part.l + reach + 1, part.r - reach)];
+      return { x0, x1, y0: part.t + GLOW_DY - reach, y1: part.b + GLOW_DY + reach };
+    }
+    default:
+      return null;
+  }
+}
+
+/** A part's sizes that motion scales: none of them may be scaled up. */
+function partSizes(part) {
+  switch (part.kind) {
+    case 'rect':
+      return [part.x1 - part.x0, part.y1 - part.y0];
+    case 'hseg':
+      return [part.x1 - part.x0];
+    case 'vseg':
+      return [part.y1 - part.y0];
+    case 'glow':
+      return [part.r - part.l, part.b - part.t];
+    default:
+      return [part.r];
+  }
+}
+
+/** `part` resized to `sizes` (partSizes order), anchored where it is. */
+function resized(part, [a, b]) {
+  switch (part.kind) {
+    case 'rect':
+      return { ...part, x1: part.x0 + a, y1: part.y0 + b };
+    case 'hseg':
+      return { ...part, x1: part.x0 + a };
+    case 'vseg':
+      return { ...part, y1: part.y0 + a };
+    case 'glow':
+      return { ...part, r: part.l + a, b: part.t + b };
+    default:
+      return { ...part, r: a };
+  }
 }
 
 /**
- * A piece's motion over `bands`, one per frame. While the line is too small to
- * draw (a null band) the piece is scaled to nothing where it next appears, so it
- * grows in place instead of flying in from where it was drawn.
+ * How a moving part is drawn: as big as it gets in this motion, so the
+ * compositor only ever scales it down. Scaled up, a part's soft edges and the
+ * runs that tuck its ends under its neighbours (RIM_RUN) would grow with it:
+ * a rim drawn short and stretched 13 times stuck out 10px past its corners.
+ * Where it rests, when that is its biggest, so it ends exactly as the still
+ * drawing that replaces it; as it was drawn before, while that is still big
+ * enough, so a piece whose motion goes on keeps playing.
  */
-export function motionsOf(part, drawn, bands) {
-  // A line pouring out starts as a sliver; squashed that thin, its whole drawing
-  // (both rims and the fill) would read as one bright line. It shows once it
-  // is a few pixels tall, as the outline always did.
-  bands = bands.map((band) => (band && band.b - band.t >= POUR_MIN ? band : null));
-  const motions = bands.map((band) => pieceMotion(part, drawn, band));
-  let next = null;
-  for (let k = bands.length - 1; k >= 0; k--) {
-    if (bands[k]) next = motions[k];
-    else if (next) motions[k] = { dx: next.dx, dy: next.dy, sx: 0, sy: 0 };
-  }
-  // A line draining away ends as nothing where it was last seen.
-  const lastShown = bands.findLastIndex(Boolean);
-  for (let k = lastShown + 1; lastShown >= 0 && k < bands.length; k++) {
-    motions[k] = { dx: motions[lastShown].dx, dy: motions[lastShown].dy, sx: 0, sy: 0 };
-  }
-  return motions;
+export function drawingOf(rest, frames, before) {
+  const present = frames.filter(Boolean);
+  if (rest) present.push(rest);
+  if (!present.length) return null;
+  const sizes = partSizes(present[0]).map((_, i) => Math.max(...present.map((part) => partSizes(part)[i])));
+  if (!(Math.min(...sizes) > 0.01)) return null;
+  const fits = (part) => part && partSizes(part).every((size, i) => size >= sizes[i] - 0.01);
+  if (fits(rest)) return rest;
+  if (fits(before) && before.kind === present[0].kind) return before;
+  return resized(rest ?? present[0], sizes);
 }
 
-/** The CSS transform for a pieceMotion; every keyframe has the same functions, so they interpolate. */
+/** Where a part's transform is anchored. */
+function partOrigin(part, glow) {
+  switch (part.kind) {
+    case 'rect':
+    case 'hseg':
+      return { x: part.x0, y: part.kind === 'rect' ? part.y0 : part.y };
+    case 'vseg':
+      return { x: part.x, y: part.y0 };
+    case 'glow': {
+      const reach = glowReach(glow);
+      const x = part.side === 'l' ? part.l : part.side === 'r' ? part.r : part.l + reach;
+      return { x, y: part.t + GLOW_DY - reach };
+    }
+    default:
+      return { x: part.x, y: part.y };
+  }
+}
+
+/**
+ * How a part drawn as `drawn` moves and scales to sit as `now`: translate
+ * (dx, dy), then scale (sx, sy) about its origin. A part missing now is
+ * scaled to nothing.
+ */
+export function partMotion(drawn, now, glow = GLOWS.dark) {
+  if (!now) return drawn.kind === 'glow' ? { dx: 0, dy: 0, sx: 0, sy: 0, o: 0 } : { dx: 0, dy: 0, sx: 0, sy: 0 };
+  const from = partOrigin(drawn, glow);
+  const to = partOrigin(now, glow);
+  const motion = { dx: to.x - from.x, dy: to.y - from.y, sx: 1, sy: 1 };
+  const ratio = (a, b) => (b > 1e-6 ? Math.max(0, a) / b : 0);
+  switch (drawn.kind) {
+    case 'rect':
+      motion.sx = ratio(now.x1 - now.x0, drawn.x1 - drawn.x0);
+      motion.sy = ratio(now.y1 - now.y0, drawn.y1 - drawn.y0);
+      break;
+    case 'hseg':
+      motion.sx = ratio(now.x1 - now.x0, drawn.x1 - drawn.x0);
+      break;
+    case 'vseg':
+      motion.sy = ratio(now.y1 - now.y0, drawn.y1 - drawn.y0);
+      break;
+    case 'glow': {
+      const reach = glowReach(glow);
+      const box = (part) => partBox(part, glow);
+      motion.sy = ratio(box(now).y1 - box(now).y0, box(drawn).y1 - box(drawn).y0);
+      // A line narrower than its two ends' ramps squeezes them to meet.
+      const squeeze = Math.min(1, Math.max(0, (now.r - now.l) / (2 * reach)));
+      motion.sx = drawn.side === 'm' ? ratio(now.r - now.l - 2 * reach, box(drawn).x1 - box(drawn).x0) : squeeze;
+      // A thin or short line casts a fainter shadow: the blur of a band
+      // peaks lower the narrower the band. Squeezing the drawing alone would
+      // leave a draining line's shadow at full strength.
+      const peak = (size) => 2 * normalCdf(Math.max(0, size) / (2 * glow.deviation)) - 1;
+      const drawnPeak = peak(drawn.b - drawn.t);
+      motion.o = drawnPeak > 1e-6 ? (peak(now.r - now.l) * peak(now.b - now.t)) / drawnPeak : 0;
+      break;
+    }
+    default:
+      // A corner grows or shrinks evenly; an edge turning around (an inner
+      // corner becoming an outer one, through nothing) mirrors it.
+      motion.sx = (now.qx * now.r) / (drawn.qx * drawn.r);
+      motion.sy = (now.qy * now.r) / (drawn.qy * drawn.r);
+  }
+  return motion;
+}
+
+const samePart = (a, b) => {
+  if (!a || !b) return a === b;
+  for (const key in a) {
+    const x = a[key];
+    if (typeof x === 'number' ? !near(x, b[key], 0.05) : x !== b[key]) return false;
+  }
+  return true;
+};
+
+/** The CSS transform for a motion; every keyframe has the same functions, so they interpolate. */
 export function motionTransform({ dx, dy, sx, sy }) {
   return `translate(${fixed(dx, 2)}px, ${fixed(dy, 2)}px) scale(${fixed(sx, 4)}, ${fixed(sy, 4)})`;
+}
+
+/** Keyframes over `span` frames, the frames the compositor cannot interpolate kept. */
+function keyframesOf(motions, box, span) {
+  return keyframeFrames(motions, box.x1 - box.x0, box.y1 - box.y0).map((k) => {
+    const frame = { offset: k / span, transform: motionTransform(motions[k]) };
+    if (motions[k].o !== undefined) frame.opacity = String(fixed(motions[k].o, 3));
+    return frame;
+  });
 }
 
 /**
@@ -288,6 +625,7 @@ export function keyframeFrames(motions, width, height, tolerance = 0.1) {
       const off = (key) => Math.abs(from[key] + (to[key] - from[key]) * f - at[key]);
       if (off('dx') > tolerance || off('dy') > tolerance) return false;
       if (off('sx') * width > tolerance || off('sy') * height > tolerance) return false;
+      if (at.o !== undefined && off('o') > 0.01) return false;
     }
     return true;
   };
@@ -301,47 +639,27 @@ export function keyframeFrames(motions, width, height, tolerance = 0.1) {
   return kept;
 }
 
-/** Where a piece's transform is anchored, in layer coordinates. */
-function pieceOrigin(part, drawn) {
-  if (part === 'end') return { x: drawn.r, y: drawn.t };
-  if (part === 'middle') return { x: drawn.l + CAP, y: drawn.t };
-  return { x: drawn.l, y: drawn.t };
+/** The standard normal CDF (Abramowitz–Stegun 7.1.26, within 1.5e-7). */
+function normalCdf(z) {
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const erf = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return z >= 0 ? (1 + erf) / 2 : (1 - erf) / 2;
 }
 
-/** The columns a moving line is cut into, between x0 and x1. */
-function pieceColumns(drawn, x0, x1) {
-  if (drawn.r - drawn.l < 2 * CAP + 2) return [{ part: 'whole', x0, x1 }];
-  return [
-    { part: 'start', x0, x1: drawn.l + CAP },
-    { part: 'middle', x0: drawn.l + CAP, x1: drawn.r - CAP },
-    { part: 'end', x0: drawn.r - CAP, x1 },
-  ];
-}
-
-/** The outline of the bands within [top, bottom], each chain cut to its lines there. */
-function outlineNear(bands, top, bottom) {
-  const chains = [];
-  let chain = null;
-  let previous = null;
-  for (const band of [...bands].filter(Boolean).sort((a, b) => a.t - b.t)) {
-    const inside = band.b >= top && band.t <= bottom;
-    if (!inside) {
-      chain = null;
-      previous = band;
-      continue;
-    }
-    if (!chain || band.first || previous?.last) {
-      chain = [];
-      chains.push(chain);
-    }
-    chain.push(band);
-    previous = band;
+/** CSS gradient stops for `value(px)` over `size` px, every `step` px. */
+function profile(size, step, value, color) {
+  const stops = [];
+  const count = Math.max(2, Math.ceil(size / step));
+  for (let k = 0; k <= count; k++) {
+    const px = (size * k) / count;
+    stops.push(`${color(fixed(Math.max(0, Math.min(1, value(px))), 4))} ${fixed((100 * px) / size, 2)}%`);
   }
-  return bubblePath(chains);
+  return stops.join(', ');
 }
 
-// Gradient, clip and filter ids are per bubble: the chat, the Dashboard and the
-// voice lasso each draw one, with gradients spanning their own selection.
+// Gradient ids are per bubble: the chat, the Dashboard and the voice lasso each
+// draw one, with gradients spanning their own selection.
 let bubbleCount = 0;
 
 /**
@@ -356,8 +674,6 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
   bubbleCount += 1;
   const fillId = `sel-bubble-fill-${bubbleCount}`;
   const rimId = `sel-bubble-rim-${bubbleCount}`;
-  const clipId = `sel-bubble-clip-${bubbleCount}`;
-  const glowId = `sel-bubble-glow-${bubbleCount}`;
 
   const layer = document.createElement('div');
   layer.className = 'sel-bubble-layer';
@@ -366,10 +682,26 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
   content.className = 'sel-bubble-content';
   layer.appendChild?.(content);
 
-  // The bubble at rest: the whole outline, minus the strips of lines in motion.
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('class', 'sel-bubble-static');
-  svg.innerHTML = `
+  // Under everything, each line's glow; then the fill and the rim, each an
+  // opaque drawing made translucent once, as a group (app.css).
+  const glows = document.createElement('div');
+  glows.className = 'sel-bubble-glows';
+  const groups = { fill: document.createElement('div'), rim: document.createElement('div') };
+  groups.fill.className = 'sel-bubble-fills';
+  groups.rim.className = 'sel-bubble-rims';
+  content.appendChild?.(glows);
+  content.appendChild?.(groups.fill);
+  content.appendChild?.(groups.rim);
+
+  // The parts that hold still, drawn as one outline per group.
+  const still = {};
+  for (const name of ['fill', 'rim']) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'sel-bubble-static');
+    groups[name].appendChild?.(svg);
+    still[name] = svg;
+  }
+  still.fill.innerHTML = `
     <defs>
       <linearGradient id="${fillId}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" class="sel-bubble-fill-top" />
@@ -379,45 +711,34 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
         <stop offset="0" class="sel-bubble-rim-top" />
         <stop offset="1" class="sel-bubble-rim-bottom" />
       </linearGradient>
-      <clipPath id="${clipId}"><path class="sel-bubble-clip" clip-rule="evenodd" /></clipPath>
-      ${Object.entries(GLOWS)
-        .map(
-          ([theme, glow]) => `
-      <filter id="${glowId}-${theme}" class="sel-bubble-glow-filter" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-        <feGaussianBlur in="SourceAlpha" stdDeviation="${glow.deviation}" />
-        <feOffset dy="6" result="shadow" />
-        <feFlood flood-color="${glow.color}" flood-opacity="${glow.opacity}" />
-        <feComposite in2="shadow" operator="in" />
-      </filter>`,
-        )
-        .join('')}
     </defs>
-    <path class="sel-bubble-glow" fill="url(#${fillId})" stroke="url(#${rimId})" />
-    <g class="sel-bubble-rest"><path class="sel-bubble" fill="url(#${fillId})" stroke="url(#${rimId})" /></g>`;
-  const path = svg.querySelector('path.sel-bubble');
-  // The glow is cast once, by the whole bubble where it rests, and never cut
-  // into pieces: moving pieces each casting their own would show seams in it.
-  const glowPath = svg.querySelector('path.sel-bubble-glow');
-  const glowFilters = [...(svg.querySelectorAll?.('filter.sel-bubble-glow-filter') ?? [])];
-  const clipShape = svg.querySelector('path.sel-bubble-clip');
-  const rest = svg.querySelector('g.sel-bubble-rest');
-  const gradients = [svg.querySelector(`#${fillId}`), svg.querySelector(`#${rimId}`)];
-  content.appendChild?.(svg);
+    <path class="sel-bubble" fill="url(#${fillId})" stroke="none" />`;
+  still.rim.innerHTML = `<path class="sel-bubble-rim" fill="none" stroke="url(#${rimId})" />`;
+  const path = still.fill.querySelector('path.sel-bubble');
+  const rimPath = still.rim.querySelector('path.sel-bubble-rim');
+  const gradients = [still.fill.querySelector(`#${fillId}`), still.fill.querySelector(`#${rimId}`)];
 
   // Each line: its spring set off from x0 at speed v0 toward `to` when the
   // current motion began (`startedAt`, on the document timeline).
   let lines = [];
+  let lineCount = 0;
   let startedAt = 0;
   let motionMs = 0;
   let leaving = false;
   let generation = 0;
   let finishTimer = 0;
+  // Parts drawn on their own: every glow part, and the fill and rim parts in motion.
+  const pieces = new Map();
+  // How each part that will end as nothing was drawn, so its piece keeps playing.
+  let drawnBefore = new Map();
+  let groupBox = null;
 
   const reduceMotion = () => Boolean(window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
   const canAnimate = () => typeof layer.animate === 'function' && !reduceMotion();
   const scrollTop = () => scroller?.scrollTop ?? 0;
   const clock = () =>
     Number(document.timeline?.currentTime ?? window?.performance?.now?.() ?? Date.now());
+  const theme = () => (document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark');
 
   function attach() {
     if (layer.parentNode !== container) container.appendChild(layer);
@@ -444,152 +765,275 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
     placed = { transform, clipPath };
   }
 
-  function setBox(element, x0, y0, x1, y1) {
+  function setBox(element, box, origin = { x: 0, y: 0 }) {
     if (!element.style) return;
-    element.style.left = `${x0}px`;
-    element.style.top = `${y0}px`;
-    element.style.width = `${Math.max(0, x1 - x0)}px`;
-    element.style.height = `${Math.max(0, y1 - y0)}px`;
+    element.style.left = `${box.x0 - origin.x}px`;
+    element.style.top = `${box.y0 - origin.y}px`;
+    element.style.width = `${Math.max(0, box.x1 - box.x0)}px`;
+    element.style.height = `${Math.max(0, box.y1 - box.y0)}px`;
   }
 
-  /** Draw `bands` as the bubble at rest, leaving out the `cut` strips. */
-  function drawRest(bands, cut) {
-    const drawn = bands.filter(Boolean);
-    if (!drawn.length) {
-      path.setAttribute('d', '');
-      glowPath?.setAttribute('d', '');
-      return;
-    }
-    // Whole pixels, so the outline lands on the pixel grid as it always did.
-    const x0 = Math.floor(Math.min(...drawn.map((band) => band.l)) - GLOW_X);
-    const x1 = Math.ceil(Math.max(...drawn.map((band) => band.r)) + GLOW_X);
-    const y0 = Math.floor(Math.min(...drawn.map((band) => band.t)) - GLOW_UP);
-    const y1 = Math.ceil(Math.max(...drawn.map((band) => band.b)) + GLOW_DOWN);
-    setBox(svg, x0, y0, x1, y1);
-    svg.setAttribute('viewBox', `${x0} ${y0} ${x1 - x0} ${y1 - y0}`);
-    for (const filter of glowFilters) {
-      filter.setAttribute('x', String(x0));
-      filter.setAttribute('y', String(y0));
-      filter.setAttribute('width', String(x1 - x0));
-      filter.setAttribute('height', String(y1 - y0));
-    }
-    // The fill and rim shade top to bottom across the whole bubble.
-    const top = Math.min(...drawn.map((band) => band.t));
-    const bottom = Math.max(...drawn.map((band) => band.b));
-    for (const gradient of gradients) {
-      gradient?.setAttribute('y1', String(round(top)));
-      gradient?.setAttribute('y2', String(round(bottom)));
-    }
-    const outline = bubblePath(fuseFromBands(drawn));
-    path.setAttribute('d', outline);
-    if (glowPath) {
-      glowPath.setAttribute('d', outline);
-      const theme = document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark';
-      glowPath.setAttribute('filter', `url(#${glowId}-${theme})`);
-    }
-    if (cut.length) {
-      const strips = cut
-        .map((s) => ({ ...s, x0: Math.max(s.x0, x0), x1: Math.min(s.x1, x1) }))
-        .filter((s) => s.x1 > s.x0)
-        .map((s) => `M${s.x0} ${s.y0}H${s.x1}V${s.y1}H${s.x0}Z`)
-        .join('');
-      clipShape.setAttribute('d', `M${x0} ${y0}H${x1}V${y1}H${x0}Z${strips}`);
-      rest.setAttribute('clip-path', `url(#${clipId})`);
-    } else {
-      rest.removeAttribute?.('clip-path');
-    }
-  }
+  /** Whole pixels outward, so a part lands on the same pixel grid moving or still. */
+  const pixelBox = (box) => ({
+    x0: Math.floor(box.x0),
+    y0: Math.floor(box.y0),
+    x1: Math.ceil(box.x1),
+    y1: Math.ceil(box.y1),
+  });
 
-  /** Bands back into chains, in order. */
-  function fuseFromBands(bands) {
-    const chains = [];
-    for (const band of [...bands].sort((a, b) => a.t - b.t)) {
-      if (band.first || !chains.length) chains.push([]);
-      chains[chains.length - 1].push(band);
-    }
-    return chains;
-  }
-
-  function dropPieces(line) {
-    for (const piece of line.pieces ?? []) {
-      piece.animation?.cancel?.();
-      piece.element.remove?.();
-    }
-    line.pieces = [];
-    line.sig = '';
-  }
-
-  /** Draw `column` of a moving line and play its keyframes, reusing `piece` when there is one. */
-  function placePiece(piece, column, box, drawn, outline, keyframes, duration) {
-    let element = piece?.element;
-    let drawing;
-    let shape;
-    if (element) {
-      piece.animation?.cancel?.();
-      drawing = element.firstChild;
-      shape = drawing.firstChild;
-    } else {
-      element = document.createElement('div');
-      element.className = 'sel-bubble-piece';
-      drawing = document.createElementNS(SVG_NS, 'svg');
-      drawing.setAttribute('preserveAspectRatio', 'none');
-      shape = document.createElementNS(SVG_NS, 'path');
-      shape.setAttribute('class', 'sel-bubble-moving');
-      shape.setAttribute('fill', `url(#${fillId})`);
-      shape.setAttribute('stroke', `url(#${rimId})`);
-      drawing.appendChild(shape);
-      element.appendChild(drawing);
-      content.appendChild(element);
-    }
-    setBox(element, column.x0, box.y0, column.x1, box.y1);
-    const origin = pieceOrigin(column.part, drawn);
-    if (element.style) element.style.transformOrigin = `${fixed(origin.x - column.x0, 2)}px ${fixed(origin.y - box.y0, 2)}px`;
-    drawing.setAttribute('viewBox', `${column.x0} ${box.y0} ${column.x1 - column.x0} ${box.y1 - box.y0}`);
-    shape.setAttribute('d', outline);
-    const animation = element.animate(keyframes, { duration, easing: 'linear', fill: 'forwards' });
-    // On the same clock as the spring: a change mid-motion reads where the
-    // bubble is from the spring itself, and the pieces agree with it.
-    animation.startTime = startedAt;
-    return { element, animation, part: column.part };
-  }
-
-  /** The strip a moving line occupies: from band to band, plus the rim at a bubble's ends. */
-  function stripOf(band, all) {
-    let ceiling = -Infinity;
-    let floor = Infinity;
-    for (const other of all) {
-      if (other === band) continue;
-      if (other.b <= band.t + 0.01) ceiling = Math.max(ceiling, other.b);
-      if (other.t >= band.b - 0.01) floor = Math.min(floor, other.t);
-    }
-    return {
-      y0: Math.max(band.t - (band.first ? RIM : 0), ceiling),
-      y1: Math.min(band.b + (band.last ? RIM : 0), floor),
+  /**
+   * The glow of one line: its shadow's alpha. The bubble always cast the
+   * shadow of its fill, so it is as strong as the fill where the line sits.
+   */
+  function glowOf(top, bottom) {
+    const glow = GLOWS[theme()];
+    const [a0, a1] = alphaOf('fill');
+    return (line) => {
+      const f = bottom > top ? Math.min(1, Math.max(0, ((line.t + line.b) / 2 - top) / (bottom - top))) : 0;
+      return fixed(glow.opacity * (a0 + (a1 - a0) * f), 4);
     };
   }
 
-  /**
-   * What a line's pieces depend on: its own target and its neighbours' (their
-   * springs are time-invariant, so unchanged targets mean unchanged motion).
-   * Pieces whose signature still matches keep playing; a drag re-plans on
-   * every move, and most lines' motion has not changed.
-   */
-  function signatureOf(i) {
-    const line = lines[i];
-    const own = `${line.dying ? 'd' : 'l'}${leaving ? '!' : ''}${round(line.to.l)},${round(line.to.r)},${round(line.to.t)},${round(line.to.b)}`;
-    // A neighbour shapes this line's band through its top and bottom (where the
-    // two meet), and through whether the two are wide enough side by side to
-    // fuse, at rest and now. Its left and right edges do not move this band.
-    const overlap = (a, b) => Math.min(a.r, b.r) - Math.max(a.l, b.l) >= 2 * (RADIUS - PAD_X);
-    const neighbour = (other) =>
-      other
-        ? `${other.dying ? 'd' : ''}${round(other.to.t)},${round(other.to.b)}` +
-          `${overlap(other.to, line.to) ? 'J' : 'j'}${overlap(other.x0, line.x0) ? 'J' : 'j'}`
-        : '-';
-    return `${own}|${neighbour(lines[i - 1])}|${neighbour(lines[i + 1])}`;
+  /** Paint a glow part: the line's blurred shadow, across this column. */
+  function paintGlow(element, part, box, glow) {
+    if (!element.style) return;
+    const sigma = glow.deviation;
+    const [red, green, blue] = glow.color;
+    const color = (alpha) => `rgb(${red} ${green} ${blue} / ${fixed(part.a * alpha, 4)})`;
+    const width = box.x1 - box.x0;
+    const across =
+      part.side === 'm'
+        ? `linear-gradient(${color(1)}, ${color(1)})`
+        : `linear-gradient(to right, ${profile(width, sigma / 2, (px) => {
+            const z = (box.x0 + px - (part.side === 'l' ? part.l : part.r)) / sigma;
+            return part.side === 'l' ? normalCdf(z) : 1 - normalCdf(z);
+          }, color)})`;
+    const top = part.t + GLOW_DY;
+    const bottom = part.b + GLOW_DY;
+    const down = `linear-gradient(to bottom, ${profile(box.y1 - box.y0, sigma / 2, (px) => {
+      const y = box.y0 + px;
+      return normalCdf((y - top) / sigma) - normalCdf((y - bottom) / sigma);
+    }, (alpha) => `rgb(0 0 0 / ${alpha})`)})`;
+    element.style.backgroundImage = across;
+    element.style.maskImage = down;
+    element.style.webkitMaskImage = down;
   }
 
-  /** Play the springs from `startedAt`: the moving lines as pieces, the rest drawn still. */
+  /** The element for a piece (parts drawn and moved as one), made or reused. */
+  function pieceFor(key, layer) {
+    let piece = pieces.get(key);
+    if (piece) return piece;
+    const element = document.createElement('div');
+    element.className = `sel-bubble-piece sel-bubble-${layer}-piece`;
+    let shape = null;
+    if (layer !== 'glow') {
+      const drawing = document.createElementNS(SVG_NS, 'svg');
+      drawing.setAttribute('preserveAspectRatio', 'none');
+      shape = document.createElementNS(SVG_NS, 'path');
+      if (layer === 'fill') {
+        shape.setAttribute('fill', `url(#${fillId})`);
+        shape.setAttribute('stroke', 'none');
+      } else {
+        shape.setAttribute('fill', 'none');
+        shape.setAttribute('stroke', `url(#${rimId})`);
+        shape.setAttribute('class', 'sel-bubble-rim');
+      }
+      drawing.appendChild(shape);
+      element.appendChild(drawing);
+    }
+    piece = { element, shape, layer, look: null, at: null, animation: null, motions: null, from: 0 };
+    pieces.set(key, piece);
+    return piece;
+  }
+
+  function dropPiece(key) {
+    const piece = pieces.get(key);
+    if (!piece) return;
+    piece.animation?.cancel?.();
+    piece.element.remove?.();
+    pieces.delete(key);
+  }
+
+  /** What a piece shows, apart from where its group sits. */
+  const pieceLook = (plan, glow) =>
+    `${plan.path ?? JSON.stringify(plan.part)}|${plan.box.x0},${plan.box.y0},${plan.box.x1},${plan.box.y1}|${plan.origin.x},${plan.origin.y}|${glow.deviation}`;
+
+  /** Draw a piece (unless it already shows this), placed in its group. */
+  function drawPiece(piece, plan, glow) {
+    const { box, origin } = plan;
+    const parent = piece.layer === 'glow' ? glows : groups[piece.layer];
+    const offset = piece.layer === 'glow' ? { x: 0, y: 0 } : { x: groupBox.x0, y: groupBox.y0 };
+    const look = pieceLook(plan, glow);
+    if (piece.look !== look) {
+      if (piece.element.style) piece.element.style.transformOrigin = `${fixed(origin.x - box.x0, 2)}px ${fixed(origin.y - box.y0, 2)}px`;
+      if (piece.shape) {
+        piece.shape.ownerSVGElement?.setAttribute?.('viewBox', `${box.x0} ${box.y0} ${box.x1 - box.x0} ${box.y1 - box.y0}`);
+        piece.shape.setAttribute('d', plan.path);
+      } else {
+        paintGlow(piece.element, plan.part, box, glow);
+      }
+      piece.look = look;
+    }
+    const at = `${box.x0 - offset.x},${box.y0 - offset.y},${box.x1 - box.x0},${box.y1 - box.y0}`;
+    if (piece.at !== at) {
+      setBox(piece.element, box, offset);
+      piece.at = at;
+    }
+    if (piece.element.parentNode !== parent) parent.appendChild?.(piece.element);
+  }
+
+  /** A glow part as a piece: its column, anchored where partMotion anchors it. */
+  const glowPlan = (part, glow) => ({ layer: 'glow', part, box: partBox(part, glow), origin: partOrigin(part, glow) });
+
+  /**
+   * Whether a piece already plays `motions` from `startedAt`: what it was
+   * given at an earlier start, read at the same moments, within KEEP px. The
+   * springs are time-invariant, so a line whose target stayed put moves on
+   * exactly as before; a drag re-plans on every move, and only the pieces
+   * near the line under the finger change course.
+   */
+  function playing(piece, motions, box) {
+    if (!piece.animation || !piece.motions) return false;
+    const shift = (startedAt - piece.from) / FRAME_MS;
+    if (shift < 0) return false;
+    const width = box.x1 - box.x0;
+    const height = box.y1 - box.y0;
+    const old = piece.motions;
+    for (let k = 0; k < motions.length; k++) {
+      const at = Math.min(old.length - 1, k + shift);
+      const i = Math.floor(at);
+      const f = at - i;
+      const j = Math.min(old.length - 1, i + 1);
+      const read = (key) => old[i][key] + (old[j][key] - old[i][key]) * f;
+      const now = motions[k];
+      if (Math.abs(read('dx') - now.dx) > KEEP || Math.abs(read('dy') - now.dy) > KEEP) return false;
+      if (Math.abs(read('sx') - now.sx) * width > KEEP || Math.abs(read('sy') - now.sy) * height > KEEP) return false;
+      if (now.o !== undefined && Math.abs(read('o') - now.o) > 0.02) return false;
+    }
+    // A motion that ends must end where the old one does.
+    return motions.length - 1 + shift >= old.length - 1 - 1e-6;
+  }
+
+  /** Put the planned pieces on screen: still glows placed, moving pieces playing. */
+  function showPieces(planned, glow) {
+    for (const key of [...pieces.keys()]) if (!planned.has(key)) dropPiece(key);
+    for (const [key, plan] of planned) {
+      const piece = pieceFor(key, plan.layer);
+      if (plan.motions && piece.look === pieceLook(plan, glow) && playing(piece, plan.motions, plan.box)) {
+        drawPiece(piece, plan, glow);
+        continue;
+      }
+      piece.animation?.cancel?.();
+      piece.animation = null;
+      piece.motions = null;
+      drawPiece(piece, plan, glow);
+      if (!plan.motions) {
+        // A glow part at rest, placed as it rests (a narrow line's ends squeezed, its shadow fainter).
+        const rest = partMotion(plan.part, plan.part, glow);
+        if (piece.element.style) {
+          piece.element.style.transform = motionTransform(rest);
+          piece.element.style.opacity = String(fixed(rest.o, 3));
+        }
+        continue;
+      }
+      if (piece.element.style) {
+        piece.element.style.transform = '';
+        piece.element.style.opacity = '';
+      }
+      // Moving pieces sit above the still ones, so only they need their own layers.
+      if (piece.element.nextSibling) piece.element.parentNode?.appendChild(piece.element);
+      piece.animation = piece.element.animate(keyframesOf(plan.motions, plan.box, plan.span), {
+        duration: plan.span * FRAME_MS,
+        easing: 'linear',
+        fill: 'forwards',
+      });
+      // On the same clock as the spring: a change mid-motion reads where the
+      // bubble is from the spring itself, and the pieces agree with it.
+      piece.animation.startTime = startedAt;
+      piece.motions = plan.motions;
+      piece.from = startedAt;
+    }
+  }
+
+  // Each group's alpha at the top and bottom of the bubble, from app.css, read
+  // once per theme.
+  const alphas = new Map();
+  function alphaOf(name) {
+    const key = `${theme()}:${name}`;
+    if (!alphas.has(key)) {
+      const style = window?.getComputedStyle?.(groups[name]);
+      const read = (property, fallback) => Number.parseFloat(style?.getPropertyValue?.(property)) || fallback;
+      alphas.set(key, [read('--sel-alpha-top', 1), read('--sel-alpha-bottom', 1)]);
+    }
+    return alphas.get(key);
+  }
+
+  /** Shade the groups across the bubble at rest: fill and rim lighten toward its top. */
+  let shaded = '';
+  function shade(top, bottom) {
+    const y1 = String(round(top));
+    const y2 = String(round(bottom));
+    const masks = Object.keys(groups).map((name) => {
+      const [a0, a1] = alphaOf(name);
+      return `linear-gradient(to bottom, rgb(0 0 0 / ${a0}) ${fixed(top - groupBox.y0, 2)}px, rgb(0 0 0 / ${a1}) ${fixed(bottom - groupBox.y0, 2)}px)`;
+    });
+    // Written only when they change: a write restyles everything in the group.
+    const sig = `${y1},${y2},${masks.join()}`;
+    if (sig === shaded) return;
+    shaded = sig;
+    for (const gradient of gradients) {
+      gradient?.setAttribute('y1', y1);
+      gradient?.setAttribute('y2', y2);
+    }
+    Object.values(groups).forEach((group, i) => {
+      if (!group.style) return;
+      group.style.maskImage = masks[i];
+      group.style.webkitMaskImage = masks[i];
+    });
+  }
+
+  /**
+   * Where the groups sit: around every part drawn in this motion, on a coarse
+   * grid, so a drag seldom moves them (moving one moves every piece in it).
+   */
+  function placeGroups(boxes) {
+    const grid = 64;
+    const box = {
+      x0: Math.floor((Math.min(...boxes.map((b) => b.x0)) - 2) / grid) * grid,
+      y0: Math.floor((Math.min(...boxes.map((b) => b.y0)) - 2) / grid) * grid,
+      x1: Math.ceil((Math.max(...boxes.map((b) => b.x1)) + 2) / grid) * grid,
+      y1: Math.ceil((Math.max(...boxes.map((b) => b.y1)) + 2) / grid) * grid,
+    };
+    if (groupBox && ['x0', 'y0', 'x1', 'y1'].every((side) => groupBox[side] === box[side])) return;
+    groupBox = box;
+    shaded = '';
+    for (const group of Object.values(groups)) setBox(group, box);
+    for (const svg of Object.values(still)) {
+      setBox(svg, { x0: 0, y0: 0, x1: box.x1 - box.x0, y1: box.y1 - box.y0 });
+      svg.setAttribute('viewBox', `${box.x0} ${box.y0} ${box.x1 - box.x0} ${box.y1 - box.y0}`);
+    }
+  }
+
+  /** Draw the parts that hold still as the still outline of each group. */
+  function drawStill(parts) {
+    let fill = '';
+    let rim = '';
+    for (const part of parts) {
+      if (part.layer === 'fill') fill += partPath(part);
+      else if (part.layer === 'rim') rim += partPath(part);
+    }
+    if (path.getAttribute?.('d') !== fill) path.setAttribute('d', fill);
+    if (rimPath.getAttribute?.('d') !== rim) rimPath.setAttribute('d', rim);
+  }
+
+  /** The bubble's top and bottom at rest, which its shading spans. */
+  function extent(bands) {
+    const drawn = bands.filter(Boolean);
+    if (!drawn.length) return { top: 0, bottom: 1 };
+    return { top: Math.min(...drawn.map((band) => band.t)), bottom: Math.max(...drawn.map((band) => band.b)) };
+  }
+
+  /** Play the springs from `startedAt`: the parts in motion on their own, the rest drawn still. */
   function play() {
     generation += 1;
     const token = generation;
@@ -639,107 +1083,141 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
     };
     const frames = Math.max(1, ...lines.map((_, i) => restsBy(i)));
     motionMs = frames * FRAME_MS;
+    const ids = lines.map((line) => line.id);
     const restBands = bandsOf(lines.map((line) => (line.dying ? null : line.to)));
     // Where every line is at each frame: all of them fused, the draining ones too.
     const samples = [];
     for (let k = 0; k <= frames; k++) samples.push(bandsOf(lines.map((_, i) => positionAt(i, k))));
-    const nowBands = samples[0];
-    const allRest = restBands.filter(Boolean);
-    const allNow = nowBands.filter(Boolean);
 
-    const cut = [];
-    let endsAt = startedAt;
-    lines.forEach((line, i) => {
-      // A line still selected is drawn where it will rest; one draining away
-      // is drawn where it is now.
-      const drawn = line.dying ? nowBands[i] : restBands[i];
-      // The last frame on which the line is not where it is drawn.
-      let last = -1;
-      if (drawn) {
-        for (let k = frames; k >= 0; k--) {
-          const now = samples[k][i];
-          if (!now || SIDES.some((side) => !near(now[side], drawn[side], 0.05))) {
-            last = k;
-            break;
-          }
-        }
-      }
-      if (last < 0) {
-        dropPieces(line);
-        return;
-      }
-      const sig = signatureOf(i);
-      if (!line.pieces?.length || line.sig !== sig) {
-        const bands = line.dying ? allNow : allRest;
-        const strip = stripOf(drawn, bands);
-        // The line's own ends, with room for an inner corner beside them. Past
-        // that, a neighbour's edge belongs to the still drawing: carried along
-        // by this line's end, it would trail across the screen as a stray line.
-        const box = {
-          x0: Math.floor(drawn.l - RADIUS - RIM),
-          x1: Math.ceil(drawn.r + RADIUS + RIM),
-          ...strip,
-        };
-        const outline = outlineNear(bands, strip.y0 - NEIGHBOURHOOD, strip.y1 + NEIGHBOURHOOD);
-        // Each piece plays only until its line comes to rest.
-        const span = Math.max(1, Math.min(frames, last + 1));
-        const duration = span * FRAME_MS;
-        const frameBands = [];
-        for (let k = 0; k <= span; k++) frameBands.push(samples[Math.min(k, frames)][i]);
-        // A line moving only up or down is one piece: it never stretches sideways.
-        const sidewaysStill = frameBands.every(
-          (band) => band && near(band.l, drawn.l, 0.05) && near(band.r, drawn.r, 0.05),
-        );
-        const columns = sidewaysStill ? [{ part: 'whole', x0: box.x0, x1: box.x1 }] : pieceColumns(drawn, box.x0, box.x1);
-        const height = box.y1 - box.y0;
-        // An end that never moves (the start of a line growing to the right)
-        // stays in the still drawing.
-        const planned = columns
-          .map((column) => ({ column, motions: motionsOf(column.part, drawn, frameBands) }))
-          .filter(({ column, motions }) =>
-            motions.some(
-              (m) =>
-                Math.abs(m.dx) > 0.05 ||
-                Math.abs(m.dy) > 0.05 ||
-                Math.abs(m.sx - 1) * (column.x1 - column.x0) > 0.05 ||
-                Math.abs(m.sy - 1) * height > 0.05,
-            ),
-          );
-        const spare = [...(line.pieces ?? [])];
-        line.pieces = planned.map(({ column, motions }) => {
-          const keyframes = keyframeFrames(motions, column.x1 - column.x0, height).map((k) => ({
-            offset: k / span,
-            transform: motionTransform(motions[k]),
-          }));
-          const reuse = spare.findIndex((piece) => piece.part === column.part);
-          const piece = reuse >= 0 ? spare.splice(reuse, 1)[0] : null;
-          return placePiece(piece, column, box, drawn, outline, keyframes, duration);
-        });
-        for (const piece of spare) {
-          piece.animation?.cancel?.();
-          piece.element.remove?.();
-        }
-        // The still drawing gives up the whole strip but the ends that do not
-        // move: what the pieces do not carry (a neighbour's edge beyond this
-        // line's ends) waits for the rest instead of showing ahead of the line.
-        const kept = columns.filter((column) => !planned.some((entry) => entry.column === column));
-        const edges = [-1e6, ...kept.flatMap((column) => [column.x0, column.x1]), 1e6].sort((a, b) => a - b);
-        line.cut = [];
-        for (let k = 0; k < edges.length; k += 2) {
-          if (edges[k + 1] > edges[k]) line.cut.push({ x0: edges[k], x1: edges[k + 1], y0: box.y0, y1: box.y1 });
-        }
-        line.sig = sig;
-        line.endsAt = startedAt + duration;
-      }
-      if (!line.pieces.length) {
-        dropPieces(line);
-        return;
-      }
-      if (!line.dying) cut.push(...line.cut);
-      endsAt = Math.max(endsAt, line.endsAt);
+    // The lines whose band moves, and with them their neighbours, whose
+    // corners round against them.
+    const moving = new Set();
+    lines.forEach((_, i) => {
+      if (samples.some((bands) => !samePart(bands[i], restBands[i]))) moving.add(i);
     });
+    const active = new Set();
+    for (const i of moving) for (const j of [i - 1, i, i + 1]) if (j >= 0 && j < lines.length) active.add(j);
 
-    drawRest(restBands, cut);
+    const glow = GLOWS[theme()];
+    const { top, bottom } = extent(restBands);
+    const glowAlpha = glowOf(top, bottom);
+    const rest = bubbleParts(restBands, ids, null, glowAlpha);
+    const series = new Map();
+    samples.forEach((bands, k) => {
+      for (const [key, part] of bubbleParts(bands, ids, active, glowAlpha)) {
+        if (!series.has(key)) series.set(key, []);
+        series.get(key)[k] = part;
+      }
+    });
+    // A part listed at rest but never during the motion is gone during it.
+    for (const [key] of rest) {
+      const owner = key.split(':')[0].split('/');
+      if (!series.has(key) && owner.some((id) => active.has(ids.indexOf(Number(id))))) series.set(key, []);
+    }
+
+    const frameKeys = [...Array(frames + 1).keys()];
+    const drawnNow = new Map();
+    const stillParts = [];
+    const planned = new Map();
+    // Fill and rim parts that move as one (the same map from where they are
+    // drawn to where they are, frame after frame) share a piece: the rounded
+    // end of a line, its corners and edge, slide as one layer.
+    const shared = new Map();
+    // The groups hold every fill and rim part of this motion, still or moving.
+    const boxes = [];
+    let endsAt = startedAt;
+    for (const [key, part] of rest) {
+      const frameParts = series.get(key);
+      if (frameParts && !frameKeys.every((k) => samePart(frameParts[k], part))) continue;
+      if (part.layer === 'glow') planned.set(key, glowPlan(part, glow));
+      else {
+        stillParts.push(part);
+        boxes.push(partBox(part, glow));
+      }
+    }
+    for (const [key, frameParts] of series) {
+      if (planned.has(key)) continue;
+      const restPart = rest.get(key);
+      if (restPart && frameKeys.every((k) => samePart(frameParts[k], restPart))) continue;
+      const drawn = drawingOf(restPart, frameParts, drawnBefore.get(key));
+      if (!drawn) continue;
+      drawnNow.set(key, drawn);
+      // The last frame on which the part is not where it rests.
+      let last = 0;
+      for (let k = frames; k >= 0; k--) {
+        if (!samePart(frameParts[k], restPart)) {
+          last = k;
+          break;
+        }
+      }
+      const span = Math.max(1, Math.min(frames, last + 1));
+      const motions = [];
+      for (let k = 0; k <= span; k++) {
+        const now = frameParts[Math.min(k, frames)];
+        motions.push(now ? partMotion(drawn, now, glow) : null);
+      }
+      // While a part is missing it is scaled to nothing where it next shows
+      // (or where it was last seen), so it grows and shrinks in place.
+      const gone = (at) => ({ dx: at?.dx ?? 0, dy: at?.dy ?? 0, sx: 0, sy: 0, ...(drawn.kind === 'glow' ? { o: 0 } : {}) });
+      let next = null;
+      for (let k = motions.length - 1; k >= 0; k--) {
+        if (motions[k]) next = motions[k];
+        else if (next) motions[k] = gone(next);
+      }
+      let seen = null;
+      for (let k = 0; k < motions.length; k++) {
+        if (motions[k]) seen = motions[k];
+        else motions[k] = gone(seen);
+      }
+      endsAt = Math.max(endsAt, startedAt + span * FRAME_MS);
+      if (drawn.layer === 'glow') {
+        const plan = glowPlan(drawn, glow);
+        planned.set(key, { ...plan, motions, span });
+        continue;
+      }
+      // Each frame as a map of the content: x -> ax x + bx, y -> ay y + by.
+      const origin = partOrigin(drawn, glow);
+      const maps = motions.map(({ dx, dy, sx, sy }) => [sx, origin.x + dx - sx * origin.x, sy, origin.y + dy - sy * origin.y]);
+      const sig = `${drawn.layer}|${span}|${maps.map((m) => `${fixed(m[0], 4)},${fixed(m[1], 2)},${fixed(m[2], 4)},${fixed(m[3], 2)}`).join(';')}`;
+      if (!shared.has(sig)) shared.set(sig, { layer: drawn.layer, keys: [], parts: [], maps, span });
+      shared.get(sig).keys.push(key);
+      shared.get(sig).parts.push(drawn);
+    }
+    for (const { layer, keys, parts, maps, span } of shared.values()) {
+      const drawnBoxes = parts.map((part) => partBox(part, glow));
+      const box = pixelBox({
+        x0: Math.min(...drawnBoxes.map((b) => b.x0)),
+        y0: Math.min(...drawnBoxes.map((b) => b.y0)),
+        x1: Math.max(...drawnBoxes.map((b) => b.x1)),
+        y1: Math.max(...drawnBoxes.map((b) => b.y1)),
+      });
+      const origin = { x: box.x0, y: box.y0 };
+      const motions = maps.map(([ax, bx, ay, by]) => ({
+        dx: ax * origin.x + bx - origin.x,
+        dy: ay * origin.y + by - origin.y,
+        sx: ax,
+        sy: ay,
+      }));
+      planned.set(`${layer}:${keys.join(',')}`, {
+        layer,
+        path: parts.map(partPath).join(''),
+        box,
+        origin,
+        motions,
+        span,
+      });
+      for (const [ax, bx, ay, by] of maps) {
+        const xs = [box.x0, box.x1].map((x) => ax * x + bx);
+        const ys = [box.y0, box.y1].map((y) => ay * y + by);
+        boxes.push({ x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) });
+      }
+    }
+    if (!boxes.length) boxes.push({ x0: 0, y0: top, x1: 1, y1: bottom });
+    placeGroups(boxes);
+    shade(top, bottom);
+    drawStill(stillParts);
+    showPieces(planned, glow);
+    drawnBefore = drawnNow;
     container.dataset.bubble = 'moving';
     finishTimer = window.setTimeout(() => {
       if (token === generation) settle();
@@ -750,20 +1228,35 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
   function settle() {
     generation += 1;
     window?.clearTimeout?.(finishTimer);
-    for (const line of lines) dropPieces(line);
     lines = lines.filter((line) => !line.dying);
     for (const line of lines) {
       line.x0 = { ...line.to };
       line.v0 = { l: 0, r: 0, t: 0, b: 0 };
     }
     if (leaving) {
+      for (const key of [...pieces.keys()]) dropPiece(key);
       lines = [];
       leaving = false;
       detach();
       container.dataset.bubble = 'gone';
       return;
     }
-    drawRest(bandsOf(lines.map((line) => line.to)), []);
+    const bands = bandsOf(lines.map((line) => line.to));
+    const glow = GLOWS[theme()];
+    const { top, bottom } = extent(bands);
+    const parts = bubbleParts(bands, lines.map((line) => line.id), null, glowOf(top, bottom));
+    const drawnStill = [];
+    const glowParts = new Map();
+    for (const [key, part] of parts) {
+      if (part.layer === 'glow') glowParts.set(key, part);
+      else drawnStill.push(part);
+    }
+    placeGroups(drawnStill.length ? drawnStill.map((part) => partBox(part, glow)) : [{ x0: 0, y0: top, x1: 1, y1: bottom }]);
+    shade(top, bottom);
+    drawStill(drawnStill);
+    const planned = new Map();
+    for (const [key, part] of glowParts) planned.set(key, glowPlan(part, glow));
+    showPieces(planned, glow);
     container.dataset.bubble = 'settled';
   }
 
@@ -775,7 +1268,8 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
   }
 
   function newLine(from, to) {
-    return { x0: { ...from }, v0: { l: 0, r: 0, t: 0, b: 0 }, to, dying: false, pieces: [], sig: '' };
+    lineCount += 1;
+    return { id: lineCount, x0: { ...from }, v0: { l: 0, r: 0, t: 0, b: 0 }, to, dying: false };
   }
 
   function sameTargets(targets) {
@@ -893,5 +1387,10 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
     play();
   }
 
-  return { set, clear };
+  /** The exact outline `ms` into the current motion (tests compare the parts with it). */
+  function shapeAt(ms) {
+    return bubblePath(bubbleChains(lines.map((line) => lineAt(line, Math.min(ms, motionMs)).at)));
+  }
+
+  return { set, clear, shapeAt };
 }
