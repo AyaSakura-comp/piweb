@@ -12,6 +12,12 @@
  * which reads like an account problem and is not one. Sending
  * `antigravity-cli/<version>` makes the identical request succeed. Do not
  * "simplify" the header away.
+ *
+ * Free-tier ("Antigravity Starter Quota") accounts get that same 403 even with
+ * the header unless the body names their Code Assist project, which
+ * `loadCodeAssist` reports as `cloudaicompanionProject` (e.g.
+ * `aicode-consumers`). Paid accounts answer `{}` directly, so the project is
+ * looked up only after a 403 and the request retried once with it.
  */
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -20,6 +26,7 @@ import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
 
 const QUOTA_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
+const LOAD_CODE_ASSIST_URL = 'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 const USER_AGENT =
   'antigravity/cli/1.3.6 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)';
 
@@ -303,6 +310,40 @@ export async function readAgyAccessToken(): Promise<string> {
   return (await readAgyAuth()).token.access_token;
 }
 
+/**
+ * The account's Code Assist project (`cloudaicompanionProject`), or undefined
+ * when it cannot be read. Best effort: any failure just leaves the caller's
+ * original 403 standing.
+ */
+export async function fetchAgyCodeAssistProject(
+  fetchImpl: typeof fetch,
+  token: string,
+): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(LOAD_CODE_ASSIST_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
+      },
+      body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', pluginType: 'GEMINI' } }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return undefined;
+    const parsed: any = JSON.parse(await response.text());
+    const project = parsed?.cloudaicompanionProject;
+    const id = typeof project === 'string' ? project : project?.id;
+    return typeof id === 'string' && id ? id : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchAgyQuota(
   fetchImpl: typeof fetch = fetch,
   tokenOverride?: string,
@@ -310,7 +351,10 @@ export async function fetchAgyQuota(
     getAgyAccessToken(forceRefresh, { fetchImpl }),
 ): Promise<AgyQuotaGroup[]> {
   let token = tokenOverride ?? (await tokenProvider(false));
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  let refreshed = false;
+  let project: string | undefined;
+  let projectTried = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS);
     let response: Awaited<ReturnType<typeof fetch>>;
@@ -323,7 +367,7 @@ export async function fetchAgyQuota(
           'Content-Type': 'application/json',
           'User-Agent': USER_AGENT,
         },
-        body: '{}',
+        body: project ? JSON.stringify({ project }) : '{}',
         signal: controller.signal,
       });
       text = await response.text();
@@ -337,12 +381,18 @@ export async function fetchAgyQuota(
       clearTimeout(timer);
     }
 
-    if (response.status === 401 && attempt === 0 && !tokenOverride) {
+    if (response.status === 401 && !refreshed && !tokenOverride) {
+      refreshed = true;
       token = await tokenProvider(true);
       continue;
     }
     if (response.status === 401) {
       throw new AgyUsageError('agy 憑證自動換發後仍被拒絕，請重新登入。');
+    }
+    if (response.status === 403 && !projectTried) {
+      projectTried = true;
+      project = await fetchAgyCodeAssistProject(fetchImpl, token);
+      if (project) continue;
     }
     if (response.status === 403) {
       throw new AgyUsageError('agy 額度 API 拒絕存取；登入仍可能有效，請檢查帳號授權或方案權限。');

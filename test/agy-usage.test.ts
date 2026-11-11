@@ -337,6 +337,33 @@ describe('fetchAgyQuota', () => {
     expect(refreshFlags).toEqual([false]);
   });
 
+  // Free-tier accounts 403 on `{}` and need their Code Assist project named.
+  it('retries a 403 with the Code Assist project from loadCodeAssist', async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const fake = (async (url: string, init: any) => {
+      calls.push({ url, body: init.body });
+      if (url.endsWith(':loadCodeAssist')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ cloudaicompanionProject: 'aicode-consumers' }),
+        };
+      }
+      if (init.body === '{}') {
+        return { ok: false, status: 403, text: async () => '{"error":{"status":"PERMISSION_DENIED"}}' };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: GROUPS }) };
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAgyQuota(fake, 'test-token')).resolves.toEqual(GROUPS);
+    expect(calls.map((c) => c.url.split(':').pop())).toEqual([
+      'retrieveUserQuotaSummary',
+      'loadCodeAssist',
+      'retrieveUserQuotaSummary',
+    ]);
+    expect(JSON.parse(calls[2].body)).toEqual({ project: 'aicode-consumers' });
+  });
+
   it('surfaces an HTTP failure as an AgyUsageError', async () => {
     const fake = (async () => ({
       ok: false,
