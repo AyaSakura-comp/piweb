@@ -456,6 +456,7 @@ export async function invokeClaudeTmux(
     let nextPromptCheckAt = 0;
     let lastApprovedPrompt = '';
     let approvalCountForPrompt = 0;
+    let computerUseSteps = 0;
     const commandProgress = new Map<string, Pick<ClaudeCommand, 'state' | 'output' | 'exitCode'>>();
     const commandsMadeProgress = (commands: ClaudeCommand[]) => {
       let changed = false;
@@ -660,6 +661,37 @@ export async function invokeClaudeTmux(
                 `piweb 選了「Stay on ${flagged.model}」，不會自動換成別的模型。` +
                 '要繼續，可以在模型選單把這個對話換成 Opus 再送，或換個說法重送。',
             };
+          }
+          const computerUse = computerUseDialog(screen);
+          if (computerUse) {
+            // Piweb has no way to answer it, and left alone the turn waits
+            // forever (20 minutes on an Xcode grant, 2026-11-12). Bypass mode
+            // already lets this session run anything; grant the apps for this
+            // session as the user would, one cursor step per look.
+            if (++computerUseSteps > 6) {
+              await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+              return {
+                ok: false,
+                text: '',
+                error: 'Claude Code computer-use permission dialog could not be answered; turn stopped',
+              };
+            }
+            // Answering it is the turn moving on, not idling toward the timeout.
+            deadline = Date.now() + deps.turnTimeoutMs;
+            if (computerUse.move) {
+              await deps.tmux(['send-keys', '-t', pane, computerUse.move]).catch(() => undefined);
+              nextPromptCheckAt = Date.now() + 200;
+            } else {
+              logger.info(
+                { apps: computerUse.apps, channelFolder },
+                'Allowed Claude Code computer use for this session',
+              );
+              await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
+              computerUseSteps = 0;
+              nextPromptCheckAt = Date.now() + 1000;
+            }
+            await deps.sleep(deps.pollMs);
+            continue;
           }
           if (requiresManualConfirmation(screen)) {
             const promptDetail = extractConfirmationPrompt(screen);
@@ -885,6 +917,31 @@ function requiresManualConfirmation(screen: string): boolean {
   );
 }
 
+/**
+ * Claude Code's computer-use grant ("Computer Use wants to control these
+ * apps"): options "Deny, and tell Claude what to do differently (esc)" with
+ * the cursor on it, then "Allow for this session". Only a dialog on the pane's
+ * last rows, with its footer, counts. `move` is the one key that walks the
+ * cursor toward "Allow for this session", or undefined when it is there.
+ */
+export function computerUseDialog(
+  screen: string,
+): { apps: string[]; move?: 'Up' | 'Down' } | undefined {
+  const tail = screen.trimEnd().slice(-1500);
+  if (!/Computer Use wants to control these apps/u.test(tail)) return undefined;
+  if (!/Enter to confirm · Esc to cancel\s*$/u.test(tail)) return undefined;
+  const lines = tail.slice(tail.lastIndexOf('Computer Use wants to control')).split(/\r?\n/u);
+  const options = lines.filter((line) => /^\s*(?:❯\s*)?(?:Deny\b|Allow\b)/u.test(line));
+  const cursor = options.findIndex((line) => /^\s*❯/u.test(line));
+  const target = options.findIndex((line) => /Allow for this session/u.test(line));
+  const apps = lines
+    .map((line) => /^\s*◉\s*(.+?)\s*$/u.exec(line)?.[1])
+    .filter((app): app is string => Boolean(app));
+  if (target < 0) return { apps, move: undefined };
+  const move = cursor < 0 || cursor === target ? undefined : cursor < target ? 'Down' : 'Up';
+  return { apps, move };
+}
+
 export function extractConfirmationPrompt(screen: string): string {
   const tail = screen.trimEnd().slice(-2000);
   const match = /Do you want to proceed\?/u.exec(tail);
@@ -938,6 +995,7 @@ async function waitForReadyPane(
   const deadline = Date.now() + deps.startupTimeoutMs;
   let acceptedTrust = false;
   let trustMoves = 0;
+  let deniedStaleGrant = false;
   let lastScreen = '';
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
@@ -961,6 +1019,20 @@ async function waitForReadyPane(
       await deps.tmux(['send-keys', '-t', pane, 'Down']);
     } else if (requiresManualConfirmation(lastScreen)) {
       // Clear any stale confirmation dialog left from a previous turn.
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+    } else if (computerUseDialog(lastScreen)) {
+      // A computer-use grant left by a turn nobody waits on any more (a
+      // worker restart, an interrupted message): its request is stale, so deny
+      // it (Esc), then stop the turn it would let carry on (2026-11-12: one
+      // sat in front of the next message until it timed out).
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+      deniedStaleGrant = true;
+      logger.info('Denied a stale Claude Code computer-use dialog left on the pane');
+      // Give the turn a moment to resume, so it is seen running and stopped
+      // before the new message is pasted in behind it.
+      await deps.sleep(Math.max(deps.pollMs, 500));
+    } else if (deniedStaleGrant && /esc to interrupt/iu.test(lastScreen)) {
+      deniedStaleGrant = false;
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
     } else if (isReadyPaneScreen(lastScreen)) {
       // The status bar appears before Ink has mounted the editable prompt.

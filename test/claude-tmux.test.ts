@@ -16,6 +16,7 @@ import {
   AUTONOMOUS_SYSTEM_PROMPT,
   buildClaudeArgs,
   claudeModelId,
+  computerUseDialog,
   extractConfirmationPrompt,
   isCatastrophicPrompt,
   isClaudeTmuxModelRef,
@@ -287,6 +288,95 @@ describe('Claude tmux invocation', () => {
     });
     expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
     expect(menuShown).toBe(false);
+    expect(fixture.loadedPrompts).toEqual(['next message']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  // Captured on the Mac mini (2026-11-12): an Xcode grant sat for 20 minutes,
+  // then blocked the next message until it timed out.
+  const computerUseScreen = (cursorOnAllow: boolean) =>
+    [
+      '⏺ Opening Xcode\'s sign-in screen now.',
+      '─'.repeat(80),
+      '  Computer Use wants to control these apps',
+      '',
+      '   │ Open Xcode\'s Accounts settings so you can sign in with your Apple ID and',
+      '   │  Piweb can be signed and installed on your iPhone.',
+      '',
+      '     ◉ Xcode',
+      '',
+      '   6 other apps will be hidden while Claude works.',
+      '',
+      `   ${cursorOnAllow ? ' ' : '❯'} Deny, and tell Claude what to do differently (esc)`,
+      `   ${cursorOnAllow ? '❯' : ' '} Allow for this session (1 app)`,
+      '',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ].join('\n');
+
+  it('reads the computer-use grant dialog and where its cursor is', () => {
+    expect(computerUseDialog(computerUseScreen(false))).toEqual({ apps: ['Xcode'], move: 'Down' });
+    expect(computerUseDialog(computerUseScreen(true))).toEqual({ apps: ['Xcode'], move: undefined });
+    // In history, without its footer on the last row, it is not a live dialog.
+    expect(
+      computerUseDialog(`${computerUseScreen(false)}\n\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on`),
+    ).toBeUndefined();
+    expect(computerUseDialog('Do you want to proceed?\n❯ 1. Yes\n\nEsc to cancel')).toBeUndefined();
+  });
+
+  it('allows computer use for the session when the turn asks for it, and goes on', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    // A cursor step waits 200ms for the dialog to redraw: longer than the
+    // fixture's 100ms inactivity limit (a real turn has an hour).
+    fixture.dependencies.turnTimeoutMs = 2000;
+    let dialog: 'deny' | 'allow' | null = 'deny';
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && dialog) {
+        return computerUseScreen(dialog === 'allow');
+      }
+      if (args[0] === 'send-keys' && fixture.submissionCount && dialog) {
+        if (args.at(-1) === 'Down') dialog = 'allow';
+        if (args.at(-1) === 'Enter' && dialog === 'allow') {
+          dialog = null;
+          fixture.appendTurn();
+        }
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'open Xcode', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    const keys = fixture.sentKeys.map((k) => k.at(-1));
+    expect(keys).toContain('Down');
+    expect(keys.indexOf('Down')).toBeLessThan(keys.lastIndexOf('Enter'));
+    expect(keys).not.toContain('Escape');
+  });
+
+  it('denies a computer-use grant a finished turn left on the pane, then sends the message', async () => {
+    const fixture = createRuntimeFixture();
+    let stale: 'dialog' | 'running' | null = 'dialog';
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.live && stale === 'dialog') {
+        return computerUseScreen(false);
+      }
+      if (args[0] === 'capture-pane' && fixture.live && stale === 'running') {
+        return `✻ Working…\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on · esc to interrupt`;
+      }
+      if (args[0] === 'send-keys' && args.at(-1) === 'Escape' && stale) {
+        stale = stale === 'dialog' ? 'running' : null;
+      }
+      return tmux(args);
+    };
+    fixture.live = true;
+    const result = await invokeClaudeTmux('web_claude1', 'next message', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.sentKeys.filter((k) => k.at(-1) === 'Escape')).toHaveLength(2);
+    expect(fixture.sentKeys.some((k) => k.at(-1) === 'Down')).toBe(false);
     expect(fixture.loadedPrompts).toEqual(['next message']);
     expect(fixture.submissionCount).toBe(1);
   });
