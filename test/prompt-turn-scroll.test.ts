@@ -70,10 +70,8 @@ function fixture({ animate = false } = {}) {
       scroller.scrollTop = top;
     }),
   };
-  vi.stubGlobal('getComputedStyle', () => ({
-    paddingTop: '12px',
-    paddingBottom: `${4 + space()}px`,
-  }));
+  // The reservation is the transcript's ::after block, not its padding.
+  vi.stubGlobal('getComputedStyle', () => ({ paddingTop: '12px', paddingBottom: '4px' }));
   vi.stubGlobal('MutationObserver', undefined);
   vi.stubGlobal('ResizeObserver', undefined);
   function space() {
@@ -262,6 +260,8 @@ describe('prompt turn ownership and lifecycle', () => {
   });
   it('late success from another selection cannot move the newly selected conversation', () => {
     const f = fixture();
+    // The reader at the end of the history (600 + 400 = its last row + padding).
+    f.add(11, 900, 96, false);
     const ticket = f.controller.begin();
     f.add(12);
     f.setOwner('elsewhere:2');
@@ -344,99 +344,137 @@ describe('smooth prompt turn navigation', () => {
     expect(f.controller.navigating).toBe(false);
     expect(f.frameCount()).toBe(0);
   });
-  it('waits for a still-open keyboard and for quiet after its final height and offset reports', () => {
+  // iPhone 2026-11-11: Send with the keyboard up slid the transcript down with
+  // the keyboard, paused, then scrolled back up. Now it is one upward motion
+  // that runs while the keyboard goes down.
+  it('starts while the keyboard is still going down and keeps going through its reports', () => {
     const f = fixture({ animate: true });
     f.viewport.height = 210;
     const ticket = f.controller.begin();
     f.add(12);
     f.controller.acknowledge(ticket, 12);
-    f.advance(350);
-    expect(f.scroller.scrollTo).not.toHaveBeenCalled();
-    f.viewport.height = 350;
-    f.controller.viewportChanged();
-    f.advance(50);
-    f.viewport.height = 400;
-    f.viewport.offsetTop = 8;
-    f.controller.viewportChanged();
-    f.advance(70);
-    f.viewport.offsetTop = 0;
-    f.controller.viewportChanged();
+    // The room the keyboard is about to free is reserved on top of the turn.
+    expect(f.space()).toBe(336 + 190);
     f.advance(100);
-    expect(f.scroller.scrollTop).toBe(600);
-    f.advance(450);
+    expect(f.scroller.scrollTop).toBeGreaterThan(600);
+    for (const [height, offsetTop] of [
+      [300, 40],
+      [370, 10],
+      [400, 0],
+    ]) {
+      f.viewport.height = height;
+      f.viewport.offsetTop = offsetTop;
+      f.controller.viewportChanged();
+      f.advance(48);
+    }
+    f.advance(200);
+    expect(f.scroller.scrollTop).toBe(1000);
+    expect(f.space()).toBe(336);
+    const positions = f.scroller.scrollTo.mock.calls.map(([call]) => call.top);
+    expect(positions.length).toBeGreaterThan(10);
+    expect(positions.every((top, i) => top >= (positions[i - 1] ?? 600) && top <= 1000)).toBe(true);
+    expect(f.frameCount()).toBe(0);
+  });
+  it('holds the reader in place while the keyboard frees its room before the row arrives', () => {
+    const f = fixture({ animate: true });
+    // At the end of the history, in the shell pinned above a 190px keyboard:
+    // the last row and the base padding end at the transcript's bottom.
+    f.add(11, 900, 96, false);
+    f.viewport.height = 210;
+    f.scroller.clientHeight = 210;
+    f.scroller.scrollTop = 790;
+    const ticket = f.controller.begin();
+    // Without it the growing transcript clamps the position and the history
+    // rides down with the keyboard.
+    expect(f.space()).toBe(190);
+    expect(f.scroller.dataset.promptTurn).toBe('active');
+    // Halfway down: the transcript grew into half of it, half is still to come.
+    f.viewport.height = 300;
+    f.scroller.clientHeight = 300;
+    f.controller.viewportChanged();
+    f.advance(32);
+    expect(f.space()).toBe(190);
+    expect(f.scroller.scrollTop).toBe(790);
+    expect(f.scroller.scrollTo).not.toHaveBeenCalled();
+    f.add(12);
+    f.controller.acknowledge(ticket, 12);
+    f.advance(500);
     expect(f.scroller.scrollTop).toBe(1000);
   });
-  it.each([false, true])(
-    'late acknowledgement still waits for fresh viewport quiet (reduced=%s)',
-    (reduced) => {
-      const f = fixture({ animate: !reduced });
-      f.viewport.height = 200;
-      const ticket = f.controller.begin();
-      f.add(12);
-      f.advance(1100);
-      f.viewport.height = 400;
-      f.controller.viewportChanged();
-      f.controller.acknowledge(ticket, 12);
-      f.advance(96);
-      expect(f.scroller.scrollTo).not.toHaveBeenCalled();
-      expect(f.scroller.scrollTop).toBe(600);
-      f.advance(500);
-      expect(f.scroller.scrollTop).toBe(1000);
-      expect(f.frameCount()).toBe(0);
-    },
-  );
-  it.each([false, true])(
-    'geometry changes after keyboard fallback pause motion for fresh quiet (reduced=%s)',
-    (reduced) => {
-      const f = fixture({ animate: true });
-      f.viewport.height = 200;
-      const ticket = f.controller.begin();
-      f.add(12);
-      f.controller.acknowledge(ticket, 12);
-      f.advance(1100);
-      const current = f.scroller.scrollTop;
-      expect(current).toBeGreaterThan(600);
-      expect(current).toBeLessThan(1000);
-      f.setReduced(reduced);
-      f.viewport.height = 400;
-      f.controller.viewportChanged();
-      f.scroller.scrollTo.mockClear();
-      f.advance(96);
-      expect(f.scroller.scrollTo).not.toHaveBeenCalled();
-      expect(f.scroller.scrollTop).toBe(current);
-      f.advance(500);
-      expect(f.scroller.scrollTop).toBe(1000);
-      expect(f.frameCount()).toBe(0);
-    },
-  );
-  it('bounds waiting if a dismissed keyboard leaves stale viewport reporting', () => {
+  it('a failed send drops the hold', () => {
+    const f = fixture({ animate: true });
+    f.add(11, 900, 96, false);
+    f.viewport.height = 210;
+    const ticket = f.controller.begin();
+    expect(f.space()).toBe(190);
+    f.controller.cancel(ticket);
+    expect(f.space()).toBe(0);
+    expect(f.scroller.dataset.promptTurn).toBeUndefined();
+  });
+  it('without a keyboard or a shrinking composer nothing is held before the row arrives', () => {
+    const f = fixture({ animate: true });
+    f.add(11, 900, 96, false);
+    f.controller.begin();
+    expect(f.space()).toBe(0);
+    expect(f.scroller.dataset.promptTurn).toBeUndefined();
+  });
+  it('the composer shrinking as Send clears a long draft does not drop the history', () => {
+    const f = fixture({ animate: true });
+    f.add(11, 900, 96, false);
+    f.controller.begin();
+    // Four lines of draft gone: the transcript grows 80px and the browser
+    // clamps the end of the history down to its bottom.
+    f.scroller.clientHeight = 480;
+    f.scroller.scrollTop = 520;
+    f.controller.update();
+    expect(f.space()).toBe(80);
+    expect(f.scroller.scrollTop).toBe(600);
+  });
+  it('a late acknowledgement moves after two layout frames, however recent the viewport change', () => {
+    const f = fixture({ animate: true });
+    f.viewport.height = 200;
+    const ticket = f.controller.begin();
+    f.add(12);
+    f.advance(1100);
+    f.viewport.height = 400;
+    f.controller.viewportChanged();
+    f.controller.acknowledge(ticket, 12);
+    f.advance(48);
+    expect(f.scroller.scrollTop).toBeGreaterThan(600);
+    f.advance(400);
+    expect(f.scroller.scrollTop).toBe(1000);
+    expect(f.frameCount()).toBe(0);
+  });
+  it('a viewport that stays short after the keyboard has gone does not hold the motion', () => {
     const f = fixture({ animate: true });
     f.viewport.height = 200;
     const ticket = f.controller.begin();
     f.add(12);
     f.controller.acknowledge(ticket, 12);
-    f.advance(900);
-    expect(f.scroller.scrollTop).toBe(600);
-    f.advance(650);
+    f.advance(420);
     expect(f.scroller.scrollTop).toBe(1000);
     expect(f.frameCount()).toBe(0);
   });
-  it('pauses mid-motion on viewport changes and resumes from the current position', () => {
-    const f = sent();
+  it('content above the prompt resizing mid-motion moves the path with it, not the prompt', () => {
+    const f = fixture({ animate: true });
+    const previous = f.add(11, 900, 100, false);
+    const ticket = f.controller.begin();
+    const prompt = f.add(12);
+    f.controller.acknowledge(ticket, 12);
     f.advance(180);
-    const current = f.scroller.scrollTop;
-    f.viewport.height = 380;
-    f.controller.viewportChanged();
-    f.advance(80);
-    expect(f.scroller.scrollTop).toBe(current);
-    f.viewport.height = 400;
-    f.controller.viewportChanged();
-    f.advance(100);
-    expect(f.scroller.scrollTop).toBe(current);
-    f.advance(450);
-    expect(f.scroller.scrollTop).toBe(1000);
-    const positions = f.scroller.scrollTo.mock.calls.map(([call]) => call.top);
-    expect(positions.every((top, i) => top >= (positions[i - 1] ?? 600))).toBe(true);
+    const edge = f.scroller.getBoundingClientRect().top;
+    const before = prompt.getBoundingClientRect().top - edge;
+    expect(before).toBeGreaterThan(0);
+    // The previous reply finishes rendering 40px taller.
+    previous.height += 40;
+    prompt.top += 40;
+    f.controller.update();
+    f.advance(16);
+    const after = prompt.getBoundingClientRect().top - edge;
+    expect(after).toBeLessThanOrEqual(before);
+    expect(before - after).toBeLessThan(80);
+    f.advance(400);
+    expect(f.scroller.scrollTop).toBe(1040);
   });
   it('reader release cancels an active tween without resetting their chosen position', () => {
     const f = sent();
@@ -473,18 +511,17 @@ describe('smooth prompt turn navigation', () => {
     f.advance(450);
     expect(f.scroller.scrollTop).toBe(1100);
   });
-  it('reduced motion still waits for keyboard dismissal, then positions without a tween', () => {
+  it('reduced motion places the prompt at once, even with the keyboard still going down', () => {
     const f = fixture();
     f.viewport.height = 200;
     const ticket = f.controller.begin();
     f.add(12);
     f.controller.acknowledge(ticket, 12);
-    f.advance(300);
-    expect(f.scroller.scrollTo).not.toHaveBeenCalled();
+    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1000, behavior: 'auto' });
     f.viewport.height = 400;
     f.controller.viewportChanged();
     f.advance(200);
-    expect(f.scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1000, behavior: 'auto' });
+    expect(f.scroller.scrollTop).toBe(1000);
     expect(f.frameCount()).toBe(0);
   });
   it('switching reduced motion on during a tween finishes once and stops its RAF', () => {

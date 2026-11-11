@@ -1751,6 +1751,10 @@ test('prompt turn follows overflow only when auto-scroll is enabled', async ({ p
         ),
     )
     .toBe(0);
+  // The target rounds up, so the row already reads flush in the motion's last
+  // sub-pixel frames; a reply that lands then is not followed (following does
+  // not compete with the send motion). Wait for the motion itself to end.
+  await expect(page.locator('#messages')).not.toHaveAttribute('data-prompt-motion', /.+/);
   await partial(page, '## 開啟跟隨\n\n' + '回覆超過一頁後可以繼續跟隨。'.repeat(120) + '\n\n');
   await ready(page);
   await expect
@@ -1805,9 +1809,7 @@ test('auto-scroll setting persists and turning it OFF fences pending image compl
   expect(errors).toEqual([]);
 });
 
-test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly', async ({
-  page,
-}, info) => {
+test('prompt turn scrolls upward smoothly while the keyboard closes', async ({ page }, info) => {
   await keyboardBoundary(page);
   const consoleErrors: string[] = [];
   page.on('console', (m) => {
@@ -1815,7 +1817,7 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
   });
   const { events, errors } = await setup(page, scrollHistory());
   await page.evaluate(() => (window as any).__setKeyboard(500));
-  await page.locator('#input').fill('等 iPhone 鍵盤收好，再平滑帶到這輪提問');
+  await page.locator('#input').fill('鍵盤一邊收，一邊平滑帶到這輪提問');
   await startPromptMotionSamples(page);
   const before = await scrollPosition(page);
   await page.locator('#btn-send').click();
@@ -1850,7 +1852,8 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
   const data = await finishPromptMotionSamples(page);
   const lastReport = data.keyboard.at(-1).time;
   const moving = data.samples.filter((s: any) => s.top > before + 2);
-  expect(moving[0].time).toBeGreaterThanOrEqual(lastReport + 100);
+  // One motion with the keyboard, not a second one after it has settled.
+  expect(moving[0].time).toBeLessThan(lastReport);
   const steps = data.samples.filter(
     (s: any, i: number, all: any[]) => i && s.top > all[i - 1].top + 1,
   );
@@ -1863,8 +1866,8 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
   ).toBeLessThan(120);
   await recordSamples(info, 'keyboard-smooth-scroll', data);
   // Send blurs the box, and the shell follows the keyboard down: the
-  // transcript only grows with each report (clearing a two-line draft grows it
-  // once more), then holds still. No remount, no bounce.
+  // transcript only grows with each report, then holds still. No remount, no
+  // bounce.
   const closingStart = data.keyboard.find((r: any) => r.height === 650).time;
   const closing = data.samples.filter((s: any) => s.time >= closingStart);
   expect(closing.every((s: any, i: number) => !i || s.height >= closing[i - 1].height)).toBe(true);
@@ -1872,7 +1875,7 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
     new Set(closing.filter((s: any) => s.time >= lastReport + 50).map((s: any) => s.height)).size,
   ).toBe(1);
   await shot(page, info, 'motion-01-keyboard-settled-prompt-at-top.png');
-  await partial(page, '## 從這輪下面開始\n\n鍵盤收合後，平滑向上。不搶讀者的位置。\n\n');
+  await partial(page, '## 從這輪下面開始\n\n鍵盤收合時，平滑向上。不搶讀者的位置。\n\n');
   await ready(page);
   await shot(page, info, 'motion-02-ready-reply.png');
   await openScrollSettings(page);
@@ -1915,6 +1918,102 @@ test('prompt turn waits for keyboard viewport quiet and scrolls upward smoothly'
   expect(consoleErrors).toEqual([]);
 });
 
+// iPhone 2026-11-11: with the keyboard up, Send slid the history down with the
+// keyboard (the end of the transcript clamped against the growing viewport
+// before the saved row arrived), paused, then scrolled it back up.
+test('Send with the keyboard up is one upward motion while the keyboard goes down', async ({
+  page,
+}, info) => {
+  await keyboardBoundary(page);
+  const { events, errors } = await setup(page, scrollHistory());
+  await page.locator('#input').focus();
+  // iOS pans the page as far as the keyboard: the shell is pinned 366px down.
+  await page.evaluate(() => (window as any).__setKeyboard(478, 366));
+  await expect(page.locator('html')).toHaveClass(/keyboard-shell/);
+  // The shell eases up along the pan; read the end of the history once it is there.
+  await expect(page.locator('html')).not.toHaveClass(/keyboard-shell-easing/);
+  await page.locator('#input').fill('鍵盤開著送出，一個動作往上');
+  await page.locator('#messages').evaluate((node) => (node.scrollTop = node.scrollHeight));
+  const before = await scrollPosition(page);
+  // At the end of the history, as when typing a reply.
+  expect(
+    await page
+      .locator('#messages')
+      .evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+  ).toBeLessThan(2);
+  await startPromptMotionSamples(page);
+  const userTop = () =>
+    page.evaluate(() => {
+      const host = window as any;
+      host.__userTops = [];
+      host.__jumpShown = 0;
+      const loop = () => {
+        const jump = document.getElementById('jump-live')!;
+        if (Number(getComputedStyle(jump).opacity) > 0.01) host.__jumpShown++;
+        const row = [...document.querySelectorAll('.msg-user')].at(-1) as HTMLElement | undefined;
+        if (row?.textContent?.includes('一個動作往上')) {
+          host.__userTops.push(
+            Math.round(row.getBoundingClientRect().top - host.visualViewport.offsetTop),
+          );
+        }
+        if (host.__recordPromptMotion) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    });
+  await userTop();
+  await page.locator('#btn-send').tap();
+  // iOS lowers the keyboard frame by frame from the tap; the saved row comes
+  // back over the network while it is still on its way down.
+  await page.evaluate((row) => {
+    const host = window as any;
+    const start = performance.now();
+    const step = () => {
+      const p = Math.min(1, (performance.now() - start) / 330);
+      const eased = 1 - (1 - p) ** 3;
+      host.__setKeyboard(Math.round(478 + (844 - 478) * eased), Math.round(366 * (1 - eased)));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    setTimeout(() => host.__emitReply('event', row), 90);
+  }, events.at(-1));
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__keyboardReports.at(-1).height))
+    .toBe(844);
+  await expect(page.locator('#messages')).not.toHaveAttribute('data-prompt-motion', /.+/);
+  await expect
+    .poll(() =>
+      page
+        .locator('.msg-user')
+        .last()
+        .evaluate(
+          (node) =>
+            Math.ceil(
+              node.getBoundingClientRect().top -
+                document.getElementById('messages')!.getBoundingClientRect().top,
+            ) + 0, // -0 when it tucks under by a fraction
+        ),
+    )
+    .toBe(0);
+  const data = await finishPromptMotionSamples(page);
+  const tops: number[] = await page.evaluate(() => (window as any).__userTops);
+  await recordSamples(info, 'keyboard-send-one-motion', { ...data, userTops: tops });
+  // The history never rides down with the keyboard: the position only rises.
+  expect(
+    data.samples.every((s: any, i: number, all: any[]) => !i || s.top >= all[i - 1].top - 1),
+  ).toBe(true);
+  expect(Math.min(...data.samples.map((s: any) => s.top))).toBeGreaterThanOrEqual(before - 1);
+  // It is already moving before the keyboard is down.
+  const lastReport = data.keyboard.at(-1).time;
+  expect(data.samples.find((s: any) => s.top > before + 2).time).toBeLessThan(lastReport);
+  // And the prompt itself only goes up the screen: no stop-and-go back down.
+  expect(tops.length).toBeGreaterThan(5);
+  expect(tops.every((top, i) => !i || top <= tops[i - 1] + 1)).toBe(true);
+  // The send is taking the reader to the present: no Jump to present flashing up.
+  expect(await page.evaluate(() => (window as any).__jumpShown)).toBe(0);
+  await shot(page, info, 'keyboard-send-one-motion.png');
+  expect(errors).toEqual([]);
+});
+
 test('prompt turn enabled following cannot snap or interrupt its send animation', async ({
   page,
 }, info) => {
@@ -1952,26 +2051,31 @@ test('prompt turn composer refocus cancels the in-flight send animation', async 
   expect(await scrollPosition(page)).toBeCloseTo(chosen, 0);
 });
 
-test('prompt turn reduced motion waits for the keyboard without autonomous scrolling frames', async ({
+test('prompt turn reduced motion places the prompt at once and holds it while the keyboard closes', async ({
   page,
 }, info) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await keyboardBoundary(page);
   const { events } = await setup(page, scrollHistory());
   await page.evaluate(() => (window as any).__setKeyboard(500));
-  await page.locator('#input').fill('減少動態效果仍等待鍵盤收合');
+  await page.locator('#input').fill('減少動態效果：一步到位，鍵盤收合時不動');
   await startPromptMotionSamples(page);
   await page.locator('#btn-send').click();
   await emit(page, 'event', events.at(-1));
   await page.evaluate(() => {
     setTimeout(() => (window as any).__setKeyboard(844), 350);
   });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__keyboardReports.at(-1).height))
+    .toBe(844);
+  await page.waitForTimeout(300);
   await expect(page.locator('#messages')).not.toHaveAttribute('data-prompt-motion', /.+/);
   const data = await finishPromptMotionSamples(page);
   const steps = data.samples.filter(
-    (s: any, i: number, all: any[]) => i && s.top > all[i - 1].top + 1,
+    (s: any, i: number, all: any[]) => i && Math.abs(s.top - all[i - 1].top) > 1,
   );
+  // One jump, before the keyboard has gone; nothing moves as it goes.
   expect(steps.length).toBe(1);
-  expect(steps[0].time).toBeGreaterThanOrEqual(data.keyboard.at(-1).time + 100);
+  expect(steps[0].time).toBeLessThan(data.keyboard.at(-1).time);
   await recordSamples(info, 'reduced-keyboard-placement', data);
 });

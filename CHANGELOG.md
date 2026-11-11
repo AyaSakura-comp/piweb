@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Send with the on-screen keyboard up is one upward motion while the keyboard goes down: the history no longer slides down with the keyboard, pauses and scrolls back up, and Jump to present no longer flashes up during a send
 - Run BTW side controls beside the serial worker control loop so a long answer does not block later snapshots or unrelated controls, while retaining ownership fencing
 - Keep Claude background Bash/Monitor work alive across yielded acknowledgements, publish intermediate replies to history and suppress an identical already-delivered final reply
 - Complete extension-consumed RPC prompts on `input_handled` when no agent run starts, and use displayed custom receipt text when no assistant text is available

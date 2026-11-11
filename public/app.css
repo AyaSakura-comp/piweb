@@ -1097,10 +1097,19 @@ html.keyboard-shell .life-edge-hint {
 }
 
 /* The submitted turn owns at least one visible transcript viewport. Its
-   non-semantic reservation shrinks as the actual response grows underneath. */
+   non-semantic reservation shrinks as the actual response grows underneath.
+   A block after the rows, not padding: while the keyboard goes down it also
+   holds the room the keyboard is about to free, which can be taller than the
+   transcript, and a box is never shorter than its padding (padding that size
+   stretched the transcript past the screen). */
 #messages[data-prompt-turn='active'] {
-  padding-bottom: calc(4px + var(--prompt-turn-space, 0px));
   overflow-anchor: none;
+}
+
+#messages[data-prompt-turn='active']::after {
+  content: '';
+  display: block;
+  height: var(--prompt-turn-space, 0px);
 }
 
 .msg {
@@ -3226,6 +3235,15 @@ html.keyboard-shell .life-edge-hint {
   pointer-events: auto;
 }
 
+/* Send is carrying the transcript to the prompt just sent: the blank reserved
+   under it is not "away from the present". The pill flashed up for the whole
+   motion and went again (iPhone, keyboard up, 2026-11-11). */
+#messages[data-prompt-motion] ~ .jump-live.visible {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+  pointer-events: none;
+}
+
 /* ── full-screen reading ─────────────────────────────────────────────────
    A tap on the transcript (session-fullscreen.js): the header and the bottom
    chrome turn into overlays, so the transcript fills .main at once, then slide
@@ -3295,10 +3313,6 @@ html.keyboard-shell .life-edge-hint {
 
 .app.session-fullscreen #messages {
   padding-bottom: calc(4px + env(safe-area-inset-bottom));
-}
-
-.app.session-fullscreen #messages[data-prompt-turn='active'] {
-  padding-bottom: calc(4px + env(safe-area-inset-bottom) + var(--prompt-turn-space, 0px));
 }
 
 .app.session-fullscreen .main > .stream-dock {

@@ -1927,13 +1927,13 @@ $('messages').addEventListener(
   { passive: true },
 );
 
-let lastJumpLiveState = null;
+// Compared with the button itself, not a cached last value: transcript updates
+// (settleTranscriptUpdate, jumpToLatest) toggle it directly, and a stale cache
+// left the pill up after the reader was back at the newest message.
 function setJumpLive(show) {
   const visible = Boolean(show);
-  if (visible !== lastJumpLiveState) {
-    lastJumpLiveState = visible;
-    $('jump-live').classList.toggle('visible', visible);
-  }
+  const button = $('jump-live');
+  if (button.classList.contains('visible') !== visible) button.classList.toggle('visible', visible);
 }
 
 async function reopenActiveTail() {
@@ -3745,6 +3745,17 @@ function renderFiles(container, files, content = '') {
 const promptTurnScroll = createPromptTurnScroll({
   scroller: $('messages'),
   getOwner: () => `${sessionSelectionGeneration}:${state.activeJid}`,
+  // While the keyboard is up the shell is pinned to the shorter visual viewport
+  // (viewport-shell.js); whatever it is short of its resting height is what
+  // the transcript still grows by as the keyboard goes down, including the
+  // eased leave. iOS 26 can leave visualViewport short after the keyboard has
+  // gone (WebKit 301857), so the shell, not the viewport, is the measure.
+  keyboardCover: () => {
+    const root = document.documentElement;
+    if (!root.classList.contains('keyboard-shell')) return 0;
+    const rest = Math.max(window.innerHeight || 0, root.clientHeight || 0);
+    return Math.max(0, Math.ceil(rest - $('app').getBoundingClientRect().height));
+  },
 });
 
 $('messages').addEventListener('click', (event) => {
@@ -4694,6 +4705,10 @@ $('composer').addEventListener('submit', async (e) => {
   // separate attachment array and composer state.
   const submittedAttachments = state.attachments;
   const compressImages = imageCompressionCheckbox.checked;
+  // Before the composer shrinks (draft, quote, chips, camera all go): the
+  // transcript holds the reader's place from here until the prompt arrives.
+  releaseComposerBottomLock();
+  const promptTicket = promptTurnScroll.begin();
   // Camera photos remain visible until acknowledged; later attachments are
   // separate objects and cannot be removed by this batch's completion.
   state.attachments = state.attachments.filter(a => a.isCamera);
@@ -4713,8 +4728,9 @@ $('composer').addEventListener('submit', async (e) => {
   // Dismiss immediately on a valid send; retained photos outlive the preview
   // and are cleared only after acknowledgement, so failures remain retryable.
   if (cameraWasOpen) cameraComposer.dismiss();
-  releaseComposerBottomLock();
-  const promptTicket = promptTurnScroll.begin();
+  // The shrunk composer grew the transcript: re-hold the reader's place now,
+  // in this task, so a clamped frame never paints.
+  promptTurnScroll.update();
   input.blur();
 
   try {

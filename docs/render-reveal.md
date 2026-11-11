@@ -226,24 +226,38 @@ send navigation applies with auto-scroll OFF as well as ON.
 
 #### Smooth Send and keyboard dismissal
 
-Send captures keyboard visibility **before** `input.blur()`. The controller owns
+Send calls `begin()` **before** it clears the composer and blurs it. The controller owns
 one `waiting → moving → anchored` transition; its real `scrollTop` moves over
 **360ms** with cubic ease-in-out. It does not translate a duplicate message or set
 global CSS `scroll-behavior: smooth`. Layout targets are cached between actual
 mutation/resize updates, rather than measuring every historical row each frame.
 
-For an iPhone-style visual viewport shorter than the layout viewport, a Send waits
-for closure reporting, a **220ms** initial guard, **120ms** of quiet after the last
-changed viewport height/offset/size, and two layout frames. The guard is not an
-assumed fixed keyboard-animation duration: later resize/scroll reports restart
-quiet settlement. Identical geometry reports do not extend the wait. A **1000ms**
-keyboard-wait fallback prevents a stale open-keyboard report from holding navigation
-forever; the current layout is used, not an assumed full-screen keyboard height.
-It never bypasses the 120ms viewport-quiet requirement: delayed acknowledgements and
-fresh geometry changes after the fallback threshold still settle before scrolling.
-A real geometry change during motion pauses and resumes from the current position,
-not from the original scroll position. Continued geometry changes can delay
-completion; these bounds are not a physical Safari timing guarantee.
+**Send with the keyboard up is one motion (2026-11-11).** The send used to wait
+for keyboard closure (a 220ms guard, 120ms of viewport quiet, a 1000ms fallback).
+Meanwhile the transcript, at the end of its history, grew with the visual viewport
+and the browser clamped its position, so the history slid down with the keyboard
+(about 150px, measured frame by frame), paused about 130ms, then scrolled back up
+for 360ms, about 850ms in all. The target, the prompt flush with the top edge, does
+not depend on the viewport height, so nothing has to wait:
+
+- `begin()` runs **before** the composer is cleared and records where the reader
+  is. Until the prompt's row is known the reservation holds that place: it covers
+  the composer shrinking (draft, quote, chips, camera) and the room the keyboard is
+  about to free (`keyboardCover`, the pinned shell's shortfall from its resting
+  height in `app.js`), and a clamp that slipped in is undone before it paints.
+- Once the row is known the reservation is the visible turn plus that remaining
+  keyboard cover, so the growing viewport never clamps the motion, and the motion
+  starts after two layout frames, alongside the keyboard (about 500ms in all).
+- Viewport changes neither pause nor restart it. Content above the prompt that
+  resizes mid-motion shifts the path with it, so the prompt does not jump.
+- Jump to present is hidden while `#messages[data-prompt-motion]` is set (CSS):
+  the reserved blank under the prompt made the transcript read as "away from the
+  bottom", and the pill flashed up for the whole motion (about 0.8s on the old
+  timing). `setJumpLive` compares with the button itself rather than a cached
+  value, since `settleTranscriptUpdate` and `jumpToLatest` toggle it directly.
+- The reservation is the transcript's `::after` block, not bottom padding: with the
+  keyboard cover it can be taller than the transcript, and padding that size
+  stretched the transcript past the screen.
 
 Automatic reply/asset following is suspended while a send or its transition owns
 scrolling, including deferred finalization callbacks. This prevents ON from jumping
@@ -251,18 +265,25 @@ to the tail in the middle of the animation. Typing/refocusing, wheel/touch/point
 reader input, manual Jump, newer submissions and navigation cancel obsolete motion.
 Cancellation stops the owned RAF without restoring its original starting position.
 The reservation remains when a reader merely takes control; navigation/Jump removes
-it. `prefers-reduced-motion: reduce` positions without a tween but still respects
-keyboard settlement; changing that preference during motion finishes it once.
+it. `prefers-reduced-motion: reduce` places the prompt in one step as soon as its
+row is known, keyboard or not; changing that preference during motion finishes it
+once.
 
 The keyboard browser tests mock only the visualViewport reporting boundary, while
 running the production UI/renderer/CSS. They intentionally leave the layout viewport
 full-height and include a late offset report, enabled following, real composer
 refocus, reduced motion and a dark/light continuous journey. A cleared multi-line
 draft legitimately resizes its composer independently of those keyboard reports.
+`Send with the keyboard up is one upward motion while the keyboard goes down`
+starts at the end of the history with the shell pinned 366px down, lowers the
+keyboard frame by frame from the tap and delivers the saved row 90ms in, then
+checks that the position only rises, that it moves before the keyboard is down,
+that the prompt only goes up the screen and that Jump to present never shows. It
+fails on the waiting version.
 These fixtures are not a physical iPhone/Safari/PWA or native IME verification.
 
-Reservation is **bottom padding on the transcript**, not cloned messages, fake
-history or a spacer after each row. It is `max(0, viewport height -
+Reservation is **one blank block at the end of the transcript** (its `::after`),
+not cloned messages, fake history or a spacer after each row. It is `max(0, viewport height -
 actual turn height - base bottom padding)`: short answers keep whitespace below,
 ready reply/media growth spends it, and long answers need no extra whitespace.
 The viewport height there is the one the prompt was held in: after a reader
@@ -270,13 +291,13 @@ gesture releases the turn, a taller viewport (full-screen reading, the keyboard
 closing) no longer grows the reservation, while a shrinking reply still does.
 Mutation/resize observations batch measurement; reveal-mask animation alone does
 not cause per-frame remeasurement. A temporary rich-body replacement may clamp
-native scrollTop before padding is recalculated; the still-owned prompt position
+native scrollTop before the reservation is recalculated; the still-owned prompt position
 is restored rather than following the new answer to its bottom.
 
 Thinking/tool disclosure activation uses one synchronous layout transaction:
 change `details.open`, recompute the current turn's reservation, then restore the
 pre-click scroll offset before painting. Native collapse can otherwise clamp
-`scrollTop` before ResizeObserver replenishes the padding, exposing older history
+`scrollTop` before ResizeObserver replenishes the reservation, exposing older history
 and incorrectly showing Jump to present. `preserveLayout` keeps a released reader
 pin released and checks exact turn/selection ownership before restoring. Delegated
 summary clicks cover partial and durable rows plus native Enter/Space activation;
@@ -296,7 +317,7 @@ Preserving an existing reader offset does not reclaim a released prompt pin.
 The auto-scroll preference governs later growth: OFF holds position; ON follows
 only from the tail when overflow requires it. Pointer/touch/wheel/keyboard reader
 interaction releases pending navigation and viewport re-pinning. Manual Jump to
-present removes the reservation; navigation clears observers, owned padding and
+present removes the reservation; navigation clears observers, the owned reservation and
 pending acknowledgements. Stale selections, newer submissions, malformed/lost
 acknowledgements and failed requests cannot claim another conversation. Identical
 prompt text is not used as identity. Slash commands and BTW are not normal-turn
@@ -340,7 +361,7 @@ npx vitest run test/streaming-rich.test.ts test/thinking-stream.test.ts \
 # The 'prompt turn submission raises' regression also checks every preceding row
 # is fully above the clipping edge (no previous-message sliver), then short/long
 # replies, next Send, dark/light, viewport resize and manual history reading.
-# next turn, keyboard-quiet smooth Send, reader/refocus cancellation, reduced motion,
+# next turn, smooth Send alongside the keyboard, reader/refocus cancellation, reduced motion,
 # viewport changes, ON follow without animation snap and pending-image OFF.
 # Settings OFF → submit navigation → hold stream/final position → ON → OFF;
 # persisted choice, delayed assets, native anchoring, final DOM/frontier identity.

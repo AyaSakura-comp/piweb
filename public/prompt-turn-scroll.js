@@ -1,8 +1,16 @@
 const SPACE_PROPERTY = '--prompt-turn-space';
-const VIEWPORT_QUIET_MS = 120;
-const KEYBOARD_GUARD_MS = 220;
-const MAX_KEYBOARD_WAIT_MS = 1000;
 const SCROLL_DURATION_MS = 360;
+
+/**
+ * How much taller the transcript will get once the on-screen keyboard is down.
+ * The app passes the pinned shell's shortfall; this fallback reads the visual
+ * viewport for callers without a keyboard shell.
+ */
+function visualViewportCover() {
+  const vv = globalThis.visualViewport;
+  if (!vv) return 0;
+  return Math.max(0, Math.round((globalThis.innerHeight || 0) - vv.height));
+}
 
 /** Reserve one visible turn, not a screen-sized spacer after every message. */
 export function getPromptTurnLayout(
@@ -24,35 +32,32 @@ export function getPromptTurnLayout(
   };
 }
 
-/** Browser-local send navigation. A durable ack and its SSE row must agree. */
-export function createPromptTurnScroll({ scroller, getOwner }) {
+/**
+ * Browser-local send navigation. A durable ack and its SSE row must agree.
+ *
+ * Send with the keyboard up is one motion (iPhone, 2026-11-11): the scroll
+ * starts as soon as the prompt's row is known and runs while iOS lowers the
+ * keyboard. It used to wait for the keyboard to settle, and the transcript
+ * meanwhile slid down with the growing viewport (its end clamped against the
+ * bottom), paused, then scrolled back up. The target, the prompt flush with
+ * the top edge, does not depend on the viewport height, so nothing has to
+ * wait: the reservation instead covers the room the keyboard is about to free
+ * (`keyboardCover`), from the tap on, so the growing viewport never clamps the
+ * position and the history stays put until the prompt carries it up.
+ */
+export function createPromptTurnScroll({
+  scroller,
+  getOwner,
+  keyboardCover = visualViewportCover,
+}) {
   let pending = null;
   let turn = null;
   let frame = 0;
   let dirty = false;
   let updating = false;
-  let viewportAt = -Infinity;
-  let viewportState = viewportSnapshot();
   const observed = new Set();
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
   const mutations = typeof MutationObserver === 'function' ? new MutationObserver(schedule) : null;
-
-  function viewportSnapshot() {
-    const vv = globalThis.visualViewport;
-    return [
-      vv?.height,
-      vv?.offsetTop,
-      vv?.width,
-      globalThis.innerHeight,
-      scroller.clientHeight,
-    ].join(':');
-  }
-
-  function keyboardOpen() {
-    return Boolean(
-      globalThis.visualViewport && globalThis.innerHeight - globalThis.visualViewport.height > 120,
-    );
-  }
 
   function reducedMotion() {
     return Boolean(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
@@ -78,17 +83,9 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
     frame = 0;
   }
 
+  // The keyboard going down only grows the viewport; the target stays put, so
+  // a motion keeps going and the reservation is simply re-measured.
   function viewportChanged() {
-    const next = viewportSnapshot();
-    if (next !== viewportState) {
-      viewportState = next;
-      viewportAt = performance.now();
-      if (turn?.motion) {
-        turn.motion.phase = 'waiting';
-        turn.motion.readyFrames = 0;
-        scroller.dataset.promptMotion = 'waiting';
-      }
-    }
     if (pending || turn) schedule();
   }
 
@@ -148,19 +145,14 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
             pin: true,
             height: -1,
             goal: null,
-            motion: {
-              phase: 'waiting',
-              readyFrames: 0,
-              began: pending.began,
-              keyboard: pending.keyboard,
-            },
+            motion: { phase: 'waiting', readyFrames: 0 },
           };
           pending = null;
           scroller.dataset.promptMotion = 'waiting';
         }
       }
-      if (!turn) {
-        if (!pending) clear();
+      if (!turn && !pending) {
+        clear();
         return;
       }
       watch();
@@ -168,46 +160,64 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
       // layout; showing it again resizes it, which schedules a fresh update.
       if (!scroller.clientHeight) return;
       const previousSpace = Number.parseFloat(scroller.style.getPropertyValue(SPACE_PROPERTY)) || 0;
-      const style = getComputedStyle(scroller);
-      const bottomPadding = (Number.parseFloat(style.paddingBottom) || 0) - previousSpace;
+      // The reservation is the ::after block after the rows, not padding.
+      const bottomPadding = Number.parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
       const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
-      const anchorTop = turn.node.getBoundingClientRect().top - origin;
+      const anchorTop = turn ? turn.node.getBoundingClientRect().top - origin : 0;
       const bottom = Math.max(
         anchorTop,
         ...Array.from(scroller.children).map((row) => row.getBoundingClientRect().bottom - origin),
       );
-      // The spacer exists to hold the prompt at the top, so it is sized for the
-      // viewport it was held in. Once the reader has taken over (a scroll, a
-      // tap), a taller viewport (full-screen reading, the keyboard going away)
-      // must not grow it into a blank band under the newest message (iPhone
-      // recording 2026-10-31); a reply that shrinks (a disclosure folding)
-      // still does, so nothing on screen moves.
-      if (turn.pin || turn.motion) turn.heldHeight = scroller.clientHeight;
-      const layout = getPromptTurnLayout(
-        Math.min(scroller.clientHeight, turn.heldHeight ?? scroller.clientHeight),
-        anchorTop,
-        bottom,
-        bottomPadding,
-      );
+      // While a send owns the transcript, reserve the room the keyboard is
+      // still going to free: the viewport grows into it on every frame of
+      // iOS lowering the keyboard, and without it the browser clamps the
+      // position (the history slides down) before the next re-measure.
+      const sending = Boolean(pending || turn?.motion || turn?.pin);
+      const cover = sending ? keyboardCover() : 0;
+      // Until the prompt's row exists, the history stays where the reader left
+      // it: neither the composer shrinking as Send clears it nor the keyboard
+      // going down may let its end ride down. (At the very top nothing can be
+      // clamped, so nothing is held there.)
+      const held =
+        pending?.place > 0.5
+          ? pending.place + scroller.clientHeight + cover - (bottom + bottomPadding)
+          : 0;
+      const hold = held > 0.5 ? Math.ceil(held) : 0;
+      let space = hold;
+      let layout = null;
+      if (turn) {
+        // The spacer exists to hold the prompt at the top, so it is sized for the
+        // viewport it was held in. Once the reader has taken over (a scroll, a
+        // tap), a taller viewport (full-screen reading, the keyboard going away)
+        // must not grow it into a blank band under the newest message (iPhone
+        // recording 2026-10-31); a reply that shrinks (a disclosure folding)
+        // still does, so nothing on screen moves.
+        if (turn.pin || turn.motion) turn.heldHeight = scroller.clientHeight;
+        layout = getPromptTurnLayout(
+          Math.min(scroller.clientHeight, turn.heldHeight ?? scroller.clientHeight),
+          anchorTop,
+          bottom,
+          bottomPadding,
+        );
+        space = Math.max(hold, layout.space + cover);
+      }
+      if (previousSpace !== space) scroller.style.setProperty(SPACE_PROPERTY, `${space}px`);
+      if (!turn && space) scroller.dataset.promptTurn = 'active';
+      // Undo a clamp that landed before this re-measure, before it paints.
+      if (pending && scroller.scrollTop < pending.place - 0.5)
+        scroller.scrollTo({ top: pending.place, behavior: 'auto' });
+      if (!turn) return;
       const pin =
         turn.pin && (turn.height !== scroller.clientHeight || scroller.scrollTop < layout.top - 1);
-      if (turn.motion && turn.goal !== null && Math.abs(turn.goal - layout.top) > 1) {
-        turn.motion.phase = 'waiting';
-        turn.motion.readyFrames = 0;
-      }
+      // Content above the prompt changed size mid-motion: shift the path with
+      // it, so the prompt keeps moving smoothly instead of jumping.
+      if (turn.motion?.phase === 'moving' && turn.goal !== null)
+        turn.motion.from += layout.top - turn.goal;
       turn.goal = layout.top;
       turn.height = scroller.clientHeight;
       scroller.dataset.promptTurn = 'active';
-      if (previousSpace !== layout.space)
-        scroller.style.setProperty(SPACE_PROPERTY, `${layout.space}px`);
       if (turn.motion) {
-        // Reduced motion can retain synchronous placement on a stable desktop.
-        // It does not exempt an iPhone send from keyboard/layout settlement.
-        if (
-          reducedMotion() &&
-          !turn.motion.keyboard &&
-          performance.now() - viewportAt >= VIEWPORT_QUIET_MS
-        ) {
+        if (reducedMotion()) {
           scroller.scrollTo({ top: turn.goal, behavior: 'auto' });
           stopMotion();
         } else requestFrame();
@@ -230,13 +240,9 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
     if (!turn?.motion) return;
     const motion = turn.motion;
     if (motion.phase === 'waiting') {
+      // Two frames for the new row's own layout (fonts, Markdown) to settle.
       motion.readyFrames++;
-      const elapsed = now - motion.began;
-      const quiet = now - viewportAt >= VIEWPORT_QUIET_MS;
-      const keyboardReady = !motion.keyboard || (elapsed >= KEYBOARD_GUARD_MS && !keyboardOpen());
-      const fallback = motion.keyboard && elapsed >= MAX_KEYBOARD_WAIT_MS;
-      // A stale keyboard report can time out; fresh viewport geometry cannot.
-      if (motion.readyFrames < 2 || !quiet || (!keyboardReady && !fallback)) {
+      if (motion.readyFrames < 2) {
         requestFrame();
         return;
       }
@@ -257,14 +263,10 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
       if (turn && !owned()) clear();
       stopMotion();
       if (turn) turn.pin = false;
-      viewportChanged();
-      pending = {
-        owner: getOwner(),
-        eventId: null,
-        began: performance.now(),
-        keyboard: keyboardOpen(),
-      };
-      watch();
+      // Call before the composer is cleared: where the reader is now is held.
+      pending = { owner: getOwner(), eventId: null, place: scroller.scrollTop };
+      // Reserve now, before iOS starts lowering the keyboard.
+      update();
       return pending;
     },
     get navigating() {
@@ -279,7 +281,8 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
       if (!current(ticket)) return;
       if (!Number.isSafeInteger(eventId) || eventId <= 0) {
         pending = null;
-        if (!turn) clear();
+        if (turn) update();
+        else clear();
         return;
       }
       ticket.eventId = eventId;
@@ -288,6 +291,7 @@ export function createPromptTurnScroll({ scroller, getOwner }) {
     cancel(ticket) {
       if (pending === ticket) pending = null;
       if (!pending && !turn) clear();
+      else if (turn) schedule();
     },
     release() {
       pending = null;

@@ -286,18 +286,23 @@ composer locks and disables browser scroll anchoring and automatic reply/asset
 following; manual scrolling and Jump to present remain available. Normal Send is
 explicit navigation: match the saved user event ID, align the question's outer row
 with the transcript's clipping edge (rounding upward for fractional pixels), and
-reserve the remaining visible turn through bottom padding. The row's own padding
-keeps its contents inset; no part of the previous turn remains visible above it.
-Send uses a cancellable 360ms cubic ease-in-out real-scroll animation, not a
-translated clone. Capture keyboard visibility before blur; wait for reported closure,
-120ms viewport quiet, a 220ms initial keyboard guard and two layout frames. Later
-height/offset reports pause/resume from the current position; stale keyboard reports
-have a bounded 1000ms fallback, not a hardcoded iPhone animation duration. Fresh
-geometry always waits for 120ms quiet, including delayed acknowledgements after
-that fallback threshold. Automatic reply-follow cannot compete during the transition.
-Reduced motion skips the tween
-but still waits for keyboard settlement; composer refocus/reader gestures cancel it.
-These timings have deterministic Chromium boundary tests, not physical Safari proof.
+reserve the remaining visible turn through a blank block after the rows (the
+transcript's `::after`, not padding: a box is never shorter than its padding). The
+row's own padding keeps its contents inset; no part of the previous turn remains
+visible above it. Send uses a cancellable 360ms cubic ease-in-out real-scroll
+animation, not a translated clone. **With the keyboard up, Send is one upward motion
+while the keyboard goes down** (iPhone 2026-11-11; it used to slide the history down
+with the keyboard, pause, then scroll back up): from the tap until the prompt's row
+arrives the history stays where the reader left it (the reservation holds that place
+through the composer shrinking and the room the keyboard is about to free), and the
+motion starts two layout frames after the row, without waiting for the keyboard.
+Viewport changes do not pause or restart it; content above the prompt resizing shifts
+its path with it. Jump to present stays hidden while it runs (the blank reserved
+under the prompt is not "away"; it used to flash up for the whole motion).
+Automatic reply-follow cannot compete during the transition.
+Reduced motion places the prompt in one step as soon as its row is known; composer
+refocus/reader gestures cancel the motion. Covered by deterministic Chromium
+boundary tests, not physical Safari proof.
 Typing alone does not move it. Replies fill that space without pushing OFF readers;
 ON follows overflowing replies only while at the tail. Short replies retain blank
 space; no per-message spacers accumulate. New sends replace the active anchor;
