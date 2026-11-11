@@ -13,6 +13,13 @@ const FRAME = 1000 / 120;
 const START = ['p1', 13] as const;
 type End = readonly [string, number];
 
+// Down through every block, a few characters a frame.
+const SWEEP: [number, End][] = [
+  ...[30, 40, 50, 60].map((o): End => ['p1', o]),
+  ...[1, 3, 5].map((o): End => ['h', o]),
+  ...[10, 20, 30, 40, 50, 60].map((o): End => ['li1', o]),
+  ...[8, 16, 24, 32, 40, 48, 56].map((o): End => ['li2', o]),
+].map((end, i) => [1000 + i * 16.7, end]);
 // Where the end of the selection goes, and when (ms on the bubble's clock).
 // The last step is the one whose frames are compared; a step at least 500ms
 // after the one before starts from a settled bubble.
@@ -37,8 +44,7 @@ const DRAGS: Record<string, [number, End][]> = {
     [0, ['li1', 30]],
     [1000, ['p1', 55]],
   ],
-  // A finger moving every frame: lines pour and drain while the end slides,
-  // and pieces whose motion did not change keep playing.
+  // A finger moving every frame: lines pour and drain while the end slides.
   'a drag across four lines, one move per frame': [
     [0, ['li1', 40]],
     ...Array.from({ length: 30 }, (_, i): [number, End] => {
@@ -50,6 +56,9 @@ const DRAGS: Record<string, [number, End][]> = {
       return [1000 + i * 16.7, ends[i]];
     }),
   ],
+  // 「現在無敵卡」 (2026-11-11): a finger sweeping down a long selection puts
+  // many lines in motion at once, and that motion is drawn frame by frame.
+  'a sweep down the whole message, one move per frame': [[0, ['p1', 20]], ...SWEEP],
 };
 const FRAMES = [0, 1, 2, 3, 4, 6, 8, 10, 13, 17, 24, 32];
 
@@ -171,3 +180,51 @@ for (const [name, steps] of Object.entries(DRAGS)) {
     expect(results.filter(({ off }) => off > 0)).toEqual([]);
   });
 }
+
+/** The pieces in motion now, and when each started. */
+async function running(page: Page) {
+  return page.evaluate(() =>
+    document
+      .getAnimations()
+      .filter((animation) => (animation.effect as KeyframeEffect)?.target instanceof Element && ((animation.effect as KeyframeEffect).target as Element).matches('.sel-bubble-piece'))
+      .map((animation) => Number(animation.startTime)),
+  );
+}
+
+async function drag(page: Page, steps: [number, End][], each?: () => Promise<void>) {
+  await page.goto('/fixtures/selection-bubble-frames.html?theme=dark');
+  await page.waitForFunction(() => (window as any).bubbleFramesReady);
+  for (const [i, [time, end]] of steps.entries()) {
+    await page.evaluate(
+      ([t, from, to]) => {
+        const frames = (window as any).bubbleFrames;
+        frames.at(1000 + t);
+        frames.set(from, to);
+      },
+      [time, START, end] as const,
+    );
+    if (i === 0) await page.evaluate(() => (window as any).bubbleFrames.settle());
+    else await each?.();
+  }
+}
+
+test('a sweep down a long selection never puts more than a few lines of parts in motion', async ({ page }) => {
+  // Every part of every moving line was planned and restarted on each move: on
+  // a long selection a move cost 17ms on desktop and the phone fell far behind.
+  let most = 0;
+  await drag(page, DRAGS['a sweep down the whole message, one move per frame'], async () => {
+    most = Math.max(most, (await running(page)).length);
+  });
+  expect(most).toBeLessThanOrEqual(40);
+});
+
+test('after a change mid-spring, every piece in motion starts again together', async ({ page }) => {
+  // Parts only fit together while their animations run on one clock; one kept
+  // playing from an earlier change could drift from a neighbour started now.
+  const starts = new Set<number>();
+  await drag(page, DRAGS['a drag across four lines, one move per frame'], async () => {
+    const now = await running(page);
+    if (now.length) starts.add(new Set(now).size);
+  });
+  expect([...starts]).toEqual([1]);
+});

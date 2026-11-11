@@ -158,11 +158,23 @@ same rules hold in the chat and in a Dashboard pane.
     Translucent, every overlap would show darker, so the fill and the rim are
     each drawn opaque and made translucent once, as a group, by a mask with the
     alpha they always had, top to bottom.
-  - A drag re-plans on every move; a piece whose motion did not change (its
-    lines kept their targets) keeps playing.
+  - Every change restarts every moving part, all in the same update: parts
+    fit only while their animations share a clock, and one kept playing from
+    an earlier change could drift from a neighbour started now (the outline
+    broke into steps, 「覺得泡泡沒有以前來的順暢…變成階梯」). A drag points
+    the bubble at the selection once a frame, in `requestAnimationFrame`.
+  - Only a motion of at most two lines (`MAX_MOVING_LINES`) plays as parts. A
+    finger sweeping down a long selection sets many lines moving at once, and
+    planning all their parts on every move cost 17ms a move on desktop
+    (「現在無敵卡」, 2026-11-11): such a motion is drawn frame by frame as one
+    outline from the same springs (60Hz on iOS), each line's glow drawn once
+    and only moved and faded. A glow's strength is its opacity, so a bubble
+    that grows does not repaint every line's glow.
   - At rest the bubble looks as before (within antialiasing).
     `test/e2e/selection-bubble-frames.spec.ts` freezes the spring on 120Hz
-    frames and compares every one with the outline drawn whole;
+    frames and compares every one with the outline drawn whole (parts and
+    frame by frame), caps the parts in motion on a sweep, and checks that
+    moving parts share one start;
     `test/e2e/selection-bubble-motion.spec.ts`, `test/selection-bubble.test.ts`.
 - **The pill steps aside while the finger drags.** Long-press swipe or handle:
   the quote/copy pill hides and the composer's quote waits; both come back with

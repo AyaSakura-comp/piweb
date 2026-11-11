@@ -180,3 +180,63 @@ test('the quote pill steps aside while a handle is dragged and comes back on the
   await expect(pill).toBeVisible();
   expect(await page.evaluate(() => (window as any).__selectedText)).toBe(live.trim());
 });
+
+test('a dragged handle moves the bubble once a frame, not on every move', async ({ page }) => {
+  // Each time the bubble is pointed somewhere new it plans its whole spring;
+  // a finger can move more often than frames are drawn.
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__bubbleWork = 0;
+    const count = () => (w.__bubbleWork += 1);
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args: any[]) {
+      if (this.closest?.('.sel-bubble-layer')) count();
+      return animate.apply(this, args as any);
+    };
+    const setKeyframes = KeyframeEffect.prototype.setKeyframes;
+    KeyframeEffect.prototype.setKeyframes = function (...args: any[]) {
+      count();
+      return setKeyframes.apply(this, args as any);
+    };
+    const set = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name: string, value: string) {
+      if (name === 'd' && this.closest?.('.sel-bubble-layer')) count();
+      return set.call(this, name, value);
+    };
+    document.addEventListener('touchstart', (event) => (w.__touchId = event.touches[0]?.identifier), true);
+  });
+  const { touch, box } = await longPress(page);
+  await touch('touchEnd');
+  await expect(page.locator('#sel-highlight-boxes')).toHaveAttribute('data-bubble', 'settled');
+  const knob = (await page.locator('#sel-handle-end .sel-handle-knob').boundingBox())!;
+  const from = { x: knob.x + knob.width / 2, y: knob.y + knob.height / 2 };
+  await touch('touchStart', from.x, from.y);
+
+  const work = await page.evaluate(
+    async ({ from, right }) => {
+      const w = window as any;
+      const handle = document.getElementById('sel-handle-end')!;
+      const move = (x: number) => {
+        const point = new Touch({ identifier: w.__touchId, target: handle, clientX: x, clientY: from.y });
+        handle.dispatchEvent(
+          new TouchEvent('touchmove', { touches: [point], targetTouches: [point], changedTouches: [point], bubbles: true, cancelable: true }),
+        );
+      };
+      const highlight = () => [...((CSS as any).highlights.get('piweb-selection') ?? [])][0]?.toString() ?? '';
+      const before = highlight();
+      w.__bubbleWork = 0;
+      move(Math.min(right, from.x + 60));
+      move(Math.min(right, from.x + 120));
+      const during = w.__bubbleWork;
+      const grew = highlight().length > before.length;
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      return { during, grew, after: w.__bubbleWork };
+    },
+    { from, right: box.x + box.width - 4 },
+  );
+  // The selection followed the finger at once; the bubble waited for the frame.
+  expect(work.grew).toBe(true);
+  expect(work.during).toBe(0);
+  expect(work.after).toBeGreaterThan(0);
+  await touch('touchEnd');
+});

@@ -1067,8 +1067,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   rounded corners and inner fillets, each line's glow), every 120Hz frame placed on the exact outline, moving
   parts as `.sel-bubble-piece` elements with `transform` keyframes. Fill and rim are each drawn opaque and made
   translucent once by a group mask (`.sel-bubble-fills`/`.sel-bubble-rims`), so overlapping parts never show
-  seams; `test/e2e/selection-bubble-frames.spec.ts` compares every frame with the outline. While a finger drags,
-  `onSelection` is not called (no pill, no re-quote); the lift reports. Contract in `DESIGN.md` "Text selection and quoting".
+  seams; every change restarts all moving parts together (one clock). Only a motion of ≤2 lines
+  (`MAX_MOVING_LINES`) plays as parts: a bigger one (a finger sweeping a long selection) is redrawn frame by
+  frame as one outline (`playFrames`, 60Hz on iOS) — planning parts for every moving line cost 17ms a move.
+  `test/e2e/selection-bubble-frames.spec.ts` compares every frame with the outline. While a finger drags, the
+  bubble is pointed at the selection once a frame (rAF) and `onSelection` is not called (no pill, no re-quote);
+  the lift reports. Contract in `DESIGN.md` "Text selection and quoting".
   - Uses `getFilteredLineRects()` to strip out container bounding boxes (such as `<ul>` or `<div>` wrapper blocks)
     that distort table/markdown highlights.
   - Character-level alignment (`getHandlePointRect`) pins the lollipops precisely to the selection endpoints.

@@ -34,12 +34,16 @@
       if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme');
       let fake = 1000;
       Object.defineProperty(document, 'timeline', { configurable: true, get: () => ({ currentTime: fake }) });
-      // The settle timer runs when the test says.
+      // The settle timer runs when the test says, and so does each frame of a
+      // motion drawn frame by frame.
       const timers = [];
+      const frames = [];
       const win = new Proxy(window, {
         get(target, key) {
           if (key === 'setTimeout') return (fn) => { timers.push(fn); return timers.length; };
           if (key === 'clearTimeout') return () => {};
+          if (key === 'requestAnimationFrame') return (fn) => { frames.push(fn); return frames.length; };
+          if (key === 'cancelAnimationFrame') return () => {};
           const value = Reflect.get(target, key);
           return typeof value === 'function' ? value.bind(target) : value;
         },
@@ -75,8 +79,10 @@
         set(from, to) { bubble.set(rects(from, to)); },
         clear() { bubble.clear(); },
         settle() { const all = timers.splice(0); all.forEach((fn) => fn()); },
-        /** Freeze every piece at `ms` on the fake clock. */
+        /** Freeze every piece at `ms` on the fake clock (and draw a frame there). */
         freeze(ms) {
+          fake = ms;
+          frames.splice(0).forEach((fn) => fn(ms));
           for (const animation of document.getAnimations()) {
             if (animation.__start === undefined) animation.__start = animation.startTime;
             animation.pause();

@@ -342,6 +342,27 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
   let endPoint = null;
   let pendingGesture = null;
   let isDragging = false;
+  // While a finger drags, the bubble is pointed at the selection once a frame,
+  // just before the frame is drawn: a move can come more often than frames, and
+  // each time the bubble is pointed somewhere new it plans its whole spring.
+  let bubbleFrame = 0;
+
+  function drawBubbleNow() {
+    bubbleFrame = 0;
+    if (!currentRange || currentRange.collapsed) return;
+    const lineRects = getFilteredLineRects(currentRange);
+    if (lineRects.length) bubble.set(lineRects);
+  }
+
+  function drawBubble(lineRects) {
+    if (isDragging && window?.requestAnimationFrame) {
+      if (!bubbleFrame) bubbleFrame = window.requestAnimationFrame(drawBubbleNow);
+      return;
+    }
+    if (bubbleFrame) window?.cancelAnimationFrame?.(bubbleFrame);
+    bubbleFrame = 0;
+    bubble.set(lineRects);
+  }
 
   function clearNativeSelection() {
     window?.getSelection?.()?.removeAllRanges();
@@ -354,6 +375,8 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     startPoint = null;
     endPoint = null;
     isDragging = false;
+    if (bubbleFrame) window?.cancelAnimationFrame?.(bubbleFrame);
+    bubbleFrame = 0;
     bubble.clear();
     if (selectionOwner === self) selectionOwner = null;
     if (overlayEl) {
@@ -463,7 +486,7 @@ export function bindCustomSelection(root, overlayEl, { onSelection, onClear = ()
     const lineRects = getFilteredLineRects(currentRange);
     if (lineRects.length === 0 || !overlayEl || !startHandle || !endHandle) return;
 
-    bubble.set(lineRects);
+    drawBubble(lineRects);
 
     const startRect = getHandlePointRect(document, startPoint, true) || lineRects[0];
     const endRect = getHandlePointRect(document, endPoint, false) || lineRects[lineRects.length - 1];
