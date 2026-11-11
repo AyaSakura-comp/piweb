@@ -480,8 +480,37 @@ function showSelectionActions(text, rect, paneJid = null) {
   actions.style.bottom = 'auto';
 }
 
+// A mouse dragging out a selection in a transcript: the pill and the quote
+// wait for the button to come up, as they wait for a finger to lift. Shown on
+// every move, the pill hopped after the pointer, went away wherever the
+// pointer crossed something that is not transcript text and came back, and the
+// quote was rewritten every frame ("這個會閃爍", 2026-11-12).
+let mouseSelecting = false;
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    if (!event.target?.closest?.('#messages, #dashboard-grid .dashboard-pane-messages')) return;
+    mouseSelecting = true;
+  },
+  true,
+);
+function mouseSelectionDone(event) {
+  if (!mouseSelecting || (event?.pointerType && event.pointerType !== 'mouse')) return;
+  mouseSelecting = false;
+  cancelAnimationFrame(selectionFrame);
+  selectionFrame = requestAnimationFrame(syncSelectionActions);
+}
+document.addEventListener('pointerup', mouseSelectionDone, true);
+document.addEventListener('pointercancel', mouseSelectionDone, true);
+window.addEventListener('blur', () => mouseSelectionDone());
+
 function syncSelectionActions() {
   selectionFrame = 0;
+  if (mouseSelecting) {
+    if (!$('selection-actions').hidden) hideSelectionActions();
+    return;
+  }
   const selection = window.getSelection();
   if (typeof sessionDashboard !== 'undefined' && sessionDashboard.active) {
     for (const scroller of document.querySelectorAll('#dashboard-grid .dashboard-pane-messages')) {

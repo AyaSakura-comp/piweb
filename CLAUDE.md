@@ -1072,7 +1072,10 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   frame as one outline (`playFrames`, 60Hz on iOS) — planning parts for every moving line cost 17ms a move.
   `test/e2e/selection-bubble-frames.spec.ts` compares every frame with the outline. While a finger drags, the
   bubble is pointed at the selection once a frame (rAF) and `onSelection` is not called (no pill, no re-quote);
-  the lift reports. Contract in `DESIGN.md` "Text selection and quoting".
+  the lift reports. A mouse drag in a transcript/pane likewise holds the pill and quote until the button is
+  released (app.js `mouseSelecting`). New lines pour out of a neighbour's edge with that edge's speed, and `fuse`
+  builds the union of overlapping bands (contained line dropped, meet halfway, deep overlap to the covering band),
+  so no slit flashes through a moving bubble. Contract in `DESIGN.md` "Text selection and quoting".
   - Uses `getFilteredLineRects()` to strip out container bounding boxes (such as `<ul>` or `<div>` wrapper blocks)
     that distort table/markdown highlights.
   - Character-level alignment (`getHandlePointRect`) pins the lollipops precisely to the selection endpoints.

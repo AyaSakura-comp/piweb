@@ -42,6 +42,10 @@
  * the same springs, at the page's frame rate (60Hz on iOS), with each line's
  * glow drawn once and only moved and faded.
  *
+ * Lines in motion must not cut each other ("這個會閃爍", 2026-11-12): a new
+ * line pours out of its neighbour's edge with that edge's speed, so the gap
+ * between them only opens, and fuse() draws overlapping bands as their union.
+ *
  * The parts overlap a little, so their edges never sit side by side (an edge
  * against an edge shows a hairline). Translucent parts would show every overlap
  * darker, so they are drawn opaque, the fill in one group and the rim in
@@ -139,7 +143,24 @@ function fuse(lines, { padX = PAD_X, padY = PAD_Y, radius = RADIUS, maxGap = MAX
       line.t - last.b < maxGap &&
       Math.min(last.r, line.r) - Math.max(last.l, line.l) >= radius * 2;
     if (joins) {
-      const meet = line.t > last.b ? (last.b + line.t) / 2 : Math.max(last.t, Math.min(last.b, line.t));
+      // Lines in motion can overlap, a line poured out of its neighbour's
+      // edge while that neighbour still grows past it ("這個會閃爍",
+      // 2026-11-11). Cut at the lower line's top, the band above lost its
+      // lower part to the narrower line inside it, and a dark slit flashed
+      // through the bubble for a few frames. The outline is the lines' union:
+      // a line wholly within the band above adds nothing (its band is left
+      // out); two bands meet halfway across the gap or the overlap between
+      // them (the same rule either side, so a moving line never jumps where
+      // its gap closes); and an overlap deeper than the padding (only ever in
+      // motion) goes to the band that spans the other one sideways.
+      if (line.b <= last.b) continue;
+      const covers = (a, b) => a.l <= b.l && a.r >= b.r;
+      let meet = (last.b + line.t) / 2;
+      if (last.b - line.t > padY * 2 + 1) {
+        if (covers(last, line)) meet = last.b;
+        else if (covers(line, last)) meet = line.t;
+      }
+      meet = Math.max(last.t, meet);
       last.b = meet;
       line.t = Math.min(meet, line.b);
       chain.push(line);
@@ -1479,9 +1500,9 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
     return { time, states: lines.map((line) => lineAt(line, Math.min(elapsed, motionMs))) };
   }
 
-  function newLine(from, to) {
+  function newLine(from, to, speed = { l: 0, r: 0, t: 0, b: 0 }) {
     lineCount += 1;
-    return { id: lineCount, x0: { ...from }, v0: { l: 0, r: 0, t: 0, b: 0 }, to, dying: false };
+    return { id: lineCount, x0: { ...from }, v0: { ...speed }, to, dying: false };
   }
 
   function sameTargets(targets) {
@@ -1551,17 +1572,23 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
         .filter((entry) => entry.x0)
         .reduce((a, b) => (!a || Math.abs(b.x0.t - y) < Math.abs(a.x0.t - y) ? b : a), null);
 
-    // New lines pour out of their neighbour's edge instead of popping in.
+    // New lines pour out of their neighbour's edge instead of popping in,
+    // moving as that edge moves: on the same spring, the gap between them then
+    // only ever opens, so a neighbour still growing never runs over the line
+    // poured out of it (a dark slit flashed through the bubble where it did).
     const grown = next.map((entry) => {
       if (entry.x0) return entry;
       const to = entry.to;
-      const from = nearest(to.t)?.x0;
+      const neighbour = nearest(to.t);
+      const from = neighbour?.x0;
       if (!from) {
         const y = (to.t + to.b) / 2;
         return newLine({ l: to.l, r: to.l, t: y, b: y }, to);
       }
-      const edge = to.t >= from.t ? from.b : from.t;
-      return newLine({ l: from.l, r: from.r, t: edge, b: edge }, to);
+      const side = to.t >= from.t ? 'b' : 't';
+      const edge = from[side];
+      const v = neighbour.v0;
+      return newLine({ l: from.l, r: from.r, t: edge, b: edge }, to, { l: v.l, r: v.r, t: v[side], b: v[side] });
     });
 
     // Lines no longer selected drain into the nearest kept line, then go.
@@ -1601,8 +1628,13 @@ export function createSelectionBubble(container, { window, scroller, clip } = {}
 
   /** The exact outline `ms` into the current motion (tests compare the parts with it). */
   function shapeAt(ms) {
-    return bubblePath(bubbleChains(lines.map((line) => lineAt(line, Math.min(ms, motionMs)).at)));
+    return bubblePath(bubbleChains(linesAt(ms)));
   }
 
-  return { set, clear, shapeAt };
+  /** Where every line's spring is `ms` into the current motion (tests check the outline holds them). */
+  function linesAt(ms) {
+    return lines.map((line) => lineAt(line, Math.min(ms, motionMs)).at);
+  }
+
+  return { set, clear, shapeAt, linesAt };
 }

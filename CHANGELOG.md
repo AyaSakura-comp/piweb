@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A selection no longer flickers while it is dragged: no dark slits or thin ledges flash through the bubble as lines pour in or drain away, and a mouse drag no longer shows the quote pill (and re-quotes, and scrolls a Dashboard pane) on every move — pill and quote come once on the release
 - Dragging a long selection no longer lags: a motion of many lines is drawn frame by frame (moving every line's parts on the compositor cost 17ms a move on desktop), a drag moves the bubble once a frame, and parts in motion always start together so the outline no longer breaks into steps
 - The selection bubble's 120Hz spring draws the exact outline on every frame: a line in motion no longer shows seams, loses its rim and glow where it was cut, squashes its rounded ends or keeps the corners of where it will rest, and a line draining away no longer leaves its shadow behind
 - Send with the on-screen keyboard up is one upward motion while the keyboard goes down: the history no longer slides down with the keyboard, pauses and scrolls back up, and Jump to present no longer flashes up during a send

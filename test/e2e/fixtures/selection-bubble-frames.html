@@ -84,12 +84,14 @@
           fake = ms;
           frames.splice(0).forEach((fn) => fn(ms));
           for (const animation of document.getAnimations()) {
-            if (animation.__start === undefined) animation.__start = animation.startTime;
+            // Read while it plays: a piece the bubble restarted has a new start.
+            if (animation.playState !== 'paused' || animation.__start === undefined) animation.__start = animation.startTime;
             animation.pause();
             animation.currentTime = Math.max(0, ms - animation.__start);
           }
         },
         shapeAt: (ms) => bubble.shapeAt?.(ms),
+        linesAt: (ms) => bubble.linesAt?.(ms),
       };
       window.bubbleFramesReady = true;
     </script>

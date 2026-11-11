@@ -180,7 +180,22 @@ same rules hold in the chat and in a Dashboard pane.
   the quote/copy pill hides and the composer's quote waits; both come back with
   the whole selection on the lift, as on iOS. Re-quoting on every move cost
   several forced layouts per touchmove and moved the glass pill under the
-  finger.
+  finger. A mouse dragging out a selection in a transcript (or a Dashboard
+  pane) is the same: pill and quote come on the button's release. Shown on
+  every move, the pill hopped after the pointer, went away and came back, and
+  a pane's quote card scrolled the pane while it was still being dragged
+  (「這個會閃爍」, 2026-11-12).
+- **Lines in motion never cut each other.** A new line pours out of its
+  neighbour's edge moving as that edge moves (it takes the edge's speed), so on
+  the shared spring the gap between them only ever opens; poured from a still
+  edge, it was overrun by a neighbour still growing. Where bands still overlap,
+  the outline is their union: a line wholly inside the band above is left out,
+  two bands meet halfway across their gap or overlap (no jump where a gap
+  closes), and a deep overlap goes to the band that spans the other sideways.
+  Cut at the lower line's top, the band above lost its lower part and a dark
+  slit flashed through the bubble. `selection-bubble-frames.spec.ts` checks
+  that every line is inside the outline on every frame of a fast drag down and
+  back (`bubble.linesAt`).
 - **A mouse selection looks the same.** On a computer the transcript keeps the
   browser's own selection (drag, double/triple click, shift-click, ⌘C, and the
   pill), drawn as the same bubble following the pointer: transcript text has no

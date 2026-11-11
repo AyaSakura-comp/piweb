@@ -221,3 +221,45 @@ test('the chat: a double-click word is drawn as the bubble, kept inside the tran
   expect(clip.expected[0]).toBeGreaterThan(0); // the header is clipped off
   expect(errors).toEqual([]);
 });
+
+test('while the mouse button is held the pill and the quote wait, and come once on the release', async ({
+  page,
+}) => {
+  // 「這個會閃爍」 (2026-11-12): every move showed the pill under the new end of
+  // the selection, hid it where the pointer crossed anything but transcript
+  // text, and re-quoted the pane, whose card scrolled the pane to keep the
+  // selection in view while it was still being dragged.
+  const errors = await setup(page, { dashboard: true });
+  await page.locator('#btn-dashboard-home').click();
+  await expect(page.locator('.dashboard-pane')).toHaveCount(2);
+  const pane = page.locator(`.dashboard-pane[data-jid="${PIWEB}"]`);
+  const reply = pane.locator('.msg-text p');
+  const first = (await reply.filter({ hasText: 'The web server code' }).boundingBox())!;
+  const second = (await reply.filter({ hasText: 'Push: the remote' }).boundingBox())!;
+  const quote = pane.locator('.pane-quote-preview .quote-preview-text');
+  const seen = { pill: 0, quote: 0, scrolled: 0 };
+  const scrollTop = () => pane.locator('.dashboard-pane-messages').evaluate((el) => el.scrollTop);
+  const from = await scrollTop();
+
+  await page.mouse.move(first.x + 40, first.y + 6);
+  await page.mouse.down();
+  const stops = 10;
+  for (let i = 1; i <= stops; i++) {
+    const f = i / stops;
+    await page.mouse.move(first.x + 40 + (second.x + second.width * 0.5 - first.x - 40) * f, first.y + 6 + (second.y + second.height - 12 - first.y) * f);
+    // A frame for selectionchange to be handled.
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    if (await page.locator('#selection-actions').isVisible()) seen.pill += 1;
+    if (((await quote.textContent().catch(() => '')) ?? '').trim()) seen.quote += 1;
+    if ((await scrollTop()) !== from) seen.scrolled += 1;
+  }
+  expect(seen).toEqual({ pill: 0, quote: 0, scrolled: 0 });
+  // The selection did grow under the pointer, drawn as the bubble.
+  expect((await geometry(page)).lineCount).toBeGreaterThan(3);
+
+  await page.mouse.up();
+  await expect(page.locator('#selection-actions')).toBeVisible();
+  const selected = await page.evaluate(() => getSelection()?.toString().trim() ?? '');
+  await expect(quote).toHaveText(new RegExp(selected.slice(0, 12).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  expect(errors).toEqual([]);
+});

@@ -228,3 +228,48 @@ test('after a change mid-spring, every piece in motion starts again together', a
   });
   expect([...starts]).toEqual([1]);
 });
+
+test('a fast drag down and back keeps every line inside the bubble on every frame', async ({ page }) => {
+  // 「這個會閃爍」 (2026-11-12): a line poured out of its neighbour's edge while
+  // that neighbour still grew was overrun by it. The band above was cut where
+  // the line began, so the rest of that neighbour fell outside the outline: a
+  // dark slit flashed through the bubble for a few frames.
+  const ends: End[] = [
+    ...[30, 45, 60].map((o): End => ['p1', o]),
+    ...[2, 5].map((o): End => ['h', o]),
+    ...[10, 25, 40, 55].map((o): End => ['li1', o]),
+    ...[10, 25, 40, 56].map((o): End => ['li2', o]),
+  ];
+  const path = [...ends, ...[...ends].reverse().slice(1), ...ends.slice(1)];
+  await page.goto('/fixtures/selection-bubble-frames.html?theme=dark');
+  await page.waitForFunction(() => (window as any).bubbleFramesReady);
+  const missed = await page.evaluate(
+    ([path, start, frame]) => {
+      const f = (window as any).bubbleFrames;
+      f.at(1000);
+      f.set(start, ['p1', 20]);
+      f.settle();
+      const context = new OffscreenCanvas(1, 1).getContext('2d')!;
+      const found: string[] = [];
+      path.forEach((end, i) => {
+        f.at(2000 + i * (1000 / 60));
+        f.set(start, end);
+        for (let k = 0; k <= 12; k++) {
+          const outline = new Path2D(f.shapeAt(k * frame));
+          // Every line big enough to be drawn, a pixel in from its edges.
+          for (const line of f.linesAt(k * frame) as { l: number; r: number; t: number; b: number }[]) {
+            if (line.r - line.l < 4 || line.b - line.t < 4) continue;
+            let out = 0;
+            for (let y = line.t + 1; y <= line.b - 1; y += 1) {
+              for (let x = line.l + 1; x <= line.r - 1; x += 2) if (!context.isPointInPath(outline, x, y)) out += 1;
+            }
+            if (out) found.push(`step ${i} frame ${k}: ${out} points of the line at ${Math.round(line.t)}-${Math.round(line.b)} outside`);
+          }
+        }
+      });
+      return found;
+    },
+    [path, START, FRAME] as const,
+  );
+  expect(missed).toEqual([]);
+});
