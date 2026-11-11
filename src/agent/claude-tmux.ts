@@ -456,6 +456,7 @@ export async function invokeClaudeTmux(
     let nextPromptCheckAt = 0;
     let lastApprovedPrompt = '';
     let approvalCountForPrompt = 0;
+    let computerUseSteps = 0;
     const commandProgress = new Map<string, Pick<ClaudeCommand, 'state' | 'output' | 'exitCode'>>();
     const commandsMadeProgress = (commands: ClaudeCommand[]) => {
       let changed = false;
@@ -661,6 +662,37 @@ export async function invokeClaudeTmux(
                 '要繼續，可以在模型選單把這個對話換成 Opus 再送，或換個說法重送。',
             };
           }
+          const computerUse = computerUseDialog(screen);
+          if (computerUse) {
+            // Piweb has no way to answer it, and left alone the turn waits
+            // forever (20 minutes on an Xcode grant, 2026-11-12). Bypass mode
+            // already lets this session run anything; grant the apps for this
+            // session as the user would, one cursor step per look.
+            if (++computerUseSteps > 6) {
+              await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+              return {
+                ok: false,
+                text: '',
+                error: 'Claude Code computer-use permission dialog could not be answered; turn stopped',
+              };
+            }
+            // Answering it is the turn moving on, not idling toward the timeout.
+            deadline = Date.now() + deps.turnTimeoutMs;
+            if (computerUse.move) {
+              await deps.tmux(['send-keys', '-t', pane, computerUse.move]).catch(() => undefined);
+              nextPromptCheckAt = Date.now() + 200;
+            } else {
+              logger.info(
+                { apps: computerUse.apps, channelFolder },
+                'Allowed Claude Code computer use for this session',
+              );
+              await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
+              computerUseSteps = 0;
+              nextPromptCheckAt = Date.now() + 1000;
+            }
+            await deps.sleep(deps.pollMs);
+            continue;
+          }
           if (requiresManualConfirmation(screen)) {
             const promptDetail = extractConfirmationPrompt(screen);
             const promptSuffix = promptDetail ? ` (${promptDetail})` : '';
@@ -751,6 +783,16 @@ export async function invokeClaudeTmux(
         await deps.tmux(['send-keys', '-t', pane, 'C-u']).catch(() => undefined);
       }
       return { ok: false, text: '', aborted: true };
+    }
+    if (pasted && !submitted && pane) {
+      // An unacknowledged paste may still have landed; left in the box it
+      // would be prepended to the next message. Ctrl-C clears a non-empty
+      // prompt (C-u clears only its last line); on an empty one it would arm
+      // "press again to exit", so it is sent only when text is there.
+      const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+      if (currentPrompt(screen)) {
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      }
     }
     logger.warn({ err: err.message, channelFolder }, 'Claude Code tmux bridge failed');
     return { ok: false, text: '', error: `Claude Code tmux bridge failed: ${err.message}` };
@@ -875,6 +917,31 @@ function requiresManualConfirmation(screen: string): boolean {
   );
 }
 
+/**
+ * Claude Code's computer-use grant ("Computer Use wants to control these
+ * apps"): options "Deny, and tell Claude what to do differently (esc)" with
+ * the cursor on it, then "Allow for this session". Only a dialog on the pane's
+ * last rows, with its footer, counts. `move` is the one key that walks the
+ * cursor toward "Allow for this session", or undefined when it is there.
+ */
+export function computerUseDialog(
+  screen: string,
+): { apps: string[]; move?: 'Up' | 'Down' } | undefined {
+  const tail = screen.trimEnd().slice(-1500);
+  if (!/Computer Use wants to control these apps/u.test(tail)) return undefined;
+  if (!/Enter to confirm · Esc to cancel\s*$/u.test(tail)) return undefined;
+  const lines = tail.slice(tail.lastIndexOf('Computer Use wants to control')).split(/\r?\n/u);
+  const options = lines.filter((line) => /^\s*(?:❯\s*)?(?:Deny\b|Allow\b)/u.test(line));
+  const cursor = options.findIndex((line) => /^\s*❯/u.test(line));
+  const target = options.findIndex((line) => /Allow for this session/u.test(line));
+  const apps = lines
+    .map((line) => /^\s*◉\s*(.+?)\s*$/u.exec(line)?.[1])
+    .filter((app): app is string => Boolean(app));
+  if (target < 0) return { apps, move: undefined };
+  const move = cursor < 0 || cursor === target ? undefined : cursor < target ? 'Down' : 'Up';
+  return { apps, move };
+}
+
 export function extractConfirmationPrompt(screen: string): string {
   const tail = screen.trimEnd().slice(-2000);
   const match = /Do you want to proceed\?/u.exec(tail);
@@ -900,6 +967,21 @@ export function isCatastrophicPrompt(text: string): boolean {
   );
 }
 
+/**
+ * Which trust-dialog option the cursor is on. Claude Code 2.1.304 lists
+ * "No, exit" first with the cursor on it, so pressing Enter blindly quits
+ * Claude and the pane disappears. Older builds listed Yes first without a
+ * visible cursor, so a dialog with no cursor glyph keeps the old behaviour.
+ */
+function trustDialogSelection(screen: string): 'yes' | 'no' | undefined {
+  if (!/Yes, I trust this folder/i.test(screen)) return undefined;
+  const selected = screen
+    .split(/\r?\n/u)
+    .find((line) => /^\s*❯/u.test(line) && /Yes, I trust this folder|No, exit/iu.test(line));
+  if (!selected) return 'yes';
+  return /Yes, I trust this folder/i.test(selected) ? 'yes' : 'no';
+}
+
 function isReadyPaneScreen(screen: string): boolean {
   return /bypass permissions on/i.test(screen) && /(?:^|\n)\s*❯/u.test(screen);
 }
@@ -912,6 +994,8 @@ async function waitForReadyPane(
   const pane = await getClaudePane(name, deps);
   const deadline = Date.now() + deps.startupTimeoutMs;
   let acceptedTrust = false;
+  let trustMoves = 0;
+  let deniedStaleGrant = false;
   let lastScreen = '';
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
@@ -919,17 +1003,36 @@ async function waitForReadyPane(
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     const flagged = stayOnModelMenu(lastScreen);
+    const trust = acceptedTrust ? undefined : trustDialogSelection(lastScreen);
     if (flagged) {
       // Left by an earlier message nobody was waiting on (an interrupted turn,
       // a background notification): answered as the in-turn check would, so
       // the new message is not blocked behind it.
       await pressKeys(pane, flagged.keys, deps);
       logger.info({ model: flagged.model }, 'Answered a model-switch menu left on the Claude Code pane');
-    } else if (/Yes, I trust this folder/i.test(lastScreen) && !acceptedTrust) {
+    } else if (trust === 'yes') {
       acceptedTrust = true;
       await deps.tmux(['send-keys', '-t', pane, 'Enter']);
+    } else if (trust === 'no') {
+      // Never confirm "No, exit": move the cursor and re-read the dialog.
+      if (++trustMoves > 4) throw new Error('Claude Code trust dialog cursor did not move');
+      await deps.tmux(['send-keys', '-t', pane, 'Down']);
     } else if (requiresManualConfirmation(lastScreen)) {
       // Clear any stale confirmation dialog left from a previous turn.
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+    } else if (computerUseDialog(lastScreen)) {
+      // A computer-use grant left by a turn nobody waits on any more (a
+      // worker restart, an interrupted message): its request is stale, so deny
+      // it (Esc), then stop the turn it would let carry on (2026-11-12: one
+      // sat in front of the next message until it timed out).
+      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+      deniedStaleGrant = true;
+      logger.info('Denied a stale Claude Code computer-use dialog left on the pane');
+      // Give the turn a moment to resume, so it is seen running and stopped
+      // before the new message is pasted in behind it.
+      await deps.sleep(Math.max(deps.pollMs, 500));
+    } else if (deniedStaleGrant && /esc to interrupt/iu.test(lastScreen)) {
+      deniedStaleGrant = false;
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
     } else if (isReadyPaneScreen(lastScreen)) {
       // The status bar appears before Ink has mounted the editable prompt.
@@ -970,6 +1073,20 @@ function currentPrompt(screen: string): string {
     .trim();
 }
 
+/** Terminal wrapping inserts breaks and indents anywhere, even inside a word or CJK run. */
+function compactText(text: string): string {
+  return text.replace(/\s+/gu, '');
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  for (let i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length)) {
+    count += 1;
+  }
+  return count;
+}
+
 async function waitForPastedPrompt(
   pane: string,
   promptText: string,
@@ -977,7 +1094,14 @@ async function waitForPastedPrompt(
   deps: ClaudeTmuxDependencies,
   signal?: AbortSignal,
 ): Promise<void> {
-  const sample = promptText.replace(/\s+/gu, ' ').trim().slice(0, 32);
+  // The prompt box shows only its last rows once the text outgrows the pane,
+  // so the opening words can scroll away while the end stays visible: accept
+  // either end of the prompt. Whitespace is dropped because wrapping reflows it.
+  const compactPrompt = compactText(promptText);
+  const samples = [...new Set([compactPrompt.slice(0, 24), compactPrompt.slice(-24)])].filter(
+    Boolean,
+  );
+  const inputBefore = compactText(currentPrompt(beforePaste));
   const previousMarkers = pasteMarkers(beforePaste);
   const deadline = Date.now() + deps.startupTimeoutMs;
   let lastScreen = '';
@@ -985,15 +1109,19 @@ async function waitForPastedPrompt(
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
-    const input = currentPrompt(lastScreen);
-    const normalizedInput = input.replace(/\s+/gu, ' ');
+    const input = compactText(currentPrompt(lastScreen));
     const hasNewMarker = [...pasteMarkers(lastScreen)].some(
       (marker) => !previousMarkers.has(marker),
     );
     // Match ordinary text only inside the editable prompt, never in stale pane
-    // history. A paste marker must be new even inside the editable prompt:
-    // unchanged markers can survive a failed acknowledgement or merely reflow.
-    if ((sample && normalizedInput.includes(sample)) || hasNewMarker) {
+    // history, and only text the paste added: an identical prompt left
+    // unsubmitted in the box must not acknowledge this one. A paste marker must
+    // be new even inside the editable prompt: unchanged markers can survive a
+    // failed acknowledgement or merely reflow.
+    const hasNewText = samples.some(
+      (sample) => countOccurrences(input, sample) > countOccurrences(inputBefore, sample),
+    );
+    if (hasNewText || hasNewMarker) {
       return;
     }
     await deps.sleep(deps.pollMs);

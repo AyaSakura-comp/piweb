@@ -157,11 +157,62 @@ describe('config loading', () => {
     delete process.env.CLAUDE_TMUX_BIN;
     delete process.env.CLAUDE_TMUX_TMUX_BIN;
 
-    const { config } = await loadConfigModule();
+    const { config, platformDefaults } = await loadConfigModule();
 
     expect(config.claudeTmuxEnabled).toBe(false);
-    expect(config.claudeTmuxBin).toBe('claude');
-    expect(config.claudeTmuxTmuxBin).toBe('tmux');
+    expect(config.claudeTmuxBin).toBe(platformDefaults().claudeBin);
+    expect(config.claudeTmuxTmuxBin).toBe(platformDefaults().tmuxBin);
+  });
+
+  it('fills gaps with per-platform defaults: Linux split deployment, macOS all-in-one', async () => {
+    const { platformDefaults } = await loadConfigModule();
+    const none = () => false;
+    const linux = platformDefaults('linux', '/home/u', none);
+    expect(linux).toEqual({
+      embeddedWorker: false,
+      trustTailscaleIdentity: true,
+      voiceAsrEnabled: true,
+      agyEnabled: true,
+      iconSet: '',
+      tmuxBin: 'tmux',
+      claudeBin: 'claude',
+      agyBin: 'agy',
+    });
+    const mac = platformDefaults('darwin', '/Users/u', none);
+    expect(mac).toMatchObject({
+      embeddedWorker: true,
+      trustTailscaleIdentity: false,
+      voiceAsrEnabled: false,
+      agyEnabled: false,
+      iconSet: 'piweb-mini',
+      tmuxBin: 'tmux',
+    });
+    // launchd/systemd PATHs lack Homebrew and ~/.local/bin: found binaries are used directly.
+    const installed = new Set(['/opt/homebrew/bin/tmux', '/Users/u/.local/bin/claude']);
+    const found = platformDefaults('darwin', '/Users/u', (p) => installed.has(p));
+    expect(found.tmuxBin).toBe('/opt/homebrew/bin/tmux');
+    expect(found.claudeBin).toBe('/Users/u/.local/bin/claude');
+    expect(found.agyBin).toBe('agy');
+    expect(found.agyEnabled).toBe(false);
+    // agy from Homebrew on the Mac: offered, by absolute path.
+    const brewAgy = platformDefaults('darwin', '/Users/u', (p) => p === '/opt/homebrew/bin/agy');
+    expect(brewAgy.agyEnabled).toBe(true);
+    expect(brewAgy.agyBin).toBe('/opt/homebrew/bin/agy');
+  });
+
+  it('lets config.env override a platform default', async () => {
+    const workDir = createTempDir();
+    process.chdir(workDir);
+    const configPath = resolve(workDir, 'config.env');
+    writeFileSync(configPath, 'VOICE_ASR_ENABLED=false\nWEB_EMBEDDED_WORKER=true\n');
+    process.env.PIDG_CONFIG = configPath;
+    delete process.env.VOICE_ASR_ENABLED;
+    delete process.env.WEB_EMBEDDED_WORKER;
+
+    const { config } = await loadConfigModule();
+
+    expect(config.voiceAsrEnabled).toBe(false);
+    expect(config.webEmbeddedWorker).toBe(true);
   });
 
   it('uses the piweb platform data directory defaults when storage paths are unset', async () => {

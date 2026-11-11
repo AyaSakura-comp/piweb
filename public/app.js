@@ -39,6 +39,7 @@ import { createSessionDashboard } from './session-dashboard.js?v=host-strip-1';
 import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import { readClipboard } from './clipboard-paste.js';
+import { guardDocumentFileDrops } from './file-drop.js';
 import { bindAndroidBack, isAndroid } from './android-back.js';
 import {
   bindLongPress,
@@ -4509,6 +4510,17 @@ $('input').addEventListener('paste', (e) => {
   e.preventDefault();
   addFiles(files);
   showToast(formatPasteToast(files));
+});
+
+// Files dragged in from Finder: a Dashboard pane takes its own (file-drop.js);
+// anywhere else in a single-session view they attach to the composer, and a
+// drop with nowhere to go is swallowed instead of Chrome opening the file.
+guardDocumentFileDrops(document, {
+  accepts: () => !!state.activeJid && state.activeJid !== LIFE_JID && !document.querySelector('.app.dashboard-active'),
+  onFiles: (files) => {
+    addFiles(files);
+    showToast(files.length === 1 ? `已加入附件 (${files[0].name})` : `已加入 ${files.length} 個附件`);
+  },
 });
 
 $('file-input').addEventListener('change', (e) => {

@@ -212,3 +212,68 @@ it('the server reads the disk of its data directory', async () => {
     vi.resetModules();
   }
 });
+
+// Captured on the Mac mini (Apple M4, 16 GiB).
+const MAC_VM_STAT = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                     9460.
+Pages active:                                 274754.
+Pages inactive:                               264731.
+Pages wired down:                             243158.
+Pages purgeable:                               12997.
+Anonymous pages:                              353881.
+Pages occupied by compressor:                 213450.
+`;
+const MAC_IOREG = `+-o AGXAcceleratorG16G  <class AGXAcceleratorG16G>
+    "PerformanceStatistics" = {"Tiler Utilization %"=18,"Renderer Utilization %"=17,"Device Utilization %"=18,"In use system memory"=553304064}
+`;
+
+it('reads CPU, memory and GPU on macOS, where there is no /proc or /sys', async () => {
+  const { createSystemMetricsSampler } = await import('../src/web/system-metrics.js');
+  let now = 0;
+  let idle = 1000;
+  const ran: string[] = [];
+  const sample = createSystemMetricsSampler({
+    platform: 'darwin',
+    root: '/nonexistent-metrics-root',
+    now: () => now,
+    totalMemory: () => 17179869184,
+    // Two cores; each sample adds 100 ms busy + 100 ms idle per core.
+    cpuTimes: () => [0, 1].map(() => ({ user: idle, nice: 0, sys: 0, idle, irq: 0 })),
+    run: async (file) => {
+      ran.push(file);
+      return file.endsWith('vm_stat') ? MAC_VM_STAT : MAC_IOREG;
+    },
+  });
+  const first = await sample();
+  expect(first.cpuPercent).toBeUndefined();
+  // Activity Monitor's Memory Used: app (anonymous − purgeable) + wired + compressed.
+  const used = (353881 - 12997 + 243158 + 213450) * 16384;
+  expect(first).toMatchObject({
+    memoryTotalBytes: 17179869184,
+    memoryUsedBytes: used,
+    memoryPercent: (100 * used) / 17179869184,
+    gpuPercent: 18,
+  });
+  expect(ran).toEqual(['/usr/bin/vm_stat', '/usr/sbin/ioreg']);
+  now = 1000;
+  idle += 100;
+  expect((await sample()).cpuPercent).toBe(50);
+});
+
+it('omits macOS readings it cannot parse instead of guessing', async () => {
+  const { createSystemMetricsSampler, macMemoryFromVmStat, macGpuPercentFromIoreg } = await import(
+    '../src/web/system-metrics.js'
+  );
+  expect(macMemoryFromVmStat('', 17179869184)).toBeUndefined();
+  expect(macMemoryFromVmStat(MAC_VM_STAT.replace(/Pages wired down.*\n/, ''), 1)).toBeUndefined();
+  expect(macMemoryFromVmStat(MAC_VM_STAT, 1024)).toBeUndefined();
+  expect(macGpuPercentFromIoreg('')).toBeUndefined();
+  expect(macGpuPercentFromIoreg('"Device Utilization %"=0')).toBe(0);
+  expect(macGpuPercentFromIoreg('"Device Utilization %"=140')).toBeUndefined();
+  const sample = createSystemMetricsSampler({
+    platform: 'darwin',
+    cpuTimes: () => [],
+    run: async () => '',
+  });
+  expect(await sample()).toEqual({});
+});

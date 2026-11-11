@@ -8,11 +8,17 @@
 
 import { bindTypingLabel, shouldLoadOlderHistory } from './session-ui.js';
 import { readClipboard } from './clipboard-paste.js';
+import { bindFileDropTarget } from './file-drop.js';
 
 const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const PANE_PAGE_SIZE = 50;
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
+// A pane tapped to take the input card grows to read comfortably: a line of at
+// least this many characters (CSS `ch`, the width of "0" in the reply font)
+// and at least this much transcript above the card (user request, 2026-11-12).
+const FIT_READING_COLUMNS = 80;
+const FIT_TRANSCRIPT_PX = 160;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
@@ -160,6 +166,7 @@ export function createSessionDashboard({
   let dockGhost = null; // { el, jid }: the card copy mid-hop and the pane it lands on
   let zoomedJid = null; // the pane blown up to the whole stage, still in the Dashboard
   let pinchSteps = null; // { jid, base, step, key }: the pane a pinch resized, its step from `base`, and the layout it made
+  let readingFit = null; // { jid, base, key }: the pane a tap grew to reading size, the layout before, and the layout it made
   let twoFingerQuietUntil = 0; // header taps this soon after a two-finger gesture are its fingers lifting
 
   /** A transcript that shrinks (the card arrives, the card grows, a splitter
@@ -1184,7 +1191,21 @@ export function createSessionDashboard({
         const holdsCard = composerJid === jid && dock.classList.contains('is-floating');
         const typing = pressTyping;
         const typingHere = pressTypingHere;
-        selectComposerPane(jid);
+        // A tap on the window grows it to reading size; its header controls
+        // (expand, split, model…) and the card itself keep their own job.
+        selectComposerPane(jid, { fit: !header.contains(e.target) && !dock.contains(e.target) });
+        // A computer has no keyboard to pop up: a mouse click on the pane puts
+        // the cursor in its input at once, as a session-list click does
+        // (revealSession). Controls and the card itself keep their own job.
+        if (
+          pressPointer === 'mouse' &&
+          window.matchMedia?.('(pointer: fine)')?.matches &&
+          !e.target.closest(PANE_TAP_KEEPS_FOCUS) &&
+          !dock.contains(e.target)
+        ) {
+          dock.querySelector('.dashboard-pane-composer textarea')?.focus({ preventScroll: true });
+          return;
+        }
         // iPhone / iPad: a finger tap on the transcript itself (not a control,
         // image or video, not ending a text selection) toggles the keyboard.
         // focus() must run inside the tap for iOS to raise the keyboard.
@@ -1816,6 +1837,9 @@ export function createSessionDashboard({
       }
       if (added > 0) renderPaneAttachments();
     };
+
+    // Files dragged in from Finder attach to this pane (file-drop.js).
+    bindFileDropTarget(paneEl, (files) => addPaneFiles(files));
 
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => {
@@ -2738,7 +2762,154 @@ export function createSessionDashboard({
    * from the old pane to the new one in an arc (it must fly above the grid:
    * panes clip their own overflow).
    */
-  function selectComposerPane(jid, { animate = true } = {}) {
+  /** How much wider and taller (px) `pane` must be for an 80-column reply
+   *  line and 160px of transcript above the card, measured with the pane's
+   *  own fonts and chrome as it is laid out now (card included). Layout
+   *  sizes, not client rects, so a pane mid-animation measures its real size. */
+  function readingShortfall(pane) {
+    const probe = el('div', 'msg');
+    const body = el('div', 'msg-body');
+    const text = el('div', 'msg-text');
+    const line = el('span');
+    line.style.cssText = `display:inline-block;width:${FIT_READING_COLUMNS}ch;height:1px`;
+    text.append(line);
+    body.append(text);
+    probe.append(body);
+    probe.style.cssText = 'visibility:hidden;height:0;overflow:hidden;padding-top:0;padding-bottom:0';
+    probe.setAttribute('aria-hidden', 'true');
+    pane.messagesEl.append(probe);
+    const width = Math.max(0, Math.ceil(line.offsetWidth - text.clientWidth));
+    probe.remove();
+    const height = Math.max(0, Math.ceil(FIT_TRANSCRIPT_PX - pane.messagesEl.clientHeight));
+    return { width, height };
+  }
+
+  /** The smallest size (px) `node` can take along `axis` at `depth`. */
+  function minSizeAlong(node, depth, axis) {
+    const minPx = axis === 'row' ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
+    if (!node.items?.length) return minPx;
+    const sizes = node.items.map((n) => minSizeAlong(n, depth + 1, axis));
+    return axisAt(depth + 1) === axis ? sizes.reduce((a, b) => a + b, 0) : Math.max(...sizes);
+  }
+
+  /** `base` with `jid` grown along `axis` to `target` px (as predictPaneRect
+   *  measures it), taking room from its nearest neighbours first and never
+   *  pressing any of them below their minimum. As far as it can go when the
+   *  stage is too small; `base` itself when nothing can change. */
+  function growAlong(base, jid, axis, target) {
+    const layout = cloneLayout(base);
+    const g = gridEl.getBoundingClientRect();
+    for (let round = 0; round < 8; round++) {
+      const rect = predictPaneRect(jid, layout);
+      if (!rect) return layout;
+      const size = axis === 'row' ? rect.width : rect.height;
+      if (size >= target - 0.5) return layout;
+      // The pane's ancestors that split along `axis`, deepest (nearest) first.
+      const levels = [];
+      const walk = (nodes, depth, box) => {
+        const i = nodes.findIndex((n) => holdsJid(n, jid));
+        if (i < 0) return;
+        const row = axisAt(depth) === 'row';
+        const total = nodes.reduce((sum, n) => sum + n.weight, 0) || 1;
+        const share = nodes.length === 1 ? 1 : nodes[i].weight / total;
+        if (nodes.length > 1 && axisAt(depth) === axis) {
+          levels.unshift({ nodes, i, depth, total, share, span: row ? box.width : box.height });
+        }
+        if (nodes[i].items) {
+          walk(nodes[i].items, depth + 1, {
+            width: row ? box.width * share : box.width,
+            height: row ? box.height : box.height * share,
+          });
+        }
+      };
+      walk(layout, 0, { width: g.width, height: g.height });
+      let changed = false;
+      for (const { nodes, i, depth, total, share, span } of levels) {
+        if (span <= 0) continue;
+        const mins = nodes.map((n) => minSizeAlong(n, depth, axis) / span);
+        const restMin = mins.reduce((sum, m, j) => (j === i ? sum : sum + m), 0);
+        const most = Math.max(share, 1 - restMin);
+        const next = Math.min(most, share * (target / size));
+        if (next - share < 0.002) continue;
+        // The others give up the difference in proportion to what they have
+        // above their minimum, so none is pressed below it.
+        const give = next - share;
+        const spare = nodes.map((n, j) => (j === i ? 0 : Math.max(0, n.weight / total - mins[j])));
+        const spareSum = spare.reduce((a, b) => a + b, 0);
+        if (spareSum <= 0) continue;
+        nodes.forEach((n, j) => {
+          const s = j === i ? next : n.weight / total - (give * spare[j]) / spareSum;
+          n.weight = Number((s * total).toFixed(4));
+        });
+        changed = true;
+        break; // re-measure: the nearest level may already be enough
+      }
+      if (!changed) return layout;
+    }
+    return layout;
+  }
+
+  /** A tap brought the card to `jid`: grow its pane to reading size (an
+   *  80-column line, 160px of transcript), first giving the pane an earlier
+   *  tap grew its old size back, so tapping around never ratchets the layout.
+   *  A layout someone has since changed by hand is left as it is. Returns
+   *  whether the layout changed. */
+  function fitPaneForReading(jid) {
+    const pane = panes.get(jid);
+    if (!active || !pane || zoomedJid || gridEl.hidden || allJids().length < 2) {
+      readingFit = null;
+      return false;
+    }
+    const heldFit = readingFit && readingFit.key === layoutKey(groups) ? readingFit : null;
+    if (heldFit?.jid === jid) return false;
+    const start = heldFit ? cloneLayout(heldFit.base) : cloneLayout(groups);
+    const need = readingShortfall(pane);
+    const now = predictPaneRect(jid, groups);
+    const before = predictPaneRect(jid, start);
+    let next = start;
+    if (now && before) {
+      // Shortfalls are measured on the pane as it stands; carry them over to
+      // `start`, which may give this pane a different size than now. The
+      // prediction leaves splitters out, so it runs a little larger than the
+      // pane: scale the wanted size by the same ratio (and a pixel to spare).
+      const scaleW = now.width / Math.max(1, pane.el.offsetWidth);
+      const scaleH = now.height / Math.max(1, pane.el.offsetHeight);
+      const wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
+      const wantH = (pane.el.offsetHeight + need.height + 1) * scaleH;
+      if (need.width > 0 || before.width < wantW) next = growAlong(next, jid, 'row', wantW);
+      if (need.height > 0 || before.height < wantH) next = growAlong(next, jid, 'column', wantH);
+    }
+    const nextKey = layoutKey(next);
+    const grew = nextKey !== layoutKey(start);
+    readingFit = grew ? { jid, base: start, key: nextKey } : null;
+    if (nextKey === layoutKey(groups)) return false;
+    animatePaneLayoutTransition(() => {
+      groups = next;
+      saveState();
+      rebuildGrid();
+      // Keyed on the layout as the grid keeps it, so the next tap recognises it.
+      if (readingFit) readingFit.key = layoutKey(groups);
+    });
+    return true;
+  }
+
+  /** `el`'s rect once `host`'s running animations (a layout FLIP) are done:
+   *  they are wound to their end for one synchronous read and wound back,
+   *  which leaves them running as they were (no finish event fires). */
+  function settledRect(el, host) {
+    const running = host.getAnimations?.() ?? [];
+    const times = running.map((a) => a.currentTime);
+    running.forEach((a) => {
+      a.currentTime = Math.max(0, (a.effect?.getComputedTiming().endTime ?? 0) - 0.01);
+    });
+    const r = el.getBoundingClientRect();
+    running.forEach((a, i) => {
+      a.currentTime = times[i];
+    });
+    return r;
+  }
+
+  function selectComposerPane(jid, { animate = true, fit = false } = {}) {
     const pane = panes.get(jid);
     if (!pane) return;
     if (composerJid === jid && pane.dock.classList.contains('is-floating')) {
@@ -2781,9 +2952,12 @@ export function createSessionDashboard({
     if (keepBottom) pane.messagesEl.scrollTop = pane.messagesEl.scrollHeight;
     // With the keyboard up the card lands already clear of it.
     syncKeyboardLift({ instant: true });
+    // The pane may grow to reading size (and one an earlier tap grew shrinks
+    // back); the card then flies to where it ends up, not where it starts.
+    const resized = fit && fitPaneForReading(jid);
 
     if (!ghost) return;
-    const to = pane.dock.getBoundingClientRect();
+    const to = resized ? settledRect(pane.dock, pane.el) : pane.dock.getBoundingClientRect();
     if (!to.width) return;
     // The ghost sits on the landing rect and flies in by transform alone, so
     // the compositor runs the hop at the display's refresh rate (120Hz on
@@ -3802,7 +3976,7 @@ export function createSessionDashboard({
     else if (zoomedJid && zoomedJid !== jid) setZoom(null);
     const pane = panes.get(jid);
     if (!pane) return;
-    selectComposerPane(jid);
+    selectComposerPane(jid, { fit: true });
     if (window.matchMedia?.('(pointer: fine)')?.matches) {
       pane.textarea?.focus({ preventScroll: true });
     }

@@ -16,6 +16,7 @@ import {
   AUTONOMOUS_SYSTEM_PROMPT,
   buildClaudeArgs,
   claudeModelId,
+  computerUseDialog,
   extractConfirmationPrompt,
   isCatastrophicPrompt,
   isClaudeTmuxModelRef,
@@ -133,6 +134,24 @@ describe('Claude tmux launch contract', () => {
 });
 
 describe('Claude tmux invocation', () => {
+  it('moves the trust dialog cursor to Yes before confirming instead of choosing No, exit', async () => {
+    const fixture = createRuntimeFixture({ trustCursorOnNo: true });
+
+    const result = await invokeClaudeTmux('web_claude1', 'fix the tests', {
+      channelJid: 'web:claude1',
+      model: 'claude-code/opus',
+      cwd: fixture.cwd,
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.exitedFromTrust).toBe(false);
+    expect(fixture.trustAccepted).toBe(true);
+    const keys = fixture.sentKeys.map((args) => args.at(-1));
+    expect(keys.indexOf('Down')).toBeGreaterThanOrEqual(0);
+    expect(keys.indexOf('Down')).toBeLessThan(keys.indexOf('Enter'));
+  });
+
   it('launches once, accepts workspace trust, sends through a tmux buffer, and reads the structured result', async () => {
     const fixture = createRuntimeFixture();
     const onEvent = vi.fn();
@@ -269,6 +288,95 @@ describe('Claude tmux invocation', () => {
     });
     expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
     expect(menuShown).toBe(false);
+    expect(fixture.loadedPrompts).toEqual(['next message']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  // Captured on the Mac mini (2026-11-12): an Xcode grant sat for 20 minutes,
+  // then blocked the next message until it timed out.
+  const computerUseScreen = (cursorOnAllow: boolean) =>
+    [
+      '⏺ Opening Xcode\'s sign-in screen now.',
+      '─'.repeat(80),
+      '  Computer Use wants to control these apps',
+      '',
+      '   │ Open Xcode\'s Accounts settings so you can sign in with your Apple ID and',
+      '   │  Piweb can be signed and installed on your iPhone.',
+      '',
+      '     ◉ Xcode',
+      '',
+      '   6 other apps will be hidden while Claude works.',
+      '',
+      `   ${cursorOnAllow ? ' ' : '❯'} Deny, and tell Claude what to do differently (esc)`,
+      `   ${cursorOnAllow ? '❯' : ' '} Allow for this session (1 app)`,
+      '',
+      '',
+      '  Enter to confirm · Esc to cancel',
+    ].join('\n');
+
+  it('reads the computer-use grant dialog and where its cursor is', () => {
+    expect(computerUseDialog(computerUseScreen(false))).toEqual({ apps: ['Xcode'], move: 'Down' });
+    expect(computerUseDialog(computerUseScreen(true))).toEqual({ apps: ['Xcode'], move: undefined });
+    // In history, without its footer on the last row, it is not a live dialog.
+    expect(
+      computerUseDialog(`${computerUseScreen(false)}\n\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on`),
+    ).toBeUndefined();
+    expect(computerUseDialog('Do you want to proceed?\n❯ 1. Yes\n\nEsc to cancel')).toBeUndefined();
+  });
+
+  it('allows computer use for the session when the turn asks for it, and goes on', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    // A cursor step waits 200ms for the dialog to redraw: longer than the
+    // fixture's 100ms inactivity limit (a real turn has an hour).
+    fixture.dependencies.turnTimeoutMs = 2000;
+    let dialog: 'deny' | 'allow' | null = 'deny';
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && dialog) {
+        return computerUseScreen(dialog === 'allow');
+      }
+      if (args[0] === 'send-keys' && fixture.submissionCount && dialog) {
+        if (args.at(-1) === 'Down') dialog = 'allow';
+        if (args.at(-1) === 'Enter' && dialog === 'allow') {
+          dialog = null;
+          fixture.appendTurn();
+        }
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'open Xcode', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    const keys = fixture.sentKeys.map((k) => k.at(-1));
+    expect(keys).toContain('Down');
+    expect(keys.indexOf('Down')).toBeLessThan(keys.lastIndexOf('Enter'));
+    expect(keys).not.toContain('Escape');
+  });
+
+  it('denies a computer-use grant a finished turn left on the pane, then sends the message', async () => {
+    const fixture = createRuntimeFixture();
+    let stale: 'dialog' | 'running' | null = 'dialog';
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.live && stale === 'dialog') {
+        return computerUseScreen(false);
+      }
+      if (args[0] === 'capture-pane' && fixture.live && stale === 'running') {
+        return `✻ Working…\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on · esc to interrupt`;
+      }
+      if (args[0] === 'send-keys' && args.at(-1) === 'Escape' && stale) {
+        stale = stale === 'dialog' ? 'running' : null;
+      }
+      return tmux(args);
+    };
+    fixture.live = true;
+    const result = await invokeClaudeTmux('web_claude1', 'next message', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.sentKeys.filter((k) => k.at(-1) === 'Escape')).toHaveLength(2);
+    expect(fixture.sentKeys.some((k) => k.at(-1) === 'Down')).toBe(false);
     expect(fixture.loadedPrompts).toEqual(['next message']);
     expect(fixture.submissionCount).toBe(1);
   });
@@ -1033,6 +1141,56 @@ describe('Claude tmux invocation', () => {
     },
   );
 
+  it('accepts a long paste whose opening rows scrolled out of the prompt box', async () => {
+    // Live failure: an 80x23 pane showed only the prompt's last rows, wrapped
+    // mid-sentence and through CJK text, so the opening words never appeared.
+    const fixture = createRuntimeFixture();
+    const prompt =
+      '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. Follow only the latest instruction below.] [Web user: web] 用中文，你有sudo 都幫我做行';
+    const originalTmux = fixture.dependencies.tmux;
+    let scrolled = false;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      if (args[0] === 'capture-pane' && screen.includes(`❯ ${prompt}`)) {
+        scrolled = true;
+        return screen.replace(
+          `❯ ${prompt}`,
+          '❯ interrupted the previous task. Do not resume or continue the previous task.\n  Follow only the latest instruction below.] [Web user: web] 用中文，你有sudo 都\n  幫我做行',
+        );
+      }
+      return screen;
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', prompt, {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(scrolled).toBe(true);
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it('does not acknowledge a paste by an identical prompt already left in the box', async () => {
+    const fixture = createRuntimeFixture();
+    const prompt = 'same request text that was left unsubmitted earlier';
+    const originalTmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      const screen = await originalTmux(args);
+      if (args[0] !== 'capture-pane') return screen;
+      // The paste never lands: the box keeps showing only the stale copy.
+      return screen.replace(/❯ [^\n]*/u, `❯ ${prompt}`);
+    };
+
+    const result = await invokeClaudeTmux('web_claude1', prompt, {
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Claude Code did not accept the pasted prompt');
+    expect(fixture.submissionCount).toBe(0);
+    expect(fixture.sentKeys.some((keys) => keys.at(-1) === 'C-c')).toBe(true);
+  });
+
   it('does not acknowledge an incomplete terminal-wrapped paste marker', async () => {
     const fixture = createRuntimeFixture({ pasteLineCount: true });
     const originalTmux = fixture.dependencies.tmux;
@@ -1428,7 +1586,12 @@ const MODEL_SWITCH_MENU = [
 ].join('\n');
 
 function createRuntimeFixture(
-  options: { completeTurns?: boolean; runningScreen?: boolean; pasteLineCount?: boolean } = {},
+  options: {
+    completeTurns?: boolean;
+    runningScreen?: boolean;
+    pasteLineCount?: boolean;
+    trustCursorOnNo?: boolean;
+  } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'piweb-claude-tmux-test-'));
   tempDirs.push(root);
@@ -1442,6 +1605,8 @@ function createRuntimeFixture(
   const pastes: string[][] = [];
   let live = false;
   let trustAccepted = false;
+  let trustCursorOnYes = !options.trustCursorOnNo;
+  let exitedFromTrust = false;
   const stateAtSubmissions: any[] = [];
   const seenPasteMarkers: string[] = [];
   let readyCaptures = 0;
@@ -1508,6 +1673,11 @@ function createRuntimeFixture(
       }
       if (args[0] === 'list-panes') return '%42\n';
       if (args[0] === 'capture-pane') {
+        if (!trustAccepted && options.trustCursorOnNo) {
+          return trustCursorOnYes
+            ? '  No, exit\n❯ Yes, I trust this folder\n\nEnter to confirm · Esc to cancel'
+            : '❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel';
+        }
         if (!trustAccepted) return '1. Yes, I trust this folder\n2. No, exit';
         readyCaptures += 1;
         if (options.runningScreen) {
@@ -1534,7 +1704,13 @@ function createRuntimeFixture(
       }
       if (args[0] === 'send-keys') {
         sentKeys.push(args);
-        if (args.at(-1) === 'Enter' && !trustAccepted) {
+        if (args.at(-1) === 'Down' && !trustAccepted) {
+          trustCursorOnYes = true;
+        } else if (args.at(-1) === 'Enter' && !trustAccepted && !trustCursorOnYes) {
+          exitedFromTrust = true;
+          live = false;
+          throw new Error(`can't find pane: ${args[2]}`);
+        } else if (args.at(-1) === 'Enter' && !trustAccepted) {
           trustAccepted = true;
         } else if (args.at(-1) === 'Enter' && currentInput) {
           submissionCount += 1;
@@ -1589,6 +1765,9 @@ function createRuntimeFixture(
     },
     get trustAccepted() {
       return trustAccepted;
+    },
+    get exitedFromTrust() {
+      return exitedFromTrust;
     },
   };
 }

@@ -73,11 +73,16 @@ public/          index.html, app.css, app.js — no framework, no build step
                  viewer-physics.js = glide/rubber band/spring for the table & diagram viewer
                  usage-report.js = the usage commands' text drawn as a card
                  clipboard-paste.js = the 貼上 button's clipboard read (chat and panes)
+                 file-drop.js = Finder file drops: a Dashboard pane attaches to itself, else the chat composer; never lets Chrome open the file
                  sw.js       = service worker (Web Push + reconnect page for a launch that cannot load)
                  vendor/katex/ = KaTeX vendored locally (no CDN)
                  vendor/mermaid/ = Mermaid.js vendored locally (no CDN)
                  vendor/highlight/ = highlight.js browser build (no CDN)
-                 icons/piweb/  = home-screen icon set; manifest.webmanifest
+                 icons/piweb/  = default home-screen icon set; manifest.webmanifest
+                 icons/piweb-mini/ = the Mac mini host's set (WEB_ICON_SET=piweb-mini): the server answers
+                                 /apple-touch-icon*.png and /manifest.webmanifest from it and
+                                 manifest.piweb-mini.webmanifest (src/web/icon-set.ts); icons/ is
+                                 served immutable, so a changed icon needs a new path
 third_party/komorebi-voice/  git submodule (Komorebi voice IME); only sdk/js is used. Push the
                              Komorebi commit to GitHub BEFORE committing the pointer here
 scripts/history.py  read-only history query CLI (stdlib only)
@@ -563,6 +568,7 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `WEB_PUBLIC_ORIGIN`                                  | web    | CSRF origin check (invariant 4)                  |
 | `WEB_SESSION_TTL_SEC`                                | web    | cookie lifetime                                  |
 | `WEB_EMBEDDED_WORKER`                                | web    | run the worker in-process (all-in-one)           |
+| `WEB_ICON_SET`                                       | web    | home-screen/install icon set ('' = default; Mac mini: `piweb-mini`) |
 | `PI_BIN`, `PI_CWD`, `PI_MODEL`, `PI_THINKING`        | worker | pi invocation                                    |
 | `STREAM_THINKING`, `STREAM_TOOLS`, `MAX_EVENT_CHARS` | worker | what gets streamed                               |
 | `RPC_STEER`, `INTERRUPT_ON_NEW_MESSAGE`              | worker | mid-run steering / pre-emption                   |
@@ -571,6 +577,23 @@ and the container gets the same values from `~/src/piweb/.env` via compose.
 | `PIWEB_HIDDEN_MODELS`                                | worker | comma-separated exact refs hidden from picker    |
 | `MAX_ATTACHMENT_BYTES`                               | worker | Discord upload cap (host config: 10 MB)          |
 | `WEB_MAX_ATTACHMENT_BYTES`                           | web    | per-file web upload cap (default 100 MB)         |
+
+**Per-platform defaults** (`platformDefaults()` in `src/config.ts`): one
+checkout runs on the Linux host and the Mac mini, so unset values follow the
+OS; an explicit value in config.env or the environment always wins.
+
+| setting                        | Linux                 | macOS                                        |
+| ------------------------------ | --------------------- | -------------------------------------------- |
+| config / data dir              | `~/.config/piweb`, `~/.local/share/piweb` | `~/Library/Application Support/piweb` (both) |
+| `WEB_EMBEDDED_WORKER`          | false (web in Docker, worker on host) | true (`piweb.js all` under launchd; SQLite locks do not cross the VM bind mount) |
+| `WEB_TRUST_TAILSCALE_IDENTITY` | true (sidecar headers) | false (Tailscale container proxies in without identity) |
+| `VOICE_ASR_ENABLED`            | true                  | false (no Breeze ASR on the Mac)             |
+| `AGY_ENABLED`                  | true                  | true if an agy binary is found, else false   |
+| `WEB_ICON_SET`                 | default icons         | `piweb-mini`                                 |
+| `CLAUDE_TMUX_TMUX_BIN`         | `tmux`                | `/opt/homebrew/bin/tmux` (or `/usr/local/bin`) if present |
+| `CLAUDE_TMUX_BIN`, `AGY_BIN`   | `~/.local/bin/<name>` if present, else the bare name (both) | same; agy also `/opt/homebrew/bin`, `/usr/local/bin` |
+
+Host metrics also branch on the OS (`docs/system-metrics.md`, macOS section).
 
 `DISCORD_*`, `CHANNEL_POLICY`, `AUTO_THREAD`, `TRIGGER_NAME` etc. are inherited
 from piscord and unused by the web transport.

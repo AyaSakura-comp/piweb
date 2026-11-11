@@ -33,6 +33,16 @@ the worker user's host privileges. This is not a sandbox. Keep authentication an
 CSRF protections enabled. Missing credentials/startup dialogs require manual host
 setup; the bridge does not type secrets or accept arbitrary prompts.
 
+**Computer use** (where it is enabled for the host's Claude Code): the grant
+dialog "Computer Use wants to control these apps" has no Piweb UI, so during a
+turn the bridge moves the cursor to **Allow for this session** and confirms
+(`computerUseDialog()`, logged as "Allowed Claude Code computer use for this
+session"), the same trust bypass mode already gives the session. A grant still on
+the pane when a new message arrives belongs to a turn nobody waits on (a worker
+restart, an interrupted message): it is denied with Esc and the turn it would
+resume is interrupted, so it cannot block the new message (2026-11-12: an Xcode
+grant sat 20 minutes, then the next message failed "did not become ready").
+
 Piweb launches and resumes Claude with
 `--settings '{"remoteControlAtStartup":false}'` and `--no-chrome`.
 Remote Control is **off by default for this bridge**, independently of inherited

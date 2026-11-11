@@ -1,0 +1,31 @@
+# piweb on macOS — Tailscale sidecar only.
+#
+#   docker compose -f deploy/mac-tailscale/compose.yml up -d
+#
+# On a Linux host the web tier runs in Docker beside the host worker and the two
+# share gateway.db. On macOS Docker runs in a VM, and SQLite locks and WAL shared
+# memory do NOT cross the VM's bind mount (tested: a container took the write
+# lock the Mac process held, and never saw its commit). So here piweb runs whole
+# on the Mac (launchd, `piweb.js all`, WEB_HOST=127.0.0.1) and this container is
+# only the tailnet node `mac-pi`: HTTPS + Funnel, proxying to the Mac's loopback
+# through OrbStack's host.internal.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: mac-pi-ts
+    hostname: mac-pi
+    restart: unless-stopped
+    environment:
+      # Only needed for the FIRST registration; afterwards the node comes up
+      # from the state dir. Without a key, register once by hand: run tailscaled
+      # on this state dir and `tailscale up --hostname=mac-pi` (containerboot's
+      # own `up` is killed after 60 s, before anyone can open the login link).
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_HOSTNAME=mac-pi
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - ${MAC_PI_TS_STATE:-~/Library/Application Support/piweb-tailscale}:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro

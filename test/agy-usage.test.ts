@@ -429,6 +429,32 @@ describe('fetchAgyQuota', () => {
     expect(refreshFlags).toEqual([false]);
   });
 
+  // Free-tier ("Antigravity Starter Quota") accounts 403 on `{}` and need their
+  // Code Assist project named (cd48246). The project is asked for first, as agy
+  // does, so such an account never sends the `{}` that would be refused.
+  it('gets a free-tier account its quota with the project loadCodeAssist names', async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const fake = (async (url: string, init: any) => {
+      calls.push({ url, body: init.body });
+      if (url.endsWith(':loadCodeAssist')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ cloudaicompanionProject: 'aicode-consumers' }),
+        };
+      }
+      if (init.body === '{}') {
+        return { ok: false, status: 403, text: async () => '{"error":{"status":"PERMISSION_DENIED"}}' };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ groups: GROUPS }) };
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAgyQuota(fake, 'test-token')).resolves.toEqual(GROUPS);
+    expect(calls.map((c) => c.url.split(':').pop())).toEqual(['loadCodeAssist', 'retrieveUserQuotaSummary']);
+    expect(JSON.parse(calls[1].body)).toEqual({ project: 'aicode-consumers' });
+    expect(calls.some((c) => c.body === '{}')).toBe(false);
+  });
+
   it('surfaces an HTTP failure as an AgyUsageError', async () => {
     const { fake } = codeAssist({ quota: () => ({ status: 500, body: 'boom' }) });
 
