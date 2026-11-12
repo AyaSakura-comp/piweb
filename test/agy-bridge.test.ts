@@ -55,6 +55,7 @@ describe('modelIdEncodesEffort', () => {
     expect(modelIdEncodesEffort('gemini-3.5-flash-low')).toBe(true);
     expect(modelIdEncodesEffort('gemini-3.1-pro-high')).toBe(true);
     expect(modelIdEncodesEffort('gpt-oss-120b-medium')).toBe(true);
+    expect(modelIdEncodesEffort('gemini-4-hydrogen-xhigh')).toBe(true);
   });
 
   it('leaves ids without an effort suffix free to take --effort', () => {

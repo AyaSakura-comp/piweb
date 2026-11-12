@@ -101,11 +101,15 @@ export const EFFORT_BY_THINKING: Record<ThinkingLevel, 'low' | 'medium' | 'high'
 
 /**
  * Most agy model ids already encode their reasoning effort as a suffix
- * (`gemini-3.5-flash-low`). Passing --effort alongside one is rejected outright:
+ * (`gemini-3.5-flash-low`, `gemini-4-hydrogen-xhigh`). Passing --effort
+ * alongside one is rejected outright:
  *   invalid model selection … --model gemini-3.5-flash-low conflicts with --effort=medium
  * so the id wins and the flag is suppressed for those models.
  */
-const EFFORT_SUFFIX = /-(low|medium|high)$/;
+const EFFORT_SUFFIX = /-(minimal|low|medium|high|xhigh|max)$/;
+
+/** agy's answer when the id already fixes the effort (a suffix we do not know yet). */
+const EFFORT_CONFLICT = /conflicts with --effort/i;
 
 export function modelIdEncodesEffort(id: string): boolean {
   return EFFORT_SUFFIX.test(id.trim());
@@ -728,10 +732,25 @@ export async function invokeAgy(
 
   const delays = config.agyRetryDelaysMs;
   let recorded = false;
+  let withoutEffort = false;
   for (let retry = 0; ; retry++) {
     const startedAt = Date.now();
-    const attempt = await runAgyAttempt(channelFolder, recorded ? AGY_RETRY_CONTINUE : promptText, opts);
+    const attempt = await runAgyAttempt(
+      channelFolder,
+      recorded ? AGY_RETRY_CONTINUE : promptText,
+      opts,
+      withoutEffort,
+    );
     const { result } = attempt;
+    // A new model whose id fixes its effort in a way modelIdEncodesEffort does
+    // not know yet: agy refuses the flags before it starts, so run it once more
+    // without --effort rather than failing every turn on that model.
+    if (!result.ok && !result.aborted && attempt.sentEffort && EFFORT_CONFLICT.test(attempt.failure)) {
+      logger.warn({ channelFolder, model: opts?.model }, 'agy refused --effort for this model; running without it');
+      withoutEffort = true;
+      retry--;
+      continue;
+    }
     if (result.ok || result.aborted || !isPassingAgyServerFailure(attempt.failure)) return result;
     if (retry >= delays.length) {
       if (retry === 0) return result;
@@ -766,6 +785,8 @@ interface AgyAttempt {
   /** agy's own error text, else its stderr — never the model's reply. Empty when killed. */
   failure: string;
   conversationId?: string;
+  /** Whether this run passed --effort. */
+  sentEffort: boolean;
 }
 
 /** One agy process for one message (plus its task reconciliation turns). */
@@ -773,6 +794,7 @@ async function runAgyAttempt(
   channelFolder: string,
   promptText: string,
   opts: AgyInvokeOptions | undefined,
+  withoutEffort = false,
 ): Promise<AgyAttempt> {
   const modelRef = opts?.model || '';
   const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
@@ -781,7 +803,8 @@ async function runAgyAttempt(
   if (modelId) args.push('--model', modelId);
 
   const effort = opts?.thinking ? EFFORT_BY_THINKING[opts.thinking] : undefined;
-  if (effort && !modelIdEncodesEffort(modelId)) args.push('--effort', effort);
+  const sentEffort = Boolean(effort && !withoutEffort && !modelIdEncodesEffort(modelId));
+  if (sentEffort) args.push('--effort', effort!);
 
   // Piweb has no UI for agy's interactive permission prompts; without this the
   // subprocess blocks forever on the first tool call.
@@ -803,7 +826,7 @@ async function runAgyAttempt(
 
   const turnStartedAt = Date.now();
   const printTimeoutMs = parseDurationMs(config.agyPrintTimeout) ?? 3_600_000;
-  const attempt: AgyAttempt = { result: { ok: false, text: '' }, failure: '' };
+  const attempt: AgyAttempt = { result: { ok: false, text: '' }, failure: '', sentEffort };
 
   await ensureFreshAgyToken().catch(() => undefined);
 

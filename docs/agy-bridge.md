@@ -122,8 +122,12 @@ regressions.
   plus `--effort medium` is rejected outright with
   `invalid model selection … conflicts with --effort=medium`, and the turn fails
   before `init`. `modelIdEncodesEffort()` suppresses the flag for any id ending
-  in `-low`/`-medium`/`-high`, so the id wins; only ids without a suffix
-  (`claude-sonnet-4-6`) actually take `--effort`. This only reproduces with a
+  in `-minimal`/`-low`/`-medium`/`-high`/`-xhigh`/`-max`, so the id wins; only
+  ids without a suffix (`claude-sonnet-4-6`) actually take `--effort`. A suffix
+  agy adds later (`-xhigh` arrived with agy 1.5.7's `gemini-4-hydrogen-xhigh`
+  and failed every turn on it) is caught at run time: when agy answers
+  `conflicts with --effort`, `invokeAgy` runs the message once more without
+  the flag. This only reproduces with a
   thinking level set, which is why it survived the first round of testing and
   was caught by the deployed end-to-end run.
 - **agy blocks on an open stdin.** `agy models` produces no output at all and

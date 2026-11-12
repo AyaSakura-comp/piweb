@@ -47,6 +47,15 @@ const rl = require('node:readline').createInterface({ input: process.stdin });
 rl.once('line', (line) => {
   const input = JSON.parse(line).message.content;
   fs.appendFileSync(calls, JSON.stringify({ argv: process.argv.slice(2), input }) + '\\n');
+  // Like agy 1.5.7 for a model whose id fixes its effort.
+  const argv = process.argv.slice(2);
+  if (process.env.FAKE_AGY_REJECT_EFFORT && argv.includes('--effort')) {
+    const model = argv[argv.indexOf('--model') + 1];
+    const effort = argv[argv.indexOf('--effort') + 1];
+    emit({ event: 'result', result: { status: 'ERROR', error:
+      'invalid model selection (--model "' + model + '" --effort "' + effort + '"): --model ' + model + ' conflicts with --effort=' + effort } });
+    process.exit(1);
+  }
   if (step !== 'busy-early') {
     fs.appendFileSync(path.join(root, 'transcript.jsonl'),
       JSON.stringify({ type: 'USER_INPUT', created_at: new Date().toISOString().replace(/\\.\\d+Z$/, 'Z') }) + '\\n');
@@ -83,6 +92,7 @@ afterEach(async () => {
   config.agyRetryDelaysMs = savedDelays;
   delete process.env.FAKE_AGY_ROOT;
   delete process.env.FAKE_AGY_PLAN;
+  delete process.env.FAKE_AGY_REJECT_EFFORT;
   rmSync(fake.root, { recursive: true, force: true });
 });
 
@@ -183,6 +193,62 @@ describe('an agy run', () => {
     expect((await invokeAgy('channel', 'hello', { isCurrent: () => true })).ok).toBe(true);
     // It used to wait out the 2 s "a grandchild still holds stdout" window every time.
     expect(Date.now() - started).toBeLessThan(1500);
+  });
+});
+
+// 2026-11-13: agy 1.5.7 added gemini-4-hydrogen-xhigh and every turn on it
+// failed with "--model gemini-4-hydrogen-xhigh conflicts with --effort=high".
+describe('an agy model whose id fixes its effort', () => {
+  it('runs without --effort when the id ends in -xhigh', async () => {
+    process.env.FAKE_AGY_PLAN = 'ok';
+    process.env.FAKE_AGY_REJECT_EFFORT = '1';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-4-hydrogen-xhigh',
+      thinking: 'high',
+      isCurrent: () => true,
+    });
+    expect(result).toEqual({ ok: true, text: 'Done after the retry.' });
+    const runs = calls();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].argv).toContain('gemini-4-hydrogen-xhigh');
+    expect(runs[0].argv).not.toContain('--effort');
+  });
+
+  it('runs again without --effort when agy says an unknown id conflicts with it', async () => {
+    process.env.FAKE_AGY_PLAN = 'ok,ok';
+    process.env.FAKE_AGY_REJECT_EFFORT = '1';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const events: any[] = [];
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-9-ultra',
+      thinking: 'high',
+      isCurrent: () => true,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    expect(result).toEqual({ ok: true, text: 'Done after the retry.' });
+    const runs = calls();
+    expect(runs).toHaveLength(2);
+    expect(runs[0].argv.join(' ')).toContain('--effort high');
+    expect(runs[1].argv).not.toContain('--effort');
+    // agy refused the flags before starting, so the message itself goes again.
+    expect(runs[1].input).toContain('Original request 7731');
+    expect(notes(events)).toEqual([]);
+  });
+
+  it('does not loop when agy still refuses without --effort', async () => {
+    process.env.FAKE_AGY_PLAN = 'quota,quota';
+    process.env.FAKE_AGY_REJECT_EFFORT = '1';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-9-ultra',
+      thinking: 'high',
+      isCurrent: () => true,
+    });
+    expect(result.ok).toBe(false);
+    expect(calls()).toHaveLength(2);
   });
 });
 
