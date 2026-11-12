@@ -187,6 +187,19 @@ function envInt(key: string, fallback: number, opts: { min?: number } = {}): num
   return v;
 }
 
+/** "15s,30s,2m" → [15000, 30000, 120000]; "off" → []. Unreadable entries are skipped. */
+export function parseRetryDelays(raw: string): number[] {
+  if (/^(off|none|no|false|0)$/i.test(raw.trim())) return [];
+  const delays: number[] = [];
+  for (const part of raw.split(',')) {
+    const match = /^(\d+)(ms|s|m)?$/.exec(part.trim());
+    if (!match) continue;
+    const value = Number(match[1]);
+    delays.push(match[2] === 'ms' ? value : match[2] === 'm' ? value * 60_000 : value * 1000);
+  }
+  return delays.slice(0, 10);
+}
+
 function envBool(key: string, fallback: boolean): boolean {
   const v = env(key).toLowerCase();
   if (!v) return fallback;
@@ -260,6 +273,13 @@ export const config = {
    * screen with no result, and nothing distinguishes "slow" from "hung".
    */
   agyToolStallWarnMs: envInt('AGY_TOOL_STALL_WARN_MS', 120_000, { min: 5_000 }),
+
+  /**
+   * Waits before running an agy turn again after Google's servers failed it
+   * in a way that passes (503 "No capacity available … try again in a
+   * minute", 502/504, a stream gone idle): one retry per entry. `off` = none.
+   */
+  agyRetryDelaysMs: parseRetryDelays(env('AGY_RETRY_DELAYS', '15s,30s,60s,120s')),
 
   /**
    * agy blocks on interactive tool-permission prompts, and Piweb has no UI to

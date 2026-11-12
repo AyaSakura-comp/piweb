@@ -135,6 +135,31 @@ regressions.
   `AGY_SKIP_PERMISSIONS` defaults to true. Turning it off makes any tool-using
   turn hang until `--print-timeout`.
 
+### Server errors that pass are retried
+
+Google answers a busy model with `Our servers are experiencing high traffic
+right now, please try again in a minute. (UNAVAILABLE (code 503): No capacity
+available for model … on the server)`, and agy ends the turn there (2026-11-12,
+three times in two days on one session). Pi and Claude Code retry such errors
+themselves; agy does not, so `invokeAgy()` does: a turn whose agy error text
+(never the model's reply) reads as a passing server failure — `UNAVAILABLE`,
+no capacity, high traffic, 500/502/503/504, a stream gone idle — runs again
+after each of `AGY_RETRY_DELAYS`. Quota (`RESOURCE_EXHAUSTED`, 429), sign-in
+and bad-request errors are not retried. While it waits, a thinking row says
+why and when (`⏳ Google 的模型伺服器目前滿載，15 秒後自動重試（第 1/4 次）`);
+a newer message or `/pi stop` ends the wait. After the last one the error
+says how many times it tried.
+
+agy writes the user's message into its conversation (`USER_INPUT`) before it
+calls the model, so a failed attempt already holds it. The retry checks the
+brain transcript: if this attempt's message is there, it sends a short
+"carry on with the message above" (`AGY_RETRY_CONTINUE`) instead of the message
+again; otherwise (it failed before recording, or no transcript, as on macOS)
+it resends the message. The conversation id is read per attempt, so a first
+turn that failed resumes the conversation it started.
+
+`test/agy-retry.test.ts` plays Google's side with a fake agy.
+
 ## Configuration
 
 | variable                | default | meaning                                               |
@@ -144,6 +169,7 @@ regressions.
 | `AGY_MODELS_TIMEOUT_MS` | `20000` | catalog probe timeout                                 |
 | `AGY_PRINT_TIMEOUT`     | `15m`   | passed as `--print-timeout` (agy's own default is 5m) |
 | `AGY_SKIP_PERMISSIONS`  | `true`  | `--dangerously-skip-permissions`; see above           |
+| `AGY_RETRY_DELAYS`      | `15s,30s,60s,120s` | waits before re-running a turn Google's servers failed in passing; `off` = none |
 
 With `AGY_ENABLED=false` (or no `agy` binary) the catalog probe fails soft, no
 `agy/*` refs are offered, and nothing else changes.
@@ -154,6 +180,7 @@ Unit (`npm test`):
 
 - `test/agy-bridge.test.ts` — ref detection, catalog parsing, event translation, quota/error formatting (including SIGTERM/code 143 and elapsed time checking), conversation-id round trip and corrupt-store handling.
 - `test/agy-subagents.test.ts` — transcript projection and delayed refresh, with passing acknowledgement/abort/ownership/deletion/replacement regressions.
+- `test/agy-retry.test.ts` — a fake agy failing with 503 no capacity: the turn runs again and continues the recorded message, resends one agy never recorded, gives up after the last wait, leaves quota alone, stops waiting on a newer message; a run settles as soon as agy exits.
 - `test/agy-commands.test.ts` — command state, task-ID correlation, output receipt, continuation and unknown-on-exit behavior.
 - `test/queue-agy-routing.test.ts` — an `agy/*` model reaches `invokeAgy` and
   **not** `invokeAgent`; every other model stays on the pi path; `RPC_STEER=true`

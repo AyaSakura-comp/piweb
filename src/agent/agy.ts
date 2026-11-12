@@ -611,46 +611,101 @@ export function formatAgyError(status: string, text: string, opts?: FormatAgyErr
   return cleanText ? `agy failed (${status}): ${cleanText}` : `agy failed (${status})`;
 }
 
+export interface AgyInvokeOptions {
+  channelJid?: string;
+  model?: string;
+  thinking?: ThinkingLevel;
+  cwd?: string;
+  signal?: AbortSignal;
+  /** Synchronous queue generation/lease fence; checked before each snapshot. */
+  isCurrent?: () => boolean;
+  /** Serialized AttachmentMeta[], same contract as invokeAgent. */
+  attachments?: string | null;
+  onEvent?: (event: any) => void | Promise<void>;
+}
+
+/**
+ * Failures of Google's model servers that pass by themselves: no capacity
+ * (`UNAVAILABLE (code 503): No capacity available for model … please try
+ * again in a minute`), a gateway error, a stream that went idle. Pi and Claude
+ * Code retry these on their own; agy gives up on the first one.
+ */
+const PASSING_SERVER_FAILURE =
+  /\bUNAVAILABLE\b|No capacity available|high traffic|try again in a minute|overloaded|\b50[0234]\b|Bad Gateway|Service Unavailable|Gateway Time-?out|stream idle timeout/i;
+/** Waiting a minute does not fix these: quota, sign-in, a bad request. */
+const LASTING_FAILURE =
+  /RESOURCE_EXHAUSTED|quota|\b429\b|PERMISSION_DENIED|UNAUTHENTICATED|INVALID_ARGUMENT|sign in|not logged in/i;
+
+/** Whether agy's own error text (never the model's reply) says the server will be back. */
+export function isPassingAgyServerFailure(failure: string): boolean {
+  return PASSING_SERVER_FAILURE.test(failure) && !LASTING_FAILURE.test(failure);
+}
+
+function describePassingFailure(failure: string): string {
+  if (/No capacity available|high traffic|overloaded/i.test(failure)) return 'Google 的模型伺服器目前滿載';
+  if (/stream idle timeout/i.test(failure)) return 'Google 的模型伺服器沒有回應';
+  const code = /\b(50[0234])\b/.exec(failure)?.[1];
+  return code ? `Google 的模型伺服器暫時出錯（${code}）` : 'Google 的模型伺服器暫時出錯';
+}
+
+/**
+ * What a retry sends when agy already recorded the user's message before the
+ * failure (it writes USER_INPUT first): sending the message again would put it
+ * in the conversation twice.
+ */
+export const AGY_RETRY_CONTINUE =
+  'PiWeb: your last attempt at the message above stopped on a temporary error from the model server, ' +
+  'not because of anything you did. Carry on with that message now, from where it stopped; ' +
+  'do not redo steps that already finished.';
+
+/** Whether agy recorded a message of this attempt in the conversation. */
+function messageRecorded(conversationId: string | undefined, since: number): boolean {
+  if (!conversationId) return false;
+  // agy stamps steps to the second.
+  const floor = Math.floor(since / 1000) * 1000 - 1000;
+  const steps = readAgyTaskTranscript(conversationId);
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i]?.type !== 'USER_INPUT') continue;
+    const at = Date.parse(String(steps[i].created_at ?? ''));
+    return Number.isFinite(at) && at >= floor;
+  }
+  return false;
+}
+
+/** Wait out a retry delay; false once the turn is stopped (a newer message, /pi stop) or lost. */
+function waitToRetry(ms: number, opts: AgyInvokeOptions | undefined): Promise<boolean> {
+  const stopped = () => Boolean(opts?.signal?.aborted || (opts?.isCurrent && !opts.isCurrent()));
+  if (stopped()) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const finish = (ok: boolean) => {
+      clearTimeout(timer);
+      clearInterval(watch);
+      opts?.signal?.removeEventListener('abort', onAbort);
+      resolve(ok);
+    };
+    const onAbort = () => finish(false);
+    const timer = setTimeout(() => finish(!stopped()), ms);
+    const watch = setInterval(() => {
+      if (stopped()) finish(false);
+    }, 5_000);
+    opts?.signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * Run one turn through the agy CLI.
  *
  * Mirrors invokeAgent's contract (same AgentResult, same onEvent stream) so the
- * queue can swap between them on the model ref alone.
+ * queue can swap between them on the model ref alone. A turn that fails on a
+ * passing server error (503 no capacity) runs again after each of
+ * AGY_RETRY_DELAYS, saying so in the transcript while it waits.
  */
 export async function invokeAgy(
   channelFolder: string,
   userText: string,
-  opts?: {
-    channelJid?: string;
-    model?: string;
-    thinking?: ThinkingLevel;
-    cwd?: string;
-    signal?: AbortSignal;
-    /** Synchronous queue generation/lease fence; checked before each snapshot. */
-    isCurrent?: () => boolean;
-    /** Serialized AttachmentMeta[], same contract as invokeAgent. */
-    attachments?: string | null;
-    onEvent?: (event: any) => void | Promise<void>;
-  },
+  opts?: AgyInvokeOptions,
 ): Promise<AgentResult> {
   if (opts?.signal?.aborted || (opts?.isCurrent && !opts.isCurrent())) return { ok: false, text: '', aborted: true };
-  const modelRef = opts?.model || '';
-  const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
-
-  const modelId = modelRef ? agyModelId(modelRef) : '';
-  if (modelId) args.push('--model', modelId);
-
-  const effort = opts?.thinking ? EFFORT_BY_THINKING[opts.thinking] : undefined;
-  if (effort && !modelIdEncodesEffort(modelId)) args.push('--effort', effort);
-
-  // Piweb has no UI for agy's interactive permission prompts; without this the
-  // subprocess blocks forever on the first tool call.
-  if (config.agySkipPermissions) args.push('--dangerously-skip-permissions');
-
-  const conversationId = readAgyConversationId(channelFolder);
-  if (conversationId) args.push('--conversation', conversationId);
-
-  args.push('--print-timeout', config.agyPrintTimeout);
 
   // agy has its own file tools, so every upload — images included — is handed
   // over by absolute path rather than inlined into the prompt.
@@ -670,6 +725,74 @@ export async function invokeAgy(
       logger.warn({ err: err.message }, 'Failed to process attachments for agy');
     }
   }
+
+  const delays = config.agyRetryDelaysMs;
+  let recorded = false;
+  for (let retry = 0; ; retry++) {
+    const startedAt = Date.now();
+    const attempt = await runAgyAttempt(channelFolder, recorded ? AGY_RETRY_CONTINUE : promptText, opts);
+    const { result } = attempt;
+    if (result.ok || result.aborted || !isPassingAgyServerFailure(attempt.failure)) return result;
+    if (retry >= delays.length) {
+      if (retry === 0) return result;
+      return { ...result, error: `${result.error ?? ''}\n\n已自動重試 ${retry} 次，伺服器還是沒有恢復。`.trim() };
+    }
+    recorded = recorded || messageRecorded(attempt.conversationId, startedAt);
+    const delayMs = delays[retry];
+    logger.warn(
+      { channelFolder, retry: retry + 1, of: delays.length, delayMs, failure: attempt.failure.slice(0, 300) },
+      'agy hit a passing server error; retrying',
+    );
+    try {
+      void opts?.onEvent?.({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'thinking_end',
+          content:
+            `⏳ ${describePassingFailure(attempt.failure)}，${humanizeDuration(delayMs)}後自動重試` +
+            `（第 ${retry + 1}/${delays.length} 次）。\n` +
+            '傳新訊息或 /pi stop 會取消重試。',
+        },
+      });
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'agy event handler failed');
+    }
+    if (!(await waitToRetry(delayMs, opts))) return { ok: false, text: '', aborted: true };
+  }
+}
+
+interface AgyAttempt {
+  result: AgentResult;
+  /** agy's own error text, else its stderr — never the model's reply. Empty when killed. */
+  failure: string;
+  conversationId?: string;
+}
+
+/** One agy process for one message (plus its task reconciliation turns). */
+async function runAgyAttempt(
+  channelFolder: string,
+  promptText: string,
+  opts: AgyInvokeOptions | undefined,
+): Promise<AgyAttempt> {
+  const modelRef = opts?.model || '';
+  const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
+
+  const modelId = modelRef ? agyModelId(modelRef) : '';
+  if (modelId) args.push('--model', modelId);
+
+  const effort = opts?.thinking ? EFFORT_BY_THINKING[opts.thinking] : undefined;
+  if (effort && !modelIdEncodesEffort(modelId)) args.push('--effort', effort);
+
+  // Piweb has no UI for agy's interactive permission prompts; without this the
+  // subprocess blocks forever on the first tool call.
+  if (config.agySkipPermissions) args.push('--dangerously-skip-permissions');
+
+  // Read per attempt: a first attempt that failed may have started the conversation.
+  const conversationId = readAgyConversationId(channelFolder);
+  if (conversationId) args.push('--conversation', conversationId);
+
+  args.push('--print-timeout', config.agyPrintTimeout);
+
   // Keep stdin open while explicitly disclosed background tasks need reconciliation.
   // Closing print-mode stdin too early can cancel the AGY task executor.
 
@@ -680,10 +803,11 @@ export async function invokeAgy(
 
   const turnStartedAt = Date.now();
   const printTimeoutMs = parseDurationMs(config.agyPrintTimeout) ?? 3_600_000;
+  const attempt: AgyAttempt = { result: { ok: false, text: '' }, failure: '' };
 
   await ensureFreshAgyToken().catch(() => undefined);
 
-  return new Promise<AgentResult>((resolve) => {
+  attempt.result = await new Promise<AgentResult>((resolve) => {
     // detached makes agy a process-group leader so the whole group can be
     // signalled. agy's tools freely spawn long-lived grandchildren (it was seen
     // starting the nodriver browser daemon in the foreground); killing only agy
@@ -873,6 +997,11 @@ export async function invokeAgy(
         settled = true;
         finalize(code, signal);
       };
+      // stdout usually ends before `exit`; a listener added now would never fire.
+      if (proc.stdout.readableEnded) {
+        finish();
+        return;
+      }
       let drained = false;
       proc.stdout.once('end', () => {
         drained = true;
@@ -935,6 +1064,9 @@ export async function invokeAgy(
         return;
       }
 
+      attempt.conversationId = seenConversationId;
+      // A killed agy is the queue's to handle (it re-queues SIGTERM/SIGKILL).
+      if (!signal && !workerShuttingDown) attempt.failure = agyErrorText || stderrText;
       const elapsedMs = Date.now() - turnStartedAt;
       let error = formatAgyError(
         status === 'UNKNOWN' ? `exit ${code}` : status,
@@ -957,4 +1089,5 @@ export async function invokeAgy(
       resolve({ ok: false, text, error });
     };
   });
+  return attempt;
 }

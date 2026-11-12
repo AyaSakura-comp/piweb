@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- agy turns that Google's servers fail in passing (503 "No capacity available … try again in a minute", 502/504, an idle stream) run again by themselves after 15 s, 30 s, 1 min and 2 min, saying so in the transcript; a newer message stops the wait
 - 🔑 Login details for the agent: a key in the composer takes a name, account and password; the web tier seals them to the host worker's key at once, so the database, the transcript and Pi's session file never hold them in plain text — the agent is told variable names (`$PIWEB_SECRET_GITHUB_PASS`), Pi's tools get the values when they run, and anything echoed back is scrubbed
 - BTW in AGY sessions, answered by agy's own `/btw` (asked in agy's TUI beside the conversation; the main conversation never sees it)
 - Recently deleted now supports Select-button or touch/mouse long-press multi-selection, one-confirmation permanent deletion, Select all, and Delete all in responsive phone and desktop layouts
@@ -24,6 +25,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- An agy turn no longer waits 2 s after agy exits: stdout had usually ended already, so the wait for its end never fired
 - A selection no longer flickers while it is dragged: no dark slits or thin ledges flash through the bubble as lines pour in or drain away, and a mouse drag no longer shows the quote pill (and re-quotes, and scrolls a Dashboard pane) on every move — pill and quote come once on the release
 - Dragging a long selection no longer lags: a motion of many lines is drawn frame by frame (moving every line's parts on the compositor cost 17ms a move on desktop), a drag moves the bubble once a frame, and parts in motion always start together so the outline no longer breaks into steps
 - The selection bubble's 120Hz spring draws the exact outline on every frame: a line in motion no longer shows seams, loses its rim and glow where it was cut, squashes its rounded ends or keeps the corners of where it will rest, and a line draining away no longer leaves its shadow behind

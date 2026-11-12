@@ -1307,6 +1307,7 @@ contains `agy/*` refs. Config knobs (all optional):
 | `AGY_SKIP_PERMISSIONS`   | `true`   | `--dangerously-skip-permissions`    |
 | `AGY_TMUX_BIN`           | `tmux`   | tmux for agy's `/btw` (TUI only)    |
 | `AGY_TOOL_STALL_WARN_MS` | `120000` | when a stuck tool call is announced |
+| `AGY_RETRY_DELAYS`       | `15s,30s,60s,120s` | waits before re-running a turn Google failed in passing (503 no capacity …); `off` = none |
 
 With no binary, or `AGY_ENABLED=false`, the probe fails soft: no `agy/*` refs are
 offered and every other model behaves exactly as before.
@@ -1513,6 +1514,11 @@ quoting another session's launch line once held a turn on that session's task.
     startup covers a killed _worker_ (rows stranded in `processing`).
   - **Upstream Google/Agy 502/503 Error Translation**: `formatAgyError()` strips raw HTML
     gateway payloads from upstream Google Cloud backend transient errors and presents clean, friendly notifications.
+  - **Agy server errors that pass are retried** (`invokeAgy()`): 503 `UNAVAILABLE` / "No capacity available",
+    500/502/504 and an idle stream run the turn again after each of `AGY_RETRY_DELAYS` (15s,30s,60s,120s), with a
+    `⏳` thinking row while it waits; quota/sign-in errors are not retried. agy records the user's message before
+    calling the model, so a retry sends `AGY_RETRY_CONTINUE` when the brain transcript already holds it. See
+    `docs/agy-bridge.md` "Server errors that pass are retried".
   - **Agy Termination and Timeout Disambiguation**: When agy exits via `SIGTERM` / `SIGKILL` (or code 143/137), `formatAgyError()` returns `exited with code 143 (SIGTERM)` rather than misreporting a 60m print-timeout, enabling `queue.ts` auto-requeue. `timeout waiting for response` is only attributed to `AGY_PRINT_TIMEOUT` if elapsed turn time actually approached the timeout threshold (`>= 80%`).
   - **E2E Test**: `test/e2e/agy-interaction.spec.ts` verifies the full agy lifecycle (model selection, `/agy-usage` command, SSE thinking/tool/reply streaming, details toggles, and clean termination handling).
 - **Do not restart the worker while a run is in flight** — it SIGTERMs the user's
