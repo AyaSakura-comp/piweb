@@ -170,6 +170,63 @@ describe.skipIf(!PI_BIN)('piweb-secrets inside a real Pi session', () => {
     expect(model.bodies[2]).toContain('user=$PIWEB_SECRET_GITHUB_USER pass=$PIWEB_SECRET_GITHUB_PASS');
   }, 90_000);
 
+  it('leaves names in any other tool, which reads the values from the environment itself (like browser_intent)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'piweb-pi-secrets-'));
+    tempDirs.push(root);
+    const agentDir = join(root, 'agent');
+    mkdirSync(agentDir);
+    // A directory named like the account: `ls` would list it if the name were filled in.
+    mkdirSync(join(root, USERNAME));
+    writeFileSync(join(root, USERNAME, 'inside.txt'), 'x');
+    const secretsFile = join(root, 'runtime.json');
+    writeFileSync(
+      secretsFile,
+      JSON.stringify({ version: 1, secrets: [{ name: 'GitHub', base: 'PIWEB_SECRET_GITHUB', username: USERNAME, password: PASSWORD }] }),
+      { mode: 0o600 },
+    );
+    const model = await scriptedModel([
+      {
+        toolCalls: [
+          { name: 'probe', args: { goal: 'log in with $PIWEB_SECRET_GITHUB_USER / $PIWEB_SECRET_GITHUB_PASS' } },
+          { name: 'ls', args: { path: '${PIWEB_SECRET_GITHUB_USER}' } },
+        ],
+      },
+      { text: 'ok' },
+    ]);
+    writeFileSync(
+      join(agentDir, 'models.json'),
+      JSON.stringify({
+        providers: {
+          fake: {
+            baseUrl: `http://127.0.0.1:${model.port}/v1`,
+            api: 'openai-completions',
+            apiKey: 'not-needed',
+            models: [{ id: 'fake-model', name: 'Fake', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1000 }],
+          },
+        },
+      }),
+    );
+    writeFileSync(join(agentDir, 'settings.json'), '{}');
+    const run = await runPi(
+      [
+        '--no-session', '--model', 'fake/fake-model', '--no-extensions', '--no-skills', '--no-prompt-templates',
+        '--tools', 'read,bash,edit,write,ls,probe',
+        '--extension', PI_SECRETS_EXTENSION,
+        '--extension', resolve(import.meta.dirname, 'fixtures/pi-probe-extension.ts'),
+        '-p', 'x',
+      ],
+      { PI_CODING_AGENT_DIR: agentDir, PIWEB_SECRETS_FILE: secretsFile, PI_SKIP_VERSION_CHECK: '1' },
+      root,
+    );
+    expect(run.out).toContain('ok');
+    const results = model.bodies[1];
+    // The tool got the names, and found the value in the environment.
+    expect(results).toContain(`kept-names=true env=set:${PASSWORD.length}`);
+    expect(results).toContain('Path not found');
+    expect(results).not.toContain('inside.txt');
+    expect(results).not.toContain(USERNAME);
+  }, 90_000);
+
   it('keeps what it read when the file goes between turns (a turn Pi starts by itself)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'piweb-pi-secrets-'));
     tempDirs.push(root);

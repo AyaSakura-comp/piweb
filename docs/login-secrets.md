@@ -77,10 +77,13 @@ piweb starts Pi with `--extension pi-extensions/piweb-secrets.ts` and
   them, so `"$PIWEB_SECRET_GITHUB_PASS"` expands in the shell; the command Pi
   stores keeps the name). The shell expands them itself — pasting values into
   command text could break quoting or inject;
-- for any other tool (write, a browser action…) fills `$NAME` / `${NAME}` into
-  the arguments just before the tool runs. Pi hands `tool_call` a
-  `structuredClone` of the arguments (`validateToolArguments`), so the
-  assistant message in the JSONL keeps the names;
+- for `write` and `edit` only, fills `$NAME` / `${NAME}` into the arguments
+  just before the tool runs. Pi hands `tool_call` a `structuredClone` of the
+  arguments (`validateToolArguments`), so the assistant message in the JSONL
+  keeps the names. Every other tool keeps the names, because its arguments may
+  go on to another model: browser_intent's goal goes to its planner (and that
+  engine's KV cache), a subagent's task to the child agent, a search query to
+  Google;
 - on `tool_result`, swaps any value for its name in the content and details
   before Pi stores the result or shows it to the model.
 
@@ -90,9 +93,28 @@ scripted OpenAI-compatible model: bash and write get the real values, the
 JSONL and all three model requests contain only names.
 
 Extensions loaded with `--extension` run before discovered ones, so another
-extension's `tool_call` handler sees a non-bash tool's filled-in arguments.
+extension's `tool_call` handler sees `write`/`edit`'s filled-in arguments.
 The installed ones (nodriver-browser, perf-optimization) only inspect tool
 names and paths.
+
+## The browser (browser_intent)
+
+browser_intent (pi-nodriver-browser, 51cc104) gets the names in its goal and
+reads the values from the Pi process's environment, which the extension has
+set by the time any tool runs. Its planner types the name; only the command
+sent to Chrome carries the value. Every page it reads back — a filled field's
+`value="…"`, a "Hi <account>" greeting, an error message — has the values
+turned back into names before the planner, the evidence corpus or the result
+sees it, and the worker's events log leaves out what a `type` command typed.
+A name the goal does not give is refused. Checked live: a real Chrome on an
+isolated worker filled a local login form with the exact values while the
+planner's requests, the task result and the log held only names. The final
+screenshot can still show an account typed into a page (password fields show
+dots); an image cannot be scrubbed. The shared Chrome profile keeps the site's
+login cookies, as with any login, and Chrome may offer to save the password.
+
+Claude Code's browser tools (MCP) cannot read the variables; for a site login
+there the agent has to script it in a shell command.
 
 ## Claude Code and agy
 

@@ -12,9 +12,16 @@
  * - bash: the values are environment variables of this process, which every
  *   bash tool call inherits, so "$PIWEB_SECRET_GITHUB_PASS" expands in the
  *   shell. The command Pi stores still says only the name.
- * - other tools: names in their arguments are filled in just before the tool
- *   runs. Pi hands `tool_call` a copy of the arguments, so the assistant
- *   message in the session JSONL keeps the names.
+ * - write / edit: names in their arguments are filled in just before the tool
+ *   runs (the agent writing a config file means the value). Pi hands
+ *   `tool_call` a copy of the arguments, so the assistant message in the
+ *   session JSONL keeps the names.
+ * - every other tool keeps the names: its arguments may go on to another model
+ *   (browser_intent's planner, a subagent's task, a search query). A tool that
+ *   must type a value does it itself, from this process's environment, at the
+ *   last moment: browser_intent (pi-nodriver-browser) types $PIWEB_SECRET_*
+ *   as the value only in the command sent to Chrome, and hides values in the
+ *   pages it reads back.
  * - tool results: any value that comes back (a page that echoes the account,
  *   `cat` of a config file) is swapped for its name before Pi stores the
  *   result or shows it to the model.
@@ -32,6 +39,8 @@ interface Detail {
 /** Values shorter than this are not scrubbed (a 3-letter account is too common a word). */
 const MIN_REDACT_CHARS = 4;
 const PREFIX = 'PIWEB_SECRET_';
+/** Tools whose arguments get the values: they act on them directly, no model reads them. */
+const FILLED_TOOLS = new Set(['write', 'edit']);
 
 let lastRead: Array<[string, string]> = [];
 
@@ -140,10 +149,12 @@ export default function piwebSecrets(pi: Api): void {
 
   pi.on('tool_call', (event) => {
     const pairs = variables();
+    // Every tool call: bash expands the names from here, browser_intent types from here.
     syncEnvironment(pairs);
-    // A shell expands the names itself, with its own quoting rules; pasting
-    // a value into the command text could break (or inject into) it.
-    if (pairs.length === 0 || event.toolName === 'bash' || event.toolName === 'powershell') return undefined;
+    // A shell expands the names itself, with its own quoting rules (pasting a
+    // value into the command text could break or inject into it); any tool
+    // not listed may hand its arguments to another model.
+    if (pairs.length === 0 || !FILLED_TOOLS.has(event.toolName)) return undefined;
     fillIn(event.input, pairs);
     return undefined;
   });
