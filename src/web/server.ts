@@ -32,6 +32,13 @@ import { parseUploadMetrics } from './upload-metrics.js';
 import { sampleSystemMetrics } from './system-metrics.js';
 import { buildQuotedDisplay, buildQuotedPrompt, normalizeQuote } from '../quoted-message.js';
 import {
+  normalizeSecretInputs,
+  sealSecret,
+  SECRET_PUBLIC_KEY_META,
+  SecretInputError,
+  type SealedSecret,
+} from '../secrets.js';
+import {
   archiveLifeSessionAndStartNew,
   lifeArchiveModel,
   beginChannelOperation,
@@ -163,6 +170,16 @@ const MIME: Record<string, string> = {
   '.woff': 'font/woff',
   '.ttf': 'font/ttf',
 };
+
+/**
+ * The user's row in the transcript names the login details a message brought
+ * (🔑 GitHub), never their values.
+ */
+function withSecretNames(display: string, secrets: SealedSecret[]): string {
+  if (secrets.length === 0) return display;
+  const names = `🔑 ${secrets.map((secret) => secret.name).join('、')}`;
+  return display ? `${display}\n${names}` : names;
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -558,6 +575,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // Lets the composer refuse an oversized file before uploading it.
       maxAttachmentBytes: config.webMaxAttachmentBytes,
       maxUploadBodyBytes: MAX_MESSAGE_BODY_BYTES,
+      // The composer offers 🔑 only once the worker has published its key.
+      secrets: isAuthed(req) && Boolean(getMeta(SECRET_PUBLIC_KEY_META)),
     });
     return;
   }
@@ -1469,6 +1488,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           text?: string;
           quote?: string;
           attachments?: Array<{ name: string; dataBase64: string }>;
+          secrets?: unknown;
           lifeGeneration?: unknown;
         }>(req, MAX_MESSAGE_BODY_BYTES);
         if (!operationHeartbeat.renew()) {
@@ -1492,7 +1512,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         const text = (body.text ?? '').trim();
         const quote = normalizeQuote(body.quote);
         const attachments = body.attachments ?? [];
-        if (!text && !quote && attachments.length === 0) {
+        // Login details are sealed here, before anything is written: the
+        // plain text never reaches SQLite, the transcript or the queue.
+        let sealedSecrets: SealedSecret[];
+        try {
+          const inputs = normalizeSecretInputs(body.secrets);
+          const publicKey = inputs.length > 0 ? getMeta(SECRET_PUBLIC_KEY_META) : undefined;
+          if (inputs.length > 0 && !publicKey) {
+            sendJson(res, 503, { error: '主機的 worker 還沒啟用登入資料加密，請先重啟 worker' });
+            return;
+          }
+          sealedSecrets = publicKey ? inputs.map((input) => sealSecret(publicKey, input)) : [];
+        } catch (error) {
+          if (error instanceof SecretInputError) {
+            sendJson(res, 400, { error: error.message });
+            return;
+          }
+          throw error;
+        }
+        if (!text && !quote && attachments.length === 0 && sealedSecrets.length === 0) {
           sendJson(res, 400, { error: 'Message is empty' });
           return;
         }
@@ -1559,6 +1597,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
               : null,
           sessionTitlePrompt: titleSource,
           immediateSessionTitle,
+          secrets: sealedSecrets,
         };
         let messageRowid: number;
         let eventId: number;
@@ -1570,7 +1609,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
             event: {
               kind: 'message',
               role: 'user',
-              content: buildQuotedDisplay(text, quote),
+              content: withSecretNames(buildQuotedDisplay(text, quote), sealedSecrets),
               files: savedPaths.urls,
             },
             message: queuedMessage,

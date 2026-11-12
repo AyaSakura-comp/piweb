@@ -40,6 +40,7 @@ import { bindCodeCopy } from './message-copy.js';
 import { bindCustomSelection, quotePreview, selectedTranscriptText } from './text-selection.js';
 import { readClipboard } from './clipboard-paste.js';
 import { guardDocumentFileDrops } from './file-drop.js';
+import { createComposerSecrets } from './composer-secrets.js';
 import { bindAndroidBack, isAndroid } from './android-back.js';
 import {
   bindLongPress,
@@ -1147,6 +1148,7 @@ function standardFallbackJid() {
 function clearStandardSelection() {
   promptTurnScroll.clear();
   ++sessionSelectionGeneration;
+  composerSecrets.clear();
   closeStream();
   closeSearch();
   state.activeJid = null;
@@ -1681,6 +1683,7 @@ async function selectSession(jid, opts = {}) {
   commandsRunningView.close();
   const selection = ++sessionSelectionGeneration;
   const navigation = opts.navigation ?? lifeNavigationGeneration;
+  if (jid !== state.activeJid) composerSecrets.clear();
   const previewingDeleted = Boolean(opts.deleted);
   closeStream();
   state.selectionPending = true;
@@ -4104,6 +4107,17 @@ function scrollToBottom(instant) {
 
 const input = $('input');
 voiceIme.register(input, { frame: $('composer'), before: $('btn-send'), onRender: () => autoGrow() });
+// 🔑 login details for the next message: memory only, sealed by the server.
+const composerSecrets = createComposerSecrets({
+  button: $('btn-secret'),
+  panel: $('secret-panel'),
+  nameInput: $('secret-name'),
+  userInput: $('secret-username'),
+  passInput: $('secret-password'),
+  cancelButton: $('secret-cancel'),
+  onChange: () => renderAttachments(),
+  onOpen: () => hideAutocomplete(),
+});
 // Left on last time: the next tap anywhere starts listening again.
 voiceIme.resume();
 
@@ -4585,7 +4599,7 @@ function removeAttachment(i) {
 function renderAttachments() {
   const wrap = $('attachments');
   wrap.textContent = '';
-  wrap.hidden = state.attachments.length === 0;
+  wrap.hidden = state.attachments.length === 0 && composerSecrets.items.length === 0;
   $('image-compression-options').hidden = !state.attachments.some((a) => a.isImage);
 
   state.attachments.forEach((attachment, i) => {
@@ -4619,6 +4633,17 @@ function renderAttachments() {
     remove.disabled = state.uploading;
     remove.setAttribute('aria-label', `Remove ${attachment.name}`);
     remove.addEventListener('click', () => removeAttachment(i));
+    chip.append(remove);
+    wrap.append(chip);
+  });
+  composerSecrets.items.forEach((secret, i) => {
+    const chip = el('div', 'chip chip-secret');
+    chip.append(el('span', 'chip-name', `🔑 ${secret.name}`));
+    const remove = el('button', 'chip-remove', '×');
+    remove.type = 'button';
+    remove.disabled = state.uploading;
+    remove.setAttribute('aria-label', `移除登入資料 ${secret.name}`);
+    remove.addEventListener('click', () => composerSecrets.remove(i));
     chip.append(remove);
     wrap.append(chip);
   });
@@ -4699,7 +4724,7 @@ $('composer').addEventListener('submit', async (e) => {
     draft = '請幫我辨識並說明這些照片裡的內容。如果需要更多資訊，可以使用以圖搜尋或上網查證，並附上來源；無法確定的部分請明確說明，不要猜測。';
   }
   const quote = state.pendingQuote;
-  if (!draft && !quote && state.attachments.length === 0) {
+  if (!draft && !quote && state.attachments.length === 0 && composerSecrets.items.length === 0) {
     abandonComposerSend();
     return;
   }
@@ -4719,7 +4744,7 @@ $('composer').addEventListener('submit', async (e) => {
 
   // A slash line is a command, not a prompt. A quoted selection always makes
   // the turn a normal prompt, even when the reply itself begins with a slash.
-  if (!quote && text.startsWith('/') && state.attachments.length === 0) {
+  if (!quote && text.startsWith('/') && state.attachments.length === 0 && composerSecrets.items.length === 0) {
     holdComposerBottomForSend(followAfterSend);
     // A validated command belongs to this destination immediately. Detach the
     // shared textarea before awaiting its request so navigation cannot carry
@@ -4745,6 +4770,7 @@ $('composer').addEventListener('submit', async (e) => {
   // time on phone-sized media; later pastes and a newer destination must own a
   // separate attachment array and composer state.
   const submittedAttachments = state.attachments;
+  const submittedSecrets = composerSecrets.take();
   const compressImages = imageCompressionCheckbox.checked;
   // Before the composer shrinks (draft, quote, chips, camera all go): the
   // transcript holds the reader's place from here until the prompt arrives.
@@ -4790,6 +4816,7 @@ $('composer').addEventListener('submit', async (e) => {
       text,
       quote,
       attachments,
+      ...(submittedSecrets.length ? { secrets: submittedSecrets } : {}),
       ...(destinationLifeGeneration ? { lifeGeneration: destinationLifeGeneration } : {}),
     };
     const result = hasAttachments
@@ -4803,6 +4830,11 @@ $('composer').addEventListener('submit', async (e) => {
     promptTurnScroll.acknowledge(promptTicket, result?.eventId);
   } catch (err) {
     promptTurnScroll.cancel(promptTicket);
+    // Unsent login details go back to the composer they came from, never to
+    // another conversation's.
+    if (destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {
+      composerSecrets.restore(submittedSecrets);
+    }
     if (submittedAttachments.some(a => a.isCamera) && destinationSelection === sessionSelectionGeneration && state.activeJid === destinationJid) {
       if (!input.value) { input.value = rawDraft; autoGrow(); voiceIme.sync(input); }
       if (!state.pendingQuote) { state.pendingQuote = quote; renderQuotePreview(); }
@@ -7169,6 +7201,7 @@ document.addEventListener('visibilitychange', () => {
 (async () => {
   const me = await api('/api/me').catch(() => ({ authed: false }));
   uploadLimits = uploadLimitsFrom(me);
+  composerSecrets.setAvailable(me.secrets === true);
   if (!me.authed) return showLogin();
   // Authenticated by Tailscale identity: there is no cookie to drop, so a
   // "Sign out" button would do nothing visible. Hide it and show who serve

@@ -5,6 +5,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { mediaDirName } from './media-path.js';
+import type { SealedSecret } from './secrets.js';
 import {
   relativePathEscapesRoot,
   resolveChannelSessionDir,
@@ -311,6 +312,19 @@ export function initDb(): void {
       updated_at    text not null default (datetime('now'))
     );
 
+    -- Login details sent from the composer (🔑), sealed by the web tier to the
+    -- worker's public key (src/secrets.ts). One row per environment-variable
+    -- stem; sending the same name again replaces it. Never holds plain text.
+    create table if not exists channel_secrets (
+      channel_jid   text not null,
+      base          text not null,
+      name          text not null,
+      blob          text not null,
+      created_at    text not null default (datetime('now')),
+      updated_at    text not null default (datetime('now')),
+      primary key (channel_jid, base)
+    );
+
     create index if not exists idx_session_title_pending
       on session_title_jobs(status, updated_at);
   `);
@@ -403,6 +417,9 @@ export function initDb(): void {
   // Scheduler/background events must wait behind an active user turn rather
   // than triggering INTERRUPT_ON_NEW_MESSAGE. User messages keep the default.
   ensureTableColumn('message_queue', 'interrupt_active', 'integer not null default 1');
+  // The login details a message brought (JSON [{name, base}]; the sealed
+  // values live in channel_secrets), so the worker can tell the agent about them.
+  ensureTableColumn('message_queue', 'secrets', 'text');
 
   // Databases claimed by an earlier durable-purge build need enough immutable
   // per-path state to distinguish our terminal seals from unverified payloads.
@@ -489,6 +506,7 @@ function installSessionPurgeWriteFences(): void {
     'channel_state',
     'channel_operations',
     'session_title_jobs',
+    'channel_secrets',
   ]) {
     db.exec(`
       create trigger if not exists fence_purging_${table}_insert
@@ -885,6 +903,8 @@ export function enqueueMessage(msg: {
   expectedFolder?: string;
   expectedStorageToken?: string;
   expectedOwnershipEpoch?: number;
+  /** Login details sealed by the web tier (src/secrets.ts); stored with the message. */
+  secrets?: SealedSecret[];
 }): number {
   return db
     .transaction(() => {
@@ -904,8 +924,9 @@ export function enqueueMessage(msg: {
         .prepare(
           `
       insert into message_queue
-        (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active)
-      values (?, ?, ?, ?, ?, ?, ?)
+        (channel_jid, sender, sender_name, content, timestamp, attachments, interrupt_active,
+         secrets)
+      values (?, ?, ?, ?, ?, ?, ?, ?)
     `,
         )
         .run(
@@ -916,8 +937,19 @@ export function enqueueMessage(msg: {
           msg.timestamp,
           msg.attachments ?? null,
           msg.interruptActive === false ? 0 : 1,
+          msg.secrets?.length
+            ? JSON.stringify(msg.secrets.map(({ name, base }) => ({ name, base })))
+            : null,
         );
       const rowid = Number(result.lastInsertRowid);
+      for (const secret of msg.secrets ?? []) {
+        db.prepare(
+          `insert into channel_secrets (channel_jid, base, name, blob)
+           values (?, ?, ?, ?)
+           on conflict (channel_jid, base) do update
+             set name = excluded.name, blob = excluded.blob, updated_at = datetime('now')`,
+        ).run(msg.channelJid, secret.base, secret.name, secret.blob);
+      }
       if (msg.sessionTitlePrompt !== undefined) {
         const captured = queuePreparedSessionTitle(msg.channelJid, msg.sessionTitlePrompt, rowid);
         if (captured && msg.immediateSessionTitle) {
@@ -947,12 +979,30 @@ export function claimNextMessage(channelJid: string): QueuedMessage | undefined 
     where rowid = (select rowid from next_message)
       and status = 'pending'
     returning rowid, channel_jid, sender, sender_name, content, timestamp, status, attachments,
-              interrupt_active
+              interrupt_active, secrets
   `,
     )
     .get(channelJid) as QueuedMessage | undefined;
 
   return row;
+}
+
+/** Every sealed login detail a session holds, oldest first. */
+export function getChannelSecrets(channelJid: string): SealedSecret[] {
+  return db
+    .prepare(
+      'select name, base, blob from channel_secrets where channel_jid = ? order by created_at, base',
+    )
+    .all(channelJid) as SealedSecret[];
+}
+
+/** Sessions that hold login details (the worker's runtime-file sweep). */
+export function channelsWithSecrets(): string[] {
+  return (
+    db.prepare('select distinct channel_jid from channel_secrets').all() as Array<{
+      channel_jid: string;
+    }>
+  ).map((row) => row.channel_jid);
 }
 
 /** The next pending message for a channel, without claiming it. */
@@ -2746,6 +2796,7 @@ export function archiveLifeSessionAndStartNew(options: {
         'channel_state',
         'session_title_jobs',
         'scheduled_tasks',
+        'channel_secrets',
       ]) {
         db.prepare(`update ${table} set channel_jid = ? where channel_jid = 'web:life'`).run(
           archivedJid,
@@ -3305,6 +3356,8 @@ export function clearChannelSession(
         throw new Error(CHANNEL_GENERATION_CHANGED_ERROR);
       }
       const removed = db.prepare('delete from web_events where channel_jid = ?').run(jid).changes;
+      // A cleared session starts over without the login details it was given.
+      db.prepare('delete from channel_secrets where channel_jid = ?').run(jid);
       db.prepare('insert into control_queue (channel_jid, command, args) values (?, ?, ?)').run(
         jid,
         'pi new',
@@ -3814,6 +3867,7 @@ const CHANNEL_OWNED_TABLES = [
   'channel_state',
   'session_title_jobs',
   'channel_operations',
+  'channel_secrets',
 ] as const;
 
 function deleteChannelOwnedRows(jid: string): void {

@@ -1,7 +1,7 @@
 import { parse } from 'dotenv';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 const DEFAULT_CONFIG_PATH = defaultConfigPath();
 const DEFAULT_DATA_DIR = defaultDataDir();
@@ -289,6 +289,20 @@ export const config = {
 
   /** SQLite database path */
   dbPath: env('DB_PATH', resolve(DEFAULT_DATA_DIR, 'gateway.db')),
+
+  /**
+   * Private key that opens the login details sent from the composer (🔑). Only
+   * the host worker reads it; it lives beside config.env, outside the data
+   * directory the web container mounts, so the web tier can seal details with
+   * the public key but never open them. See docs/login-secrets.md.
+   */
+  secretKeyPath: env('SECRET_KEY_PATH', resolve(dirname(DEFAULT_CONFIG_PATH), 'secret-key.pem')),
+
+  /**
+   * Where a turn's opened login details wait for its agent. Empty = the user's
+   * runtime dir ($XDG_RUNTIME_DIR/piweb-secrets, RAM on Linux), else the temp dir.
+   */
+  secretsRuntimeDir: env('SECRETS_RUNTIME_DIR', ''),
 
   /** Bot trigger name (default: bot's own display name) */
   triggerName: env('TRIGGER_NAME', 'pi'),

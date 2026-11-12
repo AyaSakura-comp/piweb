@@ -32,6 +32,7 @@ import { startScheduler } from '../agent/scheduler.js';
 import { startArchiveCleanup } from '../session/archive-cleanup.js';
 import { startClaudeTmuxReaper } from '../agent/claude-tmux-reaper.js';
 import { discoverPiExtensionCommands } from '../commands/extension-runner.js';
+import { initSecretKey, sweepSecretFiles } from '../agent/secret-handoff.js';
 
 // Both of these return their own stop function rather than exporting one.
 let stopHotKeywords: () => void = () => {};
@@ -112,6 +113,8 @@ async function sweepTrash(): Promise<void> {
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Trash sweep failed');
   }
+  // Cleared and purged sessions' opened login details leave the runtime dir.
+  sweepSecretFiles();
 }
 
 /**
@@ -171,6 +174,8 @@ export async function startWorker(): Promise<void> {
   initDb();
   setTransport(webTransport);
   publishBuiltinThinking();
+  // Before the queue starts: a turn may need to open login details (🔑).
+  initSecretKey();
   await recoverPendingSessionPurges();
 
   startProcessingLoop();

@@ -240,6 +240,25 @@ shell is pinned to the visual viewport (`public/viewport-shell.js`,
 - **Send mid-composition** commits the IME text before reading the box, so marked
   text is sent rather than left behind.
 
+## Login details (🔑)
+
+A borderless key button sits after 貼上 in the chat composer (38px like + and
+貼上; Send and the mic keep their 44px). It is shown only when `/api/me` says the
+host can seal details. It opens an inline card in the quote banner's place —
+never a sheet: `--bg-alt`, 8px radius, a head row with 登入資料 (accent-light,
+13px/700), a one-line note (加密保存，對話裡看不到) and the viewer's outline ✕
+(取消) and ✓ (加入, accent stroke) at 44px, then 名稱 / 帳號 / 密碼 rows with
+hairline separators in the Settings field style (borderless, transparent,
+16px so iOS does not zoom; the focused row's hairline turns accent). Return
+moves down the card and adds on 密碼; Escape cancels. A missing name or a row
+with neither account nor password turns that row's label `--danger`, no
+toast. 加入 empties the fields and adds a `🔑 <name>` chip beside the
+attachment chips (× removes it). Details live in page memory only: never in
+localStorage or the draft, cleared when you switch to another conversation,
+put back if the send fails. The transcript shows `🔑 <name>` under the
+message. The Dashboard pane composers do not have the key yet. See
+[login details](docs/login-secrets.md).
+
 ## Voice input (Komorebi)
 
 A borderless mic button sits before Send in the chat composer and in each

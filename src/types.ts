@@ -40,6 +40,8 @@ export interface QueuedMessage {
   attachments: string | null;
   /** Whether this message may pre-empt an active turn in the same channel. */
   interrupt_active: 0 | 1;
+  /** JSON [{name, base}] of the login details this message brought, or null. */
+  secrets?: string | null;
 }
 
 /** Agent invocation result */

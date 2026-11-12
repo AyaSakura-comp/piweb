@@ -4,6 +4,7 @@ import { dirname, resolve as pathResolve } from 'node:path';
 import { type AttachmentMeta } from '../discord/attachments.js';
 import { config } from '../config.js';
 import { piDefaultModelRef } from './pi-default-model.js';
+import { piSecretSpawn } from './secret-handoff.js';
 import { publishParent } from '../session/parent-publication.js';
 import { logger } from '../logger.js';
 import { downloadAttachments } from '../session/media.js';
@@ -161,7 +162,8 @@ export async function invokeAgent(
 
   // `--session` expects a session *file* path. We want a dedicated directory per
   // Discord channel and to keep reusing the most recent session inside it.
-  const args: string[] = ['--session-dir', sessionDir, '--continue'];
+  const secretSpawn = piSecretSpawn(channelFolder);
+  const args: string[] = ['--session-dir', sessionDir, '--continue', ...secretSpawn.args];
 
   // Model
   // No override: Pi's default as it is now, not the model saved in the session
@@ -287,6 +289,7 @@ export async function invokeAgent(
         ...process.env,
         PIWEB_CHANNEL_JID: opts?.channelJid ?? '',
         PIWEB_CHANNEL_FOLDER: channelFolder,
+        ...secretSpawn.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

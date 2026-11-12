@@ -25,3 +25,7 @@ process.env.SESSIONS_DIR = resolve(root, 'sessions');
 process.env.WEB_MEDIA_DIR = resolve(root, 'web-media');
 process.env.WEB_UPLOAD_DIR = resolve(root, 'web-uploads');
 process.env.AGY_TOKEN_PATH = resolve(root, 'antigravity-oauth-token');
+// The login-detail key and the opened details' runtime dir (src/secrets.ts,
+// src/agent/secret-handoff.ts) default to the real host's.
+process.env.SECRET_KEY_PATH = resolve(root, 'secret-key.pem');
+process.env.SECRETS_RUNTIME_DIR = resolve(root, 'secrets-runtime');

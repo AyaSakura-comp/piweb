@@ -47,6 +47,8 @@ import { parseOutboxMarkers } from './outbox.js';
 import { getTransport } from '../transport/index.js';
 import { computeEffectiveChannelSettings } from './channel-settings.js';
 import { harnessForModel, prepareCrossHarnessHandoff } from './harness-handoff.js';
+import { prepareSecretHandoff } from './secret-handoff.js';
+import { redactDeep } from '../secrets.js';
 
 /** Channels currently being processed (per-channel serial lock) */
 const activeChannels = new Set<string>();
@@ -308,6 +310,7 @@ function dispatch(): void {
       msg.content,
       controller,
       msg.attachments,
+      msg.secrets,
     ).finally(() => {
       activeChannels.delete(jid);
       activeTaskControllers.delete(msg.rowid);
@@ -380,6 +383,7 @@ async function processMessage(
   content: string,
   controller: AbortController,
   attachments?: string | null,
+  secrets?: string | null,
 ): Promise<void> {
   const signal = controller.signal;
   const channel = getChannel(jid);
@@ -450,6 +454,7 @@ async function processMessage(
   const delivered = new Promise<void>((resolve) => {
     releaseDelivery = resolve;
   });
+  let releaseSecrets = (): void => {};
 
   try {
     const supersedesPrevious = supersededChannels.delete(jid);
@@ -474,6 +479,17 @@ async function processMessage(
     const targetHarness = harnessForModel(effective.rawModelRef);
     const crossHarnessContext = prepareCrossHarnessHandoff(channel, targetHarness);
     if (crossHarnessContext) prompt = crossHarnessContext + prompt;
+    // Login details (🔑): opened now, for this agent only. The prompt carries
+    // their variable names; anything that echoes a value is scrubbed on its
+    // way to the transcript. An agent new to this session hears of them all.
+    const secretHandoff = prepareSecretHandoff(
+      channel,
+      secrets,
+      targetHarness,
+      Boolean(crossHarnessContext),
+    );
+    prompt += secretHandoff.prompt;
+    releaseSecrets = secretHandoff.release;
 
     // Stream pi's intermediate thinking/tool events into the channel live so
     // the user can watch what the agent is doing instead of staring at a
@@ -482,7 +498,7 @@ async function processMessage(
     const streamEvent = getTransport().createEventStreamer(jid, writeFence);
     const onEvent = async (event: unknown): Promise<void> => {
       if (!renewWorkerLease()) return;
-      await streamEvent(event);
+      await streamEvent(secretHandoff.scrubs ? redactDeep(event, secretHandoff.redact) : event);
     };
 
     // Persistent RPC session path (steer-able). Falls back to the one-shot
@@ -512,8 +528,9 @@ async function processMessage(
     }
 
     let lastBackgroundReply: string | undefined;
-    const deliverReply = async (text: string): Promise<boolean> => {
+    const deliverReply = async (reply: string): Promise<boolean> => {
       if (signal.aborted || !renewWorkerLease(true)) return false;
+      const text = secretHandoff.redact(reply);
       const { text: outText, files: outFiles, rawText } = parseOutboxMarkers(text);
       const sent = outFiles.length > 0
         ? await getTransport().sendFilesResponse(jid, rawText ?? text, outFiles, writeFence)
@@ -705,6 +722,7 @@ async function processMessage(
       // Nothing else to do here.
     }
   } finally {
+    releaseSecrets();
     try {
       // The message row may already be terminal. Keep the persisted generation lease
       // until all stream timers and the busy mirror have been cleared so those

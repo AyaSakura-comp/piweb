@@ -65,6 +65,10 @@ vi.mock('../src/agent/scheduler.js', () => ({
 vi.mock('../src/session/archive-cleanup.js', () => ({
   startArchiveCleanup: vi.fn(() => vi.fn()),
 }));
+vi.mock('../src/agent/secret-handoff.js', () => ({
+  initSecretKey: vi.fn(),
+  sweepSecretFiles: vi.fn(),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();

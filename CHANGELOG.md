@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- 🔑 Login details for the agent: a key in the composer takes a name, account and password; the web tier seals them to the host worker's key at once, so the database, the transcript and Pi's session file never hold them in plain text — the agent is told variable names (`$PIWEB_SECRET_GITHUB_PASS`), Pi's tools get the values when they run, and anything echoed back is scrubbed
 - BTW in AGY sessions, answered by agy's own `/btw` (asked in agy's TUI beside the conversation; the main conversation never sees it)
 - Recently deleted now supports Select-button or touch/mouse long-press multi-selection, one-confirmation permanent deletion, Select all, and Delete all in responsive phone and desktop layouts
 - Life mode's New action now saves the current conversation into the ordinary Sessions list, including its transcript, media, and Pi context, before opening a fresh empty Life session
