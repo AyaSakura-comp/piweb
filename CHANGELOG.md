@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A Claude Code session no longer dies when a command it ran is OOM-killed: systemd's default OOM policy stopped the pane's whole tmux scope ("can't find pane: %8"); each pane's scope now continues, and a pane that does vanish is reported in words
 - agy turns on `gemini-4-hydrogen-xhigh` (new in agy 1.5.7) no longer fail with "conflicts with --effort=high": `-xhigh` (and `-minimal`/`-max`) count as an effort already in the id, and any other id agy says conflicts with `--effort` runs once more without it
 - An agy turn no longer waits 2 s after agy exits: stdout had usually ended already, so the wait for its end never fired
 - A selection no longer flickers while it is dragged: no dark slits or thin ledges flash through the bubble as lines pour in or drain away, and a mouse drag no longer shows the quote pill (and re-quotes, and scrolls a Dashboard pane) on every move — pill and quote come once on the release

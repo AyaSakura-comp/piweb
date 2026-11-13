@@ -230,6 +230,33 @@ message is covered both at the bridge (a real looping process is or is not
 SIGTERMed) and at the queue (the abort reason each path passes). They do not consume Claude quota or prove
 live-provider timing.
 
+## A command killed for memory does not end Claude Code
+
+tmux 3.5 (built with systemd) starts every pane in its own user scope,
+`tmux-spawn-<uuid>.scope`, and the user manager's `DefaultOOMPolicy=stop`
+ends a whole unit once the kernel's OOM killer takes any process in it. On
+2026-11-14 the Pi browser session started a llama-server that ran the machine
+out of memory; the kernel killed only the llama-server, then systemd stopped
+the pane's scope, Claude Code included, twice in ten minutes. The turn failed
+with `Claude Code tmux bridge failed: can't find pane: %8`.
+
+`src/agent/tmux-oom.ts` (`keepPaneThroughOomKills`) gives each Claude pane's
+scope a runtime drop-in, `$XDG_RUNTIME_DIR/systemd/user/<scope>.d/50-piweb-oom-continue.conf`
+with `OOMPolicy=continue`, and reloads the user manager (~0.2 s; OOMPolicy
+cannot be changed with `systemctl set-property`). The bridge calls it beside
+every turn, so panes started before this existed are covered at their next
+turn; a scope that already continues costs one `systemctl show`. Drop-ins of
+ended scopes are removed. Linux only, never fails a turn.
+
+A new pane starts in the tmux server's cgroup and is moved a moment later, and
+a tmux server started from inside another pane lives in that pane's scope. So
+a cgroup the pane shares with the tmux server or the calling process is never
+taken for the pane's own (a test once did, and capped the wrong pane).
+
+If a pane does vanish mid-turn, the error says so in words —
+「Claude Code 在這一輪中途結束了…再傳一則訊息會重新開啟並接著原本的對話」 —
+with tmux's message after it (`describeBridgeFailure`).
+
 ## BTW side questions
 
 **⋯ → BTW** works in a Claude session: each side question goes to Claude Code's
@@ -253,6 +280,10 @@ npx vitest run test/claude-tmux.test.ts test/queue-claude-routing.test.ts \
   test/model-catalog-claude.test.ts test/provider-badge.test.ts \
   test/config.test.ts test/pi-new-rpc.test.ts test/thinking-level-ui.test.ts
 npx playwright test test/e2e/claude-tmux.spec.ts
+npx vitest run test/tmux-oom.test.ts
+# Real tmux + user systemd, no model calls: a 64 MB cap on the test pane's own
+# scope (only after checking it holds nothing but that pane's process).
+PIWEB_HOST_TMUX=1 npx vitest run test/tmux-oom-host.test.ts
 # Explicit opt-in: consumes Claude quota using the host's existing login.
 PIWEB_CLAUDE_LIVE=1 npx vitest run test/claude-tmux-live.test.ts
 # Real browser → web API → queues → Claude → SSE, recorded continuously:

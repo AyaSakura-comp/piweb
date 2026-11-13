@@ -29,6 +29,7 @@ import {
   type ClaudeCommand,
 } from './claude-commands.js';
 import type { AvailableModelInfo } from './model-catalog.js';
+import { keepPaneThroughOomKills } from './tmux-oom.js';
 
 export const CLAUDE_TMUX_PROVIDER = 'claude-code';
 
@@ -281,6 +282,8 @@ export interface ClaudeTmuxDependencies {
   turnTimeoutMs: number;
   /** Ends a background command's processes (by its output file). */
   stopCommand?: (outputFile: string) => number[];
+  /** Keeps the pane alive when the OOM killer takes a command it runs (src/agent/tmux-oom.ts). */
+  protectPane?: (pane: string) => Promise<unknown>;
   /** Whether a background command still has processes (by its output file). */
   commandRunning?: (outputFile: string) => boolean;
 }
@@ -293,6 +296,7 @@ const defaultDependencies: ClaudeTmuxDependencies = {
   loadBuffer: loadTmuxBuffer,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   tmux: runTmux,
+  protectPane: (pane) => keepPaneThroughOomKills(pane, { tmux: runTmux }),
   claudeBin: config.claudeTmuxBin,
   pollMs: config.claudeTmuxPollMs,
   startupTimeoutMs: config.claudeTmuxStartupTimeoutMs,
@@ -441,6 +445,9 @@ export async function invokeClaudeTmux(
     };
     pane = await getClaudePane(name, deps);
     ensureNotAborted();
+    // Every turn, so panes started before this existed are covered too; it
+    // runs beside the turn and never fails it.
+    void deps.protectPane?.(pane).catch(() => undefined);
 
     const activeTurn = recoveringTurn ? state.activeTurn : undefined;
     let transcriptPath =
@@ -795,7 +802,7 @@ export async function invokeClaudeTmux(
       }
     }
     logger.warn({ err: err.message, channelFolder }, 'Claude Code tmux bridge failed');
-    return { ok: false, text: '', error: `Claude Code tmux bridge failed: ${err.message}` };
+    return { ok: false, text: '', error: describeBridgeFailure(err.message) };
   } finally {
     childTracker?.stop();
     signal?.removeEventListener('abort', onAbort);
@@ -833,6 +840,21 @@ async function tmuxSessionExists(name: string, deps: ClaudeTmuxDependencies): Pr
 }
 
 class ClaudeTmuxAbortError extends Error {}
+
+/**
+ * A vanished pane means the Claude Code process in it ended mid-turn; tmux
+ * only says "can't find pane: %8". Say what that means and what to do.
+ */
+export function describeBridgeFailure(message: string): string {
+  if (/can't find (pane|session|window)|tmux pane exited|session has no pane/i.test(message)) {
+    return (
+      'Claude Code 在這一輪中途結束了，它的 tmux 視窗已經不在' +
+      '（例如系統記憶體不足時被一起關掉）。再傳一則訊息會重新開啟並接著原本的對話。' +
+      `\n(tmux: ${message})`
+    );
+  }
+  return `Claude Code tmux bridge failed: ${message}`;
+}
 
 async function getClaudePane(name: string, deps: ClaudeTmuxDependencies): Promise<string> {
   const pane = (await deps.tmux(['list-panes', '-t', name, '-F', '#{pane_id}']))

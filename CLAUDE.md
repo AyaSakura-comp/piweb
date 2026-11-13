@@ -1432,6 +1432,9 @@ leaves an hours-long benchmark running ("Replied, still waiting" in the doc).
 A background command starts only from a launch call (`backgroundTaskId`, Bash
 `run_in_background: true`, Monitor), never from text a command printed: a log
 quoting another session's launch line once held a turn on that session's task.
+Each Claude pane's tmux scope gets `OOMPolicy=continue` (`src/agent/tmux-oom.ts`):
+under systemd's default `stop`, an OOM-killed command (a llama-server Claude
+started) took Claude Code and its pane with it — "can't find pane: %8".
 
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 
