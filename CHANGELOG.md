@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- AGY and LOCAL session tags have their own colours: AGY in Google blue (it was the grey fallback), LOCAL green; in the light theme both (and GEM) take a tinted fill and rim like Claude's, so the three read apart in the drawer
 - Use a slim BTW header with accessible back/clear icons, horizontal transcript switching and a pending-answer link; preserve independent composer drafts and restore pending questions from worker snapshots
 - Set an explicit five-minute browser upload and server receive deadline, report timeout once and avoid automatic retries
 - Restore the **/pi status** header shortcut to standard sessions while keeping it available in Life mode

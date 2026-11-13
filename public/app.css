@@ -5072,7 +5072,9 @@ dialog.sheet::backdrop {
   color: #cbd5e1;
 }
 
-.provider-badge.gem {
+/* agy runs on Google's servers too, so it shares Gemini's blue. */
+.provider-badge.gem,
+.provider-badge.agy {
   background: rgb(66 133 244 / 0.18);
   border-color: rgb(66 133 244 / 0.5);
   color: #8ab4f8;
@@ -6065,6 +6067,13 @@ dialog.sheet::backdrop {
   color: #356348;
 }
 
+/* Text colour alone read as grey on white at 10px: LOCAL and AGY take a
+   tinted fill and rim, as Claude's badges do, so the three read apart. */
+:root[data-theme='light'] .provider-badge.local {
+  background: #f2f7f3;
+  border-color: #a6c9b1;
+}
+
 :root[data-theme='light'] .notif-state.on {
   background: #f0f5f1;
 }
@@ -6093,7 +6102,10 @@ dialog.sheet::backdrop {
   color: #52606e;
 }
 
-:root[data-theme='light'] .provider-badge.gem {
+:root[data-theme='light'] .provider-badge.gem,
+:root[data-theme='light'] .provider-badge.agy {
+  background: #f3f7fe;
+  border-color: #a9c1ea;
   color: #245cb5;
 }
 

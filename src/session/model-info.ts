@@ -121,6 +121,9 @@ export function providerBadge(provider: string, modelId = ''): { label: string; 
       return { label: 'LOCAL', kind: 'local' };
     case 'gemini':
       return { label: 'GEM', kind: 'gem' };
+    case 'agy':
+      // Google Antigravity runs its models on Google's servers: Gemini blue.
+      return { label: 'AGY', kind: 'agy' };
     case 'modelcorp':
       return { label: 'KIMI', kind: 'kimi' };
     case 'claude-code': {

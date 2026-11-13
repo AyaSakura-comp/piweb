@@ -903,6 +903,18 @@ keyboard; a finger scroll moves nothing.
   (WebKit 301108) is fixed by the `display-mode: standalone` `html` min-height
   rule in `app.css`, not by remeasuring, rotating, or a `display:none` remount.
 
+## Provider badges
+
+The model tag beside a session's name (`.provider-badge`, 10px bold caps) is
+coloured by where the model runs, and the label still carries the meaning
+without colour: Claude coral, LOCAL green (this machine), AGY and GEM Google
+blue (Google's servers), the Codex variants their own hues, anything unknown
+the neutral `--bg-input` / `--border` / `--text-dim`. In the light theme a
+coloured text on the white chip reads as grey at that size, so the common
+tags (Claude, LOCAL, AGY/GEM) also take a tinted fill and a rim in their hue.
+`test/e2e/provider-badge-colors.spec.ts` checks the three read apart in both
+themes.
+
 ## Verification
 
 ```sh

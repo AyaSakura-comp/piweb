@@ -2901,6 +2901,8 @@ function anthropicBadge(modelRef = '') {
  */
 function sessionBadge(session) {
   if (session?.provider === 'anthropic') return anthropicBadge(session.runningModel || '');
+  // A web tier older than the 'agy' kind files agy under the grey 'other'.
+  if (session?.provider === 'agy' && session.badge) return { ...session.badge, kind: 'agy' };
   return session?.badge || null;
 }
 
@@ -2935,6 +2937,7 @@ function providerBadgeFor(provider, modelRef = '') {
     'ollama-lfm2': ['LOCAL', 'local'],
     ds4: ['LOCAL', 'local'],
     gemini: ['GEM', 'gem'],
+    agy: ['AGY', 'agy'],
     modelcorp: ['KIMI', 'kimi'],
     'claude-code': ['CLAUDE', 'claude'],
     xai: ['XAI', 'xai'],

@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { modelIdFromRef, providerBadge } from '../src/session/model-info.js';
 
 describe('providerBadge', () => {
+  it('gives agy its own kind (Gemini blue), not the grey fallback', () => {
+    expect(providerBadge('agy', 'gemini-4-hydrogen-xhigh')).toEqual({ label: 'AGY', kind: 'agy' });
+    expect(providerBadge('ds4')).toEqual({ label: 'LOCAL', kind: 'local' });
+  });
+
   it('splits the Codex variants into Astra/Terra/Sol/Luna by model id', () => {
     expect(providerBadge('openai-codex', 'gpt-6-astra')).toEqual({ label: 'ASTRA', kind: 'astra' });
     expect(providerBadge('openai-codex', 'gpt-5.6-astra')).toEqual({ label: 'ASTRA', kind: 'astra' });
