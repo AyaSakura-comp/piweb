@@ -1305,7 +1305,7 @@ contains `agy/*` refs. Config knobs (all optional):
 | `AGY_MODELS_TIMEOUT_MS`  | `20000`  | `agy models` probe timeout          |
 | `AGY_PRINT_TIMEOUT`      | `60m`    | passed as `--print-timeout`         |
 | `AGY_SKIP_PERMISSIONS`   | `true`   | `--dangerously-skip-permissions`    |
-| `AGY_TMUX_BIN`           | `tmux`   | tmux for agy's `/btw` (TUI only)    |
+| `AGY_TMUX_BIN`           | per OS   | tmux for agy's `/btw` (TUI only)    |
 | `AGY_TOOL_STALL_WARN_MS` | `120000` | when a stuck tool call is announced |
 | `AGY_RETRY_DELAYS`       | `15s,30s,60s,120s` | waits before re-running a turn Google failed in passing (503 no capacity …); `off` = none |
 
