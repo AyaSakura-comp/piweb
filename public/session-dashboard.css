@@ -1467,3 +1467,10 @@
 .dashboard-pane.pane-w170 .dashboard-pane-actions .pane-close-btn {
   display: none;
 }
+
+/* A zoomed pane always shows its 縮回並排 button, even where its width hides
+   secondary icons (a phone): a tap on the window zooms it there (2026-11-15),
+   and the way back must be in sight, not only in the ⋯ menu. */
+.dashboard-grid .dashboard-pane.pane-zoomed .dashboard-pane-actions .pane-expand-btn {
+  display: grid;
+}

@@ -786,7 +786,14 @@ keyboard; a finger scroll moves nothing.
   (`fitPaneForReading()`, `FIT_TRANSCRIPT_LINES`; 2026-11-14: 高度要 180 字元高 — the
   height was the point, the width was never the complaint; a detour to 80 full-width
   字 was reverted). 180 lines is taller than any screen, so in practice the tapped pane
-  takes all the height its neighbours above and below leave at their minimum. The room comes
+  takes all the height its neighbours above and below leave at their minimum. Where the
+  stage has no room for that — growing in place would leave the pane under half the stage's
+  height, or short of the 80-column line while it shares its width with others (a phone
+  with many panes stacked, in a grid or side by side) — the tap zooms the pane to the whole
+  stage instead, exactly as 放大此視窗 does (iPhone recording 2026-11-15: seven stacked
+  panes, a tap grew one by ~20px; 做成點擊視窗放大). An earlier tap's growth goes back first,
+  so the layout under the zoom is the user's, and a zoomed pane always shows its 縮回並排
+  button, even at phone width where the header otherwise moves it into ⋯. The room comes
   from the nearest split level first, then outer ones, and no neighbour goes below its
   minimum (140×95px, nested splits summed), so on a stage too small it grows as far as it
   can. It animates like any re-tiling, and the card flies to where the pane ends up. The

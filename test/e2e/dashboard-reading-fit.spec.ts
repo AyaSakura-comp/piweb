@@ -227,3 +227,41 @@ test('the pane already holding the card grows too when tapped', async ({ page })
   await expectFullHeight(page, target, jids);
   expect(errors).toEqual([]);
 });
+
+test('on a phone with many panes stacked, a tap zooms the pane to the whole stage', async ({ page }, info) => {
+  // iPhone recording 2026-11-15: seven panes stacked, a tap grew one by ~20px
+  // (the others were already at their minimum). 做成點擊視窗放大.
+  const errors = await setup(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate((ids) => {
+    const saved = JSON.parse(localStorage.getItem('piweb.dashboard')!);
+    saved.direction = 'column';
+    saved.groups = ids.slice(0, 7).map((jid: string) => ({ weight: 1, items: [{ jid, weight: 1 }] }));
+    saved.updatedAt = Date.now() + 1000;
+    localStorage.setItem('piweb.dashboard', JSON.stringify(saved));
+  }, jids);
+  await page.reload();
+  // The phone's way in is the topbar button.
+  if (!(await page.locator('.dashboard-pane').first().isVisible())) {
+    await page.locator('#btn-topbar-dashboard').click();
+  }
+  await expect(page.locator('.dashboard-pane')).toHaveCount(7);
+  const layoutBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!).groups);
+  const target = jids[2];
+  const stage = await page.locator('#dashboard-grid').boundingBox();
+  await pane(page, target).locator('.dashboard-pane-transcript').click();
+  await expect(pane(page, target)).toHaveClass(/pane-zoomed/);
+  await expect(pane(page, target)).toHaveClass(/composer-active/);
+  const zoomed = await settled(page, target);
+  expect(zoomed.height).toBeGreaterThan(stage!.height * 0.9);
+  expect(zoomed.width).toBeGreaterThan(stage!.width * 0.9);
+  await page.screenshot({ path: info.outputPath('phone-tap-zoomed.png') });
+  // The layout under the zoom is untouched, and the header's button goes back.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!).groups)).toEqual(layoutBefore);
+  const back = pane(page, target).locator('button[title="縮回並排"]');
+  await expect(back).toBeVisible();
+  await back.click();
+  await expect(pane(page, target)).not.toHaveClass(/pane-zoomed/);
+  await expect(page.locator('.dashboard-pane:visible')).toHaveCount(7);
+  expect(errors).toEqual([]);
+});

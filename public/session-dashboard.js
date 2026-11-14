@@ -22,6 +22,9 @@ const MIN_PANE_HEIGHT_PX = 95;
 // all the height its neighbours' minimum leaves it.
 const FIT_READING_COLUMNS = 80;
 const FIT_TRANSCRIPT_LINES = 180;
+// When growing in place would leave the tapped pane under this share of the
+// stage's height, the tap zooms it to the whole stage instead (2026-11-15).
+const FIT_ZOOM_BELOW_STAGE = 0.5;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
@@ -2880,7 +2883,8 @@ export function createSessionDashboard({
   }
 
   /** A tap brought the card to `jid`: grow its pane to reading size (an
-   *  80-column line, 180 lines of transcript in sight), first giving the pane an earlier
+   *  80-column line, 180 lines of transcript in sight), or zoom it to the
+   *  whole stage when the stage has no room for that, first giving the pane an earlier
    *  tap grew its old size back, so tapping around never ratchets the layout.
    *  A layout someone has since changed by hand is left as it is. Returns
    *  whether the layout changed. */
@@ -2897,6 +2901,7 @@ export function createSessionDashboard({
     const now = predictPaneRect(jid, groups);
     const before = predictPaneRect(jid, start);
     let next = start;
+    let wantW = 0;
     if (now && before) {
       // Shortfalls are measured on the pane as it stands; carry them over to
       // `start`, which may give this pane a different size than now. The
@@ -2904,10 +2909,36 @@ export function createSessionDashboard({
       // pane: scale the wanted size by the same ratio (and a pixel to spare).
       const scaleW = now.width / Math.max(1, pane.el.offsetWidth);
       const scaleH = now.height / Math.max(1, pane.el.offsetHeight);
-      const wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
+      wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
       const wantH = (pane.el.offsetHeight + need.height + 1) * scaleH;
       if (need.width > 0 || before.width < wantW) next = growAlong(next, jid, 'row', wantW);
       if (need.height > 0 || before.height < wantH) next = growAlong(next, jid, 'column', wantH);
+    }
+    // A stage too small to give the pane a reading size even with every
+    // neighbour pressed to its minimum zooms the pane to the whole stage
+    // instead, as 放大此視窗 does (iPhone recording 2026-11-15: seven panes
+    // stacked, a tap grew one by ~20px; 做成點擊視窗放大). That is a pane left
+    // under half the stage's height, or one still short of the 80-column
+    // line while it shares its width with others.
+    const stage = gridEl.getBoundingClientRect();
+    const grown = predictPaneRect(jid, next);
+    if (
+      grown &&
+      stage.width > 0 &&
+      stage.height > 0 &&
+      (grown.height < stage.height * FIT_ZOOM_BELOW_STAGE ||
+        (wantW > 0 && grown.width < wantW - 1 && grown.width < stage.width - MIN_PANE_WIDTH_PX / 2))
+    ) {
+      readingFit = null;
+      if (layoutKey(start) !== layoutKey(groups)) {
+        // An earlier tap's growth goes back first, so the layout under the
+        // zoom is the one the user made.
+        groups = start;
+        saveState();
+        rebuildGrid();
+      }
+      setZoom(jid);
+      return zoomedJid === jid;
     }
     const nextKey = layoutKey(next);
     const grew = nextKey !== layoutKey(start);
