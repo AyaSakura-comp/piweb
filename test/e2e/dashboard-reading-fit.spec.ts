@@ -1,7 +1,7 @@
 import { expect, test, type Page } from 'playwright/test';
 
 // Tapping a pane to give it the input card grows it to reading size: an
-// 80-column reply line and at least 160px of transcript above the card. The
+// 80-column reply line and at least 180px of transcript in sight. The
 // next pane tapped gets the room instead, and the first goes back to its size.
 const sessions = Array.from({ length: 9 }, (_, i) => ({
   jid: `web:r${i}`,
@@ -105,7 +105,7 @@ const settled = async (page: Page, jid: string) => {
   return (await measure(page, jid))!;
 };
 
-test('a tapped pane grows to an 80-column line and 160px of transcript', async ({ page }, info) => {
+test('a tapped pane grows to an 80-column line and 180px of transcript', async ({ page }, info) => {
   const errors = await setup(page);
   const target = jids[4]; // the middle of the 3×3 grid
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
@@ -117,7 +117,7 @@ test('a tapped pane grows to an 80-column line and 160px of transcript', async (
   await expect(pane(page, target)).toHaveClass(/composer-active/);
   const grown = await settled(page, target);
   expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
-  expect(grown.transcript).toBeGreaterThanOrEqual(159);
+  expect(grown.transcript).toBeGreaterThanOrEqual(179);
   // Every other pane keeps at least its minimum size.
   const others = await Promise.all(jids.filter((j) => j !== target).map((j) => settled(page, j)));
   for (const o of others) {
@@ -132,7 +132,7 @@ test('a tapped pane grows to an 80-column line and 160px of transcript', async (
   await expect(pane(page, next)).toHaveClass(/composer-active/);
   const nextGrown = await settled(page, next);
   expect(nextGrown.textWidth).toBeGreaterThanOrEqual(nextGrown.ch80 - 1);
-  expect(nextGrown.transcript).toBeGreaterThanOrEqual(159);
+  expect(nextGrown.transcript).toBeGreaterThanOrEqual(179);
   // The first pane's growth was undone before the next one took its room:
   // its rows are even again, and its column gave up as much as the right one.
   const back = await settled(page, target);
@@ -166,5 +166,33 @@ test('a pane already big enough keeps the layout as it is', async ({ page }) => 
   await page.waitForTimeout(600);
   const layoutAfter = await page.evaluate(() => localStorage.getItem('piweb.dashboard'));
   expect(JSON.parse(layoutAfter!).groups).toEqual(JSON.parse(layoutBefore!).groups);
+  expect(errors).toEqual([]);
+});
+
+test('a stacked pane grows until 180px of transcript show between the pinned prompt and the card', async ({ page }) => {
+  const errors = await setup(page);
+  // Five panes stacked top to bottom: each starts too short for the card,
+  // which it squeezes, and the pinned prompt lies over its transcript.
+  await page.evaluate((ids) => {
+    const saved = JSON.parse(localStorage.getItem('piweb.dashboard')!);
+    saved.direction = 'column';
+    saved.groups = ids.slice(0, 5).map((jid: string) => ({ weight: 1, items: [{ jid, weight: 1 }] }));
+    saved.updatedAt = Date.now() + 1000;
+    localStorage.setItem('piweb.dashboard', JSON.stringify(saved));
+  }, jids);
+  await page.reload();
+  await page.locator('#btn-dashboard-home').click();
+  await expect(page.locator('.dashboard-pane')).toHaveCount(5);
+  const target = jids[2];
+  await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
+  await pane(page, target).locator('.dashboard-pane-transcript').click();
+  await expect(pane(page, target)).toHaveClass(/composer-active/);
+  await settled(page, target);
+  const seen = await page.evaluate((id) => {
+    const el = document.querySelector<HTMLElement>(`.dashboard-pane[data-jid="${id}"]`)!;
+    const pin = el.querySelector<HTMLElement>('.prompt-pin-clip:not([hidden]) .prompt-pin');
+    return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - (pin?.offsetHeight ?? 0);
+  }, target);
+  expect(seen).toBeGreaterThanOrEqual(179);
   expect(errors).toEqual([]);
 });

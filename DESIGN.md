@@ -782,7 +782,9 @@ keyboard; a finger scroll moves nothing.
   寬度 ≥ 80 字元，高度 ≥ 160): a tap on a pane's window (its transcript, not a header
   control or the card) or on its session-list row, when the card comes to it, grows it to
   an 80-column reply line (`80ch` in the reply font, measured with a hidden `.msg-text`
-  probe) and 160px of transcript above the card (`fitPaneForReading()`). The room comes
+  probe) and 180px of transcript in sight (`fitPaneForReading()`; 2026-11-14: 上下要 180 —
+  the pinned prompt bar over the transcript's top and the card's full height, which a
+  squeezed pane had cut, are taken out first, or a stacked pane grew yet showed ~25px). The room comes
   from the nearest split level first, then outer ones, and no neighbour goes below its
   minimum (140×95px, nested splits summed), so on a stage too small it grows as far as it
   can. It animates like any re-tiling, and the card flies to where the pane ends up. The

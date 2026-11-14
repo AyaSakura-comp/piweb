@@ -18,7 +18,7 @@ const MIN_PANE_HEIGHT_PX = 95;
 // least this many characters (CSS `ch`, the width of "0" in the reply font)
 // and at least this much transcript above the card (user request, 2026-11-12).
 const FIT_READING_COLUMNS = 80;
-const FIT_TRANSCRIPT_PX = 160;
+const FIT_TRANSCRIPT_PX = 180;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
@@ -2763,7 +2763,7 @@ export function createSessionDashboard({
    * panes clip their own overflow).
    */
   /** How much wider and taller (px) `pane` must be for an 80-column reply
-   *  line and 160px of transcript above the card, measured with the pane's
+   *  line and 180px of transcript in sight between the pinned prompt and the card, measured with the pane's
    *  own fonts and chrome as it is laid out now (card included). Layout
    *  sizes, not client rects, so a pane mid-animation measures its real size. */
   function readingShortfall(pane) {
@@ -2780,7 +2780,29 @@ export function createSessionDashboard({
     pane.messagesEl.append(probe);
     const width = Math.max(0, Math.ceil(line.offsetWidth - text.clientWidth));
     probe.remove();
-    const height = Math.max(0, Math.ceil(FIT_TRANSCRIPT_PX - pane.messagesEl.clientHeight));
+    // What a reader sees of the transcript: the pinned prompt bar lies over
+    // its top (counted even while hidden, since a grown pane scrolls a prompt
+    // under it), and a pane too short for the card squeezes the card, which
+    // takes its full height back once the pane has room.
+    const clip = pane.el.querySelector('.prompt-pin-clip');
+    const bar = clip?.querySelector('.prompt-pin');
+    let pinH = 0;
+    if (clip && bar) {
+      const wasHidden = clip.hidden;
+      clip.hidden = false;
+      pinH = bar.offsetHeight;
+      clip.hidden = wasHidden;
+    }
+    let cardH = 0;
+    if (pane.dock.classList.contains('is-floating')) {
+      const squeezed = pane.dock.offsetHeight;
+      const flex = pane.dock.style.flex;
+      pane.dock.style.flex = 'none';
+      cardH = Math.max(0, pane.dock.offsetHeight - squeezed);
+      pane.dock.style.flex = flex;
+    }
+    const seen = pane.messagesEl.clientHeight - pinH - cardH;
+    const height = Math.max(0, Math.ceil(FIT_TRANSCRIPT_PX - seen));
     return { width, height };
   }
 
@@ -2850,7 +2872,7 @@ export function createSessionDashboard({
   }
 
   /** A tap brought the card to `jid`: grow its pane to reading size (an
-   *  80-column line, 160px of transcript), first giving the pane an earlier
+   *  80-column line, 180px of transcript in sight), first giving the pane an earlier
    *  tap grew its old size back, so tapping around never ratchets the layout.
    *  A layout someone has since changed by hand is left as it is. Returns
    *  whether the layout changed. */
