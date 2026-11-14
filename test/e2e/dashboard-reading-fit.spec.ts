@@ -196,3 +196,19 @@ test('a stacked pane grows until 180px of transcript show between the pinned pro
   expect(seen).toBeGreaterThanOrEqual(179);
   expect(errors).toEqual([]);
 });
+
+test('the pane already holding the card grows too when tapped', async ({ page }) => {
+  const errors = await setup(page);
+  // The 3×3 grid opens with the card on the first pane (a preset or a
+  // splitter can shrink a pane under the card the same way).
+  const target = jids[0];
+  await expect(pane(page, target)).toHaveClass(/composer-active/);
+  await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
+  const before = await settled(page, target);
+  expect(before.textWidth).toBeLessThan(before.ch80);
+  await pane(page, target).locator('.dashboard-pane-transcript').click();
+  const grown = await settled(page, target);
+  expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
+  expect(grown.transcript).toBeGreaterThanOrEqual(179);
+  expect(errors).toEqual([]);
+});

@@ -2936,6 +2936,9 @@ export function createSessionDashboard({
     if (!pane) return;
     if (composerJid === jid && pane.dock.classList.contains('is-floating')) {
       if (pane.unread && paneInUse(pane)) markPaneSeen(pane);
+      // The card is already here, but a preset, splitter or pinch may have
+      // shrunk the pane since: a tap still brings it to reading size.
+      if (fit) fitPaneForReading(jid);
       return;
     }
     const prev = composerJid && composerJid !== jid ? panes.get(composerJid) : null;
