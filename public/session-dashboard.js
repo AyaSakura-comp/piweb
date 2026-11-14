@@ -15,16 +15,19 @@ const PANE_PAGE_SIZE = 50;
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
 // A pane tapped to take the input card grows to read comfortably (user request,
-// 2026-11-12: 寬度 ≥ 80 字元; 2026-11-14: 高度要 180 字元高): a reply line of at
-// least this many characters (CSS `ch`, the width of "0" in the reply font) and
-// at least this many lines of reply text in sight between the pinned prompt and
-// the card. 180 lines is taller than any screen, so in practice the pane takes
-// all the height its neighbours' minimum leaves it.
+// 2026-11-12: 寬度 ≥ 80 字元, 高度 ≥ 180): a reply line of at least this many
+// characters (CSS `ch`, the width of "0" in the reply font) and at least this
+// much transcript in sight between the pinned prompt and the card.
 const FIT_READING_COLUMNS = 80;
-const FIT_TRANSCRIPT_LINES = 180;
-// When growing in place would leave the tapped pane under this share of the
-// stage's height, the tap zooms it to the whole stage instead (2026-11-15).
-const FIT_ZOOM_BELOW_STAGE = 0.5;
+const FIT_TRANSCRIPT_PX = 180;
+// And a tap always shows: the pane grows to at least this many times its own
+// height, though never past this share of the stage, so it never fills it
+// (2026-11-15: 點擊視窗放大, 不是放大到最大). The neighbours give the room down
+// to the smallest size their density allows (a header strip on a phone with
+// many panes stacked), not the 95px a splitter keeps.
+const FIT_GROW_FACTOR = 1.5;
+const FIT_MAX_STAGE_SHARE = 0.6;
+const PANE_MINS = { row: MIN_PANE_WIDTH_PX, column: MIN_PANE_HEIGHT_PX };
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
@@ -2769,7 +2772,7 @@ export function createSessionDashboard({
    * panes clip their own overflow).
    */
   /** How much wider and taller (px) `pane` must be for an 80-column reply
-   *  line and 180 lines of transcript in sight between the pinned prompt and the card, measured with the pane's
+   *  line and 180px of transcript in sight between the pinned prompt and the card, measured with the pane's
    *  own fonts and chrome as it is laid out now (card included). Layout
    *  sizes, not client rects, so a pane mid-animation measures its real size. */
   function readingShortfall(pane) {
@@ -2778,18 +2781,13 @@ export function createSessionDashboard({
     const text = el('div', 'msg-text');
     const line = el('span');
     line.style.cssText = `display:inline-block;width:${FIT_READING_COLUMNS}ch;height:1px`;
-    // FIT_TRANSCRIPT_LINES lines of reply text, in the reply font's line height.
-    const lines = el('div');
-    lines.textContent = '字\n'.repeat(FIT_TRANSCRIPT_LINES - 1) + '字';
-    lines.style.cssText = 'white-space:pre;margin:0;padding:0;border:0';
-    text.append(line, lines);
+    text.append(line);
     body.append(text);
     probe.append(body);
     probe.style.cssText = 'visibility:hidden;height:0;overflow:hidden;padding-top:0;padding-bottom:0';
     probe.setAttribute('aria-hidden', 'true');
     pane.messagesEl.append(probe);
     const width = Math.max(0, Math.ceil(line.offsetWidth - text.clientWidth));
-    const wantH = lines.offsetHeight;
     probe.remove();
     // What a reader sees of the transcript: the pinned prompt bar lies over
     // its top (counted even while hidden, since a grown pane scrolls a prompt
@@ -2813,15 +2811,16 @@ export function createSessionDashboard({
       pane.dock.style.flex = flex;
     }
     const seen = pane.messagesEl.clientHeight - pinH - cardH;
-    const height = Math.max(0, Math.ceil(wantH - seen));
+    const height = Math.max(0, Math.ceil(FIT_TRANSCRIPT_PX - seen));
     return { width, height };
   }
 
-  /** The smallest size (px) `node` can take along `axis` at `depth`. */
-  function minSizeAlong(node, depth, axis) {
-    const minPx = axis === 'row' ? MIN_PANE_WIDTH_PX : MIN_PANE_HEIGHT_PX;
+  /** The smallest size (px) `node` can take along `axis` at `depth`, each
+   *  pane at least `mins.row` wide and `mins.column` tall. */
+  function minSizeAlong(node, depth, axis, mins = PANE_MINS) {
+    const minPx = mins[axis];
     if (!node.items?.length) return minPx;
-    const sizes = node.items.map((n) => minSizeAlong(n, depth + 1, axis));
+    const sizes = node.items.map((n) => minSizeAlong(n, depth + 1, axis, mins));
     return axisAt(depth + 1) === axis ? sizes.reduce((a, b) => a + b, 0) : Math.max(...sizes);
   }
 
@@ -2829,7 +2828,7 @@ export function createSessionDashboard({
    *  measures it), taking room from its nearest neighbours first and never
    *  pressing any of them below their minimum. As far as it can go when the
    *  stage is too small; `base` itself when nothing can change. */
-  function growAlong(base, jid, axis, target) {
+  function growAlong(base, jid, axis, target, mins = PANE_MINS) {
     const layout = cloneLayout(base);
     const g = gridEl.getBoundingClientRect();
     for (let round = 0; round < 8; round++) {
@@ -2859,15 +2858,15 @@ export function createSessionDashboard({
       let changed = false;
       for (const { nodes, i, depth, total, share, span } of levels) {
         if (span <= 0) continue;
-        const mins = nodes.map((n) => minSizeAlong(n, depth, axis) / span);
-        const restMin = mins.reduce((sum, m, j) => (j === i ? sum : sum + m), 0);
+        const floor = nodes.map((n) => minSizeAlong(n, depth, axis, mins) / span);
+        const restMin = floor.reduce((sum, m, j) => (j === i ? sum : sum + m), 0);
         const most = Math.max(share, 1 - restMin);
         const next = Math.min(most, share * (target / size));
         if (next - share < 0.002) continue;
         // The others give up the difference in proportion to what they have
         // above their minimum, so none is pressed below it.
         const give = next - share;
-        const spare = nodes.map((n, j) => (j === i ? 0 : Math.max(0, n.weight / total - mins[j])));
+        const spare = nodes.map((n, j) => (j === i ? 0 : Math.max(0, n.weight / total - floor[j])));
         const spareSum = spare.reduce((a, b) => a + b, 0);
         if (spareSum <= 0) continue;
         nodes.forEach((n, j) => {
@@ -2883,8 +2882,8 @@ export function createSessionDashboard({
   }
 
   /** A tap brought the card to `jid`: grow its pane to reading size (an
-   *  80-column line, 180 lines of transcript in sight), or zoom it to the
-   *  whole stage when the stage has no room for that, first giving the pane an earlier
+   *  80-column line, 180px of transcript in sight) and at least 1.5 times its
+   *  own height, up to 60% of the stage, first giving the pane an earlier
    *  tap grew its old size back, so tapping around never ratchets the layout.
    *  A layout someone has since changed by hand is left as it is. Returns
    *  whether the layout changed. */
@@ -2901,7 +2900,6 @@ export function createSessionDashboard({
     const now = predictPaneRect(jid, groups);
     const before = predictPaneRect(jid, start);
     let next = start;
-    let wantW = 0;
     if (now && before) {
       // Shortfalls are measured on the pane as it stands; carry them over to
       // `start`, which may give this pane a different size than now. The
@@ -2909,36 +2907,21 @@ export function createSessionDashboard({
       // pane: scale the wanted size by the same ratio (and a pixel to spare).
       const scaleW = now.width / Math.max(1, pane.el.offsetWidth);
       const scaleH = now.height / Math.max(1, pane.el.offsetHeight);
-      wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
-      const wantH = (pane.el.offsetHeight + need.height + 1) * scaleH;
-      if (need.width > 0 || before.width < wantW) next = growAlong(next, jid, 'row', wantW);
-      if (need.height > 0 || before.height < wantH) next = growAlong(next, jid, 'column', wantH);
-    }
-    // A stage too small to give the pane a reading size even with every
-    // neighbour pressed to its minimum zooms the pane to the whole stage
-    // instead, as 放大此視窗 does (iPhone recording 2026-11-15: seven panes
-    // stacked, a tap grew one by ~20px; 做成點擊視窗放大). That is a pane left
-    // under half the stage's height, or one still short of the 80-column
-    // line while it shares its width with others.
-    const stage = gridEl.getBoundingClientRect();
-    const grown = predictPaneRect(jid, next);
-    if (
-      grown &&
-      stage.width > 0 &&
-      stage.height > 0 &&
-      (grown.height < stage.height * FIT_ZOOM_BELOW_STAGE ||
-        (wantW > 0 && grown.width < wantW - 1 && grown.width < stage.width - MIN_PANE_WIDTH_PX / 2))
-    ) {
-      readingFit = null;
-      if (layoutKey(start) !== layoutKey(groups)) {
-        // An earlier tap's growth goes back first, so the layout under the
-        // zoom is the one the user made.
-        groups = start;
-        saveState();
-        rebuildGrid();
-      }
-      setZoom(jid);
-      return zoomedJid === jid;
+      const wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
+      // 180px of transcript, and a visible step up from the pane's own height
+      // that stops short of filling the stage.
+      const stage = gridEl.getBoundingClientRect();
+      const readH = (pane.el.offsetHeight + need.height + 1) * scaleH;
+      const stepH = Math.min(before.height * FIT_GROW_FACTOR, stage.height * FIT_MAX_STAGE_SHARE);
+      const wantH = Math.max(readH, stepH);
+      // Neighbours go down to what their density's CSS lets a pane be.
+      const cs = getComputedStyle(pane.el);
+      const mins = {
+        row: Math.max(44, parseFloat(cs.minWidth) || MIN_PANE_WIDTH_PX),
+        column: Math.max(44, parseFloat(cs.minHeight) || MIN_PANE_HEIGHT_PX),
+      };
+      if (before.width < wantW) next = growAlong(next, jid, 'row', wantW, mins);
+      if (before.height < wantH) next = growAlong(next, jid, 'column', wantH, mins);
     }
     const nextKey = layoutKey(next);
     const grew = nextKey !== layoutKey(start);

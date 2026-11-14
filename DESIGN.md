@@ -782,21 +782,19 @@ keyboard; a finger scroll moves nothing.
   寬度 ≥ 80 字元，高度 ≥ 160): a tap on a pane's window (its transcript, not a header
   control or the card) or on its session-list row, when the card comes to it, grows it to
   an 80-column reply line (`80ch` in the reply font, measured with a hidden `.msg-text`
-  probe) and 180 lines of reply text in sight between the pinned prompt bar and the card
-  (`fitPaneForReading()`, `FIT_TRANSCRIPT_LINES`; 2026-11-14: 高度要 180 字元高 — the
-  height was the point, the width was never the complaint; a detour to 80 full-width
-  字 was reverted). 180 lines is taller than any screen, so in practice the tapped pane
-  takes all the height its neighbours above and below leave at their minimum. Where the
-  stage has no room for that — growing in place would leave the pane under half the stage's
-  height, or short of the 80-column line while it shares its width with others (a phone
-  with many panes stacked, in a grid or side by side) — the tap zooms the pane to the whole
-  stage instead, exactly as 放大此視窗 does (iPhone recording 2026-11-15: seven stacked
-  panes, a tap grew one by ~20px; 做成點擊視窗放大). An earlier tap's growth goes back first,
-  so the layout under the zoom is the user's, and a zoomed pane always shows its 縮回並排
-  button, even at phone width where the header otherwise moves it into ⋯. The room comes
-  from the nearest split level first, then outer ones, and no neighbour goes below its
-  minimum (140×95px, nested splits summed), so on a stage too small it grows as far as it
-  can. It animates like any re-tiling, and the card flies to where the pane ends up. The
+  probe) and 180px of transcript in sight between the pinned prompt bar and the card
+  (`fitPaneForReading()`; the bar over the transcript's top and the card's full height,
+  which a squeezed pane had cut, are taken out first), and to at least 1.5× its own
+  height, but never past 60% of the stage (`FIT_GROW_FACTOR`, `FIT_MAX_STAGE_SHARE`).
+  2026-11-15, from iPhone recordings of seven stacked panes: a tap there grew a pane by
+  ~20px, because its neighbours sat at the 95px a splitter keeps; zooming it to the whole
+  stage instead was rejected (不是放大到最大). So a tap is always a visible step, the others stay on screen,
+  and for a reading fit they give room down to the smallest size their density's CSS
+  allows (65px — a header strip — with six or more panes), not the splitter's 95px. The room comes
+  from the nearest split level first, then outer ones, and no neighbour goes below that
+  minimum (nested splits summed), so on a stage too small it grows as far as it
+  can. A zoomed pane (放大此視窗) always shows its 縮回並排 button, even at phone width where
+  the header otherwise moves it into ⋯. It animates like any re-tiling, and the card flies to where the pane ends up. The
   next pane tapped first gives the earlier one its old size back, so tapping around never
   ratchets the layout; once a splitter, preset or pinch changes the layout by hand, that
   layout is kept. A pane already that big, a zoomed pane or a lone pane changes nothing.

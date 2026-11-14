@@ -1,9 +1,10 @@
 import { expect, test, type Page } from 'playwright/test';
 
 // Tapping a pane to give it the input card grows it to reading size: an
-// 80-column reply line and 180 lines of transcript in sight (2026-11-14: 高度要
-// 180 字元高), which no screen holds, so it takes all the height its neighbours'
-// minimum leaves. The next pane tapped gets the room instead, and the first goes back to its size.
+// 80-column reply line and 180px of transcript in sight, and at least 1.5 times
+// its own height, but never past 60% of the stage (2026-11-15: 點擊視窗放大, 不是
+// 放大到最大). The next pane tapped gets the room instead, and the first goes
+// back to its size.
 const sessions = Array.from({ length: 9 }, (_, i) => ({
   jid: `web:r${i}`,
   name: `Pane ${i + 1}`,
@@ -108,17 +109,34 @@ const settled = async (page: Page, jid: string) => {
   return (await measure(page, jid))!;
 };
 
-/** `jid` took all the height it could: every pane above or below it is down
- *  to its minimum (95px). */
-const expectFullHeight = async (page: Page, jid: string, ids: string[]) => {
-  const me = await settled(page, jid);
-  const others = await Promise.all(ids.filter((j) => j !== jid).map((j) => settled(page, j)));
-  const stacked = others.filter((o) => o.left < me.right - 1 && o.right > me.left + 1);
-  expect(stacked.length).toBeGreaterThan(0);
-  for (const o of stacked) expect(o.height).toBeLessThan(100); // down to the 95px minimum
+/** Transcript a reader sees in `jid`: under the pinned prompt, above the card. */
+const seenOf = (page: Page, jid: string) =>
+  page.evaluate((id) => {
+    const el = document.querySelector<HTMLElement>(`.dashboard-pane[data-jid="${id}"]`)!;
+    const pin = el.querySelector<HTMLElement>('.prompt-pin-clip:not([hidden]) .prompt-pin');
+    return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - (pin?.offsetHeight ?? 0);
+  }, jid);
+
+/** `jid` grew a visible step from `before` and to reading height, yet stops
+ *  well short of the stage: it is not zoomed, and every pane is still there. */
+const expectStep = async (
+  page: Page,
+  jid: string,
+  before: { height: number },
+  count: number,
+  minSeen = 179,
+) => {
+  const grown = await settled(page, jid);
+  const stage = (await page.locator('#dashboard-grid').boundingBox())!;
+  expect(await seenOf(page, jid)).toBeGreaterThanOrEqual(minSeen);
+  expect(grown.height).toBeGreaterThanOrEqual(Math.min(before.height * 1.5, stage.height * 0.6) - 4);
+  expect(grown.height).toBeLessThan(stage.height * 0.75);
+  await expect(pane(page, jid)).not.toHaveClass(/pane-zoomed/);
+  await expect(page.locator('.dashboard-pane:visible')).toHaveCount(count);
+  return grown;
 };
 
-test('a tapped pane grows to an 80-column line and as tall as 180 lines allow', async ({ page }, info) => {
+test('a tapped pane grows to an 80-column line, 180px of transcript and a visible step, short of the stage', async ({ page }, info) => {
   const errors = await setup(page);
   const target = jids[4]; // the middle of the 3×3 grid
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
@@ -130,7 +148,7 @@ test('a tapped pane grows to an 80-column line and as tall as 180 lines allow', 
   await expect(pane(page, target)).toHaveClass(/composer-active/);
   const grown = await settled(page, target);
   expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
-  await expectFullHeight(page, target, jids);
+  await expectStep(page, target, before, 9);
   // Every other pane keeps at least its minimum size.
   const others = await Promise.all(jids.filter((j) => j !== target).map((j) => settled(page, j)));
   for (const o of others) {
@@ -141,11 +159,12 @@ test('a tapped pane grows to an 80-column line and as tall as 180 lines allow', 
 
   // Another pane takes the room; the first goes back to its tile.
   const next = jids[0];
+  const nextBefore = before; // every tile of the even 3×3 grid is the same size
   await pane(page, next).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, next)).toHaveClass(/composer-active/);
   const nextGrown = await settled(page, next);
   expect(nextGrown.textWidth).toBeGreaterThanOrEqual(nextGrown.ch80 - 1);
-  await expectFullHeight(page, next, jids);
+  await expectStep(page, next, nextBefore, 9);
   // The first pane's growth was undone before the next one took its room:
   // its rows are even again, and its column gave up as much as the right one.
   const back = await settled(page, target);
@@ -183,7 +202,7 @@ test('a pane already wide enough with nothing above or below keeps the layout as
   expect(errors).toEqual([]);
 });
 
-test('a stacked pane takes all the height its neighbours can give', async ({ page }) => {
+test('a stacked pane grows until 180px of transcript show between the pinned prompt and the card', async ({ page }) => {
   const errors = await setup(page);
   // Five panes stacked top to bottom: each starts too short for the card,
   // which it squeezes, and the pinned prompt lies over its transcript.
@@ -199,16 +218,10 @@ test('a stacked pane takes all the height its neighbours can give', async ({ pag
   await expect(page.locator('.dashboard-pane')).toHaveCount(5);
   const target = jids[2];
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
+  const before = await settled(page, target);
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, target)).toHaveClass(/composer-active/);
-  await settled(page, target);
-  const seen = await page.evaluate((id) => {
-    const el = document.querySelector<HTMLElement>(`.dashboard-pane[data-jid="${id}"]`)!;
-    const pin = el.querySelector<HTMLElement>('.prompt-pin-clip:not([hidden]) .prompt-pin');
-    return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - (pin?.offsetHeight ?? 0);
-  }, target);
-  expect(seen).toBeGreaterThan(250);
-  await expectFullHeight(page, target, jids.slice(0, 5));
+  await expectStep(page, target, before, 5);
   expect(errors).toEqual([]);
 });
 
@@ -224,13 +237,15 @@ test('the pane already holding the card grows too when tapped', async ({ page })
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   const grown = await settled(page, target);
   expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
-  await expectFullHeight(page, target, jids);
+  await expectStep(page, target, before, 9);
   expect(errors).toEqual([]);
 });
 
-test('on a phone with many panes stacked, a tap zooms the pane to the whole stage', async ({ page }, info) => {
-  // iPhone recording 2026-11-15: seven panes stacked, a tap grew one by ~20px
-  // (the others were already at their minimum). 做成點擊視窗放大.
+test('on a phone with seven panes stacked, a tap grows the pane a clear step, not to the whole stage', async ({ page }, info) => {
+  // iPhone recordings 2026-11-15: seven panes stacked, a tap grew one by ~20px
+  // (the others sat at the 95px a splitter keeps); zooming it to the whole
+  // stage instead was too much (不是放大到最大). The others now give room down
+  // to the header strip their density allows, and all stay on screen.
   const errors = await setup(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate((ids) => {
@@ -246,22 +261,19 @@ test('on a phone with many panes stacked, a tap zooms the pane to the whole stag
     await page.locator('#btn-topbar-dashboard').click();
   }
   await expect(page.locator('.dashboard-pane')).toHaveCount(7);
-  const layoutBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!).groups);
   const target = jids[2];
-  const stage = await page.locator('#dashboard-grid').boundingBox();
+  await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
+  const before = await settled(page, target);
   await pane(page, target).locator('.dashboard-pane-transcript').click();
-  await expect(pane(page, target)).toHaveClass(/pane-zoomed/);
   await expect(pane(page, target)).toHaveClass(/composer-active/);
-  const zoomed = await settled(page, target);
-  expect(zoomed.height).toBeGreaterThan(stage!.height * 0.9);
-  expect(zoomed.width).toBeGreaterThan(stage!.width * 0.9);
-  await page.screenshot({ path: info.outputPath('phone-tap-zoomed.png') });
-  // The layout under the zoom is untouched, and the header's button goes back.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('piweb.dashboard')!).groups)).toEqual(layoutBefore);
-  const back = pane(page, target).locator('button[title="縮回並排"]');
-  await expect(back).toBeVisible();
-  await back.click();
-  await expect(pane(page, target)).not.toHaveClass(/pane-zoomed/);
-  await expect(page.locator('.dashboard-pane:visible')).toHaveCount(7);
+  // Six header strips at the compact 65px leave a little under 180px of
+  // transcript on an 844pt phone: it grows as far as they allow.
+  const grown = await expectStep(page, target, before, 7, 150);
+  expect(grown.height).toBeGreaterThan(before.height * 2); // ~110px → ~400px
+  // Every other pane still shows at least its header.
+  for (const j of jids.slice(0, 7).filter((x) => x !== target)) {
+    expect((await settled(page, j)).height).toBeGreaterThanOrEqual(44);
+  }
+  await page.screenshot({ path: info.outputPath('phone-tap-grown.png') });
   expect(errors).toEqual([]);
 });
