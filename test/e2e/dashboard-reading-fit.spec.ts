@@ -1,8 +1,9 @@
 import { expect, test, type Page } from 'playwright/test';
 
 // Tapping a pane to give it the input card grows it to reading size: an
-// 80-character reply line (full-width 漢字, the way the replies read) and at least 180px of transcript in sight. The
-// next pane tapped gets the room instead, and the first goes back to its size.
+// 80-column reply line and 180 lines of transcript in sight (2026-11-14: 高度要
+// 180 字元高), which no screen holds, so it takes all the height its neighbours'
+// minimum leaves. The next pane tapped gets the room instead, and the first goes back to its size.
 const sessions = Array.from({ length: 9 }, (_, i) => ({
   jid: `web:r${i}`,
   name: `Pane ${i + 1}`,
@@ -25,9 +26,7 @@ const events = (jid: string) =>
     createdAt: '2026-11-12T01:00:00Z',
   }));
 
-// The user's screen (2048-wide, 6–9 panes): a 3-column grid there already fits
-// 80 half-width characters, so a tap only shows if it counts full-width ones.
-test.use({ viewport: { width: 2048, height: 1110 }, isMobile: false, hasTouch: false });
+test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
 async function setup(page: Page) {
   const errors: string[] = [];
@@ -79,7 +78,7 @@ async function setup(page: Page) {
 
 const pane = (page: Page, jid: string) => page.locator(`.dashboard-pane[data-jid="${jid}"]`);
 
-/** A pane's reply width against 80 full-width characters in the reply font, its transcript height
+/** A pane's reply width against 80ch in the reply font, its transcript height
  *  and its size, once no pane is animating. */
 const measure = (page: Page, jid: string) =>
   page.evaluate((id) => {
@@ -88,17 +87,18 @@ const measure = (page: Page, jid: string) =>
     if (el.getAnimations().length) return null;
     const text = [...el.querySelectorAll<HTMLElement>('.msg:not(.msg-user) .msg-text')][0];
     const probe = document.createElement('span');
-    probe.textContent = '字'.repeat(80);
-    probe.style.cssText = 'display:inline-block;white-space:nowrap;height:1px;overflow:hidden';
+    probe.style.cssText = 'display:inline-block;width:80ch;height:1px';
     text.append(probe);
-    const line80 = probe.offsetWidth;
+    const ch80 = probe.offsetWidth;
     probe.remove();
     return {
       textWidth: text.clientWidth,
-      line80,
+      ch80,
       transcript: el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight,
       width: el.offsetWidth,
       height: el.offsetHeight,
+      left: el.getBoundingClientRect().left,
+      right: el.getBoundingClientRect().right,
     };
   }, jid);
 
@@ -108,24 +108,34 @@ const settled = async (page: Page, jid: string) => {
   return (await measure(page, jid))!;
 };
 
-test('a tapped pane grows to an 80-character line and 180px of transcript', async ({ page }, info) => {
+/** `jid` took all the height it could: every pane above or below it is down
+ *  to its minimum (95px). */
+const expectFullHeight = async (page: Page, jid: string, ids: string[]) => {
+  const me = await settled(page, jid);
+  const others = await Promise.all(ids.filter((j) => j !== jid).map((j) => settled(page, j)));
+  const stacked = others.filter((o) => o.left < me.right - 1 && o.right > me.left + 1);
+  expect(stacked.length).toBeGreaterThan(0);
+  for (const o of stacked) expect(o.height).toBeLessThan(100); // down to the 95px minimum
+};
+
+test('a tapped pane grows to an 80-column line and as tall as 180 lines allow', async ({ page }, info) => {
   const errors = await setup(page);
   const target = jids[4]; // the middle of the 3×3 grid
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
   const before = await settled(page, target);
   // The tile is too small to begin with, or this test proves nothing.
-  expect(before.textWidth).toBeLessThan(before.line80);
+  expect(before.textWidth).toBeLessThan(before.ch80);
 
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, target)).toHaveClass(/composer-active/);
   const grown = await settled(page, target);
-  expect(grown.textWidth).toBeGreaterThanOrEqual(grown.line80 - 1);
-  expect(grown.transcript).toBeGreaterThanOrEqual(179);
+  expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
+  await expectFullHeight(page, target, jids);
   // Every other pane keeps at least its minimum size.
   const others = await Promise.all(jids.filter((j) => j !== target).map((j) => settled(page, j)));
   for (const o of others) {
     expect(o.width).toBeGreaterThanOrEqual(139);
-    expect(o.height).toBeGreaterThanOrEqual(94);
+    expect(o.height).toBeGreaterThanOrEqual(90); // 95px less its share of the splitters
   }
   await page.screenshot({ path: info.outputPath('reading-fit-grown.png') });
 
@@ -134,8 +144,8 @@ test('a tapped pane grows to an 80-character line and 180px of transcript', asyn
   await pane(page, next).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, next)).toHaveClass(/composer-active/);
   const nextGrown = await settled(page, next);
-  expect(nextGrown.textWidth).toBeGreaterThanOrEqual(nextGrown.line80 - 1);
-  expect(nextGrown.transcript).toBeGreaterThanOrEqual(179);
+  expect(nextGrown.textWidth).toBeGreaterThanOrEqual(nextGrown.ch80 - 1);
+  await expectFullHeight(page, next, jids);
   // The first pane's growth was undone before the next one took its room:
   // its rows are even again, and its column gave up as much as the right one.
   const back = await settled(page, target);
@@ -147,17 +157,18 @@ test('a tapped pane grows to an 80-character line and 180px of transcript', asyn
   expect(errors).toEqual([]);
 });
 
-test('a pane already big enough keeps the layout as it is', async ({ page }) => {
+test('a pane already wide enough with nothing above or below keeps the layout as it is', async ({ page }) => {
+  await page.setViewportSize({ width: 2048, height: 1110 }); // the user's screen: half is > 80ch
   const errors = await setup(page);
-  // Equalize, then zoom out to two columns' worth by closing panes: simpler to
-  // check that a tap on a roomy pane does not touch the saved layout.
-  await page.evaluate(() => {
+  // Two full-height panes side by side: each is wider than 80ch and has no
+  // neighbour to take height from, so a tap must not touch the saved layout.
+  await page.evaluate((ids) => {
     const saved = JSON.parse(localStorage.getItem('piweb.dashboard')!);
-    saved.groups = [saved.groups[0]];
-    saved.groups[0].items = saved.groups[0].items.slice(0, 2);
+    saved.direction = 'row';
+    saved.groups = ids.slice(0, 2).map((jid: string) => ({ weight: 1, items: [{ jid, weight: 1 }] }));
     saved.updatedAt = Date.now() + 1000;
     localStorage.setItem('piweb.dashboard', JSON.stringify(saved));
-  });
+  }, jids);
   await page.reload();
   await page.locator('#btn-dashboard-home').click();
   await expect(page.locator('.dashboard-pane')).toHaveCount(2);
@@ -172,7 +183,7 @@ test('a pane already big enough keeps the layout as it is', async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test('a stacked pane grows until 180px of transcript show between the pinned prompt and the card', async ({ page }) => {
+test('a stacked pane takes all the height its neighbours can give', async ({ page }) => {
   const errors = await setup(page);
   // Five panes stacked top to bottom: each starts too short for the card,
   // which it squeezes, and the pinned prompt lies over its transcript.
@@ -196,7 +207,8 @@ test('a stacked pane grows until 180px of transcript show between the pinned pro
     const pin = el.querySelector<HTMLElement>('.prompt-pin-clip:not([hidden]) .prompt-pin');
     return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - (pin?.offsetHeight ?? 0);
   }, target);
-  expect(seen).toBeGreaterThanOrEqual(179);
+  expect(seen).toBeGreaterThan(250);
+  await expectFullHeight(page, target, jids.slice(0, 5));
   expect(errors).toEqual([]);
 });
 
@@ -208,10 +220,10 @@ test('the pane already holding the card grows too when tapped', async ({ page })
   await expect(pane(page, target)).toHaveClass(/composer-active/);
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
   const before = await settled(page, target);
-  expect(before.textWidth).toBeLessThan(before.line80);
+  expect(before.textWidth).toBeLessThan(before.ch80);
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   const grown = await settled(page, target);
-  expect(grown.textWidth).toBeGreaterThanOrEqual(grown.line80 - 1);
-  expect(grown.transcript).toBeGreaterThanOrEqual(179);
+  expect(grown.textWidth).toBeGreaterThanOrEqual(grown.ch80 - 1);
+  await expectFullHeight(page, target, jids);
   expect(errors).toEqual([]);
 });

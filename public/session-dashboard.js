@@ -14,15 +14,14 @@ const DASHBOARD_STORAGE_KEY = 'piweb.dashboard';
 const PANE_PAGE_SIZE = 50;
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
-// A pane tapped to take the input card grows to read comfortably: a line of at
-// least this many characters and at least this much transcript above the card
-// (user request, 2026-11-12: 寬度 ≥ 80 字元). Characters are counted as the
-// replies read, in full-width CJK glyphs of the reply font: 80 half-width `ch`
-// is only ~45 漢字, which a 3-column grid on a wide screen already shows, so a
-// tap there changed the pane by ~25px and looked like nothing (2026-11-14).
+// A pane tapped to take the input card grows to read comfortably (user request,
+// 2026-11-12: 寬度 ≥ 80 字元; 2026-11-14: 高度要 180 字元高): a reply line of at
+// least this many characters (CSS `ch`, the width of "0" in the reply font) and
+// at least this many lines of reply text in sight between the pinned prompt and
+// the card. 180 lines is taller than any screen, so in practice the pane takes
+// all the height its neighbours' minimum leaves it.
 const FIT_READING_COLUMNS = 80;
-const FIT_READING_GLYPH = '字';
-const FIT_TRANSCRIPT_PX = 180;
+const FIT_TRANSCRIPT_LINES = 180;
 const COMPOSER_PANE_KEY = 'piweb.dashboard.composer';
 /** Taps on these keep their own job instead of opening the pane's keyboard. */
 const PANE_TAP_KEEPS_FOCUS =
@@ -2766,8 +2765,8 @@ export function createSessionDashboard({
    * from the old pane to the new one in an arc (it must fly above the grid:
    * panes clip their own overflow).
    */
-  /** How much wider and taller (px) `pane` must be for an 80-character
-   *  (full-width) reply line and 180px of transcript in sight between the pinned prompt and the card, measured with the pane's
+  /** How much wider and taller (px) `pane` must be for an 80-column reply
+   *  line and 180 lines of transcript in sight between the pinned prompt and the card, measured with the pane's
    *  own fonts and chrome as it is laid out now (card included). Layout
    *  sizes, not client rects, so a pane mid-animation measures its real size. */
   function readingShortfall(pane) {
@@ -2775,15 +2774,19 @@ export function createSessionDashboard({
     const body = el('div', 'msg-body');
     const text = el('div', 'msg-text');
     const line = el('span');
-    line.textContent = FIT_READING_GLYPH.repeat(FIT_READING_COLUMNS);
-    line.style.cssText = 'display:inline-block;white-space:nowrap;height:1px;overflow:hidden';
-    text.append(line);
+    line.style.cssText = `display:inline-block;width:${FIT_READING_COLUMNS}ch;height:1px`;
+    // FIT_TRANSCRIPT_LINES lines of reply text, in the reply font's line height.
+    const lines = el('div');
+    lines.textContent = '字\n'.repeat(FIT_TRANSCRIPT_LINES - 1) + '字';
+    lines.style.cssText = 'white-space:pre;margin:0;padding:0;border:0';
+    text.append(line, lines);
     body.append(text);
     probe.append(body);
     probe.style.cssText = 'visibility:hidden;height:0;overflow:hidden;padding-top:0;padding-bottom:0';
     probe.setAttribute('aria-hidden', 'true');
     pane.messagesEl.append(probe);
     const width = Math.max(0, Math.ceil(line.offsetWidth - text.clientWidth));
+    const wantH = lines.offsetHeight;
     probe.remove();
     // What a reader sees of the transcript: the pinned prompt bar lies over
     // its top (counted even while hidden, since a grown pane scrolls a prompt
@@ -2807,7 +2810,7 @@ export function createSessionDashboard({
       pane.dock.style.flex = flex;
     }
     const seen = pane.messagesEl.clientHeight - pinH - cardH;
-    const height = Math.max(0, Math.ceil(FIT_TRANSCRIPT_PX - seen));
+    const height = Math.max(0, Math.ceil(wantH - seen));
     return { width, height };
   }
 
@@ -2877,7 +2880,7 @@ export function createSessionDashboard({
   }
 
   /** A tap brought the card to `jid`: grow its pane to reading size (an
-   *  80 full-width characters, 180px of transcript in sight), first giving the pane an earlier
+   *  80-column line, 180 lines of transcript in sight), first giving the pane an earlier
    *  tap grew its old size back, so tapping around never ratchets the layout.
    *  A layout someone has since changed by hand is left as it is. Returns
    *  whether the layout changed. */
