@@ -26,6 +26,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Dragging a selection handle down through a formula no longer grows the selection up the screen: KaTeX's hidden MathML copy of the formula (which WebKit's caret lookup lands in) is never a selection point or quoted text, and a caret answer drawn more than a line from the finger is ignored; a quote across a formula holds it once
+- A tool call's command (`KEY=$(…); … --auth-key="$KEY"`) is shown as written instead of being drawn as one TeX formula with its spaces gone
+
 - A Claude Code session no longer dies when a command it ran is OOM-killed: systemd's default OOM policy stopped the pane's whole tmux scope ("can't find pane: %8"); each pane's scope now continues, and a pane that does vanish is reported in words
 - agy turns on `gemini-4-hydrogen-xhigh` (new in agy 1.5.7) no longer fail with "conflicts with --effort=high": `-xhigh` (and `-minimal`/`-max`) count as an effort already in the id, and any other id agy says conflicts with `--effort` runs once more without it
 - An agy turn no longer waits 2 s after agy exits: stdout had usually ended already, so the wait for its end never fired

@@ -3618,8 +3618,8 @@ function timeLabel(iso) {
 }
 
 /** Message bodies get full markdown + LaTeX; see markdown.js. */
-function renderText(container, raw) {
-  renderRich(container, raw);
+function renderText(container, raw, options) {
+  renderRich(container, raw, options);
 }
 
 const STREAM_VIDEO_RE = /\.(mp4|webm|mov|m4v)$/;
@@ -4082,7 +4082,8 @@ function buildEventNode(event, { liveRich = false, reuseRich = null } = {}) {
     if (liveRich) growInto(bodyNode, event.content, true);
     else if (event.kind === 'thinking') renderLobehubStatic(bodyNode, event.content);
     else if (usage) bodyNode.append(renderUsageReport(usage));
-    else renderText(bodyNode, event.content);
+    // A tool call is its arguments (`$ <command>`, a path, a query): no TeX.
+    else renderText(bodyNode, event.content, { math: event.kind !== 'tool' });
     bodyWrap.append(bodyNode);
     details.append(bodyWrap);
     return details;

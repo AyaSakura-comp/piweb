@@ -208,6 +208,16 @@ same rules hold in the chat and in a Dashboard pane.
   to drawn text; LobeHub's `"\n"` text nodes between blocks used to resolve
   above the whole list and flip the selection upward. The fallback picks the
   nearest line box and character, never the nearest parent element.
+  - KaTeX's hidden MathML copy of a formula (`.katex-mathml`, clipped to 1px,
+    ahead of the drawn glyphs) is not drawn text: WebKit's caret lookup lands in
+    it, and a handle dragged down a formula jumped above its anchor, so the
+    selection grew up the screen (iPhone, 2026-11-15, 「往下的時候會變成往上」).
+    It is never a point and never quoted (a quote across a formula held it
+    twice, plus its TeX source).
+  - What the caret lookup answers is taken only where it is drawn within about
+    a line of the finger (24px or the line's height); anything farther (the
+    same recording reached the reply above) falls back to the block under the
+    finger. `test/e2e/selection-katex.spec.ts`.
 - **The quote/copy pill** is a larger glass bubble that pops in. A finished
   selection quotes itself, in the chat and in a Dashboard pane alike; the user
   did not want to wait for 引用. In a pane the input card comes to that pane

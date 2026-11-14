@@ -74,7 +74,7 @@ function selectedTextParts(range) {
   if (!common || !document?.createTreeWalker) return null;
   const parts = [];
   const visit = (node) => {
-    if (!selectableBlock(node)) return;
+    if (!selectableBlock(node) || isHiddenText(node)) return;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : node.data.length;
     if (end > start) parts.push({ node, start, end, block: selectableBlock(node) });
@@ -183,7 +183,45 @@ function withOverlayTransparent(document, fn) {
 // lands above its anchor and the selection flips up the screen. Only text that
 // is actually drawn may be a selection point (whitespace inside code is drawn).
 function isLayoutWhitespace(node) {
-  return !/\S/.test(node.textContent || '') && !node.parentElement?.closest?.('pre');
+  return !/[^\s\u200b]/.test(node.textContent || '') && !node.parentElement?.closest?.('pre');
+}
+
+// KaTeX keeps a MathML copy of every formula for screen readers, clipped to one
+// pixel, ahead of the glyphs it draws. WebKit's caret lookup still lands in it
+// (WebKitGTK 2.52: the line under a formula's first line answered with its
+// MathML), and being ahead of the drawn formula in the page, a handle dragged
+// down a formula jumped above its anchor: the selection grew up the screen
+// instead (iPhone, 2026-11-15). That copy is never a point, nor quoted text.
+const HIDDEN_TEXT = '.katex-mathml';
+
+function isHiddenText(node) {
+  return Boolean(node.parentElement?.closest?.(HIDDEN_TEXT));
+}
+
+function isDrawnText(node) {
+  return !isLayoutWhitespace(node) && !isHiddenText(node);
+}
+
+// The caret lookup can also answer with text far from the finger: in the same
+// recording the quote picked up the end of the reply above the formula. A
+// point is only taken where it is drawn within about a line of the finger.
+const NEAR_LINE_PX = 24;
+
+function nearFinger(rect, y) {
+  if (!rect || (!rect.width && !rect.height)) return false;
+  const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+  return dy <= Math.max(NEAR_LINE_PX, rect.height || 0);
+}
+
+/** Where the character at a text boundary is drawn. */
+function caretCharRect(document, node, offset) {
+  const len = node.textContent?.length ?? 0;
+  if (!len || !document.createRange) return null;
+  const range = document.createRange();
+  const at = Math.max(0, Math.min(len - 1, offset < len ? offset : offset - 1));
+  range.setStart(node, at);
+  range.setEnd(node, at + 1);
+  return range.getBoundingClientRect?.() ?? null;
 }
 
 /** The drawn character boundary in `msgEl` nearest to (x, y), line first. */
@@ -201,7 +239,7 @@ function nearestTextPoint(document, msgEl, x, y) {
   let best = null;
   let node;
   while ((node = walker.nextNode())) {
-    if (isLayoutWhitespace(node)) continue;
+    if (!isDrawnText(node)) continue;
     range.selectNodeContents(node);
     for (const rect of range.getClientRects?.() ?? []) {
       if (!rect.width && !rect.height) continue;
@@ -248,20 +286,24 @@ export function findTextPoint(document, x, y, rootContainer) {
   const raw = probe.raw;
 
   // 1. Direct text node match (fast path, <0.01ms)
-  if (raw?.node?.nodeType === 3 && !isLayoutWhitespace(raw.node) && selectableBlock(raw.node)) {
+  if (raw?.node?.nodeType === 3 && isDrawnText(raw.node) && selectableBlock(raw.node)) {
     if (!rootContainer || rootContainer.contains(raw.node.parentNode)) {
       const len = raw.node.textContent?.length ?? 0;
-      return { node: raw.node, offset: Math.max(0, Math.min(len, raw.offset)) };
+      const offset = Math.max(0, Math.min(len, raw.offset));
+      if (nearFinger(caretCharRect(document, raw.node, offset), y)) return { node: raw.node, offset };
     }
   }
 
   // 2. Otherwise search the drawn text of the message under the point
   const elUnderPoint = probe.el;
   const rawEl = raw?.node?.nodeType === 3 ? raw.node.parentElement : raw?.node;
+  // The block the caret lookup named counts only where it is drawn by the finger.
+  const rawBlock = selectableBlock(rawEl);
+  const nearRawBlock = rawBlock && nearFinger(rawBlock.getBoundingClientRect?.(), y) ? rawBlock : null;
 
   // Over a collapsed card or a gap, the nearest message: dragging a handle
   // past tool cards stops at the edge of the text beside them.
-  const msgEl = selectableBlock(elUnderPoint) || selectableBlock(rawEl) || nearestBlock(rootContainer, x, y);
+  const msgEl = selectableBlock(elUnderPoint) || nearRawBlock || nearestBlock(rootContainer, x, y);
 
   if (!msgEl || (rootContainer && !rootContainer.contains(msgEl))) return null;
 

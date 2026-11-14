@@ -1564,8 +1564,11 @@ function isTableStart(lines, i) {
 /**
  * Block-level parse. Deliberately small: headings, rules, quotes, lists,
  * tables and paragraphs — the shapes agent output actually uses.
+ * `{ math: false }` leaves `$…$` as text: a tool call's shell command
+ * (`KEY=$(grep …); … --auth-key="$KEY"`) is not TeX, and KaTeX drew it as one
+ * italic formula with its spaces gone (iPhone, 2026-11-15).
  */
-export function renderRich(container, raw) {
+export function renderRich(container, raw, { math: withMath = true } = {}) {
   const code = [];
   const math = [];
   // Normalise line endings FIRST. `.` does not match `\r` in JavaScript (it is a
@@ -1574,7 +1577,8 @@ export function renderRich(container, raw) {
   // line, `i` never advances, and the tab freezes. agy's tool output is CRLF,
   // which is how this surfaced; every `$`-anchored rule here has the same flaw.
   const source = String(raw ?? '').replace(/\r\n?/g, '\n');
-  const text = extractMath(extractCode(source, code), math);
+  const withoutCode = extractCode(source, code);
+  const text = withMath ? extractMath(withoutCode, math) : withoutCode;
   renderBlocks(container, text, code, math);
 }
 
