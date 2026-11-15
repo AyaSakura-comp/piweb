@@ -122,6 +122,18 @@ needs its next approved safe restart to pick up a changed launch policy.
   the bottom of the screen, so a reply quoting it never triggers keys. Before
   this, the menu sat on the pane and every later message failed with "Claude
   Code did not become ready".
+- Claude Code 2.1.325 has a second form (Opus 5.5, `Details: [cyber]`,
+  2026-11-15): **Session paused**, "1. Switch to Opus 4.8" / "2. Edit prompt
+  and retry with Opus 5.5", no "Enter to select" footer, only the "✻ Waiting
+  for API response…" line under it. The bridge picks Edit-and-retry
+  (`retryOnPausedMenu`) for the same badge reason. Retry puts the flagged
+  prompt back in the input box, so the bridge then clears it with one Ctrl-C,
+  sent only when the box has text (`clearRestoredPrompt`); left there it would
+  be glued in front of the next message. In a turn it ends the turn with an
+  error saying so; a menu left on the pane is answered before the next message.
+  Before this, the turn waited the full hour ("no transcript or command-output
+  progress for 3600000 ms") and then every message failed "did not become
+  ready".
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.

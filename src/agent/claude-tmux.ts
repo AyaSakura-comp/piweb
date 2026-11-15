@@ -669,6 +669,25 @@ export async function invokeClaudeTmux(
                 '要繼續，可以在模型選單把這個對話換成 Opus 再送，或換個說法重送。',
             };
           }
+          const paused = retryOnPausedMenu(screen);
+          if (paused) {
+            await pressKeys(pane, paused.keys, deps).catch(() => undefined);
+            await clearRestoredPrompt(pane, deps);
+            logger.info(
+              { model: paused.model, details: paused.details, channelFolder },
+              'Claude Code paused the session (safeguards); picked edit-and-retry on the same model',
+            );
+            const model = paused.model || '這個模型';
+            const tag = paused.details ? `（${paused.details}，可能是誤判）` : '（可能是誤判）';
+            return {
+              ok: false,
+              text: '',
+              error:
+                `${model} 的安全機制把這個對話標記起來${tag}，Claude Code 暫停了這一輪，沒有回覆。` +
+                `piweb 選了「Edit prompt and retry with ${model}」，不會自動換成別的模型；對話已經可以再傳訊息。` +
+                '要繼續，換個說法重送，或在模型選單把這個對話換成別的 Claude 模型再送。',
+            };
+          }
           const computerUse = computerUseDialog(screen);
           if (computerUse) {
             // Piweb has no way to answer it, and left alone the turn waits
@@ -919,6 +938,74 @@ export function stayOnModelMenu(screen: string): { model: string; keys: string[]
   return { model, keys: [...Array(Math.abs(stay - cursor)).fill(step), 'Enter'] };
 }
 
+/**
+ * Claude Code's "Session paused" menu (2.1.325, 2026-11-15): a model's
+ * safeguards flagged the session ("Details: `[cyber]`") and it offers
+ * "1. Switch to Opus 4.8" or "2. Edit prompt and retry with Opus 5.5". It has
+ * no "Enter to select" footer, only a status line under it, and it blocked
+ * every later message ("did not become ready") after a one-hour turn timeout.
+ * Returns the model it retries on, the tag Claude gave, and the keys that pick
+ * "Edit prompt and retry" from where the cursor (❯) is; null when it is not
+ * the bottom of the screen.
+ *
+ * piweb picks retry for the same reason it stays in the model-switch menu:
+ * switching would run the session on a model its badge does not name. Retry
+ * puts the flagged prompt back in the input box; the caller clears it.
+ */
+export function retryOnPausedMenu(screen: string): { model: string; details: string; keys: string[] } | null {
+  const tail = screen.trimEnd().slice(-2500);
+  const flagged = tail.toLowerCase().lastIndexOf('safeguards flagged this session');
+  if (flagged < 0) return null;
+  const lines = tail.slice(flagged).split(/\r?\n/u);
+  let cursor = 0;
+  let retry = 0;
+  let model = '';
+  let lastOption = -1;
+  lines.forEach((line, index) => {
+    const option = /^[\s│]*(❯)?\s*(\d+)\.\s+(.+?)\s*$/u.exec(line);
+    if (!option) return;
+    lastOption = index;
+    const number = Number(option[2]);
+    if (option[1]) cursor = number;
+    const named = /^Edit prompt and retry(?: with (.+))?$/u.exec(option[3]);
+    if (named) {
+      retry = number;
+      model = named[1] ?? '';
+    }
+  });
+  if (lastOption < 0 || !cursor || !retry) return null;
+  // Open, the menu is the screen's bottom (a "✻ Waiting for API response…"
+  // line at most). A reply quoting it has the input box and its bar below.
+  const rest = lines.slice(lastOption + 1).filter((line) => line.trim());
+  if (rest.length > 2 || rest.some((line) => /bypass permissions|^\s*─{3,}\s*$/iu.test(line))) return null;
+  if (!model) {
+    const head = tail.slice(Math.max(0, flagged - 80), flagged);
+    model = /([^\n]+?)['’]s\s*$/u.exec(head)?.[1]?.trim() ?? '';
+  }
+  const details = /Details:\s*`?([^`\n]+)`?/u.exec(lines.join('\n'))?.[1]?.trim() ?? '';
+  const step = retry > cursor ? 'Down' : 'Up';
+  return { model, details, keys: [...Array(Math.abs(retry - cursor)).fill(step), 'Enter'] };
+}
+
+/**
+ * After "Edit prompt and retry" Claude Code puts the flagged prompt back in
+ * the input box; left there it would be glued in front of the next message.
+ * Ctrl-C clears a non-empty box. Sent once, and only when text is there: on
+ * an empty box it arms "press again to exit".
+ */
+async function clearRestoredPrompt(pane: string, deps: ClaudeTmuxDependencies): Promise<void> {
+  const until = Date.now() + Math.max(2000, deps.pollMs * 4);
+  for (;;) {
+    const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+    if (isReadyPaneScreen(screen)) {
+      if (currentPrompt(screen)) await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      return;
+    }
+    if (Date.now() >= until) return;
+    await deps.sleep(deps.pollMs);
+  }
+}
+
 /** One key at a time: Ink reads keys that arrive together as one unknown input. */
 async function pressKeys(pane: string, keys: string[], deps: ClaudeTmuxDependencies): Promise<void> {
   for (const key of keys) {
@@ -1025,6 +1112,7 @@ async function waitForReadyPane(
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     const flagged = stayOnModelMenu(lastScreen);
+    const paused = flagged ? null : retryOnPausedMenu(lastScreen);
     const trust = acceptedTrust ? undefined : trustDialogSelection(lastScreen);
     if (flagged) {
       // Left by an earlier message nobody was waiting on (an interrupted turn,
@@ -1032,6 +1120,11 @@ async function waitForReadyPane(
       // the new message is not blocked behind it.
       await pressKeys(pane, flagged.keys, deps);
       logger.info({ model: flagged.model }, 'Answered a model-switch menu left on the Claude Code pane');
+    } else if (paused) {
+      // Same for the "Session paused" menu; its retry refills the input box.
+      await pressKeys(pane, paused.keys, deps);
+      await clearRestoredPrompt(pane, deps);
+      logger.info({ model: paused.model }, 'Answered a session-paused menu left on the Claude Code pane');
     } else if (trust === 'yes') {
       acceptedTrust = true;
       await deps.tmux(['send-keys', '-t', pane, 'Enter']);

@@ -21,6 +21,7 @@ import {
   isCatastrophicPrompt,
   isClaudeTmuxModelRef,
   stayOnModelMenu,
+  retryOnPausedMenu,
   invokeClaudeTmux,
   listClaudeTmuxModels,
   tmuxSessionName,
@@ -292,6 +293,72 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(1);
   });
 
+  // 2026-11-15: Opus 5.5's safeguards paused the session ("Details: [cyber]").
+  // The turn waited the full hour, then every message failed "did not become ready".
+  it('retries on the same model when the session is paused by safeguards, and says so', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    let menuShown = true;
+    let down = false;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && fixture.submissionCount && menuShown) return SESSION_PAUSED_MENU;
+      if (args[0] === 'send-keys' && fixture.submissionCount) {
+        if (args.at(-1) === 'Down') down = true;
+        if (args.at(-1) === 'Enter' && down) menuShown = false;
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain('Opus 5.5 的安全機制');
+    expect(result.error).toContain('[cyber]');
+    expect(result.error).toContain('Edit prompt and retry with Opus 5.5');
+    expect(result.error).not.toContain('timed out');
+    expect(menuShown).toBe(false);
+    const after = fixture.sentKeys.slice(fixture.sentKeys.findIndex((keys) => keys.at(-1) === 'Down'));
+    expect(after.map((keys) => keys.at(-1)).slice(0, 2)).toEqual(['Down', 'Enter']);
+  });
+
+  it('answers a session-paused menu left on the pane and clears the prompt it puts back', async () => {
+    const fixture = createRuntimeFixture();
+    let stage: 'menu' | 'restored' | 'done' = 'menu';
+    let down = false;
+    const restored = [
+      '● Opus 5.5\'s safeguards stopped the response above · continuing once',
+      '  with that noted',
+      '─'.repeat(80),
+      '❯ Please carry out the following user request: the flagged message',
+      '─'.repeat(80),
+      '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
+    ].join('\n');
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      // Keys meant for the menu or the refilled box never reach the fixture.
+      if (stage !== 'done' && args[0] === 'send-keys' && (down || args.at(-1) === 'Down')) {
+        if (stage === 'menu' && args.at(-1) === 'Down') down = true;
+        if (stage === 'menu' && args.at(-1) === 'Enter' && down) stage = 'restored';
+        else if (stage === 'restored' && args.at(-1) === 'C-c') stage = 'done';
+        return '';
+      }
+      const screen = await tmux(args);
+      if (args[0] === 'capture-pane' && stage === 'menu' && /bypass permissions on/u.test(screen)) {
+        return SESSION_PAUSED_MENU;
+      }
+      if (args[0] === 'capture-pane' && stage === 'restored') return restored;
+      return screen;
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'next message', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(stage).toBe('done');
+    expect(fixture.loadedPrompts).toEqual(['next message']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
   // Captured on the Mac mini (2026-11-12): an Xcode grant sat for 20 minutes,
   // then blocked the next message until it timed out.
   const computerUseScreen = (cursorOnAllow: boolean) =>
@@ -534,6 +601,21 @@ describe('Claude tmux invocation', () => {
     const quoted = `${MODEL_SWITCH_MENU}\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
     expect(stayOnModelMenu(quoted)).toBeNull();
     expect(stayOnModelMenu('Do you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel')).toBeNull();
+  });
+
+  it('reads the session-paused menu: the keys to retry on the model, wherever the cursor is', () => {
+    expect(retryOnPausedMenu(SESSION_PAUSED_MENU)).toEqual({
+      model: 'Opus 5.5',
+      details: '[cyber]',
+      keys: ['Down', 'Enter'],
+    });
+    const onRetry = SESSION_PAUSED_MENU.replace('❯ 1. Switch', '  1. Switch').replace('  2. Edit', '❯ 2. Edit');
+    expect(retryOnPausedMenu(onRetry)?.keys).toEqual(['Enter']);
+    // A reply quoting the menu has the input box under it, not the menu.
+    const quoted = `${SESSION_PAUSED_MENU}\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
+    expect(retryOnPausedMenu(quoted)).toBeNull();
+    expect(retryOnPausedMenu(MODEL_SWITCH_MENU)).toBeNull();
+    expect(stayOnModelMenu(SESSION_PAUSED_MENU)).toBeNull();
   });
 
   it('detects catastrophic prompts accurately', () => {
@@ -1583,6 +1665,30 @@ const MODEL_SWITCH_MENU = [
   '  4. Chat about this',
   'Enter to select · ↑/↓ to navigate · Esc to cancel',
   '✻ Waiting for API response · will retry in 2m 40s · check your network',
+].join('\n');
+
+/** Claude Code 2.1.325's "Session paused" menu as the pane showed it on 2026-11-15. */
+const SESSION_PAUSED_MENU = [
+  '● Opus 5.5\'s safeguards stopped the response above · continuing once',
+  '  with that noted',
+  '',
+  '─'.repeat(80),
+  ' Session paused',
+  '',
+  "  Opus 5.5's safeguards flagged this session. You may be seeing this for the",
+  '  first time: Opus 5.5 is more capable and has stronger safeguards as a',
+  '  result, which can sometimes flag non-cybersecurity work. We\'re improving',
+  '  these safeguards to reduce the amount of incorrectly flagged messages. Edit',
+  '  and retry, or continue with Opus 4.8. Send feedback with /feedback or learn',
+  '  more',
+  '',
+  '  Details: `[cyber]`',
+  '',
+  '  ❯ 1. Switch to Opus 4.8',
+  '    2. Edit prompt and retry with Opus 5.5',
+  '',
+  '✻ Waiting for API response · will retry in 2m 40s · check your network',
+  '',
 ].join('\n');
 
 function createRuntimeFixture(
