@@ -595,6 +595,7 @@ OS; an explicit value in config.env or the environment always wins.
 | `CLAUDE_TMUX_TMUX_BIN`         | `tmux`                | `/opt/homebrew/bin/tmux` (or `/usr/local/bin`) if present |
 | `CLAUDE_TMUX_BIN`, `AGY_BIN`   | `~/.local/bin/<name>` if present, else the bare name (both) | same; agy also `/opt/homebrew/bin`, `/usr/local/bin` |
 | `AGY_CREDENTIAL_STORE`         | `file` (`~/.gemini/antigravity-cli/antigravity-oauth-token`) | `keychain` (login Keychain, service `gemini` / account `antigravity`, via `/usr/bin/security`); an explicit `AGY_TOKEN_PATH` means the file on both |
+| `MACMON_BIN`                   | empty (NPU from sysfs) | `/opt/homebrew/bin/macmon` (or `/usr/local/bin`) if present: Host metrics' ANE power |
 | `/agy-usage` client identity   | `os_type=linux; arch=amd64` | `os_type=darwin; arch=arm64` (`agyUserAgent()`, from `process.platform`/`process.arch`) |
 
 Host metrics also branch on the OS (`docs/system-metrics.md`, macOS section).

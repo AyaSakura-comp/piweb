@@ -277,3 +277,66 @@ it('omits macOS readings it cannot parse instead of guessing', async () => {
   });
   expect(await sample()).toEqual({});
 });
+
+it('adds the Neural Engine power on macOS when macmon reads it', async () => {
+  const { createSystemMetricsSampler, anePowerFromMacmonLine } = await import('../src/web/system-metrics.js');
+  expect(anePowerFromMacmonLine('{"ane_power":1.5,"cpu_power":9}')).toBe(1.5);
+  expect(anePowerFromMacmonLine('{"ane_power":0}')).toBe(0);
+  expect(anePowerFromMacmonLine('{"ane_power":-1}')).toBeUndefined();
+  expect(anePowerFromMacmonLine('{"cpu_power":9}')).toBeUndefined();
+  expect(anePowerFromMacmonLine('not json')).toBeUndefined();
+  expect(anePowerFromMacmonLine('null')).toBeUndefined();
+  const sample = createSystemMetricsSampler({
+    platform: 'darwin',
+    cpuTimes: () => [],
+    run: async () => '',
+    readAnePower: () => 2.25,
+  });
+  expect(await sample()).toEqual({ anePowerWatts: 2.25 });
+});
+
+it('streams macmon, keeps only a fresh reading, stops when nobody asks and backs off after a crash', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const { createMacmonAneReader } = await import('../src/web/system-metrics.js');
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  try {
+    let now = 0;
+    const children: any[] = [];
+    const start = () => {
+      const child: any = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.kill = vi.fn(() => child.emit('exit'));
+      children.push(child);
+      return child;
+    };
+    const reader = createMacmonAneReader('/opt/homebrew/bin/macmon', { now: () => now, start });
+    expect(reader.read()).toBeUndefined();
+    expect(children).toHaveLength(1);
+    // A line split across chunks still parses once it is whole.
+    children[0].stdout.write('{"ane_power":1.');
+    children[0].stdout.write('25}\n');
+    await new Promise((r) => setImmediate(r));
+    expect(reader.read()).toBe(1.25);
+    now = 6000; // no new line for over 5 s: stale
+    expect(reader.read()).toBeUndefined();
+    // Crash: no restart within 30 s of the last start, then one.
+    children[0].emit('exit');
+    now = 20_000;
+    reader.read();
+    expect(children).toHaveLength(1);
+    now = 31_000;
+    reader.read();
+    expect(children).toHaveLength(2);
+    // Nobody asks for a minute: macmon is stopped.
+    now = 95_000;
+    vi.advanceTimersByTime(15_000);
+    expect(children[1].kill).toHaveBeenCalled();
+    reader.stop();
+    // Linux, or macmon not installed: never started.
+    expect(createMacmonAneReader('', { start }).read()).toBeUndefined();
+    expect(children).toHaveLength(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});

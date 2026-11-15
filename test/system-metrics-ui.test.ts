@@ -170,12 +170,17 @@ it('the Dashboard header shows a leading run of readings that fits, never one af
   // The drawer's three summary readings lead, then the NPU (it was last, and the
   // iPad's header had no room for it).
   expect(STRIP_ORDER.slice(0, 4)).toEqual(['GPU', 'CPU', 'Power', 'NPU power']);
+  // The Mac's Neural Engine: power only, two decimals like the NPU.
+  expect(metricsRows({ anePowerWatts: 1.5 })).toEqual([
+    ['ANE', '1.50 W', 'Apple Neural Engine power (macOS reports no ANE utilization %)'],
+  ]);
+  expect(metricsRows({ anePowerWatts: -1 })).toEqual([]);
   // A total that is not whole (MemTotal, when the memory blocks are unreadable) keeps its decimal.
   expect(metricsRows({ memoryUsedBytes: 2 ** 30, memoryTotalBytes: 122.8 * 2 ** 30, memoryPercent: 1 }).at(0)?.[1]).toBe(
     '1.0 / 122.8 GiB',
   );
   const labels = metricsRows({
-    powerWatts: 1, npuPowerWatts: 1, cpuTemperatureC: 1, gpuTemperatureC: 1,
+    powerWatts: 1, npuPowerWatts: 1, anePowerWatts: 1, cpuTemperatureC: 1, gpuTemperatureC: 1,
     memoryUsedBytes: 1, memoryTotalBytes: 2, memoryPercent: 50, cpuPercent: 1, gpuPercent: 1, npuPercent: 1,
     diskUsedBytes: 1, diskTotalBytes: 2, diskFreeBytes: 1, diskPercent: 50,
   }).map(([label]) => label);

@@ -4,7 +4,7 @@ The Sessions drawer displays a compact live host-telemetry panel beneath its hea
 
 ## Data and fault handling
 
-Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No elevated permissions or user-supplied filesystem paths are used (the disk path is the server's own data directory). On Linux no subprocesses are run either; macOS has no `/proc` or `/sys`, so there it runs two fixed read-only binaries (see below).
+Authenticated `GET /api/system-metrics` returns a no-store JSON snapshot. Reads are best-effort and cached for 500 ms across concurrent clients. Unreadable, absent, empty, malformed or out-of-range metrics are omitted; a failed API request hides the panel until a later successful request. Zero utilization is a valid reading, not a missing value. No elevated permissions or user-supplied filesystem paths are used (the disk path is the server's own data directory). On Linux no subprocesses are run either; macOS has no `/proc` or `/sys`, so there it runs two fixed read-only binaries, plus macmon for the Neural Engine when installed (see below).
 
 - CPU utilization: deltas of the aggregate `/proc/stat` CPU counters (guest counters excluded). The first sample has no CPU percentage.
 - RAM: total is the installed memory as `lsmem` counts it — online blocks in
@@ -41,7 +41,8 @@ The sampler picks the platform from `process.platform` (`sampleSystemMetrics`); 
 - RAM: total is `os.totalmem()`; used is Activity Monitor's "Memory Used" from `/usr/bin/vm_stat`: app memory (anonymous − purgeable pages) + wired + pages occupied by the compressor, × the page size in vm_stat's header.
 - GPU utilization: `"Device Utilization %"` from the IOAccelerator's `PerformanceStatistics` (`/usr/sbin/ioreg -r -d 1 -w 0 -c IOAccelerator`), readable without root; the highest across GPUs.
 - Disk: the same `statfs` reading as Linux.
-- Not shown: CPU/GPU temperatures and power need root on macOS (`powermetrics`), and the NPU has no counters. Both commands run with `execFile` (no shell), a 2 s timeout and no client input; a failure or unparseable output omits that reading.
+- ANE (`anePowerWatts`, row `ANE`, in the drawer's summary): the Apple Neural Engine's power in watts, from `ane_power` in [macmon](https://github.com/vladkens/macmon)'s `pipe` JSON (IOReport, no root; `brew install macmon`, path `MACMON_BIN`, default `/opt/homebrew/bin/macmon` or `/usr/local/bin/macmon`). macOS has no ANE utilization %, so power is the reading. One long-running `macmon pipe -i 1000` (spawn, no shell, no client input) starts on the first sample, stops after a minute with no sample (Host metrics closed), restarts after a crash at most every 30 s; a reading older than 5 s is omitted. No macmon: no ANE row.
+- Not shown: CPU/GPU temperatures and package power need root on macOS (`powermetrics`; macmon has them too, not wired up). The two fixed commands run with `execFile` (no shell), a 2 s timeout and no client input; a failure or unparseable output omits that reading.
 
 The current Docker runtime exposes the host `/proc/stat`, `/proc/meminfo` and relevant `/sys/class` sensors. No additional mounts or privileged container mode are required on this host. Other platforms without these Linux files simply show no telemetry. For multiple CPU/GPU temperature sensors, the highest temperature is shown; telemetry is a host overview, not a per-device inventory.
 

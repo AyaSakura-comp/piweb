@@ -57,6 +57,8 @@ export interface PlatformDefaults {
   agyBin: string;
   /** Where agy keeps its Google sign-in: a token file (Linux) or the login Keychain (macOS). */
   agyCredentialStore: 'file' | 'keychain';
+  /** macmon (Apple Silicon, no root) for the Neural Engine's power; '' = not read. */
+  macmonBin: string;
 }
 
 /** First candidate that exists, else the bare name (resolved through PATH). */
@@ -93,6 +95,7 @@ export function platformDefaults(
       claudeBin,
       agyBin: macAgy ?? 'agy',
       agyCredentialStore: 'keychain',
+      macmonBin: firstExisting(['/opt/homebrew/bin/macmon', '/usr/local/bin/macmon'], '', exists),
     };
   }
   const agyBin = firstExisting([resolve(home, '.local/bin/agy')], 'agy', exists);
@@ -106,6 +109,7 @@ export function platformDefaults(
     claudeBin,
     agyBin,
     agyCredentialStore: 'file',
+    macmonBin: '',
   };
 }
 
@@ -258,6 +262,10 @@ export const config = {
   agyCredentialStore: (env('AGY_CREDENTIAL_STORE', PLATFORM.agyCredentialStore) === 'keychain'
     ? 'keychain'
     : 'file') as 'file' | 'keychain',
+
+  /** macmon, which reads the Apple Neural Engine's power for Host metrics
+   *  without root (`brew install macmon`); empty on Linux, which has sysfs. */
+  macmonBin: env('MACMON_BIN', PLATFORM.macmonBin),
 
   /** tmux for agy's own /btw, which only its TUI runs (src/agent/agy-btw.ts) */
   agyTmuxBin: env('AGY_TMUX_BIN', PLATFORM.tmuxBin),

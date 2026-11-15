@@ -21,6 +21,12 @@ export function metricsRows(data = {}) {
       `${data.npuPowerWatts.toFixed(2)} W`,
       'NPU power from AMD gpu_metrics',
     ]);
+  if (valid(data.anePowerWatts, 100))
+    rows.push([
+      'ANE',
+      `${data.anePowerWatts.toFixed(2)} W`,
+      'Apple Neural Engine power (macOS reports no ANE utilization %)',
+    ]);
   for (const [key, label] of [
     ['cpuTemperatureC', 'CPU temp'],
     ['gpuTemperatureC', 'GPU temp'],
@@ -72,12 +78,14 @@ export function metricsRows(data = {}) {
 /** The Dashboard header's order: the readings that go first when room runs out come last. */
 // The NPU comes right after the drawer's three summary readings: last, it was the
 // one the iPad's header had no room for (2026-11-01, 「神經網路加速器不見了」).
+// The Mac's Neural Engine (power only) sits with them (2026-11-15, 「加入ANE 的usage」).
 // Disk changes slowest, so it goes first when room runs out.
 export const STRIP_ORDER = [
   'GPU',
   'CPU',
   'Power',
   'NPU power',
+  'ANE',
   'NPU',
   'RAM',
   'GPU temp',
@@ -279,9 +287,9 @@ export function mountSystemMetrics({ panel, input, document, storage, fetch = gl
     }
     panel.hidden = false;
 
-    // By default, only show GPU, CPU, and watts (Power).
+    // By default, only show GPU, CPU, watts (Power) and the Mac's Neural Engine.
     // The others slide down when the user clicks the summary.
-    const PRIMARY_ORDER = ['GPU', 'CPU', 'Power'];
+    const PRIMARY_ORDER = ['GPU', 'CPU', 'Power', 'ANE'];
     const primaryRows = [];
     const secondaryRows = [];
 

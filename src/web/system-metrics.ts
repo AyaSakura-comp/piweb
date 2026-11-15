@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { readFile, readdir, statfs } from 'node:fs/promises';
 import { cpus, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,6 +10,8 @@ export interface SystemMetrics {
   gpuPercent?: number;
   npuPercent?: number;
   npuPowerWatts?: number;
+  /** Apple Neural Engine power (macOS reports no ANE utilization %). */
+  anePowerWatts?: number;
   memoryUsedBytes?: number;
   memoryTotalBytes?: number;
   memoryPercent?: number;
@@ -83,6 +85,88 @@ export function macGpuPercentFromIoreg(ioreg: string): number | undefined {
   return best;
 }
 
+/** `ane_power` (watts) from one line of `macmon pipe` JSON; undefined if absent or impossible. */
+export function anePowerFromMacmonLine(line: string): number | undefined {
+  let sample: unknown;
+  try {
+    sample = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const watts = (sample as { ane_power?: unknown } | null)?.ane_power;
+  return typeof watts === 'number' && Number.isFinite(watts) && watts >= 0 && watts <= 100
+    ? watts
+    : undefined;
+}
+
+/**
+ * The Apple Neural Engine's power from a long-running `macmon pipe` (IOReport,
+ * no root; powermetrics would need it). Started on the first read, stopped
+ * after a minute nobody asks (Host metrics closed), restarted after a crash
+ * no sooner than every 30 s. A reading older than 5 s counts as none.
+ */
+export function createMacmonAneReader(
+  bin: string,
+  {
+    now = () => performance.now(),
+    start = (file: string): ChildProcess =>
+      spawn(file, ['pipe', '-i', '1000'], { stdio: ['ignore', 'pipe', 'ignore'] }),
+  }: { now?: () => number; start?: (file: string) => ChildProcess } = {},
+): { read: () => number | undefined; stop: () => void } {
+  let child: ChildProcess | undefined;
+  let latest: { watts: number; at: number } | undefined;
+  let startedAt = -Infinity;
+  let askedAt = -Infinity;
+  let idleTimer: ReturnType<typeof setInterval> | undefined;
+  const stop = () => {
+    child?.kill();
+    child = undefined;
+    latest = undefined;
+    if (idleTimer) clearInterval(idleTimer);
+    idleTimer = undefined;
+  };
+  const launch = () => {
+    startedAt = now();
+    let proc: ChildProcess;
+    try {
+      proc = start(bin);
+    } catch {
+      return;
+    }
+    child = proc;
+    let buffered = '';
+    proc.stdout?.setEncoding('utf8');
+    proc.stdout?.on('data', (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split('\n');
+      buffered = lines.pop() ?? '';
+      if (buffered.length > 1 << 20) buffered = '';
+      for (const line of lines) {
+        const watts = anePowerFromMacmonLine(line);
+        if (watts !== undefined) latest = { watts, at: now() };
+      }
+    });
+    const gone = () => {
+      if (child === proc) child = undefined;
+    };
+    proc.on('error', gone);
+    proc.on('exit', gone);
+    idleTimer ??= setInterval(() => {
+      if (now() - askedAt > 60_000) stop();
+    }, 15_000);
+    idleTimer.unref?.();
+  };
+  return {
+    read() {
+      if (!bin) return undefined;
+      askedAt = now();
+      if (!child && askedAt - startedAt >= 30_000) launch();
+      return latest && askedAt - latest.at <= 5000 ? latest.watts : undefined;
+    },
+    stop,
+  };
+}
+
 /**
  * Read-only, best-effort host telemetry; never elevated access or client paths.
  * Linux reads /proc and /sys with no commands. macOS has neither, so it reads
@@ -100,6 +184,7 @@ export function createSystemMetricsSampler({
   run = runReadOnly,
   cpuTimes = () => cpus().map((cpu) => cpu.times),
   totalMemory = totalmem,
+  readAnePower = () => undefined,
 }: {
   root?: string;
   now?: () => number;
@@ -109,6 +194,7 @@ export function createSystemMetricsSampler({
   run?: (file: string, args: string[]) => Promise<string>;
   cpuTimes?: () => CpuTimes[];
   totalMemory?: () => number;
+  readAnePower?: () => number | undefined;
 } = {}) {
   let previousCpu: { total: number; idle: number } | undefined;
   let previousEnergy: { path: string; energy: number; time: number } | undefined;
@@ -198,6 +284,8 @@ export function createSystemMetricsSampler({
     applyDisk(result, disk);
     const gpu = macGpuPercentFromIoreg(ioreg);
     if (gpu !== undefined) result.gpuPercent = gpu;
+    const ane = readAnePower();
+    if (ane !== undefined) result.anePowerWatts = ane;
     cached = result;
     sampledAt = time;
     return result;
@@ -326,4 +414,6 @@ export function createSystemMetricsSampler({
 export const sampleSystemMetrics = createSystemMetricsSampler({
   diskPath: dirname(config.dbPath),
   platform: process.platform,
+  readAnePower:
+    process.platform === 'darwin' ? createMacmonAneReader(config.macmonBin).read : undefined,
 });
