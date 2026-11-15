@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AgyUsageError,
+  agyUsesKeychain,
+  decodeKeyringSecret,
+  encodeKeyringSecret,
   extractAgyOAuthClientCandidates,
   fetchAgyQuota,
   formatAgyUsage,
@@ -466,5 +469,23 @@ describe('fetchAgyQuota', () => {
 
     await expect(fetchAgyQuota(fake, 'test-token')).rejects.toThrow(/帳號方案.*HTTP 500/);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('agy credentials in the macOS Keychain', () => {
+  it('reads and writes go-keyring base64 the way agy stores it', () => {
+    const json = JSON.stringify({ token: { access_token: 'a', refresh_token: 'r' }, auth_method: 'consumer' });
+    const stored = encodeKeyringSecret(json);
+    expect(stored.startsWith('go-keyring-base64:')).toBe(true);
+    expect(stored).not.toMatch(/\s/);
+    expect(decodeKeyringSecret(`${stored}\n`)).toBe(json);
+    // A plain (unprefixed) secret is passed through.
+    expect(decodeKeyringSecret(json)).toBe(json);
+  });
+
+  it('is used only on macOS without an explicit token file', () => {
+    // The test setup sets AGY_TOKEN_PATH, so no test ever reaches the real Keychain.
+    expect(process.env.AGY_TOKEN_PATH).toBeTruthy();
+    expect(agyUsesKeychain()).toBe(false);
   });
 });

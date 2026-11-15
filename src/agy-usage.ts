@@ -21,8 +21,9 @@
  *
  * Do not "simplify" either one away.
  */
+import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { config } from './config.js';
@@ -48,6 +49,68 @@ export function agyTokenPath(): string {
     process.env.AGY_TOKEN_PATH ||
     join(homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token')
   );
+}
+
+/**
+ * On macOS agy keeps its sign-in in the login Keychain, not in the token file:
+ * go-keyring's generic password, service "gemini", account "antigravity",
+ * holding `go-keyring-base64:` + base64 of the same JSON the Linux file holds.
+ * The item was made by `/usr/bin/security` (go-keyring shells out to it), so
+ * the same tool reads and updates it without a Keychain prompt. An explicit
+ * AGY_TOKEN_PATH always means that file (tests set it, so they never touch the
+ * Keychain).
+ */
+const KEYCHAIN_SERVICE = 'gemini';
+const KEYCHAIN_ACCOUNT = 'antigravity';
+const KEYRING_PREFIX = 'go-keyring-base64:';
+const SECURITY_BIN = '/usr/bin/security';
+
+export function agyUsesKeychain(): boolean {
+  return process.platform === 'darwin' && !process.env.AGY_TOKEN_PATH;
+}
+
+export function decodeKeyringSecret(secret: string): string {
+  const value = secret.trim();
+  return value.startsWith(KEYRING_PREFIX)
+    ? Buffer.from(value.slice(KEYRING_PREFIX.length), 'base64').toString('utf8')
+    : value;
+}
+
+export function encodeKeyringSecret(json: string): string {
+  return KEYRING_PREFIX + Buffer.from(json, 'utf8').toString('base64');
+}
+
+/** Run `security`, the secret going in on stdin (never argv, so `ps` never shows it). */
+function runSecurity(args: string[], input?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(SECURITY_BIN, args, { timeout: 5000 }, (error, stdout) =>
+      error ? reject(error) : resolve(String(stdout)),
+    );
+    child.stdin?.end(input ?? '');
+  });
+}
+
+async function readKeychainAuth(): Promise<string> {
+  return decodeKeyringSecret(
+    await runSecurity(['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w']),
+  );
+}
+
+async function writeKeychainAuth(json: string): Promise<void> {
+  // `security -i` reads commands from stdin; base64 has no spaces or quotes.
+  await runSecurity(
+    ['-i'],
+    `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${KEYCHAIN_ACCOUNT} -w ${encodeKeyringSecret(json)}\n`,
+  );
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface AgyQuotaBucket {
@@ -93,6 +156,10 @@ interface AgyTokenDependencies {
 /** Replace agy's credential file in one step, so agy never reads half of it. */
 export async function writeAgyAuth(auth: AgyAuth): Promise<void> {
   const path = agyTokenPath();
+  if (agyUsesKeychain() && !(await fileExists(path))) {
+    await writeKeychainAuth(JSON.stringify(auth));
+    return;
+  }
   const temporary = `${path}.${process.pid}.tmp`;
   await mkdir(dirname(path), { recursive: true });
   await writeFile(temporary, `${JSON.stringify(auth, null, 2)}\n`, { mode: 0o600 });
@@ -104,6 +171,9 @@ export async function readAgyAuth(): Promise<AgyAuth> {
   try {
     raw = await readFile(agyTokenPath(), 'utf8');
   } catch {
+    raw = agyUsesKeychain() ? await readKeychainAuth().catch(() => '') : '';
+  }
+  if (!raw) {
     throw new AgyUsageError(
       '找不到 agy 的登入憑證，請到 Piweb Settings 連接 Antigravity（或在終端機跑一次 agy 登入）。',
     );
@@ -119,6 +189,20 @@ export async function readAgyAuth(): Promise<AgyAuth> {
     throw new AgyUsageError('agy 的憑證檔沒有 access token。');
   }
   return parsed as AgyAuth;
+}
+
+/** Sign agy out: its token file, and on macOS its Keychain item. */
+export async function removeAgyAuth(): Promise<void> {
+  await unlink(agyTokenPath()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  if (agyUsesKeychain()) {
+    await runSecurity(['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT]).catch(
+      (error: { code?: number }) => {
+        if (error.code !== 44) throw error; // 44 = no such item
+      },
+    );
+  }
 }
 
 /** Extract the public installed-app OAuth client metadata bundled in agy. */

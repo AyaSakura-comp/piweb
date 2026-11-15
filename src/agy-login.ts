@@ -6,20 +6,19 @@
  * https://antigravity.google/oauth-callback displays. This module runs that
  * same flow — agy's installed-app client, scopes and redirect — so the phone
  * gets the link and pastes the code back, and writes the result where agy
- * reads it (`~/.gemini/antigravity-cli/antigravity-oauth-token`, the same file
- * agy-usage.ts refreshes).
+ * reads it (`~/.gemini/antigravity-cli/antigravity-oauth-token` on Linux, the
+ * login Keychain on macOS; the same place agy-usage.ts refreshes).
  *
  * The client secret is not kept here; it is read out of the agy binary, the
  * same way the token refresh finds it.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { unlink } from 'node:fs/promises';
 import {
-  agyTokenPath,
   type AgyAuth,
   findAgyOAuthClientCandidates,
   type OAuthClient,
   readAgyAuth,
+  removeAgyAuth,
   writeAgyAuth,
 } from './agy-usage.js';
 import { logger } from './logger.js';
@@ -247,9 +246,7 @@ export function createAgySubscriptionRuntime(overrides: Partial<AgyLoginDependen
       });
     },
     async logout(): Promise<void> {
-      await unlink(agyTokenPath()).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-      });
+      await removeAgyAuth();
     },
     async checkAuth(): Promise<boolean> {
       try {

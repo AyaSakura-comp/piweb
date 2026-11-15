@@ -1277,9 +1277,11 @@ The bridge is inert without the `agy` binary; nothing else in piweb changes.
 # 1. Install the CLI (Google Antigravity). Verify it is on PATH:
 agy --version            # e.g. 1.1.15
 
-# 2. Log in once, interactively, in a real terminal. This writes
-#    ~/.gemini/antigravity-cli/antigravity-oauth-token and is the only
-#    credential the bridge uses.
+# 2. Log in once, interactively, in a real terminal. On Linux this writes
+#    ~/.gemini/antigravity-cli/antigravity-oauth-token; on macOS agy keeps it in
+#    the login Keychain (service "gemini", account "antigravity", go-keyring
+#    base64), which src/agy-usage.ts reads and refreshes through
+#    /usr/bin/security. It is the only credential the bridge uses.
 agy --print "hello"
 
 # 3. Confirm the model catalog answers — this is exactly what piweb calls:
