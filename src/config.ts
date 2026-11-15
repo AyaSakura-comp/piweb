@@ -55,6 +55,8 @@ export interface PlatformDefaults {
   tmuxBin: string;
   claudeBin: string;
   agyBin: string;
+  /** Where agy keeps its Google sign-in: a token file (Linux) or the login Keychain (macOS). */
+  agyCredentialStore: 'file' | 'keychain';
 }
 
 /** First candidate that exists, else the bare name (resolved through PATH). */
@@ -90,6 +92,7 @@ export function platformDefaults(
       tmuxBin: firstExisting(['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux'], 'tmux', exists),
       claudeBin,
       agyBin: macAgy ?? 'agy',
+      agyCredentialStore: 'keychain',
     };
   }
   const agyBin = firstExisting([resolve(home, '.local/bin/agy')], 'agy', exists);
@@ -102,6 +105,7 @@ export function platformDefaults(
     tmuxBin: 'tmux',
     claudeBin,
     agyBin,
+    agyCredentialStore: 'file',
   };
 }
 
@@ -248,6 +252,12 @@ export const config = {
 
   /** agy binary path */
   agyBin: env('AGY_BIN', PLATFORM.agyBin),
+  /** 'file' (~/.gemini/antigravity-cli/antigravity-oauth-token) or 'keychain'
+   *  (macOS login Keychain, service gemini / account antigravity). An explicit
+   *  AGY_TOKEN_PATH always means the file. */
+  agyCredentialStore: (env('AGY_CREDENTIAL_STORE', PLATFORM.agyCredentialStore) === 'keychain'
+    ? 'keychain'
+    : 'file') as 'file' | 'keychain',
 
   /** tmux for agy's own /btw, which only its TUI runs (src/agent/agy-btw.ts) */
   agyTmuxBin: env('AGY_TMUX_BIN', PLATFORM.tmuxBin),

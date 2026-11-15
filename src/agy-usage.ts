@@ -33,8 +33,20 @@ const LOAD_URL = `${CODE_ASSIST_URL}:loadCodeAssist`;
 const QUOTA_URL = `${CODE_ASSIST_URL}:retrieveUserQuotaSummary`;
 /** The body agy itself sends to loadCodeAssist. */
 const LOAD_BODY = { metadata: { ideType: 'ANTIGRAVITY' } };
-const USER_AGENT =
-  'antigravity/cli/1.3.6 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)';
+/**
+ * agy's own client identity, `antigravity/cli/<v> (aidev_client; os_type=<GOOS>;
+ * arch=<GOARCH>; auth_method=consumer)`, naming the OS it runs on: linux/amd64
+ * on the Linux host, darwin/arm64 on the Mac mini.
+ */
+export function agyUserAgent(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const osType = platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'windows' : 'linux';
+  const goArch = arch === 'x64' ? 'amd64' : arch === 'ia32' ? '386' : arch;
+  return `antigravity/cli/1.3.6 (aidev_client; os_type=${osType}; arch=${goArch}; auth_method=consumer)`;
+}
+const USER_AGENT = agyUserAgent();
 
 /**
  * The control loop drains commands strictly serially and does not schedule its
@@ -52,7 +64,9 @@ export function agyTokenPath(): string {
 }
 
 /**
- * On macOS agy keeps its sign-in in the login Keychain, not in the token file:
+ * Where agy's sign-in lives differs by OS (`agyCredentialStore`, per-platform
+ * default in config.ts): Linux has the token file above. On macOS agy keeps it
+ * in the login Keychain instead:
  * go-keyring's generic password, service "gemini", account "antigravity",
  * holding `go-keyring-base64:` + base64 of the same JSON the Linux file holds.
  * The item was made by `/usr/bin/security` (go-keyring shells out to it), so
@@ -66,7 +80,7 @@ const KEYRING_PREFIX = 'go-keyring-base64:';
 const SECURITY_BIN = '/usr/bin/security';
 
 export function agyUsesKeychain(): boolean {
-  return process.platform === 'darwin' && !process.env.AGY_TOKEN_PATH;
+  return config.agyCredentialStore === 'keychain' && !process.env.AGY_TOKEN_PATH;
 }
 
 export function decodeKeyringSecret(secret: string): string {

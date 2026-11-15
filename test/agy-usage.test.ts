@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AgyUsageError,
+  agyUserAgent,
   agyUsesKeychain,
   decodeKeyringSecret,
   encodeKeyringSecret,
@@ -487,5 +488,16 @@ describe('agy credentials in the macOS Keychain', () => {
     // The test setup sets AGY_TOKEN_PATH, so no test ever reaches the real Keychain.
     expect(process.env.AGY_TOKEN_PATH).toBeTruthy();
     expect(agyUsesKeychain()).toBe(false);
+  });
+});
+
+describe('agy client identity', () => {
+  it('names the OS it runs on, as agy itself does', () => {
+    expect(agyUserAgent('linux', 'x64')).toBe(
+      'antigravity/cli/1.3.6 (aidev_client; os_type=linux; arch=amd64; auth_method=consumer)',
+    );
+    expect(agyUserAgent('darwin', 'arm64')).toBe(
+      'antigravity/cli/1.3.6 (aidev_client; os_type=darwin; arch=arm64; auth_method=consumer)',
+    );
   });
 });

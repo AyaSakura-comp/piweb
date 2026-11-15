@@ -177,6 +177,7 @@ describe('config loading', () => {
       tmuxBin: 'tmux',
       claudeBin: 'claude',
       agyBin: 'agy',
+      agyCredentialStore: 'file',
     });
     const mac = platformDefaults('darwin', '/Users/u', none);
     expect(mac).toMatchObject({
@@ -186,6 +187,7 @@ describe('config loading', () => {
       agyEnabled: false,
       iconSet: 'piweb-mini',
       tmuxBin: 'tmux',
+      agyCredentialStore: 'keychain',
     });
     // launchd/systemd PATHs lack Homebrew and ~/.local/bin: found binaries are used directly.
     const installed = new Set(['/opt/homebrew/bin/tmux', '/Users/u/.local/bin/claude']);
