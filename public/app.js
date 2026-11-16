@@ -1421,14 +1421,17 @@ async function deleteSession(session) {
 //
 // Holding a drawer row opens Rename / Delete anchored to it. The row keeps a
 // highlight while open; the 5s session poll re-renders rows, so the open jid
-// (not the DOM node) is the state.
+// (not the DOM node) is the state. The menu is placed against the row on
+// screen now, found by jid: a poll or busy change that re-renders the list
+// during the hold leaves the held node detached, and its all-zero box put the
+// menu in the top-left corner under the status bar (iPad, 2026-11-17).
 let rowMenuJid = null;
 
 function isRowMenuOpen() {
   return rowMenuJid !== null;
 }
 
-function openSessionRowMenu(jid, anchor) {
+function openSessionRowMenu(jid) {
   const session = state.sessions.find((s) => s.jid === jid);
   if (!session || state.renamingJid) return;
   rowMenuJid = jid;
@@ -1442,12 +1445,26 @@ function openSessionRowMenu(jid, anchor) {
   for (const row of $('session-list').querySelectorAll('.session-item')) {
     row.classList.toggle('menu-open', row.dataset.jid === jid);
   }
-  // Under the row when it fits, otherwise above it; never off-screen.
-  const rect = anchor.getBoundingClientRect();
+  placeSessionRowMenu();
+}
+
+/** Under the open row when it fits, otherwise above it; never off-screen or over the list's header. */
+function placeSessionRowMenu() {
+  if (!isRowMenuOpen()) return;
+  const list = $('session-list');
+  const row = list.querySelector(`.session-item[data-jid="${CSS.escape(rowMenuJid)}"]`);
+  const rect = row?.getBoundingClientRect();
+  if (!rect || (!rect.width && !rect.height)) {
+    // The row is gone (deleted, filtered) or not laid out: nothing to anchor to.
+    closeSessionRowMenu();
+    return;
+  }
+  const menu = $('session-row-menu');
   const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const floor = Math.max(8, list.getBoundingClientRect().top);
   const height = menu.offsetHeight;
   const below = rect.bottom + 4;
-  const top = below + height <= viewportHeight - 8 ? below : Math.max(8, rect.top - height - 4);
+  const top = below + height <= viewportHeight - 8 ? below : Math.max(floor, rect.top - height - 4);
   menu.style.top = `${top}px`;
   menu.style.left = `${Math.max(8, rect.left + 8)}px`;
   menu.style.right = 'auto';
@@ -1610,7 +1627,7 @@ function renderSessions(force = false) {
         () => {
           // A row being dragged into the dashboard is not asking for the menu.
           if (document.body.classList.contains('dashboard-pointer-dragging')) return;
-          openSessionRowMenu(session.jid, item);
+          openSessionRowMenu(session.jid);
         },
         {
           // Mouse users get the same menu from right-click; a held mouse
@@ -1621,7 +1638,7 @@ function renderSessions(force = false) {
       item.addEventListener('contextmenu', (e) => {
         if (e.target.closest('input')) return;
         e.preventDefault();
-        openSessionRowMenu(session.jid, item);
+        openSessionRowMenu(session.jid);
       });
     }
     item.append(body);
@@ -1657,6 +1674,8 @@ function renderSessions(force = false) {
     });
     list.append(item);
   }
+  // Rows can move under an open menu (a session with new activity sorts up).
+  placeSessionRowMenu();
   if (typeof sessionDashboard !== 'undefined') sessionDashboard.syncSessions();
 }
 

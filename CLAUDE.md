@@ -914,7 +914,12 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   Delete) are also behind a touch hold or right-click (`#session-row-menu`,
   `openSessionRowMenu()`). Mouse holds do not open it
   (`bindLongPress` `shouldStart`): a held mouse button there starts the HTML5
-  drag into the dashboard. `test/e2e/session-list-layout.spec.ts`.
+  drag into the dashboard. `test/e2e/session-list-layout.spec.ts`. The menu
+  is placed against the row found by jid (`placeSessionRowMenu()`, also after
+  each list render while open), never the node the hold began on: a render
+  during the hold detaches that node, and its all-zero box once put the menu in
+  the top-left corner under the status bar (iPad, 2026-11-17). A row that is
+  gone closes the menu. `test/e2e/session-row-menu-anchor.spec.ts`.
 - **Topbar = frequent actions; ⋯ menu = the rest.** In standard mode the topbar
   holds `/pi status`, `/gpt-usage`, the model picker, and thinking level; search,
   `/pi new` and soft **Delete session** live in the ⋯ menu. At ≤420px a standard
