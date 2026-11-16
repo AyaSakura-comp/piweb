@@ -991,15 +991,22 @@ export function retryOnPausedMenu(screen: string): { model: string; details: str
  * After "Edit prompt and retry" Claude Code puts the flagged prompt back in
  * the input box; left there it would be glued in front of the next message.
  * Ctrl-C clears a non-empty box. Sent once, and only when text is there: on
- * an empty box it arms "press again to exit".
+ * an empty box it arms "press again to exit". The box can be drawn empty a
+ * frame before the refill lands (the menu closes, then the aborted turn puts
+ * the prompt back), so an empty box is looked at a few times before trusting it.
  */
+const EMPTY_BOX_LOOKS = 3;
 async function clearRestoredPrompt(pane: string, deps: ClaudeTmuxDependencies): Promise<void> {
   const until = Date.now() + Math.max(2000, deps.pollMs * 4);
+  let emptyLooks = 0;
   for (;;) {
     const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
     if (isReadyPaneScreen(screen)) {
-      if (currentPrompt(screen)) await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
-      return;
+      if (currentPrompt(screen)) {
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+        return;
+      }
+      if (++emptyLooks >= EMPTY_BOX_LOOKS) return;
     }
     if (Date.now() >= until) return;
     await deps.sleep(deps.pollMs);

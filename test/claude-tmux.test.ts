@@ -359,6 +359,43 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(1);
   });
 
+  // The menu closes, the box is drawn empty, then the aborted turn refills it.
+  it('clears the prompt the paused menu puts back even when it lands a frame late', async () => {
+    const fixture = createRuntimeFixture();
+    let stage: 'menu' | 'blank' | 'restored' | 'done' = 'menu';
+    let down = false;
+    const box = (text: string) =>
+      ['─'.repeat(80), `❯ ${text}`, '─'.repeat(80), '  ⏵⏵ bypass permissions on (shift+tab to cycle)'].join('\n');
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (stage !== 'done' && args[0] === 'send-keys' && (down || args.at(-1) === 'Down')) {
+        if (stage === 'menu' && args.at(-1) === 'Down') down = true;
+        if (stage === 'menu' && args.at(-1) === 'Enter' && down) stage = 'blank';
+        else if (stage === 'restored' && args.at(-1) === 'C-c') stage = 'done';
+        return '';
+      }
+      const screen = await tmux(args);
+      if (args[0] === 'capture-pane' && stage === 'menu' && /bypass permissions on/u.test(screen)) {
+        return SESSION_PAUSED_MENU;
+      }
+      if (args[0] === 'capture-pane' && stage === 'blank') {
+        stage = 'restored';
+        return box('');
+      }
+      if (args[0] === 'capture-pane' && stage === 'restored') {
+        return box('Please carry out the following user request: the flagged message');
+      }
+      return screen;
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'next message', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(stage).toBe('done');
+    expect(fixture.loadedPrompts).toEqual(['next message']);
+  });
+
   // Captured on the Mac mini (2026-11-12): an Xcode grant sat for 20 minutes,
   // then blocked the next message until it timed out.
   const computerUseScreen = (cursorOnAllow: boolean) =>

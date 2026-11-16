@@ -129,7 +129,9 @@ needs its next approved safe restart to pick up a changed launch policy.
   (`retryOnPausedMenu`) for the same badge reason. Retry puts the flagged
   prompt back in the input box, so the bridge then clears it with one Ctrl-C,
   sent only when the box has text (`clearRestoredPrompt`); left there it would
-  be glued in front of the next message. In a turn it ends the turn with an
+  be glued in front of the next message. The box can be drawn empty a frame
+  before the refill lands, so an empty box is looked at three times before
+  it is trusted. In a turn it ends the turn with an
   error saying so; a menu left on the pane is answered before the next message.
   Before this, the turn waited the full hour ("no transcript or command-output
   progress for 3600000 ms") and then every message failed "did not become
