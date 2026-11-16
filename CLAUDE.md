@@ -1437,6 +1437,14 @@ quoting another session's launch line once held a turn on that session's task.
 Each Claude pane's tmux scope gets `OOMPolicy=continue` (`src/agent/tmux-oom.ts`):
 under systemd's default `stop`, an OOM-killed command (a llama-server Claude
 started) took Claude Code and its pane with it — "can't find pane: %8".
+A Claude Code menu the bridge has no rule for ("Resume this conversation?",
+any new one) is put to the user as a normal reply (`readClaudeMenu`), never
+answered with Escape/Ctrl-C and never left to "did not become ready"; the
+message is held in `pendingMenu` and the user's next message ("2" or a label)
+picks the option, then the held message is sent. "Start a new conversation" is
+done by the bridge (fresh `--session-id`), since Claude Code's own new id is
+never learned. Menus with a rule (trust, permission, computer use, model
+switch, Session paused) keep it.
 
 ## 8. Session lifecycle (what `/pi new` and delete actually do)
 

@@ -136,6 +136,32 @@ needs its next approved safe restart to pick up a changed launch policy.
   Before this, the turn waited the full hour ("no transcript or command-output
   progress for 3600000 ms") and then every message failed "did not become
   ready".
+- **Any other menu is put to the user** (`readClaudeMenu`, 2026-11-17). Claude
+  Code keeps adding menus (on 2026-11-17 `/pi thinking` relaunched the TUI on
+  an 884.7k-token conversation and it asked "Resume this conversation? …
+  Resuming it will use about 12% of your 5-hour usage limit · 1. Resume /
+  2. Start a new conversation"; three messages failed "did not become ready"
+  and the user's reply "2" never reached it). A menu is a question, two or more
+  options with the cursor (❯) on one, numbered or not, and an "Enter to
+  confirm/select" footer as the screen's bottom; seen on two looks in a row
+  (while waiting for the pane, for the paste, or mid-turn, after the rules
+  above), the bridge sends no keys and ends the turn with a normal reply: the
+  dialog's words, its options, "reply with a number", and that the message is
+  held. The state file keeps `pendingMenu` (the menu's title and labels, the
+  held message and its attachments, and whether Enter had already handed it
+  over). The next message, if the same menu is still up and the message is an
+  option's number ("2", "２", "選2") or label, picks it: arrow keys one at a
+  time, always at least one (the resume menu ignores Enter until a row is
+  picked when the box held text), then Enter, again if the menu stays up. The
+  box is emptied if the menu left the unsent message in it, and the held
+  message is sent (or, if it had been handed over, the turn is tailed as after
+  a restart). Any other message asks again and is held instead; a menu that is
+  gone (TUI restarted) just lets the message through. "Start a new
+  conversation" is done by the bridge itself: Claude Code would start it under
+  an id piweb never learns, leaving the bridge watching the old transcript, so
+  the bridge kills the TUI, starts a fresh `--session-id`, and adds a line to
+  the held message pointing at the old transcript. A trust dialog still
+  closing after its Enter is never put to the user.
 - `/pi new` closes the matching Claude session **after** ownership/idle checks,
   before rotating the pointer directory. Next use gets a new Claude UUID.
   Archived Claude transcripts are not deleted by resetting Piweb.

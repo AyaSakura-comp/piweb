@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A Claude Code menu piweb has no rule for ("Resume this conversation?" when a long idle conversation is reopened, and any new one) no longer fails every message with "did not become ready": piweb shows the question and its options in the chat, holds the message, and the reply "1"/"2" picks the option and sends the held message; "Start a new conversation" starts one piweb can follow, pointing Claude at the old transcript
 - A Claude Code session that a model's safeguards pause ("Session paused": Switch to Opus 4.8 / Edit prompt and retry with Opus 5.5) no longer shows "pi is working…" for an hour and then fails every later message: piweb picks retry on the same model, clears the prompt Claude Code puts back, and ends the turn with a message that says what happened
 - Dragging a selection handle down through a formula no longer grows the selection up the screen: KaTeX's hidden MathML copy of the formula (which WebKit's caret lookup lands in) is never a selection point or quoted text, and a caret answer drawn more than a line from the finger is ignored; a quote across a formula holds it once
 - A tool call's command (`KEY=$(…); … --auth-key="$KEY"`) is shown as written instead of being drawn as one TeX formula with its spaces gone

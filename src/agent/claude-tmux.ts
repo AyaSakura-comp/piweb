@@ -261,6 +261,19 @@ interface ClaudeTmuxState {
   modelRef: string;
   thinking: ThinkingLevel | '';
   activeTurn?: ClaudeTmuxActiveTurn;
+  /** A Claude Code menu put to the user; their next message may answer it. */
+  pendingMenu?: PendingClaudeMenu;
+}
+
+interface PendingClaudeMenu {
+  /** menuKey of the menu, to know it is still the one on the pane. */
+  key: string;
+  /** The message the menu held up, sent once it is answered. */
+  held: { text: string; attachments: string | null };
+  /** Enter had already handed `held` to Claude when the menu came up. */
+  submitted: boolean;
+  transcriptPath?: string;
+  transcriptOffset?: number;
 }
 
 export interface ClaudeTmuxDependencies {
@@ -380,6 +393,10 @@ export async function invokeClaudeTmux(
     if (aborted || signal?.aborted) throw new ClaudeTmuxAbortError();
   };
 
+  // What this turn sends: the message, or one a menu held up (see pendingMenu).
+  let sendText = userText;
+  let sendAttachments = opts?.attachments ?? null;
+
   try {
     ensureNotAborted();
     mkdirSync(sessionDir, { recursive: true });
@@ -411,7 +428,63 @@ export async function invokeClaudeTmux(
       live = false;
     }
 
-    const recoveringTurn = state.activeTurn?.turnId === turnId;
+    // A menu put to the user last turn: this message may be its answer.
+    let answeredInTurn: PendingClaudeMenu | undefined;
+    let menuAnswered = false;
+    let earlierTranscript: string | undefined;
+    if (state.pendingMenu) {
+      const pending = state.pendingMenu;
+      delete state.pendingMenu;
+      const menuPane = live ? await getClaudePane(name, deps) : undefined;
+      const menu = menuPane
+        ? readClaudeMenu(await deps.tmux(['capture-pane', '-p', '-t', menuPane]))
+        : null;
+      ensureNotAborted();
+      // Gone (the TUI restarted, or it was answered at the terminal): this
+      // message is just the next message.
+      if (menuPane && menu && menuKey(menu) === pending.key) {
+        const choice = chooseMenuOption(messageText(userText), menu.options);
+        if (choice < 0) {
+          // Not an answer: ask again, holding this newer message instead.
+          state.pendingMenu = { ...pending, held: { text: userText, attachments: sendAttachments } };
+          writeState(stateFile, state);
+          return { ok: true, text: describeClaudeMenu(menu, userText, true) };
+        }
+        const option = menu.options[choice];
+        sendText = pending.held.text;
+        sendAttachments = pending.held.attachments;
+        if (startsNewConversation(option)) {
+          // Claude Code would start it under an id piweb never learns, and the
+          // bridge would watch the old transcript for a reply that never comes.
+          // Start it here instead, and point Claude at the old one as it would.
+          earlierTranscript = state.transcriptPath || deps.findTranscript(state.sessionId);
+          await deps.tmux(['kill-session', '-t', name]).catch(() => undefined);
+          ensureNotAborted();
+          state = { sessionId: deps.randomUUID(), cwd, modelRef, thinking };
+          live = false;
+          logger.info({ channelFolder }, 'Claude Code menu answered: started a new conversation');
+        } else {
+          await pressKeys(menuPane, menuKeys(menu.cursor, choice, menu.options.length), deps);
+          ensureNotAborted();
+          if (!(await settleAfterMenu(menuPane, menu, deps))) {
+            state.pendingMenu = pending;
+            writeState(stateFile, state);
+            return {
+              ok: false,
+              text: '',
+              error: `Claude Code 的選單選了「${option.label}」卻沒有關掉，請再回覆一次。`,
+            };
+          }
+          ensureNotAborted();
+          logger.info({ channelFolder, option: option.label }, 'Claude Code menu answered');
+          menuAnswered = true;
+          if (pending.submitted) answeredInTurn = pending;
+        }
+      }
+      writeState(stateFile, state);
+    }
+
+    const recoveringTurn = state.activeTurn?.turnId === turnId || Boolean(answeredInTurn);
     if (!live) {
       const transcriptPath = state.transcriptPath || deps.findTranscript(state.sessionId);
       const resume = Boolean(transcriptPath && existsSync(transcriptPath));
@@ -449,7 +522,21 @@ export async function invokeClaudeTmux(
     // runs beside the turn and never fails it.
     void deps.protectPane?.(pane).catch(() => undefined);
 
-    const activeTurn = recoveringTurn ? state.activeTurn : undefined;
+    // A menu answered mid-turn: Claude may carry on with the held message, so
+    // tail from where that turn began, as after a worker restart.
+    const activeTurn = answeredInTurn
+      ? {
+          turnId,
+          ...(answeredInTurn.transcriptPath ? { transcriptPath: answeredInTurn.transcriptPath } : {}),
+          transcriptOffset: answeredInTurn.transcriptOffset ?? 0,
+        }
+      : recoveringTurn
+        ? state.activeTurn
+        : undefined;
+    if (answeredInTurn && activeTurn) {
+      state.activeTurn = activeTurn;
+      writeState(stateFile, state);
+    }
     let transcriptPath =
       activeTurn?.transcriptPath || state.transcriptPath || deps.findTranscript(state.sessionId);
     let offset = activeTurn?.transcriptOffset ?? fileSize(transcriptPath);
@@ -464,6 +551,7 @@ export async function invokeClaudeTmux(
     let lastApprovedPrompt = '';
     let approvalCountForPrompt = 0;
     let computerUseSteps = 0;
+    const watchMenu = menuWatch();
     const commandProgress = new Map<string, Pick<ClaudeCommand, 'state' | 'output' | 'exitCode'>>();
     const commandsMadeProgress = (commands: ClaudeCommand[]) => {
       let changed = false;
@@ -513,18 +601,27 @@ export async function invokeClaudeTmux(
     }
 
     if (shouldSubmit) {
-      if (!recoveringTurn) pane = await waitForReadyPane(name, deps, signal);
+      // An answer can start real work first ("Resume from summary" compacts
+      // the conversation), so it gets the turn's patience, not startup's.
+      if (!recoveringTurn) {
+        pane = await waitForReadyPane(name, deps, signal, menuAnswered ? deps.turnTimeoutMs : undefined);
+      }
       ensureNotAborted();
 
-      let promptText = userText;
-      if (opts?.attachments) {
+      let promptText = sendText;
+      if (sendAttachments) {
         const files = await (deps.prepareAttachments ?? prepareClaudeAttachments)(
-          opts.attachments,
+          sendAttachments,
           channelFolder,
           signal,
         );
         ensureNotAborted();
         for (const file of files) promptText += `\n[Uploaded file: ${file}]`;
+      }
+      if (earlierTranscript) {
+        promptText +=
+          `\n[This session's earlier Claude Code conversation, not in your context; ` +
+          `read it only if the user refers to it: ${earlierTranscript}]`;
       }
 
       if (!transcriptPath) transcriptPath = deps.findTranscript(state.sessionId);
@@ -751,6 +848,22 @@ export async function invokeClaudeTmux(
             }
             logger.info({ promptDetail, channelFolder }, 'Auto-approved non-catastrophic Claude Code confirmation prompt');
             await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
+          } else {
+            // Any other menu waits on the user (left alone: the hour-long
+            // timeout). Put it to them; their next message answers it.
+            const menu = watchMenu(screen);
+            if (menu) {
+              state.pendingMenu = {
+                key: menuKey(menu),
+                held: { text: sendText, attachments: sendAttachments },
+                submitted: true,
+                ...(transcriptPath ? { transcriptPath } : {}),
+                transcriptOffset: state.activeTurn?.transcriptOffset ?? offset,
+              };
+              writeState(stateFile, state);
+              logger.info({ channelFolder, question: menu.question.split('\n')[0] }, 'Claude Code menu put to the user');
+              return { ok: true, text: describeClaudeMenu(menu, sendText) };
+            }
           }
           nextPromptCheckAt = Date.now() + 1000;
         }
@@ -809,6 +922,24 @@ export async function invokeClaudeTmux(
         await deps.tmux(['send-keys', '-t', pane, 'C-u']).catch(() => undefined);
       }
       return { ok: false, text: '', aborted: true };
+    }
+    if (err instanceof ClaudeMenuQuestion) {
+      // The message was not handed to Claude: hold it until the menu is
+      // answered. No keys now: Ctrl-C or Escape would answer the menu.
+      const state = readState(stateFile);
+      if (state) {
+        state.pendingMenu = {
+          key: menuKey(err.menu),
+          held: { text: sendText, attachments: sendAttachments },
+          submitted: false,
+        };
+        writeState(stateFile, state);
+      }
+      logger.info(
+        { channelFolder, question: err.menu.question.split('\n')[0] },
+        'Claude Code menu put to the user',
+      );
+      return { ok: true, text: describeClaudeMenu(err.menu, sendText) };
     }
     if (pasted && !submitted && pane) {
       // An unacknowledged paste may still have landed; left in the box it
@@ -1013,6 +1144,230 @@ async function clearRestoredPrompt(pane: string, deps: ClaudeTmuxDependencies): 
   }
 }
 
+export interface ClaudeMenuOption {
+  label: string;
+  description: string;
+}
+
+/** A choice Claude Code is waiting on, read off the pane. */
+export interface ClaudeMenu {
+  /** The dialog's own words above its options (title first). */
+  question: string;
+  options: ClaudeMenuOption[];
+  /** Index of the option the cursor (❯) is on. */
+  cursor: number;
+}
+
+/**
+ * Any Claude Code menu the bridge has no rule for: a question, two or more
+ * options with the cursor (❯) on one, and an "Enter to confirm/select" footer
+ * as the screen's bottom (a status line at most under it). Claude Code keeps
+ * adding these ("Resume this conversation?" on resuming a long idle
+ * conversation, 2026-11-17; newer-model offers; resume-from-summary), and each
+ * one used to block the pane until "did not become ready". Options may be
+ * numbered ("❯ 1. Resume") or not ("❯ Resume"); a description sits two spaces
+ * after its label or wraps onto deeper-indented rows. A reply that quotes a
+ * menu has the input box and its "bypass permissions" bar below it, so it is
+ * never read as one. Null when no menu is open.
+ */
+export function readClaudeMenu(screen: string): ClaudeMenu | null {
+  const lines = screen.replace(/\s+$/u, '').split(/\r?\n/u);
+  let footer = -1;
+  for (let i = lines.length - 1, seen = 0; i >= 0 && seen < 3; i -= 1) {
+    if (!lines[i].trim()) continue;
+    seen += 1;
+    if (/Enter to (?:confirm|select)\b/u.test(lines[i])) {
+      footer = i;
+      break;
+    }
+  }
+  if (footer < 0) return null;
+  if (lines.slice(footer + 1).some((line) => /bypass permissions|^\s*❯/iu.test(line))) return null;
+
+  const isRule = (line: string) => /^[\s│╭╰┌└]*[─━]{3,}/u.test(line);
+  let cursorRow = -1;
+  for (let i = footer - 1; i >= 0; i -= 1) {
+    if (/^[\s│]*❯\s*\S/u.test(lines[i])) {
+      cursorRow = i;
+      break;
+    }
+    if (isRule(lines[i])) break;
+  }
+  if (cursorRow < 0) return null;
+  const cursorLine = lines[cursorRow];
+  const glyph = cursorLine.indexOf('❯');
+  const labelCol = glyph + 1 + (/^\s*/u.exec(cursorLine.slice(glyph + 1))?.[0].length ?? 0);
+  const isRow = (line: string) =>
+    /^[\s│]*(?:❯\s*)?$/u.test(line.slice(0, labelCol)) && /\S/u.test(line.charAt(labelCol));
+  const isMore = (line: string) => line.trim() !== '' && !/\S/u.test(line.slice(0, labelCol + 1));
+
+  // Rows above the cursor are contiguous; below it, blank rows may part them.
+  let first = cursorRow;
+  while (first > 0 && (isRow(lines[first - 1]) || isMore(lines[first - 1]))) first -= 1;
+  while (first < cursorRow && !isRow(lines[first])) first += 1;
+  let last = cursorRow;
+  for (let i = cursorRow + 1; i < footer; i += 1) {
+    if (!lines[i].trim()) continue;
+    if (!isRow(lines[i]) && !isMore(lines[i])) break;
+    last = i;
+  }
+
+  const options: ClaudeMenuOption[] = [];
+  let cursor = -1;
+  for (let i = first; i <= last; i += 1) {
+    const line = lines[i];
+    if (isRow(line)) {
+      const text = line.slice(labelCol).trim().replace(/^\d+\.\s+/u, '');
+      const [label, ...rest] = text.split(/\s{2,}/u);
+      if (i === cursorRow) cursor = options.length;
+      options.push({ label: label.trim(), description: rest.join(' ').trim() });
+    } else if (isMore(line) && options.length) {
+      const option = options[options.length - 1];
+      option.description = `${option.description} ${line.trim()}`.trim();
+    }
+  }
+  if (options.length < 2 || cursor < 0) return null;
+
+  const question: string[] = [];
+  for (let i = first - 1; i >= 0 && question.length < 12; i -= 1) {
+    if (isRule(lines[i])) break;
+    const text = lines[i].replace(/^[\s│]+|[\s│]+$/gu, '');
+    if (text || question.length) question.unshift(text);
+  }
+  while (question.length && !question[0]) question.shift();
+  while (question.length && !question[question.length - 1]) question.pop();
+  return { question: question.join('\n'), options, cursor };
+}
+
+/** What identifies a menu across looks: its title and option labels, not live text ("inactive for 6m"). */
+function menuKey(menu: { question: string; options: { label: string }[] | string[] }): string {
+  const labels = menu.options.map((option) => (typeof option === 'string' ? option : option.label));
+  return `${menu.question.split('\n')[0]}\n${labels.join('\n')}`;
+}
+
+/** Claude Code's "Start a new conversation": piweb starts it itself (see invokeClaudeTmux). */
+function startsNewConversation(option: ClaudeMenuOption): boolean {
+  return /^Start a new conversation\b/iu.test(option.label);
+}
+
+/** The user's own words in a queued prompt (after the "[Web user: …]" or "[Discord user: …]" line). */
+function messageText(prompt: string): string {
+  const tag = /\[(?:Web|Discord) user: [^\]\n]*\]\n/gu;
+  let start = 0;
+  for (let match = tag.exec(prompt); match; match = tag.exec(prompt)) start = match.index + match[0].length;
+  return prompt.slice(start).trim();
+}
+
+/** The option a reply picks: its number ("2", "２", "2.") or its label; -1 when it is not an answer. */
+export function chooseMenuOption(reply: string, options: ClaudeMenuOption[]): number {
+  const text = reply
+    .trim()
+    .replace(/[０-９]/gu, (digit) => String(digit.charCodeAt(0) - 0xff10))
+    .replace(/[.。)）]$/u, '')
+    .trim();
+  const number = /^(?:選|option\s*)?(\d{1,2})$/iu.exec(text);
+  if (number) {
+    const index = Number(number[1]) - 1;
+    return index >= 0 && index < options.length ? index : -1;
+  }
+  const label = text.toLowerCase();
+  return options.findIndex((option) => option.label.toLowerCase() === label);
+}
+
+/**
+ * Keys that put the cursor on `target` and confirm. At least one arrow always
+ * goes first (there and back when the cursor is already on it): Claude Code's
+ * resume-cost menu ignores Enter until a row is picked with an arrow when the
+ * prompt box held text as it opened.
+ */
+function menuKeys(cursor: number, target: number, count: number): string[] {
+  if (target === cursor) {
+    if (count < 2) return ['Enter'];
+    return [...(target < count - 1 ? ['Down', 'Up'] : ['Up', 'Down']), 'Enter'];
+  }
+  const step = target > cursor ? 'Down' : 'Up';
+  return [...Array(Math.abs(target - cursor)).fill(step), 'Enter'];
+}
+
+/** The question as a chat message: the dialog's words, its options, and how to answer. */
+export function describeClaudeMenu(menu: ClaudeMenu, heldPrompt: string, again = false): string {
+  const held = messageText(heldPrompt).replace(/\s+/gu, ' ');
+  const preview = held.length > 40 ? `${held.slice(0, 40)}…` : held;
+  const options = menu.options.map((option, index) => {
+    const note = startsNewConversation(option)
+      ? '（piweb 會開一個新對話，並告訴 Claude 舊對話的紀錄在哪）'
+      : option.description
+        ? ` — ${option.description}`
+        : '';
+    return `${index + 1}. ${option.label}${note}`;
+  });
+  return [
+    again
+      ? '這則不是選項的回答，所以 Claude Code 還停在這個選單：'
+      : 'Claude Code 停在一個選單，要你選了才能繼續：',
+    '',
+    ...menu.question.split('\n').map((line) => `> ${line}`),
+    '',
+    ...options,
+    '',
+    `回覆數字（例如「${menu.cursor + 1}」）就會幫你選。` +
+      (preview ? `你的訊息「${preview}」先保留，選完會接著送出。` : ''),
+  ].join('\n');
+}
+
+/** Thrown while waiting on the pane when Claude Code is asking the user something. */
+class ClaudeMenuQuestion extends Error {
+  constructor(readonly menu: ClaudeMenu) {
+    super(`Claude Code is waiting on a menu: ${menu.question.split('\n')[0]}`);
+  }
+}
+
+/**
+ * The same menu on two looks in a row is one Claude Code is waiting on, not a
+ * frame of a dialog opening or closing. Returns a function to feed each screen.
+ */
+function menuWatch(): (screen: string) => ClaudeMenu | null {
+  let lastKey = '';
+  return (screen) => {
+    const menu = readClaudeMenu(screen);
+    const key = menu ? menuKey(menu) : '';
+    const steady = Boolean(menu) && key === lastKey;
+    lastKey = key;
+    return steady ? menu : null;
+  };
+}
+
+/**
+ * After picking an option: wait for the menu to close (Enter again if it is
+ * still open, at most twice: Claude Code ignores an Enter that comes too soon
+ * after a key), then empty the prompt box when the menu left text in it (the
+ * idle variant keeps the unsent message there; piweb sends it again itself).
+ * Returns false when the menu stayed open.
+ */
+async function settleAfterMenu(pane: string, menu: ClaudeMenu, deps: ClaudeTmuxDependencies): Promise<boolean> {
+  const key = menuKey(menu);
+  let enters = 0;
+  let since = Date.now();
+  const until = Date.now() + Math.max(6000, deps.pollMs * 20);
+  for (;;) {
+    await deps.sleep(deps.pollMs);
+    const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+    const open = readClaudeMenu(screen);
+    if (!open || menuKey(open) !== key) {
+      if (!open && isReadyPaneScreen(screen) && currentPrompt(screen)) {
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      }
+      return true;
+    }
+    if (Date.now() >= until) return false;
+    if (Date.now() - since >= Math.max(1500, deps.pollMs * 4) && enters < 2) {
+      enters += 1;
+      since = Date.now();
+      await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
+    }
+  }
+}
+
 /** One key at a time: Ink reads keys that arrive together as one unknown input. */
 async function pressKeys(pane: string, keys: string[], deps: ClaudeTmuxDependencies): Promise<void> {
   for (const key of keys) {
@@ -1106,9 +1461,11 @@ async function waitForReadyPane(
   name: string,
   deps: ClaudeTmuxDependencies,
   signal?: AbortSignal,
+  timeoutMs = deps.startupTimeoutMs,
 ): Promise<string> {
   const pane = await getClaudePane(name, deps);
-  const deadline = Date.now() + deps.startupTimeoutMs;
+  const deadline = Date.now() + timeoutMs;
+  const watchMenu = menuWatch();
   let acceptedTrust = false;
   let trustMoves = 0;
   let deniedStaleGrant = false;
@@ -1118,6 +1475,7 @@ async function waitForReadyPane(
     await ensurePaneAlive(pane, deps);
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
+    const menu = watchMenu(lastScreen);
     const flagged = stayOnModelMenu(lastScreen);
     const paused = flagged ? null : retryOnPausedMenu(lastScreen);
     const trust = acceptedTrust ? undefined : trustDialogSelection(lastScreen);
@@ -1156,6 +1514,11 @@ async function waitForReadyPane(
     } else if (deniedStaleGrant && /esc to interrupt/iu.test(lastScreen)) {
       deniedStaleGrant = false;
       await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+    } else if (menu && trustDialogSelection(lastScreen) === undefined) {
+      // Any other menu ("Resume this conversation?" on resuming a long idle
+      // conversation) is the user's to answer: put it to them, not a timeout.
+      // (A trust dialog still closing after its Enter is not one.)
+      throw new ClaudeMenuQuestion(menu);
     } else if (isReadyPaneScreen(lastScreen)) {
       // The status bar appears before Ink has mounted the editable prompt.
       // Sending the tmux paste in that narrow window is silently discarded, so
@@ -1226,11 +1589,16 @@ async function waitForPastedPrompt(
   const inputBefore = compactText(currentPrompt(beforePaste));
   const previousMarkers = pasteMarkers(beforePaste);
   const deadline = Date.now() + deps.startupTimeoutMs;
+  const watchMenu = menuWatch();
   let lastScreen = '';
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
     lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
     if (signal?.aborted) throw new ClaudeTmuxAbortError();
+    // A menu can open on the typing itself (the idle "Resume this
+    // conversation?"); the text waits in the box until it is answered.
+    const menu = watchMenu(lastScreen);
+    if (menu) throw new ClaudeMenuQuestion(menu);
     const input = compactText(currentPrompt(lastScreen));
     const hasNewMarker = [...pasteMarkers(lastScreen)].some(
       (marker) => !previousMarkers.has(marker),

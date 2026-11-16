@@ -22,6 +22,8 @@ import {
   isClaudeTmuxModelRef,
   stayOnModelMenu,
   retryOnPausedMenu,
+  readClaudeMenu,
+  chooseMenuOption,
   invokeClaudeTmux,
   listClaudeTmuxModels,
   tmuxSessionName,
@@ -357,6 +359,191 @@ describe('Claude tmux invocation', () => {
     expect(stage).toBe('done');
     expect(fixture.loadedPrompts).toEqual(['next message']);
     expect(fixture.submissionCount).toBe(1);
+  });
+
+  // 2026-11-17: `/pi thinking` relaunched the TUI on an 884.7k-token
+  // conversation and Claude Code asked "Resume this conversation?". Three
+  // messages failed "did not become ready"; the user's reply "2" never reached it.
+  it('puts a menu it has no rule for to the user, and their number answers it', async () => {
+    const fixture = createRuntimeFixture();
+    const menu = menuOnPane(fixture, RESUME_MENU, 2);
+    const asked = await invokeClaudeTmux('web_claude1', '[Web user: web]\n你幫我全部改寫到可以跟GPU一樣快', {
+      dependencies: fixture.dependencies,
+    });
+    expect(asked.error).toBeUndefined();
+    expect(asked.ok).toBe(true);
+    expect(asked.text).toContain('Resume this conversation?');
+    expect(asked.text).toContain('12% of your 5-hour usage limit');
+    expect(asked.text).toContain('1. Resume');
+    expect(asked.text).toContain('2. Start a new conversation');
+    expect(asked.text).toContain('你幫我全部改寫到可以跟GPU一樣快');
+    expect(fixture.loadedPrompts).toEqual([]);
+    expect(menu.open).toBe(true);
+    // Escape or Ctrl-C would have answered it for the user.
+    expect(menu.keys).toEqual([]);
+
+    const answered = await invokeClaudeTmux('web_claude1', '[Web user: web]\n1', {
+      dependencies: fixture.dependencies,
+    });
+    expect(answered.error).toBeUndefined();
+    expect(answered).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(menu.chosen).toBe(0);
+    // The held message goes out once the menu is answered, not the "1".
+    expect(fixture.loadedPrompts).toEqual(['[Web user: web]\n你幫我全部改寫到可以跟GPU一樣快']);
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it('starts the new conversation itself when that is the answer, pointing at the old one', async () => {
+    const fixture = createRuntimeFixture();
+    const menu = menuOnPane(fixture, RESUME_MENU, 2);
+    const oldTranscript = fixture.transcript;
+    let fresh = false;
+    fixture.dependencies.findTranscript = (id) => (id === fixture.sessionId || fresh ? oldTranscript : undefined);
+    await invokeClaudeTmux('web_claude1', '[Web user: web]\ncontinue', { dependencies: fixture.dependencies });
+    fixture.dependencies.randomUUID = () => 'a-new-conversation';
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'new-session' && args.includes('a-new-conversation')) fresh = true;
+      return tmux(args);
+    };
+    const launchesBefore = fixture.launches.length;
+
+    const result = await invokeClaudeTmux('web_claude1', '[Web user: web]\n2', { dependencies: fixture.dependencies });
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(menu.killed).toBe(true);
+    expect(menu.chosen).toBeNull();
+    const launch = fixture.launches.slice(launchesBefore).at(-1)!;
+    expect(launch).toContain('--session-id');
+    expect(launch).toContain('a-new-conversation');
+    expect(launch).not.toContain('--resume');
+    expect(fixture.loadedPrompts).toHaveLength(1);
+    expect(fixture.loadedPrompts[0]).toContain('[Web user: web]\ncontinue');
+    expect(fixture.loadedPrompts[0]).toContain(`earlier Claude Code conversation`);
+    expect(fixture.loadedPrompts[0]).toContain(oldTranscript);
+    const state = JSON.parse(readFileSync(join(fixture.sessionDir, 'claude-tmux-session.json'), 'utf8'));
+    expect(state.sessionId).toBe('a-new-conversation');
+    expect(state.pendingMenu).toBeUndefined();
+  });
+
+  it('asks again when the next message is not an answer, and holds that newer message', async () => {
+    const fixture = createRuntimeFixture();
+    const menu = menuOnPane(fixture, RESUME_MENU, 2);
+    await invokeClaudeTmux('web_claude1', '[Web user: web]\nfirst', { dependencies: fixture.dependencies });
+    const again = await invokeClaudeTmux('web_claude1', '[Web user: web]\n先跑測試', {
+      dependencies: fixture.dependencies,
+    });
+    expect(again.ok).toBe(true);
+    expect(again.text).toContain('不是選項的回答');
+    expect(again.text).toContain('先跑測試');
+    expect(menu.keys).toEqual([]);
+    expect(fixture.loadedPrompts).toEqual([]);
+
+    const answered = await invokeClaudeTmux('web_claude1', '[Web user: web]\nResume', {
+      dependencies: fixture.dependencies,
+    });
+    expect(answered).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(menu.chosen).toBe(0);
+    expect(fixture.loadedPrompts).toEqual(['[Web user: web]\n先跑測試']);
+  });
+
+  // The idle variant opens once the message is in: no numbers, and the unsent
+  // message waits in the box until the menu is answered.
+  it('puts a menu that opens mid-turn to the user, then sends the held message cleanly', async () => {
+    const fixture = createRuntimeFixture({ completeTurns: false });
+    // The in-turn check looks once a second and wants the menu on two looks.
+    fixture.dependencies.turnTimeoutMs = 5000;
+    const menu = menuOnPane(fixture, IDLE_RESUME_MENU, 2, { cursor: 1, after: () => fixture.submissionCount > 0 });
+    let leftover = '';
+    let answeredSubmissions = 0;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'send-keys' && !menu.open && menu.chosen !== null) {
+        if (args.at(-1) === 'C-c' && leftover) {
+          leftover = '';
+          return '';
+        }
+        if (args.at(-1) === 'Enter' && !leftover) {
+          const result = await tmux(args);
+          answeredSubmissions += 1;
+          appendReply(fixture.transcript, 'Done after the menu.');
+          return result;
+        }
+      }
+      if (args[0] === 'capture-pane' && !menu.open && menu.chosen !== null && leftover) {
+        return `${'─'.repeat(80)}\n❯ ${leftover}\n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
+      }
+      return tmux(args);
+    };
+    menu.onChoose = () => {
+      leftover = 'Please carry out the following user request: [Web user: web] rewrite it';
+    };
+
+    const asked = await invokeClaudeTmux('web_claude1', '[Web user: web]\nrewrite it', {
+      dependencies: fixture.dependencies,
+    });
+    expect(asked.error).toBeUndefined();
+    expect(asked.ok).toBe(true);
+    expect(asked.text).toContain('Resume this conversation?');
+    expect(asked.text).toContain('rewrite it');
+    expect(asked.text).not.toContain('timed out');
+
+    const answered = await invokeClaudeTmux('web_claude1', '[Web user: web]\n１', {
+      dependencies: fixture.dependencies,
+    });
+    expect(answered.error).toBeUndefined();
+    expect(answered).toMatchObject({ ok: true, text: 'Done after the menu.' });
+    expect(menu.chosen).toBe(0);
+    expect(leftover).toBe('');
+    expect(answeredSubmissions).toBe(1);
+    expect(fixture.loadedPrompts).toEqual(['[Web user: web]\nrewrite it', '[Web user: web]\nrewrite it']);
+  });
+
+  it('does not put a trust dialog that is still closing to the user', async () => {
+    const fixture = createRuntimeFixture();
+    const trust = '  ❯ 1. Yes, I trust this folder\n    2. No, exit\n\n  Enter to confirm · Esc to cancel';
+    let lingering = -1;
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && !fixture.trustAccepted) return trust;
+      if (args[0] === 'capture-pane' && lingering > 0) {
+        lingering -= 1;
+        return trust;
+      }
+      const result = await tmux(args);
+      if (args[0] === 'send-keys' && fixture.trustAccepted && lingering < 0) lingering = 3;
+      return result;
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'work', { dependencies: fixture.dependencies });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.loadedPrompts).toEqual(['work']);
+  });
+
+  it('reads Claude Code menus: options, the cursor and the question; never a quoted one', () => {
+    const numbered = readClaudeMenu(RESUME_MENU)!;
+    expect(numbered.question.split('\n')[0]).toBe('Resume this conversation?');
+    expect(numbered.question).toContain('884.7k tokens long');
+    expect(numbered.options).toEqual([
+      { label: 'Resume', description: '' },
+      { label: 'Start a new conversation', description: 'Claude can look this one up if you refer to it later' },
+    ]);
+    expect(numbered.cursor).toBe(0);
+    const idle = readClaudeMenu(IDLE_RESUME_MENU)!;
+    expect(idle.options.map((option) => option.label)).toEqual(['Resume', 'Start a new conversation']);
+    expect(idle.cursor).toBe(1);
+    const quoted = `${RESUME_MENU}\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
+    expect(readClaudeMenu(quoted)).toBeNull();
+    expect(readClaudeMenu('Do you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel')).toBeNull();
+    expect(readClaudeMenu('❯ \nbypass permissions on · esc to interrupt')).toBeNull();
+
+    const options = numbered.options;
+    expect(chooseMenuOption('2', options)).toBe(1);
+    expect(chooseMenuOption('２', options)).toBe(1);
+    expect(chooseMenuOption(' 1. ', options)).toBe(0);
+    expect(chooseMenuOption('選2', options)).toBe(1);
+    expect(chooseMenuOption('resume', options)).toBe(0);
+    expect(chooseMenuOption('3', options)).toBe(-1);
+    expect(chooseMenuOption('continue', options)).toBe(-1);
   });
 
   // The menu closes, the box is drawn empty, then the aborted turn refills it.
@@ -1703,6 +1890,107 @@ const MODEL_SWITCH_MENU = [
   'Enter to select · ↑/↓ to navigate · Esc to cancel',
   '✻ Waiting for API response · will retry in 2m 40s · check your network',
 ].join('\n');
+
+/** Claude Code 2.1.325's "Resume this conversation?" as the pane showed it on 2026-11-17. */
+const RESUME_MENU = [
+  '  量測腳本、圖和數據放在 ~/strata-perf/dma-microbench/npu-prefill/compare/。',
+  '✻ Worked for 7m 55s · done 12:54 AM',
+  '─'.repeat(80),
+  '  Resume this conversation?',
+  '',
+  '  This conversation has been inactive for 6m and is 884.7k tokens long.',
+  '  Resuming it will use about 12% of your 5-hour usage limit.',
+  '',
+  '  ❯ 1. Resume',
+  '    2. Start a new conversation  Claude can look this one up if you refer to',
+  '                                 it later',
+  '',
+  '  Enter to confirm · Esc to resume',
+  '',
+].join('\n');
+
+/** The same menu opened on typing into an idle conversation: rows unnumbered. */
+const IDLE_RESUME_MENU = [
+  '─'.repeat(80),
+  '  Resume this conversation?',
+  '',
+  '  This conversation has been inactive for 12m and is 884.7k tokens long.',
+  '  Resuming it will use about 12% of your 5-hour usage limit.',
+  '  Your unsent message will still be there after you answer.',
+  '',
+  '    Resume',
+  '  ❯ Start a new conversation  Claude can look this one up if you refer to it',
+  '                              later',
+  '',
+  '  ↑/↓ pick a row first · Enter to confirm · Esc to dismiss',
+  '',
+].join('\n');
+
+function appendReply(transcript: string, text: string): void {
+  appendFileSync(
+    transcript,
+    [
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } }),
+      JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 12 }),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+}
+
+/**
+ * Puts a Claude Code menu on the fixture's pane: shown while open (from the
+ * first look, or once `after` holds), arrows move its cursor, Enter answers
+ * it and closes it, killing the session takes it away. Other keys sent while
+ * it is open are recorded in `keys` (they would answer it for the user).
+ */
+function menuOnPane(
+  fixture: ReturnType<typeof createRuntimeFixture>,
+  screen: string,
+  count: number,
+  options: { cursor?: number; after?: () => boolean } = {},
+) {
+  const menu = {
+    open: true,
+    cursor: options.cursor ?? 0,
+    chosen: null as number | null,
+    killed: false,
+    keys: [] as string[],
+    onChoose: undefined as undefined | (() => void),
+  };
+  const draw = () => {
+    const rows = screen.split('\n');
+    const optionRows = rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => /^\s*(?:❯\s*)?(?:\d+\.\s+)?(?:Resume|Start a new conversation)(?:\s{2}|$)/u.test(row));
+    for (const [n, { row, index }] of optionRows.entries()) {
+      const text = row.replace(/^\s*(?:❯\s*)?/u, '');
+      rows[index] = `  ${n === menu.cursor ? '❯ ' : '  '}${text}`;
+    }
+    return rows.join('\n');
+  };
+  const shown = () => menu.open && (!options.after || options.after());
+  const tmux = fixture.dependencies.tmux;
+  fixture.dependencies.tmux = async (args) => {
+    if (args[0] === 'kill-session') {
+      menu.open = false;
+      menu.killed = true;
+    }
+    if (args[0] === 'capture-pane' && shown()) return draw();
+    if (args[0] === 'send-keys' && shown()) {
+      const key = args.at(-1)!;
+      if (key === 'Down') menu.cursor = Math.min(count - 1, menu.cursor + 1);
+      else if (key === 'Up') menu.cursor = Math.max(0, menu.cursor - 1);
+      else if (key === 'Enter') {
+        menu.chosen = menu.cursor;
+        menu.open = false;
+        menu.onChoose?.();
+      } else menu.keys.push(key);
+      return '';
+    }
+    return tmux(args);
+  };
+  return menu;
+}
 
 /** Claude Code 2.1.325's "Session paused" menu as the pane showed it on 2026-11-15. */
 const SESSION_PAUSED_MENU = [
