@@ -57,13 +57,13 @@ describe('Claude sign-in', () => {
     fails('  ', 'Paste the code');
   });
 
-  it('exchanges the code with the same redirect and stores a pi OAuth credential', async () => {
+  it('exchanges the code with the same redirect and stores Claude Code OAuth credentials', async () => {
     const fetchImpl = answer(200, tokenResponse);
-    const saveCredential = vi.fn(async () => undefined);
+    const saveClaudeCodeCredential = vi.fn(async () => undefined);
     const credential = await exchangeClaudeCode('abc', 's', 'the-verifier', undefined, {
       fetchImpl: fetchImpl as any,
       now: () => 1_000_000,
-      saveCredential,
+      saveClaudeCodeCredential,
     });
     const [url, init] = (fetchImpl.mock.calls[0] as unknown) as [string, RequestInit];
     expect(url).toBe('https://platform.claude.com/v1/oauth/token');
@@ -81,12 +81,20 @@ describe('Claude sign-in', () => {
       refresh: 'sk-ant-ort-refresh',
       expires: 1_000_000 + 28800_000 - 300_000,
     });
-    expect(saveCredential).toHaveBeenCalledWith(credential);
+    expect(saveClaudeCodeCredential).toHaveBeenCalledWith({
+      accessToken: 'sk-ant-oat-access',
+      refreshToken: 'sk-ant-ort-refresh',
+      expiresAt: 1_000_000 + 28800_000,
+      scopes: expect.arrayContaining(['user:inference', 'user:sessions:claude_code']),
+    });
   });
 
   it('classifies every failure, never quoting the upstream body', async () => {
-    const run = (fetchImpl: any, saveCredential: any = vi.fn()) =>
-      exchangeClaudeCode('abc', 's', 'v', undefined, { fetchImpl, saveCredential });
+    const run = (fetchImpl: any, saveClaudeCodeCredential: any = vi.fn(async () => undefined)) =>
+      exchangeClaudeCode('abc', 's', 'v', undefined, {
+        fetchImpl,
+        saveClaudeCodeCredential,
+      });
     const expectFailure = async (promise: Promise<unknown>, retryable: boolean, text: string) => {
       const error = await promise.then(
         () => undefined,
@@ -145,14 +153,21 @@ describe('Claude sign-in', () => {
     ).rejects.not.toBeInstanceOf(PublicLoginError);
   });
 
-  it('keeps the same link waiting through fixable codes, then reloads pi', async () => {
-    const pi = { refresh: vi.fn(async () => undefined), logout: vi.fn(), checkAuth: vi.fn() };
+  it('keeps the same link waiting through fixable codes, then clears duplicate pi OAuth', async () => {
+    const pi = {
+      refresh: vi.fn(async () => undefined),
+      logout: vi.fn(async () => undefined),
+      checkAuth: vi.fn(async () => ({ type: 'oauth' })),
+    };
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(tokenResponse)));
-    const saveCredential = vi.fn(async () => undefined);
-    const runtime = claudeSubscriptionRuntime(pi, { fetchImpl: fetchImpl as any, saveCredential });
+    const saveClaudeCodeCredential = vi.fn(async () => undefined);
+    const runtime = claudeSubscriptionRuntime(pi, {
+      fetchImpl: fetchImpl as any,
+      saveClaudeCodeCredential,
+    });
     let state = '';
     const pastes = ['abc#old-state', 'expired#STATE', 'good#STATE'];
     const rejected: string[] = [];
@@ -168,15 +183,19 @@ describe('Claude sign-in', () => {
       expect.stringContaining('did not accept'),
     ]);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(saveCredential).toHaveBeenCalledTimes(1);
-    expect(pi.refresh).toHaveBeenCalledWith({ providers: ['anthropic'], allowNetwork: false });
+    expect(saveClaudeCodeCredential).toHaveBeenCalledTimes(1);
+    expect(pi.logout).toHaveBeenCalledWith('anthropic', { signal: undefined });
   });
 
-  it('a failed pi reload after storing the credential does not undo the sign-in', async () => {
-    const pi = { refresh: vi.fn(async () => Promise.reject(new Error('reload'))), logout: vi.fn(), checkAuth: vi.fn() };
+  it('a failed pi duplicate-clear after storing the credential does not undo the sign-in', async () => {
+    const pi = {
+      refresh: vi.fn(async () => undefined),
+      logout: vi.fn(async () => Promise.reject(new Error('logout'))),
+      checkAuth: vi.fn(async () => ({ type: 'oauth' })),
+    };
     const runtime = claudeSubscriptionRuntime(pi, {
       fetchImpl: answer(200, tokenResponse) as any,
-      saveCredential: vi.fn(async () => undefined),
+      saveClaudeCodeCredential: vi.fn(async () => undefined),
     });
     let state = '';
     await expect(
@@ -199,38 +218,36 @@ describe('Claude status through the host Claude Code', () => {
   const cliSignedIn = async () => ({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r' } });
   const cliMissing = async () => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
-  it('counts a signed-in Claude Code CLI as connected when pi has no Claude credential', async () => {
+  it('reports connected solely from the host Claude Code CLI OAuth state', async () => {
     expect(await claudeSubscriptionRuntime(pi(undefined), { readClaudeCodeAuth: cliSignedIn }).checkAuth('anthropic')).toEqual({
       type: 'oauth',
       via: 'claude-code',
     });
     expect(await claudeSubscriptionRuntime(pi(undefined), { readClaudeCodeAuth: cliMissing }).checkAuth('anthropic')).toBeUndefined();
-    // An API key is not a subscription, and Claude Code logged in with one has no OAuth block.
+    expect(
+      await claudeSubscriptionRuntime(pi({ type: 'oauth' }), { readClaudeCodeAuth: cliMissing }).checkAuth('anthropic'),
+    ).toBeUndefined();
     expect(
       await claudeSubscriptionRuntime(pi({ type: 'api_key' }), {
         readClaudeCodeAuth: async () => ({ primaryApiKey: 'k' }),
       }).checkAuth('anthropic'),
-    ).toEqual({ type: 'api_key' });
+    ).toBeUndefined();
     expect(await claudeCodeSignedIn(async () => 'not json')).toBe(false);
-  });
-
-  it("pi's own sign-in still answers first", async () => {
-    const readClaudeCodeAuth = vi.fn(cliSignedIn);
     expect(
-      await claudeSubscriptionRuntime(pi({ type: 'oauth' }), { readClaudeCodeAuth }).checkAuth('anthropic'),
-    ).toEqual({ type: 'oauth' });
-    expect(readClaudeCodeAuth).not.toHaveBeenCalled();
+      await claudeCodeSignedIn(async () => ({
+        claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 0, loginEnded: 'time_limit' },
+      })),
+    ).toBe(false);
   });
 
-  it('Disconnect never signs the host Claude Code out', async () => {
-    const onlyCli = pi(undefined);
-    await expect(
-      claudeSubscriptionRuntime(onlyCli, { readClaudeCodeAuth: cliSignedIn }).logout('anthropic'),
-    ).rejects.toThrow(/Signed in through the host's Claude Code/);
-    expect(onlyCli.logout).not.toHaveBeenCalled();
-
+  it('Disconnect clears Claude Code credentials and any duplicate pi OAuth credential', async () => {
+    const clearClaudeCodeCredential = vi.fn(async () => undefined);
     const piOwn = pi({ type: 'oauth' });
-    await claudeSubscriptionRuntime(piOwn, { readClaudeCodeAuth: cliSignedIn }).logout('anthropic');
+    await claudeSubscriptionRuntime(piOwn, {
+      readClaudeCodeAuth: cliSignedIn,
+      clearClaudeCodeCredential,
+    }).logout('anthropic');
+    expect(clearClaudeCodeCredential).toHaveBeenCalledTimes(1);
     expect(piOwn.logout).toHaveBeenCalledWith('anthropic', undefined);
   });
 });

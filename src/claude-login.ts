@@ -21,7 +21,12 @@ import {
   unreachableError,
   withPastedCode,
 } from './subscription-login.js';
-import { readClaudeCodeCredentials } from './claude-code-credentials.js';
+import {
+  type ClaudeCodeOAuthCredential,
+  clearClaudeCodeCredentials,
+  readClaudeCodeCredentials,
+  writeClaudeCodeCredentials,
+} from './claude-code-credentials.js';
 import { logger } from './logger.js';
 
 export const CLAUDE_PROVIDER = 'anthropic';
@@ -54,39 +59,19 @@ export interface PiCredentialRuntime {
 export interface ClaudeLoginDependencies {
   fetchImpl: typeof fetch;
   now: () => number;
-  saveCredential: (credential: Credential) => Promise<void>;
+  /** Store the freshly exchanged OAuth tokens for the host Claude Code CLI. */
+  saveClaudeCodeCredential: (oauth: ClaudeCodeOAuthCredential) => Promise<void>;
+  /** Remove OAuth tokens from the host Claude Code CLI on Disconnect. */
+  clearClaudeCodeCredential: () => Promise<void>;
   /** The host Claude Code CLI's credentials file, parsed. */
   readClaudeCodeAuth: () => Promise<unknown>;
-}
-
-interface PiAuthStorage {
-  modify(
-    provider: string,
-    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
-  ): Promise<unknown>;
-}
-
-/**
- * pi's own auth.json store, so the write takes the same file lock as every pi
- * process and lands in the cache pi's runtime reads. It is internal to pi
- * (not in its exports map), hence the resolved path; pi is pinned exactly
- * (CLAUDE.md "Pinning pi"), and a bump that moves it fails here, loudly.
- */
-async function savePiCredential(credential: Credential): Promise<void> {
-  const entry = import.meta.resolve('@earendil-works/pi-coding-agent');
-  const module = (await import(new URL('./core/auth-storage.js', entry).href)) as {
-    AuthStorage?: { create(): PiAuthStorage };
-  };
-  if (typeof module.AuthStorage?.create !== 'function') {
-    throw new Error('pi AuthStorage is unavailable');
-  }
-  await module.AuthStorage.create().modify(CLAUDE_PROVIDER, async () => credential);
 }
 
 const DEFAULT_DEPENDENCIES: ClaudeLoginDependencies = {
   fetchImpl: fetch,
   now: Date.now,
-  saveCredential: savePiCredential,
+  saveClaudeCodeCredential: writeClaudeCodeCredentials,
+  clearClaudeCodeCredential: clearClaudeCodeCredentials,
   readClaudeCodeAuth: readClaudeCodeCredentials,
 };
 
@@ -94,14 +79,19 @@ const DEFAULT_DEPENDENCIES: ClaudeLoginDependencies = {
  * Whether the host's Claude Code CLI is signed in to a subscription. Piweb's
  * `claude-code/*` sessions run that CLI, so this sign-in is a working Claude
  * connection even when pi's own `anthropic` credential is absent. Only the
- * presence of a refresh token is checked; nothing is copied out of the file.
+ * presence of a refresh token (without a `loginEnded` marker) is checked;
+ * nothing is copied out of the file.
  */
 export async function claudeCodeSignedIn(
   readAuth: ClaudeLoginDependencies['readClaudeCodeAuth'] = DEFAULT_DEPENDENCIES.readClaudeCodeAuth,
 ): Promise<boolean> {
   try {
-    const oauth = ((await readAuth()) as { claudeAiOauth?: { refreshToken?: unknown } } | null)
-      ?.claudeAiOauth;
+    const oauth = (
+      (await readAuth()) as {
+        claudeAiOauth?: { refreshToken?: unknown; loginEnded?: unknown };
+      } | null
+    )?.claudeAiOauth;
+    if (oauth?.loginEnded) return false;
     return typeof oauth?.refreshToken === 'string' && oauth.refreshToken.length > 0;
   } catch {
     return false;
@@ -230,32 +220,46 @@ export async function exchangeClaudeCode(
       'Claude answered without a usable token. Open Claude again and paste the new code.',
     );
   }
+  const expiresAt =
+    dependencies.now() +
+    (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 3600_000);
   const credential: Credential = {
     type: 'oauth',
     refresh: result.refresh_token,
     access: result.access_token,
-    expires:
-      dependencies.now() +
-      (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 3600_000) -
-      EXPIRY_MARGIN_MS,
+    expires: expiresAt - EXPIRY_MARGIN_MS,
   } as Credential;
+  const scopes =
+    typeof result?.scope === 'string' && result.scope.trim()
+      ? result.scope.trim().split(/\s+/)
+      : [...CLAUDE_SCOPES];
+  // Store ONLY in Claude Code's credentials file so Claude Code is the single
+  // owner of the single-use rotating refresh token (sharing it with pi's
+  // auth.json causes whichever process refreshes first to invalidate the other).
   try {
-    await dependencies.saveCredential(credential);
+    await dependencies.saveClaudeCodeCredential({
+      accessToken: result.access_token,
+      refreshToken: result.refresh_token,
+      expiresAt,
+      scopes,
+    });
   } catch (error: unknown) {
     logger.warn(
       { err: (error as Error)?.name ?? 'Error' },
-      'Could not store the Claude credential',
+      'Could not store the Claude Code credential',
     );
     throw new PublicLoginError(
-      "Signed in, but the host couldn't save pi's credentials (auth.json). Check its disk and permissions, then connect again.",
+      "Signed in, but the host couldn't save Claude Code credentials (.credentials.json). Check its disk and permissions, then connect again.",
     );
   }
   return credential;
 }
 
 /**
- * The subscription-runtime face of Claude: Piweb runs the sign-in, then pi
- * reloads the provider so its models are usable without a worker restart.
+ * The subscription-runtime face of Claude: Piweb signs Claude Code in directly
+ * (single owner of the rotating OAuth refresh token), and clears any stale
+ * duplicate OAuth entry in pi's auth.json so pi never races Claude Code to
+ * refresh the same token.
  */
 export function claudeSubscriptionRuntime(
   pi: PiCredentialRuntime,
@@ -263,6 +267,8 @@ export function claudeSubscriptionRuntime(
 ) {
   const readClaudeCodeAuth =
     overrides.readClaudeCodeAuth ?? DEFAULT_DEPENDENCIES.readClaudeCodeAuth;
+  const clearClaudeCode =
+    overrides.clearClaudeCodeCredential ?? DEFAULT_DEPENDENCIES.clearClaudeCodeCredential;
   return {
     async login(
       _provider: string,
@@ -286,34 +292,32 @@ export function claudeSubscriptionRuntime(
           );
         },
       );
-      // The credential is stored; a reload that fails only delays the models.
+      // Remove any duplicate OAuth credential in pi's auth.json so pi never
+      // rotates the refresh token out from under Claude Code.
       await Promise.resolve()
-        .then(() => pi.refresh({ providers: [CLAUDE_PROVIDER], allowNetwork: false }))
+        .then(async () => {
+          if (isOauth(await pi.checkAuth(CLAUDE_PROVIDER, { signal: interaction.signal }))) {
+            await pi.logout(CLAUDE_PROVIDER, { signal: interaction.signal });
+          }
+        })
         .catch((error: unknown) =>
           logger.warn(
             { err: (error as Error)?.name ?? 'Error' },
-            'pi did not reload the Claude provider',
+            'Could not clear duplicate pi Claude credential',
           ),
         );
       return credential;
     },
     async logout(provider: string, options?: { signal?: AbortSignal }): Promise<void> {
-      // Signing the host's Claude Code out would end every Claude Code session
-      // on it, including the ones Piweb runs; that is not Settings' call.
-      const piSignedIn = isOauth(await pi.checkAuth(provider, options));
-      if (!piSignedIn && (await claudeCodeSignedIn(readClaudeCodeAuth))) {
-        throw new PublicLoginError(
-          "Signed in through the host's Claude Code; sign out there to disconnect.",
-        );
+      await clearClaudeCode();
+      if (isOauth(await pi.checkAuth(provider, options))) {
+        await pi.logout(provider, options);
       }
-      await pi.logout(provider, options);
     },
-    async checkAuth(provider: string, options?: { signal?: AbortSignal }): Promise<unknown> {
-      const check = await pi.checkAuth(provider, options);
-      if (isOauth(check)) return check;
+    async checkAuth(_provider: string, _options?: { signal?: AbortSignal }): Promise<unknown> {
       return (await claudeCodeSignedIn(readClaudeCodeAuth))
         ? { type: 'oauth', via: 'claude-code' }
-        : check;
+        : undefined;
     },
   };
 }

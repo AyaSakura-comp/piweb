@@ -330,12 +330,12 @@ describe('Pi subscription jobs', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_in: 3600 })),
       );
-    const saveCredential = vi.fn(async () => undefined);
+    const saveClaudeCodeCredential = vi.fn(async () => undefined);
     const pi = { refresh: vi.fn(async () => undefined), logout: vi.fn(), checkAuth: vi.fn() };
     const id = db.enqueueSubscriptionJob('anthropic', 'login');
     const run = runSubscriptionJob(
       db.claimPendingSubscriptionJob()!,
-      claudeSubscriptionRuntime(pi, { fetchImpl: fetchImpl as any, saveCredential }) as any,
+      claudeSubscriptionRuntime(pi, { fetchImpl: fetchImpl as any, saveClaudeCodeCredential }) as any,
       new AbortController().signal,
     );
     await vi.waitFor(() => expect(db.getSubscriptionJob(id)?.status).toBe('waiting'));
@@ -365,7 +365,7 @@ describe('Pi subscription jobs', () => {
     await run;
     expect(db.getSubscriptionJob(id)).toMatchObject({ status: 'succeeded', authUrl: '' });
     expect(db.getMeta('subscription.anthropic')).toContain('"connected":true');
-    expect(saveCredential).toHaveBeenCalledTimes(1);
+    expect(saveClaudeCodeCredential).toHaveBeenCalledTimes(1);
   });
 
   it('shows a safe reason for a fatal sign-in error, and for a failed disconnect', async () => {

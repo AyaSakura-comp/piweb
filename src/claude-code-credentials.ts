@@ -1,8 +1,19 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+export interface ClaudeCodeOAuthCredential {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scopes?: string[];
+}
+
+export function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+}
 
 /**
  * The host Claude Code CLI's OAuth credentials, parsed.
@@ -17,7 +28,7 @@ import { join } from 'node:path';
  * when neither yields JSON. Never log what this returns.
  */
 export async function readClaudeCodeCredentials(): Promise<unknown> {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+  const configDir = claudeConfigDir();
   try {
     return JSON.parse(await readFile(join(configDir, '.credentials.json'), 'utf8'));
   } catch (fileError) {
@@ -36,6 +47,89 @@ export async function readClaudeCodeCredentials(): Promise<unknown> {
     }
   }
   throw lastError;
+}
+
+/**
+ * Update the host Claude Code CLI's `<config dir>/.credentials.json` with a
+ * fresh OAuth token pair, preserving unrelated keys and subscription metadata
+ * while clearing any stale `loginEnded` / `refreshTokenExpiresAt` markers.
+ * Written atomically with 0600 permissions. Never log its contents.
+ */
+export async function writeClaudeCodeCredentials(
+  oauth: ClaudeCodeOAuthCredential,
+): Promise<void> {
+  const configDir = claudeConfigDir();
+  const credPath = join(configDir, '.credentials.json');
+  let existing: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(await readFile(credPath, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Missing or unreadable file: start fresh.
+  }
+
+  const prevOauth =
+    existing.claudeAiOauth &&
+    typeof existing.claudeAiOauth === 'object' &&
+    !Array.isArray(existing.claudeAiOauth)
+      ? { ...(existing.claudeAiOauth as Record<string, unknown>) }
+      : {};
+  delete prevOauth.loginEnded;
+  delete prevOauth.refreshTokenExpiresAt;
+
+  const nextOauth: Record<string, unknown> = {
+    ...prevOauth,
+    accessToken: oauth.accessToken,
+    refreshToken: oauth.refreshToken,
+    expiresAt: oauth.expiresAt,
+  };
+  if (oauth.scopes && oauth.scopes.length > 0) {
+    nextOauth.scopes = oauth.scopes;
+  }
+
+  const payload = JSON.stringify({ ...existing, claudeAiOauth: nextOauth });
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  const tempPath = join(configDir, `.credentials.json.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
+  try {
+    await writeFile(tempPath, payload, { encoding: 'utf8', mode: 0o600 });
+    await chmod(tempPath, 0o600);
+    await rename(tempPath, credPath);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Remove `claudeAiOauth` from `<config dir>/.credentials.json` while
+ * preserving unrelated keys (such as `mcpOAuth`).
+ */
+export async function clearClaudeCodeCredentials(): Promise<void> {
+  const configDir = claudeConfigDir();
+  const credPath = join(configDir, '.credentials.json');
+  let existing: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(await readFile(credPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    existing = { ...(parsed as Record<string, unknown>) };
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!('claudeAiOauth' in existing)) return;
+  delete existing.claudeAiOauth;
+  const payload = JSON.stringify(existing);
+  const tempPath = join(configDir, `.credentials.json.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
+  try {
+    await writeFile(tempPath, payload, { encoding: 'utf8', mode: 0o600 });
+    await chmod(tempPath, 0o600);
+    await rename(tempPath, credPath);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 function keychainPassword(service: string): Promise<string> {
