@@ -645,7 +645,35 @@ export function isPassingAgyServerFailure(failure: string): boolean {
   return PASSING_SERVER_FAILURE.test(failure) && !LASTING_FAILURE.test(failure);
 }
 
+/**
+ * agy checks --model against the model list it fetches when it starts. Right
+ * after a boot that fetch times out (`agy models`: "timed out waiting for
+ * available models"), the list is empty, and every model is refused:
+ *   invalid model selection (--model "gemini-4-neon-high" --effort ""): model
+ *   gemini-4-neon-high is not recognized as a known model or custom model in settings
+ */
+const UNKNOWN_MODEL = /is not recognized as a known model/i;
+
+/**
+ * Whether agy still offers this model, from a fresh `agy models`: undefined
+ * when the list cannot be fetched (or comes back empty), which says agy is
+ * not ready yet rather than that the model is gone.
+ */
+async function agyOffersModel(modelId: string): Promise<boolean | undefined> {
+  if (!modelId) return undefined;
+  try {
+    const models = parseAgyModels(await runAgy(['models'], config.agyModelsTimeoutMs));
+    if (!models.length) return undefined;
+    modelCache = { loadedAt: Date.now(), models };
+    return models.some((model) => model.id === modelId);
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'agy model list still unavailable');
+    return undefined;
+  }
+}
+
 function describePassingFailure(failure: string): string {
+  if (UNKNOWN_MODEL.test(failure)) return 'agy 還沒拿到模型清單（多半是剛開機、網路還沒好）';
   if (/No capacity available|high traffic|overloaded/i.test(failure)) return 'Google 的模型伺服器目前滿載';
   if (/stream idle timeout/i.test(failure)) return 'Google 的模型伺服器沒有回應';
   const code = /\b(50[0234])\b/.exec(failure)?.[1];
@@ -751,7 +779,17 @@ export async function invokeAgy(
       retry--;
       continue;
     }
-    if (result.ok || result.aborted || !isPassingAgyServerFailure(attempt.failure)) return result;
+    // A refused model id is only a lasting failure when agy's own list, read
+    // now, lacks it; otherwise agy started before it could load the list.
+    let listNotLoaded = false;
+    if (!result.ok && !result.aborted && UNKNOWN_MODEL.test(attempt.failure)) {
+      const modelId = opts?.model ? agyModelId(opts.model) : '';
+      if ((await agyOffersModel(modelId)) === false) {
+        return { ...result, error: `agy 已經沒有 ${modelId} 這個模型了，用 /model 換一個。` };
+      }
+      listNotLoaded = true;
+    }
+    if (result.ok || result.aborted || !(listNotLoaded || isPassingAgyServerFailure(attempt.failure))) return result;
     if (retry >= delays.length) {
       if (retry === 0) return result;
       return { ...result, error: `${result.error ?? ''}\n\n已自動重試 ${retry} 次，伺服器還是沒有恢復。`.trim() };

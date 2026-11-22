@@ -162,6 +162,21 @@ again; otherwise (it failed before recording, or no transcript, as on macOS)
 it resends the message. The conversation id is read per attempt, so a first
 turn that failed resumes the conversation it started.
 
+### A model refused as unknown right after a boot
+
+agy checks `--model` against the model list it fetches as it starts. On
+2026-11-22, in the first minute after each reboot, that fetch timed out
+(`agy models`: `timed out waiting for available models`), and the AGY session
+failed with `invalid model selection (--model "gemini-4-neon-high" --effort
+""): model gemini-4-neon-high is not recognized as a known model or custom
+model in settings`, a model `agy models` listed a minute later. So on that
+error `invokeAgy()` runs `agy models` itself: when the list has the model, or
+cannot be fetched, the turn is retried on the same `AGY_RETRY_DELAYS` waits
+(`⏳ agy 還沒拿到模型清單（多半是剛開機、網路還沒好）…`); agy refused before
+recording anything, so the message itself is sent again. Only when the list
+loads without the model does the turn end, with `agy 已經沒有 <id> 這個模型了，
+用 /model 換一個。`
+
 `test/agy-retry.test.ts` plays Google's side with a fake agy.
 
 ## Configuration

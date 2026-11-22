@@ -1541,7 +1541,9 @@ switch, Session paused) keep it.
     500/502/504 and an idle stream run the turn again after each of `AGY_RETRY_DELAYS` (15s,30s,60s,120s), with a
     `⏳` thinking row while it waits; quota/sign-in errors are not retried. agy records the user's message before
     calling the model, so a retry sends `AGY_RETRY_CONTINUE` when the brain transcript already holds it. See
-    `docs/agy-bridge.md` "Server errors that pass are retried".
+    `docs/agy-bridge.md` "Server errors that pass are retried". "model … is not recognized as a known model"
+    is retried the same way unless a fresh `agy models` loads without that model: right after a boot agy
+    refuses every model because its own list fetch timed out (2026-11-22).
   - **Agy Termination and Timeout Disambiguation**: When agy exits via `SIGTERM` / `SIGKILL` (or code 143/137), `formatAgyError()` returns `exited with code 143 (SIGTERM)` rather than misreporting a 60m print-timeout, enabling `queue.ts` auto-requeue. `timeout waiting for response` is only attributed to `AGY_PRINT_TIMEOUT` if elapsed turn time actually approached the timeout threshold (`>= 80%`).
   - **E2E Test**: `test/e2e/agy-interaction.spec.ts` verifies the full agy lifecycle (model selection, `/agy-usage` command, SSE thinking/tool/reply streaming, details toggles, and clean termination handling).
 - **Do not restart the worker while a run is in flight** — it SIGTERMs the user's

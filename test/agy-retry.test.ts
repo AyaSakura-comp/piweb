@@ -33,7 +33,7 @@ const CONVERSATION = '12345678-1234-1234-1234-123456789012';
 /**
  * Each run takes the next step of FAKE_AGY_PLAN: `busy` (records the message,
  * then fails with BUSY), `busy-early` (fails before recording it), `quota`,
- * or `ok`.
+ * `unknown-model` (agy refuses --model), or `ok`.
  */
 const FAKE_AGY = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -43,6 +43,16 @@ const calls = path.join(root, 'calls.jsonl');
 const n = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\\n').filter(Boolean).length : 0;
 const step = (process.env.FAKE_AGY_PLAN.split(',')[n] || 'ok').trim();
 const emit = (x) => console.log(JSON.stringify(x));
+// \`agy models\`: FAKE_AGY_MODELS, or agy 1.5.14 right after a boot.
+if (process.argv[2] === 'models') {
+  console.log('Fetching available models...');
+  if (!process.env.FAKE_AGY_MODELS) {
+    console.error('Error: timed out waiting for available models');
+    process.exit(1);
+  }
+  for (const id of process.env.FAKE_AGY_MODELS.split(',')) console.log(id + '\t' + id);
+  process.exit(0);
+}
 const rl = require('node:readline').createInterface({ input: process.stdin });
 rl.once('line', (line) => {
   const input = JSON.parse(line).message.content;
@@ -54,6 +64,14 @@ rl.once('line', (line) => {
     const effort = argv[argv.indexOf('--effort') + 1];
     emit({ event: 'result', result: { status: 'ERROR', error:
       'invalid model selection (--model "' + model + '" --effort "' + effort + '"): --model ' + model + ' conflicts with --effort=' + effort } });
+    process.exit(1);
+  }
+  // agy 1.5.14 when its model list was not loaded: refused before it starts.
+  if (step === 'unknown-model') {
+    const model = argv[argv.indexOf('--model') + 1];
+    emit({ event: 'result', result: { status: 'ERROR', error:
+      'invalid model selection (--model "' + model + '" --effort ""): model ' + model +
+      ' is not recognized as a known model or custom model in settings' } });
     process.exit(1);
   }
   if (step !== 'busy-early') {
@@ -93,6 +111,7 @@ afterEach(async () => {
   delete process.env.FAKE_AGY_ROOT;
   delete process.env.FAKE_AGY_PLAN;
   delete process.env.FAKE_AGY_REJECT_EFFORT;
+  delete process.env.FAKE_AGY_MODELS;
   rmSync(fake.root, { recursive: true, force: true });
 });
 
@@ -249,6 +268,61 @@ describe('an agy model whose id fixes its effort', () => {
     });
     expect(result.ok).toBe(false);
     expect(calls()).toHaveLength(2);
+  });
+});
+
+// 2026-11-22: after a reboot the AGY session answered "invalid model selection
+// (--model "gemini-4-neon-high" --effort ""): model gemini-4-neon-high is not
+// recognized as a known model or custom model in settings" — agy could not load
+// its model list yet ("timed out waiting for available models"). A minute later
+// the same model ran fine.
+describe('an agy model refused as unknown', () => {
+  it('runs again once agy lists the model, sending the message itself again', async () => {
+    process.env.FAKE_AGY_PLAN = 'unknown-model,ok';
+    process.env.FAKE_AGY_MODELS = 'gemini-4-neon-high,gemini-4-neon-low';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const events: any[] = [];
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-4-neon-high',
+      isCurrent: () => true,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    expect(result).toEqual({ ok: true, text: 'Done after the retry.' });
+    const runs = calls();
+    expect(runs).toHaveLength(2);
+    expect(runs[1].argv).toContain('gemini-4-neon-high');
+    // agy refused before it recorded anything: the message goes again, not "carry on".
+    expect(runs[1].input).toContain('Original request 7731');
+    const said = notes(events);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain('agy 還沒拿到模型清單');
+    expect(said[0]).toContain('第 1/3 次');
+  });
+
+  it('also runs again while agy cannot list its models at all', async () => {
+    process.env.FAKE_AGY_PLAN = 'unknown-model,unknown-model,ok';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-4-neon-high',
+      isCurrent: () => true,
+    });
+    expect(result).toEqual({ ok: true, text: 'Done after the retry.' });
+    expect(calls()).toHaveLength(3);
+  });
+
+  it('says the model is gone, without retrying, when agy lists models without it', async () => {
+    process.env.FAKE_AGY_PLAN = 'unknown-model,ok';
+    process.env.FAKE_AGY_MODELS = 'gemini-4-neon-high,gemini-3.8-flash-low';
+    const { invokeAgy } = await import('../src/agent/agy.js');
+    const result = await invokeAgy('channel', 'Original request 7731', {
+      model: 'agy/gemini-3.5-flash-low',
+      isCurrent: () => true,
+    });
+    expect(calls()).toHaveLength(1);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('agy 已經沒有 gemini-3.5-flash-low 這個模型了，用 /model 換一個。');
   });
 });
 
