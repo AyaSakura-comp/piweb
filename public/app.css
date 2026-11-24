@@ -4566,12 +4566,16 @@ dialog.sheet::backdrop {
 
 .lb-bar {
   grid-row: 1;
+  grid-column: 1;
   z-index: 2;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: calc(10px + env(safe-area-inset-top)) 10px 10px 12px;
   color: #fff;
+  /* It lies over the picture: a soft shade keeps the white icons readable on
+     a light image and is invisible over the black backdrop. */
+  background: linear-gradient(rgb(0 0 0 / 0.5), rgb(0 0 0 / 0));
 }
 
 .lb-count {
@@ -4616,13 +4620,16 @@ dialog.sheet::backdrop {
   background: rgb(255 255 255 / 0.18);
 }
 
+/* The picture has the whole screen; the bar and the filmstrip lie over it and
+   a tap on the picture fades them away (.chrome-hidden). */
 .lb-stage {
-  grid-row: 2;
+  grid-row: 1 / -1;
+  grid-column: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -4638,7 +4645,8 @@ dialog.sheet::backdrop {
   width: auto;
   height: auto;
   object-fit: contain;
-  border-radius: 14px;
+  /* Edge to edge: square corners, as the screen's own frame the picture. */
+  border-radius: 0;
   box-shadow: 0 18px 50px rgb(0 0 0 / 0.6);
   background: rgb(255 255 255 / 0.03);
   will-change: transform, opacity;
@@ -4687,6 +4695,9 @@ dialog.sheet::backdrop {
 
 .lb-strip {
   grid-row: 3;
+  grid-column: 1;
+  z-index: 2;
+  background: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / 0.55));
   display: flex;
   gap: 8px;
   align-items: center;
@@ -4750,6 +4761,35 @@ dialog.sheet::backdrop {
   opacity: 1;
   border-color: var(--accent);
   background: rgba(255, 255, 255, 0.16);
+}
+
+/* A tap on the picture fades the controls away and another brings them back;
+   hidden, they take no touches, so the picture gets them. */
+.lb-bar,
+.lb-strip,
+.lb-nav {
+  transition:
+    opacity 0.24s ease,
+    visibility 0s linear 0s;
+}
+.lightbox.chrome-hidden .lb-bar,
+.lightbox.chrome-hidden .lb-strip,
+.lightbox.chrome-hidden .lb-nav {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.24s ease,
+    visibility 0s linear 0.24s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lb-bar,
+  .lb-strip,
+  .lb-nav,
+  .lightbox.chrome-hidden .lb-bar,
+  .lightbox.chrome-hidden .lb-strip,
+  .lightbox.chrome-hidden .lb-nav {
+    transition: none;
+  }
 }
 
 /* One image: the strip and the arrows are just clutter. */
@@ -6349,7 +6389,7 @@ dialog.sheet::backdrop {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 14px;
+  border-radius: 0;
   background: #000;
   box-shadow: 0 18px 50px rgb(0 0 0 / 0.6);
   will-change: transform, opacity;

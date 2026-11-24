@@ -1089,7 +1089,10 @@ Discord-flavoured dark theme, phone first, no framework and no build step —
   videos in the same album; audio still uses the separate media player. The overlay sets `touch-action: none` and handles its own
   gestures: multi-touch pinch-to-zoom scales with transform matrix bounds, double-tap toggles
   2.5x zoom, horizontal swipe pages at 1x scale, and downward drag dismisses. Small images are shown at native size rather than
-  upscaled — an icon blown up to fill the screen just looks blurry.
+  upscaled — an icon blown up to fill the screen just looks blurry. The picture has the whole screen and the bar,
+  arrows and filmstrip lie over it; a tap on the picture fades them away and another brings them back (hidden, any
+  tap brings them back instead of closing; the tap waits out a double tap). `.lightbox.chrome-hidden`,
+  `toggleLightboxChromeSoon()`; DESIGN.md "Image viewer"; `test/e2e/lightbox-chrome.spec.ts`.
 - **Apple-style Text Selection & Quoting (`public/text-selection.js`, `public/selection-bubble.js`)**:
   Custom selection UI overlays iOS-style teardrop lollipop handle pins (`.sel-handle-line` + `.sel-handle-knob`)
   and a glass floating action pill (`Quote`, `Copy`, `Dismiss`). The selection itself is one rounded

@@ -114,6 +114,32 @@ exclusions preserve native scrolling, selection and tool-output interactions.
 - While any native dialog is open, global Life and Sessions-drawer gestures
   cannot begin. A swipe inside Subagents must never open Life underneath it.
 
+## Image viewer
+
+The picture has the whole screen (`.lb-stage` spans every row, no padding,
+square corners): as large as the screen allows, edge to edge on the axis it
+fills. The top bar (counter, pencil, download, open, ✕), the prev/next arrows
+and the filmstrip lie over it, each on a soft black shade (bar fading down,
+strip fading up) so the white icons read on a light picture and the shade is
+invisible over the backdrop.
+
+- **A tap on the picture fades the controls away** (opacity over 240ms, then
+  `visibility: hidden`, so they take no touches and the picture gets them);
+  another tap brings them back. While they are hidden there is no ✕, so a tap
+  anywhere (picture, backdrop, video) brings them back rather than closing.
+  With them showing, a tap on the backdrop still closes the viewer.
+- The tap waits 300ms for a second one: a double tap zooms and leaves the
+  controls as they were. A swipe, pinch or pan is not a tap; neither is a
+  mouse drag that panned a zoomed picture.
+- Opening the viewer always shows the controls; paging keeps their state.
+  Reduced motion switches at once.
+- Drawing (below) needs the tools out of the way: once the canvas is up, the
+  hidden photo takes the middle row again and the tools keep their own rows.
+
+iPhone, 2026-11-24 (landscape, filmstrip circled):
+「把這個設計成可以蓋到圖片，但是點一下中間的圖片他會消失（淡淡的消失），儘量滿版」.
+`test/e2e/lightbox-chrome.spec.ts` (390×844 and 844×390, both themes).
+
 ## Image annotation
 
 The image lightbox exposes a pencil action for writable main conversations. Drawing happens in the viewer itself, never in a second window: the picture turns into the canvas at the same spot and zoom, the viewer's top bar becomes Cancel (left) / Confirm (right), and the filmstrip row becomes the tools (one row when it fits, colours over the edit tools on a phone). The canvas glides from the photo's rect to its new fit, and Cancel hands the zoom back to the viewer. Cancel/Confirm, colour swatches, brush width, Undo and Clear have at least 44px targets. Actions reuse the image viewer’s transparent monochrome outline-icon buttons (no accent-filled Confirm or boxed text actions); brush width uses a dark capsule and colour selection uses a circular white ring. Icon actions retain accessible names and tooltips. The canvas takes the viewer photo's own fit and owns pointer gestures; the viewer's paging, dismiss and backdrop tap stand down while drawing. Single-pointer input draws; two fingers pinch from 1× to 8× and pan within image bounds. Switching to a pinch removes its unfinished initial stroke; drawing resumes only after all gesture fingers lift. Zoom is view-only: the PNG always contains the complete image, not just the visible crop. Confirm adds a flattened PNG to the existing composer, preserves the draft and never sends automatically. Annotating an image that is still a pending composer attachment replaces that attachment in place (same position, old object URL revoked), so re-editing never leaves the old copy behind; an image from the transcript is added as a new attachment. See [image annotation](docs/image-annotation.md) for limits and browser regression coverage.

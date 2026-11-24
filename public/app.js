@@ -5173,7 +5173,6 @@ function setLightboxCommitted(target) {
     img.classList.add('zoomed');
     img.style.width = `${w * target}px`;
     img.style.height = `${h * target}px`;
-    img.style.borderRadius = `${14 * target}px`;
   }
   img.style.transition = 'none';
   img.style.transform = `translate3d(${lb.x}px, ${lb.y}px, 0) scale(${lb.scale / lb.committed})`;
@@ -5384,6 +5383,7 @@ function openLightbox(url, urls, target = null) {
   lb.index = Math.max(0, lb.urls.indexOf(url));
   $('lightbox').hidden = false;
   $('lightbox').classList.toggle('single', lb.urls.length < 2);
+  setLightboxChrome(true);
   document.body.style.overflow = 'hidden';
   resetLightboxTransform(false);
   buildFilmstrip();
@@ -5503,6 +5503,7 @@ function closeLightbox() {
   lb.target = null;
   lightboxAlbumGeneration++;
   releaseLightboxVideo();
+  setLightboxChrome(true);
   $('lightbox').hidden = true;
   document.body.style.overflow = '';
   resetLightboxTransform(false);
@@ -5622,10 +5623,58 @@ $('lb-download')?.addEventListener('click', async (e) => {
   }
 });
 
-// Tapping the backdrop closes; tapping the image itself must not.
+/*
+ * The picture has the whole screen and the controls lie over it. A tap on the
+ * picture fades them away and another brings them back, the way a photo app
+ * does. Hidden, there is no ✕ to close with, so any tap brings them back
+ * rather than closing. The tap waits out a double tap, which zooms instead.
+ */
+let lightboxChromeTimer = 0;
+let lightboxPress = null;
+
+function setLightboxChrome(visible) {
+  clearTimeout(lightboxChromeTimer);
+  lightboxChromeTimer = 0;
+  $('lightbox').classList.toggle('chrome-hidden', !visible);
+}
+
+function cancelLightboxChromeTap() {
+  clearTimeout(lightboxChromeTimer);
+  lightboxChromeTimer = 0;
+}
+
+function toggleLightboxChromeSoon() {
+  // A second click inside the wait is a double click: it zooms instead.
+  if (lightboxChromeTimer) {
+    cancelLightboxChromeTap();
+    return;
+  }
+  lightboxChromeTimer = setTimeout(() => {
+    lightboxChromeTimer = 0;
+    if ($('lightbox').hidden || imageAnnotator.active) return;
+    setLightboxChrome($('lightbox').classList.contains('chrome-hidden'));
+  }, 300);
+}
+
+$('lightbox').addEventListener('mousedown', (e) => {
+  lightboxPress = { x: e.clientX, y: e.clientY };
+});
+
+// Tapping the backdrop closes while the controls show; tapping the picture
+// shows or hides them.
 $('lightbox').addEventListener('click', (e) => {
   if (imageAnnotator.active) return;
-  if (e.target === $('lightbox') || e.target === $('lb-stage')) closeLightbox();
+  // A mouse drag that panned a zoomed picture is not a tap.
+  const press = lightboxPress;
+  lightboxPress = null;
+  if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 6) return;
+  const hidden = $('lightbox').classList.contains('chrome-hidden');
+  const backdrop = e.target === $('lightbox') || e.target === $('lb-stage');
+  if (e.target === $('lb-img') || (hidden && (backdrop || e.target === $('lb-video')))) {
+    toggleLightboxChromeSoon();
+  } else if (backdrop) {
+    closeLightbox();
+  }
 });
 
 document.addEventListener('keydown', (e) => {
@@ -5707,6 +5756,8 @@ lightboxEl.addEventListener(
         lb.lastTap = 0;
         lb.isPanning = false;
         lb.drag = null;
+        // The first tap's show/hide is still waiting: this was a double tap.
+        cancelLightboxChromeTap();
         toggleLightboxZoomAt(touch.clientX, touch.clientY);
         return;
       }

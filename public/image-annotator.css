@@ -23,6 +23,13 @@
 .lightbox.annotation-ready #lb-img {
   visibility: hidden;
 }
+/* The viewer gives its picture the whole screen under the bar and filmstrip;
+   drawing needs the tools out of the way, so once the canvas is up (the photo
+   hidden) the photo takes the middle row too, and the canvas lies on it. */
+.lightbox.annotation-ready > .lb-stage {
+  grid-row: 2;
+  padding: 8px 12px;
+}
 .annotation-bar {
   grid-row: 1;
   z-index: 3;
