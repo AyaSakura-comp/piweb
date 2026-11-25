@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- With the iPhone turned sideways, text keeps the size the app sets: Safari no longer enlarges it in wide Dashboard panes only, which left wide and narrow panes at different sizes
 - Dashboard on the iPhone: opening the keyboard no longer throws a pane's transcript back to older messages, and the input card rises straight to just above the keyboard instead of shooting up to the top of the pane and sinking back
 - On an iPhone with an outer camera bump (Duo), the Dashboard no longer leaves a dead strip the whole height of the grid beside the rightmost pane: the phone rule only honoured the top safe area, so a reported side inset pushed the grid in from the edge; left and right insets are now 0 there and the grid runs to the physical edge (the regression emulates a 21px right inset and asserts it)
 - An AGY session no longer fails with "model gemini-4-neon-high is not recognized as a known model" right after a reboot: agy could not load its model list yet, so the turn now waits and runs again (as long as `agy models` still has the model, or cannot answer yet); a model agy really dropped says so and points to /model

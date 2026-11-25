@@ -77,6 +77,17 @@ body {
 }
 
 /*
+ * Text is the size this CSS sets, in any orientation. Turned sideways, Safari
+ * on the iPhone enlarges text in wide blocks only (text autosizing): two wide
+ * Dashboard panes read ~17px beside 13px narrow ones (iPhone screenshot
+ * 2026-11-26, 「字體沒有統一，我是說字體大小」). Pinch zoom is untouched.
+ */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
  * iOS 26 Home Screen app (viewport-fit=cover + black-translucent): WebKit sizes
  * the viewport short by the status bar height while the page is shorter than
  * the screen (WebKit 301108), leaving a strip under the composer until the

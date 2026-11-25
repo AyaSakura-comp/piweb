@@ -17,6 +17,11 @@ navigation.
 | `--text-2` | `#b5bac1` | `#56534d` |
 | `--accent` | `#5865f2` | `#3f5f6f` |
 
+Text is the size the CSS sets, in either orientation: `html` has
+`-webkit-text-size-adjust: 100%`. Turned sideways, Safari on the iPhone otherwise
+enlarges text in wide blocks only, so two wide Dashboard panes read ~17px beside 13px
+narrow ones (iPhone screenshot 2026-11-26, 「字體沒有統一」).
+
 Subagents uses the inherited system font, a 20px/650-weight heading, 15px card
 names and 12–13px metadata. Use 16px horizontal content spacing, 12px card gaps
 and visible keyboard focus. Header buttons are at least 44×44px.
