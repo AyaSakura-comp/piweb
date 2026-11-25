@@ -1,10 +1,10 @@
 import { expect, test, type Page } from 'playwright/test';
 
 // Tapping a pane to give it the input card grows it to reading size: an
-// 80-column reply line and 180px of transcript in sight, and at least 1.5 times
+// 80-column reply line and 140px of transcript in sight, and at least 1.5 times
 // its own height, but never past 60% of the stage (2026-11-15: 點擊視窗放大, 不是
-// 放大到最大). The next pane tapped gets the room instead, and the first goes
-// back to its size.
+// 放大到最大; 2026-11-25: 不是放到最大，就是大一點，至少80字元寬140字元高). The
+// next pane tapped gets the room instead, and the first goes back to its size.
 const sessions = Array.from({ length: 9 }, (_, i) => ({
   jid: `web:r${i}`,
   name: `Pane ${i + 1}`,
@@ -117,6 +117,19 @@ const seenOf = (page: Page, jid: string) =>
     return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - (pin?.offsetHeight ?? 0);
   }, jid);
 
+/** Transcript in sight as the fit counts it: the pinned prompt bar is taken
+ *  out even while hidden (a grown pane scrolls a prompt under it). */
+const fitSeenOf = (page: Page, jid: string) =>
+  page.evaluate((id) => {
+    const el = document.querySelector<HTMLElement>(`.dashboard-pane[data-jid="${id}"]`)!;
+    const clip = el.querySelector<HTMLElement>('.prompt-pin-clip');
+    const hidden = clip?.hidden ?? false;
+    if (clip) clip.hidden = false;
+    const pin = clip?.querySelector<HTMLElement>('.prompt-pin')?.offsetHeight ?? 0;
+    if (clip) clip.hidden = hidden;
+    return el.querySelector<HTMLElement>('.dashboard-pane-messages')!.clientHeight - pin;
+  }, jid);
+
 /** `jid` grew a visible step from `before` and to reading height, yet stops
  *  well short of the stage: it is not zoomed, and every pane is still there. */
 const expectStep = async (
@@ -124,7 +137,7 @@ const expectStep = async (
   jid: string,
   before: { height: number },
   count: number,
-  minSeen = 179,
+  minSeen = 139,
 ) => {
   const grown = await settled(page, jid);
   const stage = (await page.locator('#dashboard-grid').boundingBox())!;
@@ -136,7 +149,7 @@ const expectStep = async (
   return grown;
 };
 
-test('a tapped pane grows to an 80-column line, 180px of transcript and a visible step, short of the stage', async ({ page }, info) => {
+test('a tapped pane grows to an 80-column line, 140px of transcript and a visible step, short of the stage', async ({ page }, info) => {
   const errors = await setup(page);
   const target = jids[4]; // the middle of the 3×3 grid
   await expect(pane(page, target).locator('.msg-text').first()).toBeVisible();
@@ -202,7 +215,7 @@ test('a pane already wide enough with nothing above or below keeps the layout as
   expect(errors).toEqual([]);
 });
 
-test('a stacked pane grows until 180px of transcript show between the pinned prompt and the card', async ({ page }) => {
+test('a stacked pane grows until 140px of transcript show between the pinned prompt and the card, and no further', async ({ page }) => {
   const errors = await setup(page);
   // Five panes stacked top to bottom: each starts too short for the card,
   // which it squeezes, and the pinned prompt lies over its transcript.
@@ -222,6 +235,9 @@ test('a stacked pane grows until 180px of transcript show between the pinned pro
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, target)).toHaveClass(/composer-active/);
   await expectStep(page, target, before, 5);
+  // 140px, then it stops: a bit bigger, not as big as the others allow
+  // (2026-11-25: 不是放到最大，就是大一點，至少80字元寬140字元高).
+  expect(await fitSeenOf(page, target)).toBeLessThan(156);
   expect(errors).toEqual([]);
 });
 
@@ -266,10 +282,11 @@ test('on a phone with seven panes stacked, a tap grows the pane a clear step, no
   const before = await settled(page, target);
   await pane(page, target).locator('.dashboard-pane-transcript').click();
   await expect(pane(page, target)).toHaveClass(/composer-active/);
-  // Six header strips at the compact 65px leave a little under 180px of
-  // transcript on an 844pt phone: it grows as far as they allow.
-  const grown = await expectStep(page, target, before, 7, 150);
-  expect(grown.height).toBeGreaterThan(before.height * 2); // ~110px → ~400px
+  // 140px of transcript in sight and no more: ~105px → ~320px, and the other
+  // six keep more than their header strip.
+  const grown = await expectStep(page, target, before, 7);
+  expect(await fitSeenOf(page, target)).toBeLessThan(156);
+  expect(grown.height).toBeGreaterThan(before.height * 2.5);
   // Every other pane still shows at least its header.
   for (const j of jids.slice(0, 7).filter((x) => x !== target)) {
     expect((await settled(page, j)).height).toBeGreaterThanOrEqual(44);

@@ -831,10 +831,10 @@ keyboard; a finger scroll moves nothing.
     image/multimedia attachment thumbnail preview strip with lightbox + image editor (`✎`),
     image compression toggle (`壓縮圖片`), and `createHotKeywords` quick-input chip bar.
 - **A tapped pane grows to reading size** (user request, 2026-11-12: 點 window 的時候自己展開
-  寬度 ≥ 80 字元，高度 ≥ 160): a tap on a pane's window (its transcript, not a header
+  寬度 ≥ 80 字元，高度 ≥ 160; again 2026-11-25: 點擊視窗會自己放大（不是放到最大，就是大一點，至少80字元寬140字元高）): a tap on a pane's window (its transcript, not a header
   control or the card) or on its session-list row, when the card comes to it, grows it to
   an 80-column reply line (`80ch` in the reply font, measured with a hidden `.msg-text`
-  probe) and 180px of transcript in sight between the pinned prompt bar and the card
+  probe) and 140px of transcript in sight between the pinned prompt bar and the card
   (`fitPaneForReading()`; the bar over the transcript's top and the card's full height,
   which a squeezed pane had cut, are taken out first), and to at least 1.5× its own
   height, but never past 60% of the stage (`FIT_GROW_FACTOR`, `FIT_MAX_STAGE_SHARE`).

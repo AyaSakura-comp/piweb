@@ -299,18 +299,26 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   const paneAt = (i: number) => page.locator('.dashboard-pane').nth(i);
   await paneAt(0).locator('.msg-text').first().tap();
   await expect(paneAt(0)).toHaveClass(/composer-active/);
+  // The tap also grows the pane (reading fit, up to 60% of the stage): measure
+  // once it has, not mid-animation.
+  await expect
+    .poll(() => page.evaluate(() => [...document.querySelectorAll('.dashboard-pane')].some(p => p.getAnimations().length)))
+    .toBe(false);
+  await page.waitForTimeout(150);
   const rest = await onScreen();
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);
   const app = await rect('.app');
   expect(app).toEqual({ top: 364, bottom: 364 + 844 });
   const topTyping = await onScreen();
+  // The panes stay where they were.
   expect(topTyping.panes).toEqual(rest.panes);
+  // Grown, the top pane's card sits where the keyboard comes up: only the
+  // card rises, just clear of it.
+  expect(rest.dock.bottom).toBeGreaterThan(480 - 6);
   expect(topTyping.dock.bottom).toBeLessThanOrEqual(480 - 6);
-  // The top card is above the keyboard already: nothing moves at all.
-  expect(rest.dock.bottom).toBeLessThanOrEqual(480 - 6);
-  expect(topTyping.dock).toEqual(rest.dock);
-  expect(topTyping.lifted).toEqual([false, false]);
+  expect(topTyping.dock.bottom).toBeGreaterThan(480 - 40);
+  expect(topTyping.lifted).toEqual([true, false]);
   await page.screenshot({ path: info.outputPath('02-dashboard-keyboard-top-pane.png') });
 
   // Typing in the lower pane (it sits under the keyboard, so it is tapped with
@@ -326,7 +334,12 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   await expect(paneAt(1).locator('textarea')).not.toBeFocused();
   await paneAt(1).locator('.msg-text').first().tap();
   await expect(paneAt(1).locator('textarea')).toBeFocused();
-  const bottomRest = (await onScreen()).dock;
+  // That tap grew the lower pane (and gave the top one its size back).
+  await expect
+    .poll(() => page.evaluate(() => [...document.querySelectorAll('.dashboard-pane')].some(p => p.getAnimations().length)))
+    .toBe(false);
+  const bottomRestAll = await onScreen();
+  const bottomRest = bottomRestAll.dock;
   await page.evaluate(() => (window as any).__setVisibleHeight(480));
   await page.waitForTimeout(800);
   // The lift re-samples the viewport up to 700ms after the keyboard event; on
@@ -334,7 +347,7 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   // wait, 1-20px short. Wait for where it settles, not a moment in between.
   await expect.poll(async () => (await onScreen()).dock.bottom).toBe(480 - 6);
   const bottomTyping = await onScreen();
-  expect(bottomTyping.panes).toEqual(rest.panes);
+  expect(bottomTyping.panes).toEqual(bottomRestAll.panes);
   expect(bottomTyping.lifted).toEqual([false, true]);
   expect(bottomTyping.dock.top).toBeGreaterThanOrEqual(8);
   await expect(paneAt(1).locator('textarea')).toBeFocused();

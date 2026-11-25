@@ -15,11 +15,12 @@ const PANE_PAGE_SIZE = 50;
 const MIN_PANE_WIDTH_PX = 140;
 const MIN_PANE_HEIGHT_PX = 95;
 // A pane tapped to take the input card grows to read comfortably (user request,
-// 2026-11-12: 寬度 ≥ 80 字元, 高度 ≥ 180): a reply line of at least this many
-// characters (CSS `ch`, the width of "0" in the reply font) and at least this
-// much transcript in sight between the pinned prompt and the card.
+// 2026-11-12: 寬度 ≥ 80 字元, 高度 ≥ 180; 2026-11-25: 至少80字元寬140字元高): a
+// reply line of at least this many characters (CSS `ch`, the width of "0" in
+// the reply font) and at least this much transcript in sight between the
+// pinned prompt and the card.
 const FIT_READING_COLUMNS = 80;
-const FIT_TRANSCRIPT_PX = 180;
+const FIT_TRANSCRIPT_PX = 140;
 // And a tap always shows: the pane grows to at least this many times its own
 // height, though never past this share of the stage, so it never fills it
 // (2026-11-15: 點擊視窗放大, 不是放大到最大). The neighbours give the room down
@@ -2772,7 +2773,7 @@ export function createSessionDashboard({
    * panes clip their own overflow).
    */
   /** How much wider and taller (px) `pane` must be for an 80-column reply
-   *  line and 180px of transcript in sight between the pinned prompt and the card, measured with the pane's
+   *  line and 140px of transcript in sight between the pinned prompt and the card, measured with the pane's
    *  own fonts and chrome as it is laid out now (card included). Layout
    *  sizes, not client rects, so a pane mid-animation measures its real size. */
   function readingShortfall(pane) {
@@ -2882,7 +2883,7 @@ export function createSessionDashboard({
   }
 
   /** A tap brought the card to `jid`: grow its pane to reading size (an
-   *  80-column line, 180px of transcript in sight) and at least 1.5 times its
+   *  80-column line, 140px of transcript in sight) and at least 1.5 times its
    *  own height, up to 60% of the stage, first giving the pane an earlier
    *  tap grew its old size back, so tapping around never ratchets the layout.
    *  A layout someone has since changed by hand is left as it is. Returns
@@ -2908,7 +2909,7 @@ export function createSessionDashboard({
       const scaleW = now.width / Math.max(1, pane.el.offsetWidth);
       const scaleH = now.height / Math.max(1, pane.el.offsetHeight);
       const wantW = (pane.el.offsetWidth + need.width + 1) * scaleW;
-      // 180px of transcript, and a visible step up from the pane's own height
+      // 140px of transcript, and a visible step up from the pane's own height
       // that stops short of filling the stage.
       const stage = gridEl.getBoundingClientRect();
       const readH = (pane.el.offsetHeight + need.height + 1) * scaleH;

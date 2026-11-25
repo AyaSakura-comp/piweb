@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- A tapped Dashboard pane grows until 140px of its transcript are in sight (was 180px), still to an 80-column line and at least 1.5× its height, never past 60% of the stage: a bit bigger, not the most the others allow
 - The image viewer gives the picture the whole screen: the top bar, arrows and filmstrip lie over it, and a tap on the picture fades them away (another tap brings them back); a double tap still zooms
 - AGY and LOCAL session tags have their own colours: AGY in Google blue (it was the grey fallback), LOCAL green; in the light theme both (and GEM) take a tinted fill and rim like Claude's, so the three read apart in the drawer
 - Use a slim BTW header with accessible back/clear icons, horizontal transcript switching and a pending-answer link; preserve independent composer drafts and restore pending questions from worker snapshots
