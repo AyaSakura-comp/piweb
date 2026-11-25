@@ -314,11 +314,13 @@ test('the keyboard pins the chat and dashboard shell to the panned visual viewpo
   // The panes stay where they were.
   expect(topTyping.panes).toEqual(rest.panes);
   // Grown, the top pane's card sits where the keyboard comes up: only the
-  // card rises, just clear of it.
+  // card rises, just clear of it, over its own transcript, so the pane keeps
+  // clipping (.kb-lifted is for a card that must go over the pane above; on
+  // iOS the switch reset the transcript's scroll, 2026-11-26).
   expect(rest.dock.bottom).toBeGreaterThan(480 - 6);
   expect(topTyping.dock.bottom).toBeLessThanOrEqual(480 - 6);
   expect(topTyping.dock.bottom).toBeGreaterThan(480 - 40);
-  expect(topTyping.lifted).toEqual([true, false]);
+  expect(topTyping.lifted).toEqual([false, false]);
   await page.screenshot({ path: info.outputPath('02-dashboard-keyboard-top-pane.png') });
 
   // Typing in the lower pane (it sits under the keyboard, so it is tapped with

@@ -963,6 +963,14 @@ keyboard; a finger scroll moves nothing.
   pan floats the composer at the top. The iOS 26 standalone short-viewport gap
   (WebKit 301108) is fixed by the `display-mode: standalone` `html` min-height
   rule in `app.css`, not by remeasuring, rotating, or a `display:none` remount.
+- **Dashboard keyboard: only the card moves, once.** The panes keep their places and
+  the active card rises straight to 6px above the keyboard, never past it and back
+  (its unlifted place comes from the layout, not its sliding rect). A card that clears
+  the keyboard inside its own pane leaves the pane's clipping alone; only one that
+  must go over the pane above switches the pane to `.kb-lifted`, and the transcripts
+  are then held where the reader was (iOS reset the transcript's scroll on that
+  switch). The reader's place never moves when the keyboard opens or closes (iPhone
+  recording 2026-11-26, 「這個會亂跳」; `test/e2e/dashboard-keyboard-reading.spec.ts`).
 
 ## Provider badges
 

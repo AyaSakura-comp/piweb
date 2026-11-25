@@ -3073,6 +3073,7 @@ export function createSessionDashboard({
     const target = active && keyboard && composerJid ? panes.get(composerJid) : null;
     for (const pane of panes.values()) {
       let lift = 0;
+      let outside = false;
       if (pane === target && !pane.disposed && pane.dock.classList.contains('is-floating')) {
         // Measured against the shell, not visualViewport.offsetTop: the shell
         // is pinned to the top of the visible strip, so the strip is
@@ -3080,28 +3081,110 @@ export function createSessionDashboard({
         // offsetTop and the shell's position disagree for a moment, and the
         // card flew ~100px too high before settling (iPhone recording
         // 2026-10-22).
-        const rect = pane.dock.getBoundingClientRect();
+        // Where the card sits unlifted comes from the layout (offsetTop leaves
+        // the lift's translate out), not its rect: mid-slide the rect carries
+        // only part of the lift, and adding the whole of it put the card too
+        // low, so each keyboard step lifted it too far — up to the top of the
+        // pane — before it sank back (iPhone recording 2026-11-26).
+        const paneRect = pane.el.getBoundingClientRect();
+        const top = paneRect.top + pane.el.clientTop + pane.dock.offsetTop;
+        const bottom = top + pane.dock.offsetHeight;
         const shellTop = app.getBoundingClientRect().top;
-        const current = pane.kbLift || 0;
         // Just above the keyboard, but never past the top of the visible strip.
-        const need = rect.bottom - shellTop + current - (vv.height - 6);
-        const room = rect.top - shellTop + current - 8;
+        const need = bottom - shellTop - (vv.height - 6);
+        const room = top - shellTop - 8;
         lift = Math.round(Math.max(0, Math.min(need, room)));
+        // Only a card lifted past its own pane's top needs the pane to stop
+        // clipping it (.kb-lifted) to cover the pane above. Inside its pane it
+        // covers its own transcript, and the pane keeps its overflow: on iOS,
+        // switching it rebuilt the transcript's scrolling layer, which came
+        // back at the top (iPhone recording 2026-11-26, 「這個會亂跳」).
+        outside = lift > 0 && top - lift < paneRect.top - 0.5;
       }
-      if (lift === (pane.kbLift || 0)) continue;
-      pane.kbLift = lift;
-      if (instant) pane.dock.style.transition = 'none';
-      pane.dock.style.setProperty('--kb-lift', `${lift}px`);
+      if (lift !== (pane.kbLift || 0)) {
+        pane.kbLift = lift;
+        if (instant) pane.dock.style.transition = 'none';
+        pane.dock.style.setProperty('--kb-lift', `${lift}px`);
+        if (instant) {
+          pane.dock.getBoundingClientRect();
+          pane.dock.style.transition = '';
+        }
+      }
+      setPaneUnclipped(pane, outside, instant);
+    }
+  }
+
+  /** Let `pane`'s lifted card out over the pane above (`.kb-lifted`), or clip
+   *  it again — after the card has slid back into its pane, unless `instant`.
+   *  Either way the transcripts are held where the reader left them. */
+  function setPaneUnclipped(pane, on, instant) {
+    const has = pane.el.classList.contains('kb-lifted');
+    if (on) {
       clearTimeout(pane.kbLiftTimer);
-      if (lift > 0) pane.el.classList.add('kb-lifted');
-      // Stay unclipped while the card slides back down into its pane.
-      else if (instant) pane.el.classList.remove('kb-lifted');
-      else pane.kbLiftTimer = setTimeout(() => pane.el.classList.remove('kb-lifted'), 260);
-      if (instant) {
-        pane.dock.getBoundingClientRect();
-        pane.dock.style.transition = '';
+      pane.kbLiftTimer = 0;
+      if (!has) {
+        holdReadingPlace(pane);
+        pane.el.classList.add('kb-lifted');
+      }
+      return;
+    }
+    if (!has) return;
+    const clip = () => {
+      pane.kbLiftTimer = 0;
+      holdReadingPlace(pane);
+      pane.el.classList.remove('kb-lifted');
+    };
+    if (instant) {
+      clearTimeout(pane.kbLiftTimer);
+      clip();
+    } else if (!pane.kbLiftTimer) {
+      pane.kbLiftTimer = setTimeout(clip, 260);
+    }
+  }
+
+  /** For a moment after `pane` starts or stops clipping its card, a transcript
+   *  that jumps (more than a flick moves it in a frame) without a finger on it
+   *  is put back where the reader was: iOS rebuilt the transcript's scrolling
+   *  layer on that switch, and it came back at the top of the loaded page
+   *  (iPhone recording 2026-11-26). A finger, wheel or new content ends it. */
+  function holdReadingPlace(pane, ms = 800) {
+    pane.readingHold?.();
+    const holds = [pane.messagesEl, pane.btwMessagesEl]
+      .filter((el) => el && !el.hidden)
+      .map((el) => ({ el, top: el.scrollTop, bottom: isNearBottom(el), height: el.scrollHeight }));
+    if (!holds.length) return;
+    const JUMP_PX = 160;
+    const put = () => {
+      for (const h of holds) {
+        if (h.el.scrollHeight !== h.height) continue; // its own code places new content
+        const want = h.bottom ? h.el.scrollHeight - h.el.clientHeight : h.top;
+        if (Math.abs(h.el.scrollTop - want) > JUMP_PX) h.el.scrollTop = want;
+        else if (!h.bottom) h.top = h.el.scrollTop; // a small step is the reader's own
+      }
+    };
+    let frame = 0;
+    const tick = () => {
+      put();
+      frame = requestAnimationFrame(tick);
+    };
+    const end = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      for (const h of holds) {
+        h.el.removeEventListener('scroll', put);
+        for (const type of ['touchstart', 'pointerdown', 'wheel']) h.el.removeEventListener(type, end);
+      }
+      if (pane.readingHold === end) pane.readingHold = null;
+    };
+    for (const h of holds) {
+      h.el.addEventListener('scroll', put, { passive: true });
+      for (const type of ['touchstart', 'pointerdown', 'wheel']) {
+        h.el.addEventListener(type, end, { passive: true });
       }
     }
+    frame = requestAnimationFrame(tick);
+    const timer = setTimeout(end, ms);
+    pane.readingHold = end;
   }
 
   /** Keep the floating input on a pane that exists (after add/remove/reload). */
