@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- ⏩ Continue in the chat composer, left of the mic: one tap sends "continue" to the session's agent. It shows only while the box is empty (typing, a quote, attachments or the mic listening put it away) and not in Life or BTW
 - agy turns that Google's servers fail in passing (503 "No capacity available … try again in a minute", 502/504, an idle stream) run again by themselves after 15 s, 30 s, 1 min and 2 min, saying so in the transcript; a newer message stops the wait
 - 🔑 Login details for the agent: a key in the composer takes a name, account and password; the web tier seals them to the host worker's key at once, so the database, the transcript and Pi's session file never hold them in plain text — the agent is told variable names (`$PIWEB_SECRET_GITHUB_PASS`), Pi's tools get the values when they run, and anything echoed back is scrubbed
 - BTW in AGY sessions, answered by agy's own `/btw` (asked in agy's TUI beside the conversation; the main conversation never sees it)

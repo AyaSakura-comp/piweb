@@ -343,6 +343,22 @@ vertical strokes still scroll. While voice input is on the box handles touches
 itself (no iOS edit menu or loupe: a tap places the caret), and a stroke stays on
 its first line until the finger is a line away. See [voice input](docs/voice-input.md).
 
+## Composer: continue
+
+A borderless ⏩ button (`#btn-continue`, two outline triangles, `--text-dim`
+like the other composer icons, 44px target on touch) sits between the box and
+the mic in the chat composer; Send stays last. One tap sends `continue` to the
+open session's agent, exactly as if it had been typed and sent: the prompt
+appears in the transcript and is placed like any sent prompt. The box, its
+caret and any keyboard stay as they are (the button keeps focus where it is),
+and a second tap while the first is on its way does nothing. It shows only
+while there is nothing else to send: text in the box, a quote, attachments,
+login details or a listening mic put it away, and the box takes its width back
+(the voice status in the placeholder keeps its ~11 characters on a phone).
+Life and BTW have no ⏩ (a side question must never reach the main agent).
+Dashboard pane composers do not have it. (iPhone/iPad, 2026-11-25: 「Add
+continue icon button, and it will send continue message to session agent」.)
+
 ## Render-first replies
 
 Live assistant/thinking replies use a reply-only React 19 island backed by

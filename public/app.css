@@ -670,9 +670,25 @@ html.keyboard-shell .life-edge-hint {
   color: var(--accent);
 }
 
+/* Continue (⏩) sends "continue" in one tap. It shows only while there is
+   nothing else to send: typing, a quote, attachments or login details take it
+   away (the box gets its width back), and Life and BTW have no use for it.
+   While the mic listens it goes too: saying "continue" does the same, and the
+   voice status in the placeholder keeps its room. */
+.composer:has(> textarea:not(:placeholder-shown)) > #btn-continue,
+.composer:has(> textarea:disabled) > #btn-continue,
+.composer.voice-listening > #btn-continue,
+.composer-wrap:has(> #quote-preview:not([hidden]), > #attachments:not([hidden]), > #secret-panel:not([hidden]))
+  #btn-continue,
+.app.life-mode #btn-continue,
+.app.btw-active #btn-continue {
+  display: none;
+}
+
 /* Primary turn actions must be reliably tappable on phone layouts. */
 @media (pointer: coarse) {
   #btn-send,
+  #btn-continue,
   #btn-stop {
     min-width: 44px;
     min-height: 44px;

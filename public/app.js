@@ -4877,6 +4877,51 @@ $('composer').addEventListener('submit', async (e) => {
   }
 });
 
+// ⏩ Continue (iPhone, 2026-11-25: 「Add continue icon button, and it will send
+// continue message to session agent」). One tap sends "continue" to the open
+// session, as if typed and sent; the box, its caret and any keyboard stay as
+// they are. CSS shows it only while the composer has nothing else to send.
+const CONTINUE_TEXT = 'continue';
+let continueSending = false;
+$('btn-continue').addEventListener('pointerdown', (e) => e.preventDefault());
+$('btn-continue').addEventListener('click', () => void sendContinue());
+
+async function sendContinue() {
+  const jid = state.activeJid;
+  if (
+    continueSending ||
+    !jid ||
+    jid === LIFE_JID ||
+    state.mode === 'life' ||
+    state.uploading ||
+    state.selectionPending ||
+    state.previewingDeleted ||
+    input.disabled ||
+    btwWorkspace.isSide()
+  ) {
+    return;
+  }
+  continueSending = true;
+  $('btn-continue').disabled = true;
+  releaseComposerBottomLock();
+  const promptTicket = promptTurnScroll.begin();
+  try {
+    const result = await api(`/api/sessions/${encodeURIComponent(jid)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text: CONTINUE_TEXT, quote: '', attachments: [] }),
+    });
+    applyImmediateSessionTitle(jid, result?.sessionTitle);
+    promptTurnScroll.acknowledge(promptTicket, result?.eventId);
+  } catch (err) {
+    promptTurnScroll.cancel(promptTicket);
+    if (err.status === 401) showLogin();
+    alert(err.message);
+  } finally {
+    continueSending = false;
+    $('btn-continue').disabled = false;
+  }
+}
+
 /** Parse "/pi model gpt-5" into a command + its single argument. */
 async function trySendCommand(
   line,
