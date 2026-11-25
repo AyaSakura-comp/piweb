@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- On an iPhone with an outer camera bump (Duo), the Dashboard no longer leaves a dead strip the whole height of the grid beside the rightmost pane: the phone rule only honoured the top safe area, so a reported side inset pushed the grid in from the edge; left and right insets are now 0 there and the grid runs to the physical edge (the regression emulates a 21px right inset and asserts it)
 - An AGY session no longer fails with "model gemini-4-neon-high is not recognized as a known model" right after a reboot: agy could not load its model list yet, so the turn now waits and runs again (as long as `agy models` still has the model, or cannot answer yet); a model agy really dropped says so and points to /model
 - Holding a session row sometimes opened Rename / Delete in the top-left corner, its title under the status bar: when the session list re-rendered during the hold (the 5 s poll, a session turning busy), the menu was placed against the replaced row; it now finds the row on screen, follows it when the list re-renders, and closes if the row is gone
 - A Claude Code menu piweb has no rule for ("Resume this conversation?" when a long idle conversation is reopened, and any new one) no longer fails every message with "did not become ready": piweb shows the question and its options in the chat, holds the message, and the reply "1"/"2" picks the option and sends the held message; "Start a new conversation" starts one piweb can follow, pointing Claude at the old transcript

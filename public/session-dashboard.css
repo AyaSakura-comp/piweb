@@ -1438,7 +1438,19 @@
 @media (max-width: 767px), (max-height: 499px) and (pointer: coarse) {
   .dashboard-toolbar { height: 52px; min-height: 52px; flex-wrap: nowrap; gap: 4px; padding: 0 8px; }
   .dashboard-toolbar-title { flex: 1 1 0; }
-  .app.dashboard-active #dashboard-view { padding-top: env(safe-area-inset-top); padding-bottom: 0; box-sizing: border-box; }
+  /* Only the top inset is honoured: the notch sits there. Left/right are not —
+     an iPhone Duo-style outer camera bump reports a side inset, and honouring
+     it left a dead strip the whole height of the grid beside the rightmost
+     pane (iPhone screenshot 2026-11-25). Nothing in the Dashboard sits that
+     close to the edge, so the grid runs to the physical edge instead. Bottom
+     stays 0 too (a3c64a9): the panes' own 8px padding clears the home bar. */
+  .app.dashboard-active #dashboard-view {
+    padding-top: env(safe-area-inset-top);
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    box-sizing: border-box;
+  }
   .dashboard-Menu-btn { display: grid; }
   .dashboard-layout-presets { flex: 0 0 auto; max-width: calc(100% - 52px); margin-left: auto; overflow-x: auto; }
   /* No room for host readings on a phone; the drawer still has them. */

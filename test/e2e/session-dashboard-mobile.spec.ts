@@ -216,11 +216,16 @@ test('phone dashboard opens, adds panes, survives rotation and closes without ga
   await page.locator('#btn-topbar-dashboard').click();
   await expect(page.locator('#dashboard-view')).toBeVisible();
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: 34 } });
+  // A Duo-style outer camera bump reports a right inset; the grid must still
+  // reach the physical edge (iPhone screenshot 2026-11-25: a dead strip sat
+  // the whole height of the grid beside the rightmost pane).
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: 34, right: 21 } });
   await expect(page.locator('#dashboard-view')).toHaveCSS('padding-bottom', '0px');
+  await expect(page.locator('#dashboard-view')).toHaveCSS('padding-right', '0px');
   const rootBox = await page.locator('#dashboard-view').boundingBox();
   const stageBox = await page.locator('.dashboard-stage').boundingBox();
   expect(Math.abs(rootBox!.y + rootBox!.height - stageBox!.y - stageBox!.height)).toBeLessThan(2);
+  expect(Math.abs(stageBox!.x + stageBox!.width - 390)).toBeLessThan(2);
   const firstPane = page.locator('.dashboard-pane').first();
   await firstPane.locator('.dashboard-pane-messages').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(firstPane.locator('.pane-jump-live')).not.toHaveClass(/visible/);
