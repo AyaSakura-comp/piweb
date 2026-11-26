@@ -1517,8 +1517,58 @@ describe('Claude tmux invocation', () => {
     expect(fixture.pastes).toHaveLength(1);
   });
 
-  it('sends Ctrl-C and preserves the tmux session when aborted', async () => {
+  it('stops with a lone Escape, and no Ctrl-C once the turn has stopped', async () => {
+    // 2026-11-16 (Qwen image): Escape and C-c back to back read as one Alt
+    // chord, so three stops never reached a turn stuck on `devicectl --console`.
     const fixture = createRuntimeFixture({ completeTurns: false });
+    fixture.dependencies.escapeSettleMs = 400;
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'send-keys' && ['Escape', 'C-c'].includes(String(args.at(-1)))) calls.push(String(args.at(-1)));
+      return tmux(args);
+    };
+    const originalSleep = fixture.dependencies.sleep;
+    fixture.dependencies.sleep = async (ms) => {
+      if (ms === 400) calls.push('settle');
+      if (fixture.submissionCount > 0 && !controller.signal.aborted) controller.abort();
+      return originalSleep(Math.min(ms, 1));
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'keep working', {
+      signal: controller.signal,
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toMatchObject({ ok: false, aborted: true });
+    expect(calls).toEqual(['Escape', 'settle']);
+    expect(fixture.live).toBe(true);
+  });
+
+  it('pauses before a new message while an earlier turn still runs, and stops it first', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.live = true;
+    let stillRunning = true;
+    const keys: string[] = [];
+    const tmux = fixture.dependencies.tmux;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'capture-pane' && stillRunning && fixture.trustAccepted) {
+        return `✻ Working…\n${'─'.repeat(80)}\n❯ \n${'─'.repeat(80)}\n  ⏵⏵ bypass permissions on · esc to interrupt`;
+      }
+      if (args[0] === 'send-keys') keys.push(String(args.at(-1)));
+      if (args[0] === 'send-keys' && args.at(-1) === 'Escape') stillRunning = false;
+      if (args[0] === 'paste-buffer') expect(stillRunning).toBe(false);
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'next message', { dependencies: fixture.dependencies });
+    expect(result).toMatchObject({ ok: true, text: 'Done from tmux.' });
+    expect(keys.filter((k) => k === 'Escape')).toHaveLength(1);
+    expect(keys).not.toContain('C-c');
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it('sends Ctrl-C and preserves the tmux session when aborted', async () => {
+    // The Escape did not stop it (the footer still offers the interrupt).
+    const fixture = createRuntimeFixture({ completeTurns: false, runningAfterSubmit: true });
     const controller = new AbortController();
     const originalSleep = fixture.dependencies.sleep;
     fixture.dependencies.sleep = async (ms) => {
@@ -1718,7 +1768,8 @@ describe('Claude tmux progress-aware timeout', () => {
       const { result, fixture, elapsed } = await runTimeoutScenario(mode);
       expect(result).toMatchObject({ ok: false });
       expect(result.error).toContain('tmux turn timed out');
-      expect(elapsed).toBeLessThanOrEqual(140);
+      // One poll past the deadline, plus the pause between Escape and C-c.
+      expect(elapsed).toBeLessThanOrEqual(210);
       expect(fixture.sentKeys.some((keys) => keys.includes('Escape'))).toBe(true);
       expect(fixture.sentKeys.some((keys) => keys.includes('C-c'))).toBe(true);
     },
@@ -1764,7 +1815,7 @@ async function runTimeoutScenario(
     | 'transcript' | 'background-output' | 'empty-tool-result' | 'boundary' | 'idle' | 'noise'
     | 'background-noise' | 'background-silent' | 'quoted-launch',
 ) {
-  const fixture = createRuntimeFixture({ completeTurns: false });
+  const fixture = createRuntimeFixture({ completeTurns: false, runningAfterSubmit: true });
   const output = join(fixture.root, 'benchmark.output');
   writeFileSync(output, mode === 'background-noise' ? 'steady output\n' : '');
   // A silent watcher: alive, holding the output file, printing nothing.
@@ -2019,6 +2070,8 @@ const SESSION_PAUSED_MENU = [
 function createRuntimeFixture(
   options: {
     completeTurns?: boolean;
+    /** The footer offers "esc to interrupt" once a message is in (a turn running). */
+    runningAfterSubmit?: boolean;
     runningScreen?: boolean;
     pasteLineCount?: boolean;
     trustCursorOnNo?: boolean;
@@ -2122,8 +2175,11 @@ function createRuntimeFixture(
               : pendingPrompt;
           }
         }
+        // Claude Code offers the interrupt only while a turn runs: an idle
+        // prompt's footer has no "esc to interrupt".
+        const running = submissionCount > 0 && Boolean(options.runningAfterSubmit);
         return readyCaptures >= 2
-          ? `${priorScreen}❯ ${currentInput}\nbypass permissions on · esc to interrupt`
+          ? `${priorScreen}❯ ${currentInput}\nbypass permissions on${running ? ' · esc to interrupt' : ''}`
           : 'bypass permissions on · starting Claude Code';
       }
       if (args[0] === 'paste-buffer') {
@@ -2165,6 +2221,7 @@ function createRuntimeFixture(
     pollMs: 1,
     startupTimeoutMs: 100,
     turnTimeoutMs: 100,
+    escapeSettleMs: 1,
   };
 
   return {
