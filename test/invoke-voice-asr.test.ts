@@ -78,6 +78,12 @@ describe('invokeAgent channel context', () => {
     const spawnOptions = spawnMock.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv };
     expect(spawnOptions.env.PIWEB_CHANNEL_JID).toBe('web:abc123');
     expect(spawnOptions.env.PIWEB_CHANNEL_FOLDER).toBe('web_abc123');
+
+    // piweb's reply formats (a ```map block for places): the extension and its text.
+    const { PI_REPLY_FORMAT_EXTENSION, PLACE_MAP_GUIDANCE } = await import('../src/agent/reply-format.js');
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args[args.indexOf(PI_REPLY_FORMAT_EXTENSION) - 1]).toBe('--extension');
+    expect(spawnOptions.env.PIWEB_REPLY_GUIDANCE).toBe(PLACE_MAP_GUIDANCE);
   });
 });
 

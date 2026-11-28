@@ -13,6 +13,7 @@
  */
 
 import { AUDIO_FILE_RE, createAudioTrack, isSameOriginMediaPath } from './media-files.js';
+import { renderPlaceMap } from './place-map.js';
 import {
   axisMotion,
   bouncyDuration,
@@ -1133,6 +1134,11 @@ export function applySyntaxHighlighting(
 }
 
 export function renderCode(item) {
+  // A reply's places, pinned on one Google Map (public/place-map.js).
+  if (item.lang === 'map') {
+    const card = renderPlaceMap(item.code);
+    if (card) return card;
+  }
   if (item.lang === 'mermaid') {
     const wrap = document.createElement('div');
     wrap.className = 'mermaid-wrap';

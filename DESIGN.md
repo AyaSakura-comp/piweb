@@ -364,6 +364,37 @@ Life and BTW have no ⏩ (a side question must never reach the main agent).
 Dashboard pane composers do not have it. (iPhone/iPad, 2026-11-25: 「Add
 continue icon button, and it will send continue message to session agent」.)
 
+## Place maps
+
+A reply's ```map block (one place per line: a street address, or a place's name
+with its city) is drawn as one Google Map with every place pinned
+(`public/place-map.js`, `renderCode()` in `public/markdown.js`, so assistant
+replies, other events and Dashboard panes alike). It is the table's sheet: a
+rounded frame (`--radius`, 1px `--border`) on `--bg-alt`, at most 560px wide.
+The map fills the top (16:10, 180–320px; several places 4:3 up to 380px, since
+Google's stops panel takes the top left); under it each place is a 44px row
+(pin outline in `--accent`, 13.5px name in `--text`, a hairline above) that
+opens it in Google Maps, the app on a phone. A row is not a transcript link:
+it opens instead of copying. List markers the model put before a line, repeats
+and lines past the tenth are dropped; a block with no place stays a code block.
+
+The map is Google's keyless embed (no API key on this host). One place is a
+place search (one pin); several are the stops of one route (`saddr`/`daddr`
+… `+to:` …), the only keyless form that geocodes every line and frames them
+all: one search for `A|B|C` pinned one or two and left the rest out of view.
+Places a car can reach get the route drawn between them; others just their
+pins. The frame starts blank on `--bg-alt` and fades in once Google's page has
+loaded; it loads only once the card has been on screen for 500ms, so history
+loads only the maps scrolled to, and a streaming reply, which re-renders the
+block as its lines arrive, loads one map with every place rather than one per
+half-written line. Only Pi sessions are asked for the block
+(`src/agent/reply-format.ts` → `pi-extensions/piweb-reply-format.ts`, which adds
+the text to the system prompt; Pi's `--append-system-prompt` would replace
+`~/.pi/agent/APPEND_SYSTEM.md`). (2026-11-28: 「如果有偵測到地址，他就會
+embedded google map pin 著，如果有多個地址就一起 pin in same map」, 「你可以用
+system prompt drive agent 回覆的時候要滿足某種特別的格式」, 「Pi agent 就好」.)
+`test/e2e/place-map.spec.ts`, `test/pi-reply-format-extension.test.ts`.
+
 ## Render-first replies
 
 Live assistant/thinking replies use a reply-only React 19 island backed by

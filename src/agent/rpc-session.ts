@@ -29,6 +29,7 @@ import { logger } from '../logger.js';
 import { repairSessionForContinue, resolveChannelSessionDir } from '../session/path.js';
 import { formatStreamError, resolvePiSpawn } from './invoke.js';
 import { piDefaultModelRef } from './pi-default-model.js';
+import { piReplyFormatSpawn } from './reply-format.js';
 import { piSecretSpawn } from './secret-handoff.js';
 import type { AgentResult } from '../types.js';
 
@@ -262,7 +263,16 @@ class RpcSession {
           this.opts.cwd || config.piCwd,
         );
       const secretSpawn = piSecretSpawn(this.folder);
-      const args = ['--mode', 'rpc', '--session-dir', dir, '--continue', ...secretSpawn.args];
+      const formatSpawn = piReplyFormatSpawn();
+      const args = [
+        '--mode',
+        'rpc',
+        '--session-dir',
+        dir,
+        '--continue',
+        ...secretSpawn.args,
+        ...formatSpawn.args,
+      ];
       if (this.opts.model) args.push('--model', this.opts.model);
       if (this.opts.thinking) args.push('--thinking', this.opts.thinking);
       if (config.piExtraFlags) args.push(...config.piExtraFlags.split(/\s+/).filter(Boolean));
@@ -274,6 +284,7 @@ class RpcSession {
           PIWEB_CHANNEL_JID: this.opts.channelJid ?? '',
           PIWEB_CHANNEL_FOLDER: this.folder,
           ...secretSpawn.env,
+          ...formatSpawn.env,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
