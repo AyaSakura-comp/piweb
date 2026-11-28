@@ -376,30 +376,50 @@ continue icon button, and it will send continue message to session agent」.)
 
 ## Place maps
 
-A reply's ```map block (one place per line: a street address, or a place's name
-with its city) is drawn as one Google Map with every place pinned
-(`public/place-map.js`, `renderCode()` in `public/markdown.js`, so assistant
-replies, other events and Dashboard panes alike). It is the table's sheet: a
-rounded frame (`--radius`, 1px `--border`) on `--bg-alt`, at most 560px wide.
-The map fills the top (16:10, 180–320px; several places 4:3 up to 380px, since
-Google's stops panel takes the top left); under it each place is a 44px row
-(pin outline in `--accent`, 13.5px name in `--text`, a hairline above) that
-opens it in Google Maps, the app on a phone. A row is not a transcript link:
-it opens instead of copying. List markers the model put before a line, repeats
-and lines past the tenth are dropped; a block with no place stays a code block.
+A reply's ```map block (one place per line, `name | address`, or just one of
+them) is drawn as one still map with a numbered pin per place
+(`public/place-map.js`, from `renderCode()` in `public/markdown.js`, so
+assistant replies, other events and Dashboard panes alike). It is the table's
+sheet: a 12px-rounded frame (1px `--border`) on `--bg-alt`, at most 560px wide.
 
-The map is Google's keyless embed (no API key on this host). One place is a
-place search (one pin); several are the stops of one route (`saddr`/`daddr`
-… `+to:` …), the only keyless form that geocodes every line and frames them
-all: one search for `A|B|C` pinned one or two and left the rest out of view.
-Places a car can reach get the route drawn between them; others just their
-pins. The frame starts blank on `--bg-alt` and fades in once Google's page has
-loaded; it loads only once the card has been on screen for 500ms, so history
-loads only the maps scrolled to, and a streaming reply, which re-renders the
-block as its lines arrive, loads one map with every place rather than one per
-half-written line. Only Pi sessions are asked for the block
-(`src/agent/reply-format.ts` → `pi-extensions/piweb-reply-format.ts`, which adds
-the text to the system prompt; Pi's `--append-system-prompt` would replace
+- **Map** (16:10, 170–300px): OpenFreeMap's vector map in the app's colours,
+  `fiord` (blue-grey) in dark mode and `positron` in light, labels in the
+  places' own names (臺南, not "Tainan 臺南") from the phone's own CJK font.
+  Several places are framed together (30px padding, never past zoom 15); one
+  place sits at zoom 14. Credit line bottom right (9px, on a translucent chip).
+- **Pins**: 24px circles in `--accent`, a 2px white ring, a white bold number
+  and a soft shadow, with a 44px target; a pin opens its place in Google Maps.
+- **List**: the same numbers as 20px accent circles, the name (13.5px, 600,
+  `--text-bright`) over the address (12px, `--text-2`), an outline ↗ in
+  `--text-dim`; 44px rows with a hairline above each. A row opens the place in
+  Google Maps (the app on a phone) instead of copying like a transcript link.
+  A place that could not be found keeps its row with an outline number and no
+  pin; if none is found (or no map can be drawn) the card is the list alone.
+
+The list shows at once; the map area says 定位中… until the pins are placed,
+then fades in (240ms). The map is not interactive: it is drawn off screen by
+MapLibre (`public/vendor/maplibre-gl-6.17.0/`, loaded only when a reply has a
+map), kept as a picture and the WebGL map thrown away, one at a time, so a long
+transcript never runs out of WebGL contexts and a finger on the map still
+scrolls the transcript. It is redrawn when the theme switches or its width
+changes.
+
+Places are found with OpenStreetMap's Nominatim from the browser: the name,
+then the address, then the address without its house number (OpenStreetMap
+rarely has Taiwan's), one request a second as its usage policy asks, every
+answer kept in this browser (`localStorage` `piweb.geocode.v1`; a miss is asked
+again after a week). Nothing is looked up until the card has been on screen for
+500ms, so history looks up only the maps scrolled to and a streaming reply,
+which re-renders the block as its lines arrive, never sends a half-written line.
+
+Why not Google's embed (the first version, 2026-11-28, 「這個很醜，改好看一點」):
+without a Maps API key the only embed that pins several places is a driving
+route, covered by its stops panel, a route line and a drive-time bubble, and
+its one-finger drags fight the transcript. Google Maps stays one tap away.
+
+Only Pi sessions are asked for the block (`src/agent/reply-format.ts` →
+`pi-extensions/piweb-reply-format.ts`, which adds the text to the system
+prompt; Pi's `--append-system-prompt` would replace
 `~/.pi/agent/APPEND_SYSTEM.md`). (2026-11-28: 「如果有偵測到地址，他就會
 embedded google map pin 著，如果有多個地址就一起 pin in same map」, 「你可以用
 system prompt drive agent 回覆的時候要滿足某種特別的格式」, 「Pi agent 就好」.)

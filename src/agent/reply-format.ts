@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
  * Places on a map (2026-11-28, 「如果有偵測到地址，他就會 embedded google map
  * pin 著，如果有多個地址就一起 pin in same map」 then 「你可以用 system prompt
  * drive agent 回覆的時候要滿足某種特別的格式，他就會把多個地址包起來」): the
- * agent lists the places it named in a ```map block, and public/markdown.js
- * draws that block as one Google Map with a pin per line.
+ * agent lists the places it named in a ```map block, and public/place-map.js
+ * draws that block as one map with a numbered pin per line.
  *
  * Pi agents only (「Pi agent 就好」): Claude Code and agy sessions are not asked.
  * Pi gets it through the extension below; Pi's own --append-system-prompt would
@@ -17,9 +17,10 @@ import { fileURLToPath } from 'node:url';
 export const PLACE_MAP_GUIDANCE =
   'Places on a map: when your reply gives the address or location of physical places someone may go to ' +
   '(venues, shops, event sites, street addresses), end the reply with a fenced code block whose language is ' +
-  '`map`, one place per line (up to 10), each written as you would search it in Google Maps: the full street ' +
-  'address, or the place\'s full name with its city (for example "中埔穀倉農創園區 嘉義縣中埔鄉"). Piweb shows ' +
-  'the block as one embedded Google Map with every line pinned on it. Keep naming the places in your text as ' +
+  '`map`, one place per line (up to 10) written as `name | address`: the place\'s own name (the venue, not ' +
+  'the event), then its street address with city and district, e.g. `中埔穀倉農創園區 | 嘉義縣中埔鄉頂山門36號`. ' +
+  'A line may be just the name or just the address when that is all you know. Piweb draws the block as one ' +
+  'map with a numbered pin per line, each opening in Google Maps. Keep naming the places in your text as ' +
   'usual; the block only adds the map. No physical place, no block.';
 
 /**

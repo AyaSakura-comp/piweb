@@ -4,10 +4,12 @@ import { expect, test, type Page } from 'playwright/test';
 // The user, 2026-11-28 (a Life reply listing this weekend's markets and fairs,
 // each with its venue): 「如果有偵測到地址，他就會 embedded google map pin 著，如果
 // 有多個地址就一起 pin in same map」, then 「你可以用 system prompt drive agent 回覆
-// 的時候要滿足某種特別的格式，他就會把多個地址包起來」. A Pi reply ends with a
-// ```map block, one place per line; the transcript shows it as one Google Map
-// with every place pinned, and under it a row per place that opens it in Google
-// Maps. Google is faked here: the test records what the page asks it for.
+// 的時候要滿足某種特別的格式，他就會把多個地址包起來」, then of Google's route
+// embed 「這個很醜，改好看一點」. A Pi reply ends with a ```map block, one
+// `name | address` per line; the transcript shows one still map in the app's
+// colours with a numbered pin per place, and the same numbers in a list under
+// it, each opening the place in Google Maps. The geocoder (Nominatim) and the
+// map style are faked: the test records what the page asks them.
 
 const JID = 'web:map01';
 const session = {
@@ -21,7 +23,21 @@ const session = {
   lastReplyId: 2,
   lastActivity: '2026-11-28 01:00:00',
 };
-const PLACES = ['中埔穀倉農創園區 嘉義縣中埔鄉', '麻豆總爺藝文中心 臺南市麻豆區', '臺南市中西區民族路二段76號'];
+
+// Made-up coordinates: north to south, 1 → 3.
+const KNOWN: Record<string, [number, number]> = {
+  中埔穀倉農創園區: [23.447, 120.494],
+  總爺藝文中心: [23.186, 120.269],
+  '臺南市中西區民族路二段': [22.997, 120.201],
+};
+const PLACES = [
+  { name: '中埔穀倉農創園區', address: '嘉義縣中埔鄉頂山門36號' },
+  { name: '總爺藝文中心', address: '臺南市麻豆區南勢里總爺5號' },
+  // Neither the event nor the house number is known: the street is.
+  { name: '府城市集', address: '臺南市中西區民族路二段76號' },
+];
+const block = (places: { name: string; address: string }[]) =>
+  ['```map', ...places.map((p) => (p.address ? `${p.name} | ${p.address}` : p.name)), '```'].join('\n');
 const REPLY = [
   '這週末可以去：',
   '',
@@ -29,38 +45,42 @@ const REPLY = [
   '- **2026 Mattauw大地藝術季** — 9/5–12/6，麻豆總爺藝文中心',
   '- **府城市集** — 11/29（六），民族路二段',
   '',
-  '```map',
-  ...PLACES,
-  '```',
+  block(PLACES),
 ].join('\n');
 
-// Several places are the stops of one route: the keyless embed that pins every
-// one (a `q=A|B|C` search pinned one or two of them).
-const mapUrl = ([first, ...rest]: string[]) =>
-  rest.length
-    ? `https://maps.google.com/maps?saddr=${encodeURIComponent(first)}&daddr=${rest.map(encodeURIComponent).join('+to:')}&output=embed`
-    : `https://maps.google.com/maps?q=${encodeURIComponent(first)}&output=embed`;
-const searchUrl = (place: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`;
+const searchUrl = (p: { name: string; address: string }) =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.address ? `${p.name} ${p.address}` : p.name)}`;
 
-/** Fake Google: a map frame that says what it was asked for, and records each ask. */
-async function fakeGoogle(page: Page) {
-  const maps: string[] = [];
-  await page.context().route('https://maps.google.com/**', (route) => {
-    maps.push(route.request().url());
+/** Fake Nominatim and map style; Google Maps pages for the links. */
+async function fakeServices(page: Page) {
+  const lookups: Array<{ q: string; at: number }> = [];
+  const styles: string[] = [];
+  await page.context().route('https://nominatim.openstreetmap.org/**', (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q') ?? '';
+    lookups.push({ q, at: Date.now() });
+    const hit = KNOWN[q];
     return route.fulfill({
-      contentType: 'text/html; charset=utf-8',
-      body: '<body style="margin:0;background:#cfe3c8;font:14px sans-serif;display:grid;place-items:center;height:100vh">地圖</body>',
+      json: hit ? [{ lat: String(hit[0]), lon: String(hit[1]), display_name: q }] : [],
+      headers: { 'access-control-allow-origin': '*' },
+    });
+  });
+  await page.context().route('https://tiles.openfreemap.org/styles/**', (route) => {
+    styles.push(new URL(route.request().url()).pathname);
+    const dark = route.request().url().endsWith('/fiord');
+    return route.fulfill({
+      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': dark ? '#3b4a5a' : '#dfe6da' } }] },
+      headers: { 'access-control-allow-origin': '*' },
     });
   });
   await page.context().route('https://www.google.com/maps/**', (route) =>
     route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<title>Google Maps</title>' }),
   );
-  return maps;
+  return { lookups, styles };
 }
 
 async function routeApi(page: Page, events: unknown[], ssePort?: number) {
   await page.route('**/media/piweb-shared/hot-keywords.json', (route) => route.fulfill({ json: { items: [] } }));
-  await page.route('**/api/**', (route) => {
+  await page.route('http://127.0.0.1:*/api/**', (route) => {
     const url = new URL(route.request().url());
     const path = decodeURIComponent(url.pathname);
     if (path === '/api/me') return route.fulfill({ json: { authed: true } });
@@ -77,80 +97,126 @@ async function routeApi(page: Page, events: unknown[], ssePort?: number) {
   });
 }
 
-async function open(page: Page) {
-  await page.addInitScript(() => {
+async function open(page: Page, theme = 'dark') {
+  await page.addInitScript((t) => {
     localStorage.setItem('piweb.mode', 'sessions');
     localStorage.setItem('piweb.dashboardEnabled', 'false');
-  });
+    localStorage.setItem('piweb.theme', t);
+  }, theme);
   await page.goto('/');
   await expect(page.locator('#messages')).toBeVisible();
 }
 
-test('a reply\'s places are pinned on one map, and each opens in Google Maps', async ({ page }, info) => {
+const reply = (content: string) => [
+  { id: 1, kind: 'message', role: 'user', content: '這週末台南嘉義有什麼市集？', createdAt: '2026-11-28T01:00:00Z' },
+  { id: 2, kind: 'message', role: 'assistant', content, createdAt: '2026-11-28T01:01:00Z' },
+];
+
+/** Each pin's centre, relative to the map. */
+const pinCentres = (page: Page) =>
+  page.locator('#messages .place-map').evaluate((card) => {
+    const view = card.querySelector('.place-map-view')!.getBoundingClientRect();
+    return [...card.querySelectorAll<HTMLElement>('.place-map-marker')].map((pin) => {
+      const r = pin.getBoundingClientRect();
+      return { n: pin.textContent, x: r.left + r.width / 2 - view.left, y: r.top + r.height / 2 - view.top, w: view.width, h: view.height };
+    });
+  });
+
+test('a reply\'s places are numbered pins on one map, and each opens in Google Maps', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const maps = await fakeGoogle(page);
-  await routeApi(page, [
-    { id: 1, kind: 'message', role: 'user', content: '這週末台南嘉義有什麼市集？', createdAt: '2026-11-28T01:00:00Z' },
-    { id: 2, kind: 'message', role: 'assistant', content: REPLY, createdAt: '2026-11-28T01:01:00Z' },
-  ]);
+  const { lookups, styles } = await fakeServices(page);
+  await routeApi(page, reply(REPLY));
   await open(page);
 
   const card = page.locator('#messages .place-map');
   await expect(card).toHaveCount(1);
   // The block is the map, not a code listing of its lines.
   await expect(page.locator('#messages .msg-text pre')).toHaveCount(0);
-  // One map, all three places in its one query.
-  await expect(card).toHaveAttribute('data-loaded', 'true');
-  await expect(card.locator('iframe')).toHaveAttribute('src', mapUrl(PLACES));
-  expect(maps).toEqual([mapUrl(PLACES)]);
-  // A row per place, each to that place in Google Maps.
-  const rows = card.locator('.place-map-place');
-  await expect(rows).toHaveText(PLACES);
-  for (const [i, place] of PLACES.entries()) await expect(rows.nth(i)).toHaveAttribute('href', searchUrl(place));
-  for (const row of await rows.all()) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).toBe(true);
+  // The list is there at once; the map once the places are found.
+  await expect(card.locator('.place-map-name')).toHaveText(PLACES.map((p) => p.name));
+  await expect(card.locator('.place-map-address')).toHaveText(PLACES.map((p) => p.address));
+  await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  expect(styles).toEqual(['/styles/fiord']);
 
+  // Name first, then the address, then its street (OpenStreetMap rarely has
+  // Taiwan's house numbers); one request a second, as Nominatim asks.
+  expect(lookups.map((l) => l.q)).toEqual([
+    '中埔穀倉農創園區',
+    '總爺藝文中心',
+    '府城市集',
+    '臺南市中西區民族路二段76號',
+    '臺南市中西區民族路二段',
+  ]);
+  for (let i = 1; i < lookups.length; i++) expect(lookups[i].at - lookups[i - 1].at).toBeGreaterThanOrEqual(1000);
+
+  // Three pins, numbered as the list, inside the frame, north above south and
+  // east right of west, as the places lie.
+  const pins = await pinCentres(page);
+  expect(pins.map((p) => p.n)).toEqual(['1', '2', '3']);
+  for (const p of pins) {
+    expect(p.x).toBeGreaterThanOrEqual(12);
+    expect(p.x).toBeLessThanOrEqual(p.w - 12);
+    expect(p.y).toBeGreaterThanOrEqual(12);
+    expect(p.y).toBeLessThanOrEqual(p.h - 12);
+  }
+  expect(pins[0].y).toBeLessThan(pins[1].y);
+  expect(pins[1].y).toBeLessThan(pins[2].y);
+  expect(pins[0].x).toBeGreaterThan(pins[1].x);
+  expect(pins[1].x).toBeGreaterThan(pins[2].x);
+
+  // Pins and rows open the place in Google Maps; rows are 44px.
+  const rows = card.locator('.place-map-place');
+  for (const [i, place] of PLACES.entries()) {
+    await expect(rows.nth(i)).toHaveAttribute('href', searchUrl(place));
+    await expect(card.locator('.place-map-marker').nth(i)).toHaveAttribute('href', searchUrl(place));
+    expect((await rows.nth(i).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).toBe(true);
   await card.scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath('place-map-dark.png') });
+
+  const [opened] = await Promise.all([page.context().waitForEvent('page'), rows.nth(1).click()]);
+  expect(opened.url()).toBe(searchUrl(PLACES[1]));
+  await opened.close();
+  // Opened, not copied (a transcript link copies on tap).
+  await expect(page.locator('#toast')).toBeHidden();
+
+  // The theme switch redraws in the day colours; the places are not asked again.
+  const asked = lookups.length;
   await page.evaluate(() => {
-    localStorage.setItem('piweb.theme', 'light');
+    document.documentElement.dataset.theme = 'light';
   });
-  await page.reload();
-  await expect(page.locator('#messages .place-map')).toHaveAttribute('data-loaded', 'true');
-  await page.locator('#messages .place-map').scrollIntoViewIfNeeded();
+  await expect.poll(() => styles).toEqual(['/styles/fiord', '/styles/positron']);
+  await expect(card).toHaveAttribute('data-state', 'ready');
+  await page.waitForTimeout(800);
   await page.screenshot({ path: info.outputPath('place-map-light.png') });
 
-  // A place opens in Google Maps (a transcript link would copy instead).
-  const [maps2] = await Promise.all([
-    page.context().waitForEvent('page'),
-    page.locator('#messages .place-map-place').nth(1).click(),
-  ]);
-  expect(maps2.url()).toBe(searchUrl(PLACES[1]));
-  await expect(page.locator('#toast')).toBeHidden();
+  // A reload finds them in this browser's cache.
+  await page.reload();
+  await expect(page.locator('#messages .place-map')).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  expect(lookups.length).toBe(asked);
   expect(errors).toEqual([]);
 });
 
-test('one place is one pin', async ({ page }) => {
-  const maps = await fakeGoogle(page);
-  const place = '奇美博物館 臺南市仁德區';
+test('a place found nowhere keeps its row without a pin; none found leaves the list', async ({ page }) => {
+  const { lookups } = await fakeServices(page);
+  const unknown = { name: '不存在的地方', address: '' };
   await routeApi(page, [
-    { id: 1, kind: 'message', role: 'user', content: '奇美博物館在哪？', createdAt: '2026-11-28T01:00:00Z' },
-    {
-      id: 2,
-      kind: 'message',
-      role: 'assistant',
-      content: `在臺南市仁德區，台1線旁。\n\n\`\`\`map\n- ${place}\n\`\`\``,
-      createdAt: '2026-11-28T01:01:00Z',
-    },
+    ...reply(`兩個地方：\n\n${block([PLACES[1], unknown])}`),
+    { id: 3, kind: 'message', role: 'user', content: '那這個呢？', createdAt: '2026-11-28T01:02:00Z' },
+    { id: 4, kind: 'message', role: 'assistant', content: `找不到：\n\n${block([{ name: '查無此處', address: '' }])}`, createdAt: '2026-11-28T01:03:00Z' },
   ]);
   await open(page);
-  const card = page.locator('#messages .place-map');
-  await expect(card).toHaveAttribute('data-loaded', 'true');
-  await expect(card.locator('iframe')).toHaveAttribute('src', mapUrl([place]));
-  // A list marker the model put in front of the line is not part of the place.
-  await expect(card.locator('.place-map-place')).toHaveText([place]);
-  expect(maps).toEqual([mapUrl([place])]);
+  const [some, none] = [page.locator('#messages .place-map').first(), page.locator('#messages .place-map').last()];
+  await expect(some).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(some.locator('.place-map-marker')).toHaveText(['1']);
+  await expect(some.locator('.place-map-place').nth(1)).toHaveClass(/unlocated/);
+  await expect(some.locator('.place-map-place').nth(1)).toHaveAttribute('href', searchUrl(unknown));
+  await expect(none).toHaveAttribute('data-state', 'list', { timeout: 15_000 });
+  await expect(none.locator('.place-map-view')).toBeHidden();
+  await expect(none.locator('.place-map-place')).toHaveText(['1查無此處']);
+  expect(lookups.map((l) => l.q).sort()).toEqual(['不存在的地方', '查無此處', '總爺藝文中心'].sort());
 });
 
 test.describe('a streaming reply', () => {
@@ -174,13 +240,11 @@ test.describe('a streaming reply', () => {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  test('loads its map once, with every place, not for each line as it is written', async ({ page }) => {
+  test('looks up only the places as written, never a half-written line', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
-    const maps = await fakeGoogle(page);
-    await routeApi(page, [
-      { id: 1, kind: 'message', role: 'user', content: '這週末台南嘉義有什麼市集？', createdAt: '2026-11-28T01:00:00Z' },
-    ], port);
+    const { lookups } = await fakeServices(page);
+    await routeApi(page, reply(REPLY).slice(0, 1), port);
     await open(page);
     await expect.poll(() => clients.length).toBeGreaterThan(0);
 
@@ -191,17 +255,17 @@ test.describe('a streaming reply', () => {
     for (const piece of REPLY.match(/[\s\S]{1,6}/g)!) {
       text += piece;
       send('partial', { content: text, thinking: '' });
-      await page.waitForTimeout(text.endsWith('麻豆總爺') || text.endsWith('民族路') ? 420 : 40);
+      await page.waitForTimeout(text.endsWith('總爺藝') || text.endsWith('民族路') ? 420 : 40);
     }
     await page.waitForTimeout(300);
     send('event', { id: 2, kind: 'message', role: 'assistant', content: REPLY, createdAt: '2026-11-28T01:01:00Z' });
     send('busy', { busy: false });
 
     const card = page.locator('#messages .place-map');
-    await expect(card).toHaveAttribute('data-loaded', 'true');
-    await expect(card.locator('.place-map-place')).toHaveText(PLACES);
-    await page.waitForTimeout(1200);
-    expect(maps).toEqual([mapUrl(PLACES)]);
+    await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+    await expect(card.locator('.place-map-marker')).toHaveText(['1', '2', '3']);
+    const whole = new Set(['中埔穀倉農創園區', '總爺藝文中心', '府城市集', '臺南市中西區民族路二段76號', '臺南市中西區民族路二段']);
+    for (const { q } of lookups) expect(whole.has(q), q).toBe(true);
     expect(errors).toEqual([]);
   });
 });

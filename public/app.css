@@ -3747,44 +3747,137 @@ html.keyboard-shell .life-edge-hint {
 }
 
 /* ── place map (```map, public/place-map.js) ─────────────────────────────
-   The table's sheet: a rounded frame with hairline rows. The map fills the
-   top; under it each place is a row that opens it in Google Maps. */
+   A still map in the app's colours with a numbered pin per place, and under
+   it the same numbers in a list (the table's sheet: rounded frame, hairline
+   rows). A pin or a row opens that place in Google Maps. */
 .place-map {
+  --map-bg: #2a3441;
   width: min(100%, 560px);
   margin: 10px 0 12px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   background: var(--bg-alt);
 }
 
-.place-map-frame {
-  width: 100%;
+:root[data-theme='light'] .place-map {
+  --map-bg: #eceae6;
+}
+
+.place-map-view {
+  position: relative;
   aspect-ratio: 16 / 10;
-  min-height: 180px;
-  max-height: 320px;
-  background: var(--bg-alt);
+  min-height: 170px;
+  max-height: 300px;
+  overflow: hidden;
+  background: var(--map-bg);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-/* Several places are a route: Google's stops panel takes the top left, so the
-   map gets more height to show the pins under it. */
-.place-map:not([data-places='1']) .place-map-frame {
-  aspect-ratio: 4 / 3;
-  max-height: 380px;
+/* Looking the places up: a quiet word where the map will be. */
+.place-map:not([data-state='ready']) .place-map-view::after {
+  content: '定位中…';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
-.place-map-frame iframe {
+/* No place found, or no map could be drawn: the list alone. */
+.place-map[data-state='list'] .place-map-view {
+  display: none;
+}
+
+.msg-text img.place-map-image,
+.place-map-image {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
+  max-width: none;
+  margin: 0;
   border: 0;
-  /* about:blank until the map is in; no white flash on the dark theme. */
+  border-radius: 0;
   opacity: 0;
-  transition: opacity 180ms ease;
+  transition: opacity 240ms ease;
+  pointer-events: none;
 }
 
-.place-map[data-loaded='true'] .place-map-frame iframe {
+.place-map[data-state='ready'] .place-map-image {
   opacity: 1;
+}
+
+.place-map-pins {
+  position: absolute;
+  inset: 0;
+}
+
+.msg-text a.place-map-marker,
+.place-map-marker {
+  position: absolute;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Day mode paints transcript links in the accent; a pin's number stays white. */
+:root[data-theme='light'] .msg-text a.place-map-marker {
+  color: #fff;
+}
+
+:root[data-theme='light'] .msg-text a.place-map-place {
+  color: var(--text);
+}
+
+/* A 44px target round the 24px pin. */
+.place-map-marker::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+
+.place-map-marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.place-map-credit {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.35);
+  color: rgb(255 255 255 / 0.7);
+  font-size: 9px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+:root[data-theme='light'] .place-map-credit {
+  background: rgb(255 255 255 / 0.7);
+  color: rgb(0 0 0 / 0.55);
+}
+
+.place-map:not([data-state='ready']) .place-map-credit {
+  display: none;
 }
 
 .msg-text .place-map-list,
@@ -3801,16 +3894,18 @@ html.keyboard-shell .life-edge-hint {
   border-top: 1px solid var(--border);
 }
 
+.place-map[data-state='list'] .place-map-list li:first-child {
+  border-top: 0;
+}
+
 .msg-text a.place-map-place,
 .place-map-place {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-height: 44px;
-  padding: 6px 12px;
+  padding: 7px 12px;
   color: var(--text);
-  font-size: 13.5px;
-  line-height: 1.35;
   text-decoration: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -3827,19 +3922,59 @@ html.keyboard-shell .life-edge-hint {
   outline-offset: -2px;
 }
 
-.place-map-pin {
+.place-map-num {
   flex: none;
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  stroke-linejoin: round;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Not found on the map: the number is an outline, the row still opens Google Maps. */
+.place-map-place.unlocated .place-map-num {
+  background: transparent;
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.place-map-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
 }
 
 .place-map-name {
-  min-width: 0;
+  color: var(--text-bright);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.place-map-address {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.place-map-open {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ── math ────────────────────────────────────────────────────────────── */
