@@ -430,7 +430,13 @@ its one-finger drags fight the transcript. Google Maps stays one tap away.
 Only Pi sessions are asked for the block (`src/agent/reply-format.ts` →
 `pi-extensions/piweb-reply-format.ts`, which adds the text to the system
 prompt; Pi's `--append-system-prompt` would replace
-`~/.pi/agent/APPEND_SYSTEM.md`). (2026-11-28: 「如果有偵測到地址，他就會
+`~/.pi/agent/APPEND_SYSTEM.md`). An answer written from `research` is asked
+in research's own closing line instead, beside its `[[image: …]]` rule
+(`~/src/pi-nodriver-browser` `PIWEB_MAP_RULE`, only when Pi was started by
+piweb, i.e. `PIWEB_CHANNEL_JID` is set): the evidence's closing rules are read
+after the system prompt and won, so Life answered 「民雄附近哪裡有觀光工廠」
+with street addresses and no map (2026-11-28, 「這個為什麼沒有地圖？」 then
+「不能只用 extension 的 prompt guide 他就好了嗎？像是圖片也是啊」). (2026-11-28: 「如果有偵測到地址，他就會
 embedded google map pin 著，如果有多個地址就一起 pin in same map」, 「你可以用
 system prompt drive agent 回覆的時候要滿足某種特別的格式」, 「Pi agent 就好」.)
 `test/e2e/place-map.spec.ts`, `test/pi-reply-format-extension.test.ts`.
