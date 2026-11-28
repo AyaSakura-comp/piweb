@@ -410,8 +410,20 @@ alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
   (or no map can be drawn) the cards stand alone one under another, hairline
   between, on `--bg-alt`.
 
+**Full screen** (「想要手指可以自由操作地圖」, 2026-11-28): a tap on the map (a
+quiet 28px frosted expand mark at its top left says so) opens it as a live map
+over everything (`openPlaceMapViewer()`, z-index 110, the map's own background):
+one finger pans, two pinch, no rotation or tilt. The same pins and cards lie
+over it (cards at the foot above the safe area, at most 600px wide); a card in
+front eases its place to the middle (450ms; reduced motion jumps). ✕ is a 44px
+frosted circle at the top right, as the table and diagram viewers close there;
+the credit chip moves to the top left. Escape or ✕ closes it and the live map
+is thrown away; only one is open at a time. Its touches stop at the overlay, so
+the drawer and Life edge swipes never start from it. The tap is not the
+transcript's full-screen-reading tap (the map is `role="button"`).
+
 The cards show at once; the map area says 定位中… until the pins are placed,
-then fades in (240ms). The map is not interactive: it is drawn off screen by
+then fades in (240ms). In the transcript the map is not interactive: it is drawn off screen by
 MapLibre (`public/vendor/maplibre-gl-6.17.0/`, loaded only when a reply has a
 map), kept as a picture and the WebGL map thrown away, one at a time, so a long
 transcript never runs out of WebGL contexts and a finger on the map still

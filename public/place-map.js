@@ -433,21 +433,10 @@ function select(card, index, { scroll = false } = {}) {
   const state = states.get(card);
   if (!state) return;
   state.active = index;
-  state.cards.querySelectorAll('.place-map-card').forEach((item, i) => {
-    if (i === index) item.dataset.active = 'true';
-    else delete item.dataset.active;
-  });
-  for (const marker of state.pins.children)
-    marker.setAttribute('aria-pressed', String(Number(marker.dataset.index) === index));
+  showCard(state.cards, index, scroll);
+  for (const pin of state.pins.children) pin.setAttribute('aria-pressed', String(Number(pin.dataset.index) === index));
   // A place with no pin says so over the map, rather than the map just not changing.
   state.lost.hidden = !state.cards.children[index]?.dataset.unlocated;
-  if (scroll) {
-    const target = state.cards.children[index];
-    state.cards.scrollTo({
-      left: target.offsetLeft - state.cards.firstElementChild.offsetLeft,
-      behavior: reducedMotion() ? 'auto' : 'smooth',
-    });
-  }
 }
 
 async function fill(card) {
@@ -469,19 +458,7 @@ async function fill(card) {
   }
   const doc = card.ownerDocument;
   state.pins.replaceChildren(
-    ...state.located.map((place) => {
-      const marker = doc.createElement('button');
-      marker.type = 'button';
-      marker.className = 'place-map-marker';
-      marker.dataset.index = String(place.index);
-      marker.textContent = String(place.index + 1);
-      marker.setAttribute('aria-label', `${place.index + 1}. ${place.name}`);
-      marker.addEventListener('click', (event) => {
-        event.stopPropagation();
-        select(card, place.index, { scroll: true });
-      });
-      return marker;
-    }),
+    ...state.located.map((place) => marker(doc, place, (i) => select(card, i, { scroll: true }))),
   );
   select(card, state.active ?? 0);
   await draw(card);
@@ -525,15 +502,7 @@ function whenShown(card, run) {
 /** Lucide "navigation": the arrow a maps app draws for directions. */
 const GO_PATH = 'M3 11l19-9-9 19-2-8-8-2z';
 
-function goIcon(doc) {
-  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', GO_PATH);
-  svg.append(path);
-  return svg;
-}
+const goIcon = (doc) => svgIcon(doc, GO_PATH);
 
 /** Directions to the place in Google Maps, from where the phone is. */
 export function placeDirectionsUrl({ name, address }) {
@@ -553,37 +522,11 @@ function externalLink(doc, className, href, label) {
   return link;
 }
 
-/** The card for a ```map block, or null when it names no place. */
-export function renderPlaceMap(code, doc = document) {
-  const places = parsePlaces(code);
-  if (places.length === 0) return null;
-
-  const card = doc.createElement('figure');
-  card.className = 'place-map';
-  card.dataset.places = String(places.length);
-  card.dataset.state = 'waiting';
-
-  const view = doc.createElement('div');
-  view.className = 'place-map-view';
-  view.setAttribute('role', 'img');
-  view.setAttribute('aria-label', `地圖：${places.map((p, i) => `${i + 1}. ${p.name}`).join('、')}`);
-  const image = doc.createElement('img');
-  image.className = 'place-map-image';
-  image.alt = '';
-  image.draggable = false;
-  const pins = doc.createElement('div');
-  pins.className = 'place-map-pins';
-  const credit = doc.createElement('span');
-  credit.className = 'place-map-credit';
-  credit.textContent = 'OpenFreeMap © OpenMapTiles © OpenStreetMap';
-  const lost = doc.createElement('span');
-  lost.className = 'place-map-lost';
-  lost.textContent = '地圖上找不到這個地點';
-  lost.hidden = true;
-  view.append(image, pins, credit, lost);
-
-  // The places lie over the map's foot as cards, one in view at a time; a
-  // swipe brings the next, and the pins follow.
+/**
+ * The places as cards, one in view at a time over a map's foot; a swipe brings
+ * the next. `onShown(i)` hears which card is in front as the strip settles.
+ */
+function placeCards(doc, places, onShown) {
   const cards = doc.createElement('div');
   cards.className = 'place-map-cards';
   cards.setAttribute('role', 'list');
@@ -624,7 +567,6 @@ export function renderPlaceMap(code, doc = document) {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        if (card.dataset.state === 'list') return;
         const start = cards.firstElementChild.offsetLeft;
         let nearest = 0;
         let distance = Infinity;
@@ -632,11 +574,240 @@ export function renderPlaceMap(code, doc = document) {
           const d = Math.abs(item.offsetLeft - start - cards.scrollLeft);
           if (d < distance) [nearest, distance] = [i, d];
         });
-        if (nearest !== states.get(card).active) select(card, nearest);
+        onShown(nearest);
       });
     },
     { passive: true },
   );
+  return cards;
+}
+
+/** Mark card `index` as the one in front; scroll it into view when asked. */
+function showCard(cards, index, scroll) {
+  [...cards.children].forEach((item, i) => {
+    if (i === index) item.dataset.active = 'true';
+    else delete item.dataset.active;
+  });
+  if (!scroll) return;
+  const target = cards.children[index];
+  cards.scrollTo({
+    left: target.offsetLeft - cards.firstElementChild.offsetLeft,
+    behavior: scroll === 'instant' || reducedMotion() ? 'auto' : 'smooth',
+  });
+}
+
+function marker(doc, place, onPick) {
+  const pin = doc.createElement('button');
+  pin.type = 'button';
+  pin.className = 'place-map-marker';
+  pin.dataset.index = String(place.index);
+  pin.textContent = String(place.index + 1);
+  pin.setAttribute('aria-label', `${place.index + 1}. ${place.name}`);
+  pin.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onPick(place.index);
+  });
+  return pin;
+}
+
+function svgIcon(doc, d, className) {
+  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  if (className) svg.classList.add(className);
+  const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.append(path);
+  return svg;
+}
+
+const EXPAND_PATH = 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7';
+const CLOSE_PATH = 'M18 6 6 18M6 6l12 12';
+
+// ── the map in your fingers ────────────────────────────────────────────────
+//
+// 「想要手指可以自由操作地圖」 (2026-11-28). In the transcript the map stays a
+// picture (a finger on it still scrolls the transcript, and no WebGL map is
+// held per reply); a tap opens it full screen as a live map: one finger pans,
+// two pinch, the cards and pins work as in the transcript and a card in front
+// brings its place to the middle. Closed with ✕ or Escape; the live map is
+// thrown away. One at a time.
+
+let viewer = null;
+
+function loadMapLibreCss(doc) {
+  const href = `${MAPLIBRE_DIR}maplibre-gl.css`;
+  let link = doc.querySelector(`link[href="${href}"]`);
+  if (!link) {
+    link = doc.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    doc.head.append(link);
+  }
+  if (link.sheet) return Promise.resolve();
+  return new Promise((done) => {
+    link.addEventListener('load', done, { once: true });
+    link.addEventListener('error', done, { once: true });
+    setTimeout(done, 3000);
+  });
+}
+
+export async function openPlaceMapViewer(card) {
+  const state = states.get(card);
+  if (viewer || !state?.located.length) return;
+  const doc = card.ownerDocument;
+  const overlay = doc.createElement('div');
+  overlay.className = 'place-map-viewer';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', '地圖');
+  overlay.dataset.places = String(state.places.length);
+  const host = doc.createElement('div');
+  host.className = 'place-map-viewer-map';
+  // Inline: MapLibre's own stylesheet, loaded after app.css, makes its container `position: relative`.
+  host.style.cssText = 'position:absolute;inset:0';
+  const close = doc.createElement('button');
+  close.type = 'button';
+  close.className = 'place-map-viewer-close';
+  close.setAttribute('aria-label', '關閉地圖');
+  close.append(svgIcon(doc, CLOSE_PATH));
+  const credit = doc.createElement('span');
+  credit.className = 'place-map-credit';
+  credit.textContent = 'OpenFreeMap © OpenMapTiles © OpenStreetMap';
+  const lost = doc.createElement('span');
+  lost.className = 'place-map-lost';
+  lost.textContent = '地圖上找不到這個地點';
+  lost.hidden = true;
+  let map = null;
+  const pins = [];
+  const pick = (index, scroll) => {
+    showCard(cards, index, scroll);
+    for (const pin of pins) pin.setAttribute('aria-pressed', String(Number(pin.dataset.index) === index));
+    const place = state.located.find((p) => p.index === index);
+    lost.hidden = Boolean(place);
+    if (place && map) map.easeTo({ center: [place.point[1], place.point[0]], duration: reducedMotion() ? 0 : 450 });
+  };
+  let shown = state.active ?? 0;
+  const cards = placeCards(doc, state.places, (i) => {
+    if (i !== shown) pick((shown = i), false);
+  });
+  state.places.forEach((_, i) => {
+    if (state.cards.children[i]?.dataset.unlocated) cards.children[i].dataset.unlocated = 'true';
+  });
+  overlay.append(host, credit, lost, cards, close);
+  // The overlay's touches are the map's: not the drawer's or Life's edge swipes.
+  overlay.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+
+  const back = doc.activeElement;
+  const onKey = (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    teardown();
+  };
+  const teardown = () => {
+    if (viewer !== record) return;
+    viewer = null;
+    doc.removeEventListener('keydown', onKey, true);
+    map?.remove();
+    overlay.remove();
+    (back?.isConnected ? back : state.view).focus?.({ preventScroll: true });
+  };
+  const record = { overlay, close: teardown };
+  viewer = record;
+  close.addEventListener('click', (event) => {
+    event.stopPropagation();
+    teardown();
+  });
+  doc.addEventListener('keydown', onKey, true);
+  doc.body.append(overlay);
+  showCard(cards, shown, 'instant');
+  close.focus({ preventScroll: true });
+
+  try {
+    const [lib, style] = await Promise.all([loadMapLibre(), loadStyle(themeNow()), loadMapLibreCss(doc)]);
+    if (viewer !== record) return;
+    const lonLats = state.located.map(({ point: [lat, lon] }) => [lon, lat]);
+    const span = boundsOf(lonLats);
+    const padding = { ...FIT_PADDING, top: 64, bottom: Math.round(cards.offsetHeight + 40) };
+    const single = span[0][0] === span[1][0] && span[0][1] === span[1][1];
+    map = new lib.Map({
+      container: host,
+      style: structuredClone(style),
+      attributionControl: false,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+      fadeDuration: 0,
+      localIdeographFontFamily: CJK_FONT,
+      ...(single ? { center: lonLats[0], zoom: 15 } : { bounds: span, fitBoundsOptions: { padding, maxZoom: CLOSE_ZOOM } }),
+    });
+    map.touchZoomRotate.disableRotation();
+    if (single) map.jumpTo({ center: lonLats[0], zoom: 15, padding: { top: 0, left: 0, right: 0, bottom: padding.bottom - 26 } });
+    for (const place of state.located) {
+      const pin = marker(doc, place, (i) => pick((shown = i), true));
+      pins.push(pin);
+      // MapLibre moves the wrapper; the pin keeps its own scale for the place in front.
+      const wrap = doc.createElement('div');
+      wrap.className = 'place-map-viewer-pin';
+      wrap.append(pin);
+      new lib.Marker({ element: wrap, anchor: 'center' }).setLngLat([place.point[1], place.point[0]]).addTo(map);
+    }
+    for (const pin of pins) pin.setAttribute('aria-pressed', String(Number(pin.dataset.index) === shown));
+    lost.hidden = state.located.some((p) => p.index === shown);
+    overlay.dataset.state = 'ready';
+  } catch {
+    teardown();
+  }
+}
+
+/** The card for a ```map block, or null when it names no place. */
+export function renderPlaceMap(code, doc = document) {
+  const places = parsePlaces(code);
+  if (places.length === 0) return null;
+
+  const card = doc.createElement('figure');
+  card.className = 'place-map';
+  card.dataset.places = String(places.length);
+  card.dataset.state = 'waiting';
+
+  const view = doc.createElement('div');
+  view.className = 'place-map-view';
+  view.setAttribute('role', 'button');
+  view.tabIndex = 0;
+  view.setAttribute('aria-label', `打開地圖：${places.map((p, i) => `${i + 1}. ${p.name}`).join('、')}`);
+  const image = doc.createElement('img');
+  image.className = 'place-map-image';
+  image.alt = '';
+  image.draggable = false;
+  const pins = doc.createElement('div');
+  pins.className = 'place-map-pins';
+  const credit = doc.createElement('span');
+  credit.className = 'place-map-credit';
+  credit.textContent = 'OpenFreeMap © OpenMapTiles © OpenStreetMap';
+  const expand = doc.createElement('span');
+  expand.className = 'place-map-expand';
+  expand.append(svgIcon(doc, EXPAND_PATH));
+  const lost = doc.createElement('span');
+  lost.className = 'place-map-lost';
+  lost.textContent = '地圖上找不到這個地點';
+  lost.hidden = true;
+  view.append(image, pins, credit, expand, lost);
+  // A tap opens the map full screen, where fingers move it.
+  const open = (event) => {
+    if (card.dataset.state !== 'ready') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openPlaceMapViewer(card);
+  };
+  view.addEventListener('click', open);
+  view.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') open(event);
+  });
+
+  const cards = placeCards(doc, places, (i) => {
+    if (card.dataset.state !== 'list' && i !== states.get(card).active) select(card, i);
+  });
 
   card.append(view, cards);
   states.set(card, { places, view, image, pins, cards, lost, located: [], active: 0 });

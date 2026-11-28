@@ -273,6 +273,96 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   expect(errors).toEqual([]);
 });
 
+// 「想要手指可以自由操作地圖」 (2026-11-28): in the transcript the map is a picture
+// (a finger on it scrolls the transcript); a tap opens it full screen as a live
+// map that a finger drags and a pinch (here the wheel) zooms, with the cards.
+test('a tap opens the map full screen, where it moves with the finger and zooms', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await fakeServices(page);
+  await routeApi(page, reply(REPLY));
+  await open(page);
+  const card = page.locator('#messages .place-map');
+  await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  const canvases = await page.locator('canvas').count();
+  const appClass = await page.locator('#app').getAttribute('class');
+
+  await card.locator('.place-map-view').click();
+  const viewer = page.locator('.place-map-viewer');
+  await expect(viewer).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await expect(viewer).toHaveAttribute('role', 'dialog');
+  await expect(viewer.locator('.maplibregl-canvas')).toHaveCount(1);
+  // Opening the map is not the transcript's tap for full-screen reading.
+  expect(await page.locator('#app').getAttribute('class')).toBe(appClass);
+  expect(await viewer.locator('.place-map-viewer-close').evaluate((el) => [el.offsetWidth, el.offsetHeight])).toEqual([44, 44]);
+  const pins = viewer.locator('.place-map-marker');
+  await expect(pins).toHaveText(['1', '2', '3']);
+  await expect(viewer.locator('.place-map-marker[aria-pressed="true"]')).toHaveText('1');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: info.outputPath('viewer-open.png') });
+
+  const centre = async (n: number) => {
+    const box = (await pins.nth(n).boundingBox())!;
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  // A drag moves the map, pins and all, with the finger.
+  const map = (await viewer.locator('.place-map-viewer-map').boundingBox())!;
+  const before = await centre(0);
+  await page.mouse.move(map.x + map.width / 2, map.y + map.height / 3);
+  await page.mouse.down();
+  await page.mouse.move(map.x + map.width / 2 - 60, map.y + map.height / 3 + 50, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  const after = await centre(0);
+  // (MapLibre waits out a few pixels before a drag, and lets it glide on after.)
+  expect(Math.abs(after.x - before.x + 60)).toBeLessThan(15);
+  expect(Math.abs(after.y - before.y - 50)).toBeLessThan(15);
+  // Zooming in spreads the pins apart.
+  const spread = async () => {
+    const [a, b] = [await centre(0), await centre(1)];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  const near = await spread();
+  await page.mouse.move(map.x + map.width / 2, map.y + map.height / 2);
+  await page.mouse.wheel(0, -500);
+  await page.waitForTimeout(900);
+  expect(await spread()).toBeGreaterThan(near * 1.3);
+
+  // A card in front brings its place to the middle of the map.
+  await viewer.locator('.place-map-cards').evaluate((strip) => {
+    const items = strip.querySelectorAll<HTMLElement>('.place-map-card');
+    strip.scrollTo({ left: items[2].offsetLeft - items[0].offsetLeft, behavior: 'instant' });
+  });
+  await expect(viewer.locator('.place-map-marker[aria-pressed="true"]')).toHaveText('3');
+  await page.waitForTimeout(800);
+  expect(Math.abs((await centre(2)).x - map.x - map.width / 2)).toBeLessThan(30);
+  await page.screenshot({ path: info.outputPath('viewer-third.png') });
+
+  // Its touches are the map's: the drawer and Life edge swipes never see them.
+  expect(
+    await viewer.evaluate((overlay) => {
+      let seen = 0;
+      const count = () => seen++;
+      document.addEventListener('touchstart', count);
+      const r = overlay.getBoundingClientRect();
+      const touch = new Touch({ identifier: 1, target: overlay, clientX: r.right - 10, clientY: r.top + r.height / 2 });
+      overlay.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch], changedTouches: [touch] }));
+      document.removeEventListener('touchstart', count);
+      return seen;
+    }),
+  ).toBe(0);
+
+  // Escape (or ✕) closes it and lets the live map go.
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+  expect(await page.locator('canvas').count()).toBe(canvases);
+  await card.locator('.place-map-view').click();
+  await expect(viewer).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  await viewer.locator('.place-map-viewer-close').click();
+  await expect(viewer).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 // iPhone recording, 2026-11-28 (「他不會自己切」): two toy factories on neighbouring
 // streets; the second line held two addresses and a 鄰, so nothing found it and a
 // swipe to its card left the map as it was. Its street is found now, and the two
