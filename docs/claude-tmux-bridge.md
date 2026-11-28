@@ -179,6 +179,68 @@ needs its next approved safe restart to pick up a changed launch policy.
 - `/pi status`, Pi compaction, Pi subagent controls and Pi extension commands are
   not Claude-native controls. Do not interpret their output as Claude usage.
 
+## Handing a message to Claude Code
+
+The bridge types into a terminal program it does not control: Claude Code
+updates itself, and its screen changes with it. Every failure of this kind so
+far had the same shape: the bridge sent keys, assumed what they did, and a
+screen it had not foreseen left the message unsent — sometimes for every later
+message too. So a message is handed over in steps that are each **checked on
+the pane or the transcript, never assumed from the keys sent** (`deliver()` in
+`invokeClaudeTmux`):
+
+1. **An idle, empty prompt box.** `waitForReadyPane` stops a turn still running
+   (a lone Escape), answers the dialogs it has rules for, and empties any text
+   left in the box (one Ctrl-C, only when the box really holds text). Text is
+   left there by an Escape that came before Claude's first output (Claude Code
+   puts the stopped message back for editing), by a paste that was never sent,
+   and by a stop between paste and Enter. Pasted behind it, the new message
+   would be sent glued to the old one.
+2. **The text seen in the box** (`waitForPastedPrompt`).
+3. **Enter, then the turn seen to start** (`confirmTurnStarted`): the transcript
+   holds a user or assistant record after the turn's offset, or the pane is
+   running, or the text has left the box. While the text still sits in an idle
+   box, Enter is pressed again (twice at most). Claude Code's own bookkeeping
+   records (`mode`, `last-prompt` …) are not a turn (`turnRecordedSince`); a
+   recovered turn is judged the same way.
+4. **A failure leaves nothing behind.** Whatever the box holds is emptied, so
+   one failed message cannot break the next.
+5. **Last resort: restart the TUI on the same conversation, once.** When the
+   pane never becomes ready, never shows the paste, or never starts the turn
+   (`ClaudePaneNotReady`), the tmux session is closed, Claude Code is started
+   again with `--resume`, and the message is handed over once more. The
+   conversation is in its transcript, so only the TUI is lost. Not after a menu
+   answer (that work is the user's), and not while the conversation has
+   background commands running (`claudeSessionHasRunningCommands`: a restart
+   would end them) — then the failure is reported and says so.
+
+The prompt box is found **by its frame, not by its `❯`** (`readPromptBox`): the
+rows between the last two rules on the screen. The box shows only its last rows
+once the text outgrows it (6 rows in an 80x23 pane; the top rule then reads
+`─── ↑ 2 more ───`), and with the `❯` row scrolled away the old reader saw no
+prompt at all. Every message after an interrupt carries a handoff note that
+long. Whether the box is *empty* is read from a styled capture
+(`capture-pane -e`, `solidScreen`): the "Try …" placeholder is drawn faint and
+is not text in the box, and Ctrl-C on an empty box arms "Press Ctrl-C again to
+exit".
+
+2026-11-28 (iPhone Duo), the failure these rules come from: a message sent 22 s
+into a turn stopped it; Claude Code put the stopped message back in the box;
+the new message, with its handoff note, was pasted behind it and scrolled the
+`❯` away. The paste was never recognised ("did not accept the pasted prompt"),
+the cleanup did not see the text either, and every later message failed with
+"did not become ready".
+
+When the bridge fails, the whole pane as it looked (styled) is saved to
+`claude-tmux-failure-screen.txt` in the session directory; the log line keeps
+only its last 300 characters.
+
+The unit tests draw these screens as Claude Code 2.1.332 does
+(`createRuntimeFixture({ framed: true })`, and screens captured from the real
+TUI). The opt-in live test drives the same sequence against the real TUI
+(`real Claude tmux: a message after an early stop is delivered alone`); run it
+after a Claude Code update that changes the screen.
+
 ## Background replies and commands
 
 A parent may yield an acknowledgement before background work finishes. The bridge
@@ -340,6 +402,8 @@ PIWEB_CLAUDE_E2E_LIVE=1 PIWEB_CLAUDE_E2E_MODEL=opus \
 The live test uses disposable config/session/workspace paths (not the production
 DB), closes only its own tmux session, and verifies tools, uploaded text, memory
 across turns and pane restart, interruption, post-Stop reuse, and fresh context.
+A second live test stops a message before Claude's first output and sends the
+next one with the handoff note (see "Handing a message to Claude Code").
 Claude may retain its ordinary CLI transcript after temporary test data is removed.
 
 The real-browser live test starts a loopback server plus real message/control

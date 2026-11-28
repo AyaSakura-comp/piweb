@@ -110,6 +110,34 @@ export function stopCommandProcesses(outputFile: string, procRoot = '/proc'): nu
   return stopped;
 }
 
+/**
+ * Whether a Claude conversation still has background commands running: any
+ * task output file of the session that a live process writes to. Asked before
+ * the TUI is restarted, which would end them.
+ */
+export function claudeSessionHasRunningCommands(sessionId: string, claudeTmp?: string): boolean {
+  const root = claudeTmp ?? `/tmp/claude-${process.getuid?.() ?? 1000}`;
+  let projects: string[];
+  try {
+    projects = readdirSync(root);
+  } catch {
+    return false;
+  }
+  for (const project of projects) {
+    const tasks = join(root, project, sessionId, 'tasks');
+    let files: string[];
+    try {
+      files = readdirSync(tasks);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (file.endsWith('.output') && commandProcessIds(join(tasks, file)).length > 0) return true;
+    }
+  }
+  return false;
+}
+
 export function findTaskOutputFile(sessionId: string, taskId: string, cwd?: string): string | undefined {
   // Claude Code keeps task output under /tmp/claude-<uid> (1000 on the Linux host, 501 on a Mac).
   const claudeTmp = `/tmp/claude-${process.getuid?.() ?? 1000}`;

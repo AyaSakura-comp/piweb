@@ -111,3 +111,91 @@ it.skipIf(process.env.PIWEB_CLAUDE_LIVE !== '1')(
   },
   180000,
 );
+
+// The 2026-11-28 failure, against the real TUI: a message stopped before
+// Claude's first output is put back in the prompt box, and the next message
+// carries a handoff note taller than the box (its ❯ row scrolls away).
+it.skipIf(process.env.PIWEB_CLAUDE_LIVE !== '1')(
+  'real Claude tmux: a message after an early stop is delivered alone',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'piweb-claude-live-'));
+    const cwd = join(root, 'workspace');
+    mkdirSync(cwd);
+    vi.stubEnv('PIDG_CONFIG', join(root, 'absent.env'));
+    vi.stubEnv('SESSIONS_DIR', join(root, 'sessions'));
+    vi.stubEnv('CLAUDE_TMUX_STARTUP_TIMEOUT_MS', '30000');
+    vi.stubEnv('CLAUDE_TMUX_TURN_TIMEOUT_MS', '60000');
+    vi.resetModules();
+    const { invokeClaudeTmux, closeClaudeTmuxSession, tmuxSessionName, readPromptBox } =
+      await import('../src/agent/claude-tmux.js');
+    const { config } = await import('../src/config.js');
+    const folder = `live-${randomUUID()}`;
+    const name = tmuxSessionName(folder);
+    const statePath = join(root, 'sessions', folder, 'claude-tmux-session.json');
+    const options = { model: 'claude-code/haiku', cwd };
+    const screen = () =>
+      execFileSync(config.claudeTmuxTmuxBin, ['capture-pane', '-p', '-t', name], { encoding: 'utf8' });
+    try {
+      const warm = await invokeClaudeTmux(
+        folder,
+        '[Web user: web]\nReply with exactly WARM_OK. No tools.',
+        options,
+      );
+      expect(warm.ok, warm.error).toBe(true);
+      expect(warm.text).toContain('WARM_OK');
+
+      // Stop the next message the moment its turn shows as running.
+      const controller = new AbortController();
+      const watch = setInterval(() => {
+        try {
+          if (/esc to interrupt/iu.test(screen())) controller.abort();
+        } catch {
+          /* the pane is not up yet */
+        }
+      }, 50);
+      let stopped;
+      try {
+        stopped = await invokeClaudeTmux(
+          folder,
+          '[Web user: web]\nWrite a 3000 word essay about the history of tea, in full. No tools.',
+          { ...options, signal: controller.signal },
+        );
+      } finally {
+        clearInterval(watch);
+      }
+      expect(stopped.aborted).toBe(true);
+      // Claude Code put the stopped message back for editing.
+      const left = readPromptBox(screen());
+      expect(left.text).toContain('history of tea');
+
+      const after = await invokeClaudeTmux(
+        folder,
+        '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. ' +
+          'Follow only the latest instruction below. If asked for a screenshot, take it and immediately return it ' +
+          'using [[file: /absolute/path/to/screenshot.png]].]\n[Web user: web]\n' +
+          'Reply with exactly AFTER_EARLY_STOP and nothing else. No tools.',
+        options,
+      );
+      expect(after.ok, after.error).toBe(true);
+      expect(after.text).toContain('AFTER_EARLY_STOP');
+
+      // What Claude was handed is the new message alone.
+      const transcript = JSON.parse(readFileSync(statePath, 'utf8')).transcriptPath;
+      const prompts = readFileSync(transcript, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === 'user' && typeof record.message?.content === 'string')
+        .map((record) => record.message.content as string);
+      const last = prompts.at(-1) ?? '';
+      expect(last).toContain('AFTER_EARLY_STOP');
+      expect(last).not.toContain('history of tea');
+      expect(readPromptBox(screen()).framed).toBe(true);
+    } finally {
+      closeClaudeTmuxSession(folder);
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  180000,
+);

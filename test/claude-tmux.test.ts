@@ -23,6 +23,8 @@ import {
   stayOnModelMenu,
   retryOnPausedMenu,
   readClaudeMenu,
+  readPromptBox,
+  solidScreen,
   chooseMenuOption,
   invokeClaudeTmux,
   listClaudeTmuxModels,
@@ -1048,6 +1050,36 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(0);
   });
 
+  it('submits a recovered turn left unsent in the box, though Claude Code wrote bookkeeping since', async () => {
+    // The worker stopped between paste and Enter. Claude Code appends records
+    // of its own while idle; they are not the turn, and taking them for it
+    // waited an hour on a message that was never sent.
+    const fixture = createRuntimeFixture({
+      framed: true,
+      initialInput: 'Please carry out the following user request: submit after recovery',
+    });
+    persistActiveTurn(fixture, '93', 0);
+    fixture.live = true;
+    writeFileSync(
+      fixture.transcript,
+      `${JSON.stringify({ type: 'last-prompt', lastPrompt: '{"type":"user"} quoted in a prompt' })}\n` +
+        `${JSON.stringify({ type: 'mode', mode: 'normal' })}\n`,
+    );
+
+    const result = await invokeClaudeTmux('web_claude1', 'submit after recovery', {
+      turnId: 93,
+      model: 'claude-code/haiku',
+      cwd: fixture.cwd,
+      dependencies: fixture.dependencies,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    // Sent once, alone: the copy left in the box was emptied first.
+    expect(fixture.submittedInputs).toEqual([
+      'Please carry out the following user request: submit after recovery',
+    ]);
+  });
+
   it('submits a recovered turn once when the pane is idle and the transcript has no new bytes', async () => {
     const fixture = createRuntimeFixture();
     persistActiveTurn(fixture, '92', 0);
@@ -1430,9 +1462,12 @@ describe('Claude tmux invocation', () => {
         }
         const marker =
           fixture.pastes.length > 0 ? '[Pasted text #7 +1 lines]' : '[Pasted\n  text #7 +1 lines]';
-        return location === 'editable prompt'
-          ? `❯ ${marker}\nbypass permissions on`
-          : `Previous turn: ${marker}\n❯\nbypass permissions on`;
+        if (location === 'editable prompt') {
+          // A marker left in the box is emptied (Ctrl-C) before the new paste.
+          const emptied = fixture.sentKeys.some((keys) => keys.at(-1) === 'C-c');
+          return emptied ? '❯\nbypass permissions on' : `❯ ${marker}\nbypass permissions on`;
+        }
+        return `Previous turn: ${marker}\n❯\nbypass permissions on`;
       };
 
       const result = await invokeClaudeTmux('web_claude1', 'first line\nsecond line', {
@@ -1444,6 +1479,10 @@ describe('Claude tmux invocation', () => {
       expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
       expect(fixture.submissionCount).toBe(1);
       expect(fixture.pastes).toHaveLength(1);
+      expect(fixture.sentKeys.filter((keys) => keys.at(-1) === 'C-c')).toHaveLength(
+        location === 'editable prompt' ? 1 : 0,
+      );
+      expect(fixture.launches).toHaveLength(1);
     },
   );
 
@@ -1476,15 +1515,17 @@ describe('Claude tmux invocation', () => {
     expect(fixture.submissionCount).toBe(1);
   });
 
-  it('does not acknowledge a paste by an identical prompt already left in the box', async () => {
+  it('empties an identical prompt left in the box, and still reports a paste that never lands', async () => {
     const fixture = createRuntimeFixture();
     const prompt = 'same request text that was left unsubmitted earlier';
     const originalTmux = fixture.dependencies.tmux;
+    let stale = true;
     fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'send-keys' && args.at(-1) === 'C-c') stale = false;
       const screen = await originalTmux(args);
       if (args[0] !== 'capture-pane') return screen;
-      // The paste never lands: the box keeps showing only the stale copy.
-      return screen.replace(/❯ [^\n]*/u, `❯ ${prompt}`);
+      // The stale copy until it is emptied; after that the paste never lands.
+      return screen.replace(/❯ [^\n]*/u, stale ? `❯ ${prompt}` : '❯ ');
     };
 
     const result = await invokeClaudeTmux('web_claude1', prompt, {
@@ -1494,7 +1535,13 @@ describe('Claude tmux invocation', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Claude Code did not accept the pasted prompt');
     expect(fixture.submissionCount).toBe(0);
-    expect(fixture.sentKeys.some((keys) => keys.at(-1) === 'C-c')).toBe(true);
+    // The stale copy never acknowledged the paste: it was emptied first.
+    const keys = fixture.sentKeys.map((sent) => sent.at(-1));
+    expect(keys.indexOf('C-c')).toBeGreaterThanOrEqual(0);
+    expect(keys.indexOf('C-c')).toBeLessThan(keys.indexOf('Please carry out the following user request: '));
+    // Tried once more on a restarted TUI before giving up.
+    expect(fixture.launches).toHaveLength(2);
+    expect(fixture.pastes).toHaveLength(2);
   });
 
   it('does not acknowledge an incomplete terminal-wrapped paste marker', async () => {
@@ -1503,7 +1550,7 @@ describe('Claude tmux invocation', () => {
     fixture.dependencies.tmux = async (args) => {
       const screen = await originalTmux(args);
       return args[0] === 'capture-pane'
-        ? screen.replace('[Pasted text #1 +1 lines]', '[Pasted\n  text #1 +1 lines')
+        ? screen.replace(/\[Pasted text #(\d+) \+1 lines\]/u, '[Pasted\n  text #$1 +1 lines')
         : screen;
     };
 
@@ -1514,7 +1561,9 @@ describe('Claude tmux invocation', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Claude Code did not accept the pasted prompt');
     expect(fixture.submissionCount).toBe(0);
-    expect(fixture.pastes).toHaveLength(1);
+    // Once, then once more on a restarted TUI.
+    expect(fixture.pastes).toHaveLength(2);
+    expect(fixture.launches).toHaveLength(2);
   });
 
   it('stops with a lone Escape, and no Ctrl-C once the turn has stopped', async () => {
@@ -1564,6 +1613,190 @@ describe('Claude tmux invocation', () => {
     expect(keys.filter((k) => k === 'Escape')).toHaveLength(1);
     expect(keys).not.toContain('C-c');
     expect(fixture.submissionCount).toBe(1);
+  });
+
+  // 2026-11-28, iPhone Duo. A message sent 22 s into a turn stopped it, and
+  // then: "did not accept the pasted prompt", and "did not become ready" for
+  // every message after. Screens below are Claude Code 2.1.332's, 80x23.
+  const HANDOFF =
+    '[System handoff: The user interrupted the previous task. Do not resume or continue the previous task. ' +
+    'Follow only the latest instruction below. If asked for a screenshot, take it and immediately return it ' +
+    'using [[file: /absolute/path/to/screenshot.png]].]\n[Web user: web]\n你可以用我在隨身碟裡面的Sony raw 檔修圖看看';
+  const TYPED = 'Please carry out the following user request: ';
+  const E = '\x1b';
+  const SCROLLED_BOX = [
+    `${E}[38;5;246m✻${E}[39m ${E}[38;5;246mCooked for 26m 16s · done 9:40 PM${E}[39m`,
+    '',
+    `${E}[38;5;244m───${E}[39m ${E}[2m↑ 2 more${E}[0m ${E}[38;5;244m${'─'.repeat(67)}`,
+    `${E}[39m  The user interrupted the previous task. Do not resume or continue the`,
+    '  previous task. Follow only the latest instruction below. If asked for a',
+    '  screenshot, take it and immediately return it using [[file:',
+    '  /absolute/path/to/screenshot.png]].]',
+    '  [Web user: web]',
+    '  你可以用我在隨身碟裡面的Sony raw 檔修圖看看',
+    `${E}[38;5;244m${'─'.repeat(80)}`,
+    `${E}[39m  ${E}[38;5;210m⏵⏵ bypass permissions on${E}[38;5;246m (shift+tab to cycle)${E}[39m`,
+  ].join('\n');
+  const EMPTY_BOX_WITH_PLACEHOLDER = [
+    `${E}[38;5;244m${'─'.repeat(80)}`,
+    `${E}[39m❯ ${E}[2mTry "create a util logging.py that…"${E}[0m`,
+    `${E}[38;5;244m${'─'.repeat(80)}`,
+    `${E}[39m  ${E}[38;5;210m⏵⏵ bypass permissions on${E}[38;5;246m (shift+tab to cycle)${E}[39m`,
+  ].join('\n');
+
+  it('reads the prompt box by its frame when the ❯ row has scrolled away', () => {
+    // Styling removed, faint text kept: the frame's own "↑ 2 more" is faint.
+    const box = readPromptBox(solidScreen(SCROLLED_BOX, false));
+    expect(box).toMatchObject({ framed: true, glyph: false, hiddenAbove: 2 });
+    // With faint text dropped the box's text is the same: none of it is faint.
+    expect(readPromptBox(solidScreen(SCROLLED_BOX)).text).toBe(box.text);
+    expect(box.text).toContain('The user interrupted the previous task.');
+    expect(box.text.endsWith('你可以用我在隨身碟裡面的Sony raw 檔修圖看看')).toBe(true);
+    // Nothing above the frame is taken for the box.
+    expect(box.text).not.toContain('Cooked');
+  });
+
+  it('reads an empty box as empty: placeholder text is drawn faint, not typed', () => {
+    expect(readPromptBox(solidScreen(EMPTY_BOX_WITH_PLACEHOLDER))).toMatchObject({
+      framed: true,
+      glyph: true,
+      text: '',
+    });
+    // Unstyled, the same screen looks full, which is why emptiness is read styled.
+    // eslint-disable-next-line no-control-regex
+    const plain = EMPTY_BOX_WITH_PLACEHOLDER.replace(/\x1b\[[0-9;]*m/gu, '');
+    expect(readPromptBox(plain).text).toContain('Try "create a util');
+    // A 256-colour index of 2 is a colour, not "faint".
+    expect(solidScreen(`${E}[38;5;2mkept${E}[39m ${E}[2mdropped${E}[22m kept`)).toBe('kept  kept');
+  });
+
+  it('a dialog under a single rule is not a prompt box', () => {
+    const dialog = [
+      '─'.repeat(80),
+      '  Make auto mode your default permission mode?',
+      '',
+      '  Auto mode lets Claude handle permission prompts automatically. Claude checks',
+      '  each tool call for risky actions and prompt injection before executing,',
+      '  runs the ones it assesses as lower-risk, and blocks the rest.',
+      '',
+      '  ❯ Yes, set auto mode as my default permission mode',
+      '    No, keep bypass permissions',
+    ].join('\n');
+    expect(readPromptBox(dialog).framed).toBe(false);
+  });
+
+  it('sends a message whose text outgrows the prompt box (the ❯ row scrolls away)', async () => {
+    const fixture = createRuntimeFixture({ framed: true });
+    const result = await invokeClaudeTmux('web_claude1', HANDOFF, { dependencies: fixture.dependencies });
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submittedInputs).toEqual([`${TYPED}${HANDOFF}`]);
+    expect(fixture.launches).toHaveLength(1);
+    expect(fixture.sentKeys.some((keys) => keys.at(-1) === 'C-c')).toBe(false);
+  });
+
+  it('a message after an early stop is sent alone, not glued to the one Claude Code put back', async () => {
+    // Escape before Claude's first output puts the stopped message back in the box.
+    const options = { framed: true, restoreOnEscape: true, runningAfterSubmit: true, completeTurns: false };
+    const fixture = createRuntimeFixture(options);
+    const controller = new AbortController();
+    const originalSleep = fixture.dependencies.sleep;
+    fixture.dependencies.sleep = async (ms) => {
+      if (fixture.submissionCount === 1 && !controller.signal.aborted) controller.abort();
+      return originalSleep(ms);
+    };
+    const first = await invokeClaudeTmux('web_claude1', '[Web user: web]\nDo video record', {
+      signal: controller.signal,
+      dependencies: fixture.dependencies,
+    });
+    expect(first).toMatchObject({ ok: false, aborted: true });
+    expect(fixture.currentInput).toBe(`${TYPED}[Web user: web]\nDo video record`);
+
+    options.completeTurns = true;
+    const second = await invokeClaudeTmux('web_claude1', HANDOFF, { dependencies: fixture.dependencies });
+    expect(second).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submittedInputs.at(-1)).toBe(`${TYPED}${HANDOFF}`);
+    expect(fixture.sentKeys.filter((keys) => keys.at(-1) === 'C-c')).toHaveLength(1);
+    expect(fixture.launches).toHaveLength(1);
+  });
+
+  it('empties text an earlier failure left in the box, however long, before the next message', async () => {
+    // The state the pane was left in: the ❯ row scrolled away, so nothing saw the text.
+    const fixture = createRuntimeFixture({ framed: true, initialInput: `${TYPED}${HANDOFF}` });
+    const result = await invokeClaudeTmux('web_claude1', '[Web user: web]\nContinue', {
+      dependencies: fixture.dependencies,
+    });
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.submittedInputs).toEqual([`${TYPED}[Web user: web]\nContinue`]);
+  });
+
+  it('presses Enter again when Claude Code leaves the message in the box', async () => {
+    const fixture = createRuntimeFixture({ framed: true, swallowEnters: 1 });
+    const result = await invokeClaudeTmux('web_claude1', 'hello', { dependencies: fixture.dependencies });
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.sentKeys.filter((keys) => keys.at(-1) === 'Enter').length).toBeGreaterThanOrEqual(2);
+    expect(fixture.submittedInputs).toEqual([`${TYPED}hello`]);
+    expect(fixture.launches).toHaveLength(1);
+  });
+
+  it('restarts the TUI on the same conversation when Enter starts nothing, and leaves the box empty', async () => {
+    const fixture = createRuntimeFixture({ framed: true, swallowEnters: 3 });
+    writeFileSync(fixture.transcript, '');
+    const result = await invokeClaudeTmux('web_claude1', 'hello', { dependencies: fixture.dependencies });
+    // Three Enters went nowhere; the restarted TUI took the message.
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.launches).toHaveLength(2);
+    expect(fixture.launches[1]).toEqual(expect.arrayContaining(['--resume', fixture.sessionId]));
+    expect(fixture.submittedInputs).toEqual([`${TYPED}hello`]);
+  });
+
+  it('reports the failure, with the box emptied, when the restarted TUI cannot take it either', async () => {
+    const fixture = createRuntimeFixture({ framed: true, swallowEnters: 99 });
+    const result = await invokeClaudeTmux('web_claude1', 'hello', { dependencies: fixture.dependencies });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Claude Code did not start the turn');
+    expect(fixture.launches).toHaveLength(2);
+    expect(fixture.submissionCount).toBe(0);
+    // Nothing is left to be glued in front of the next message.
+    expect(fixture.currentInput).toBe('');
+  });
+
+  it('restarts a pane showing something the bridge cannot read, then sends the message', async () => {
+    const fixture = createRuntimeFixture();
+    writeFileSync(fixture.transcript, '');
+    const tmux = fixture.dependencies.tmux;
+    let unreadable = true;
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'kill-session') unreadable = false;
+      if (args[0] === 'capture-pane' && unreadable && fixture.trustAccepted) {
+        return '╭──────────╮\n│ Some notice Claude Code added │\n╰──────────╯\n  0 to dismiss';
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'hello', { dependencies: fixture.dependencies });
+    expect(result).toEqual({ ok: true, text: 'Done from tmux.' });
+    expect(fixture.launches).toHaveLength(2);
+    expect(fixture.launches[1]).toEqual(expect.arrayContaining(['--resume', fixture.sessionId]));
+    expect(fixture.submissionCount).toBe(1);
+  });
+
+  it('does not restart a pane whose conversation still has background commands running', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.dependencies.hasBackgroundWork = () => true;
+    const tmux = fixture.dependencies.tmux;
+    const killed: string[][] = [];
+    fixture.dependencies.tmux = async (args) => {
+      if (args[0] === 'kill-session') killed.push(args);
+      if (args[0] === 'capture-pane' && fixture.trustAccepted) {
+        return 'Some notice Claude Code added\n  0 to dismiss';
+      }
+      return tmux(args);
+    };
+    const result = await invokeClaudeTmux('web_claude1', 'hello', { dependencies: fixture.dependencies });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('did not become ready');
+    expect(result.error).toContain('background commands');
+    expect(killed).toHaveLength(0);
+    expect(fixture.launches).toHaveLength(1);
   });
 
   it('sends Ctrl-C and preserves the tmux session when aborted', async () => {
@@ -2075,6 +2308,18 @@ function createRuntimeFixture(
     runningScreen?: boolean;
     pasteLineCount?: boolean;
     trustCursorOnNo?: boolean;
+    /**
+     * Draw the prompt box as Claude Code 2.1 does: between two rules, wrapped at
+     * the pane's width, only its last 6 rows visible ("─── ↑ N more ───"). Typed
+     * and pasted text shows as it is.
+     */
+    framed?: boolean;
+    /** Text already sitting in the box when the first message arrives. */
+    initialInput?: string;
+    /** An Escape during a turn puts the stopped message back in the box. */
+    restoreOnEscape?: boolean;
+    /** This many Enters on a full box do nothing. */
+    swallowEnters?: number;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'piweb-claude-tmux-test-'));
@@ -2097,7 +2342,10 @@ function createRuntimeFixture(
   let pasteCaptures = 0;
   let pastePending = false;
   let pasteMarker = 0;
-  let currentInput = '';
+  let currentInput = options.initialInput ?? '';
+  let stopped = false;
+  let swallowEnters = options.swallowEnters ?? 0;
+  const submittedInputs: string[] = [];
   let priorScreen = '';
   let pendingPrompt = '';
   let submissionCount = 0;
@@ -2136,6 +2384,28 @@ function createRuntimeFixture(
     );
   };
 
+  const framedScreen = () => {
+    const rows: string[] = [];
+    for (const [index, line] of `${currentInput}`.split('\n').entries()) {
+      let rest = line;
+      let first = true;
+      do {
+        rows.push(`${index === 0 && first ? '❯ ' : '  '}${rest.slice(0, 78)}`);
+        rest = rest.slice(78);
+        first = false;
+      } while (rest);
+    }
+    const hidden = Math.max(0, rows.length - 6);
+    const running = submissionCount > 0 && Boolean(options.runningAfterSubmit) && !stopped;
+    return [
+      priorScreen.trimEnd(),
+      hidden ? `─── ↑ ${hidden} more ${'─'.repeat(67)}` : '─'.repeat(80),
+      ...rows.slice(hidden),
+      '─'.repeat(80),
+      `  ⏵⏵ bypass permissions on (shift+tab to cycle)${running ? ' · esc to interrupt' : ''}`,
+    ].join('\n');
+  };
+
   const dependencies: ClaudeTmuxDependencies = {
     randomUUID: () => sessionId,
     resolveSessionDir: () => sessionDir,
@@ -2164,6 +2434,7 @@ function createRuntimeFixture(
         }
         if (!trustAccepted) return '1. Yes, I trust this folder\n2. No, exit';
         readyCaptures += 1;
+        if (options.framed) return framedScreen();
         if (options.runningScreen) {
           return `${priorScreen}Working on tools…\nbypass permissions on · esc to interrupt`;
         }
@@ -2182,8 +2453,19 @@ function createRuntimeFixture(
           ? `${priorScreen}❯ ${currentInput}\nbypass permissions on${running ? ' · esc to interrupt' : ''}`
           : 'bypass permissions on · starting Claude Code';
       }
+      if (args[0] === 'kill-session') {
+        // The TUI is gone, and whatever its prompt box held with it.
+        live = false;
+        currentInput = '';
+        pastePending = false;
+        return '';
+      }
       if (args[0] === 'paste-buffer') {
         pastes.push(args);
+        if (options.framed) {
+          currentInput += pendingPrompt;
+          return '';
+        }
         pastePending = true;
         pasteCaptures = 0;
         if (pendingPrompt.includes('\n')) pasteMarker += 1;
@@ -2199,8 +2481,21 @@ function createRuntimeFixture(
           throw new Error(`can't find pane: ${args[2]}`);
         } else if (args.at(-1) === 'Enter' && !trustAccepted) {
           trustAccepted = true;
+        } else if (options.framed && args.includes('-l')) {
+          currentInput += args.at(-1);
+        } else if (args.at(-1) === 'Enter' && currentInput && swallowEnters > 0) {
+          swallowEnters -= 1;
+        } else if (args.at(-1) === 'Escape' && options.restoreOnEscape && submissionCount && !stopped) {
+          stopped = true;
+          currentInput = submittedInputs.at(-1) ?? '';
+        } else if (args.at(-1) === 'C-c') {
+          // Empties a box that holds text (on an empty one it arms the exit).
+          currentInput = '';
+          pastePending = false;
         } else if (args.at(-1) === 'Enter' && currentInput) {
           submissionCount += 1;
+          stopped = false;
+          submittedInputs.push(currentInput);
           stateAtSubmissions.push(
             JSON.parse(readFileSync(join(sessionDir, 'claude-tmux-session.json'), 'utf8')),
           );
@@ -2222,6 +2517,9 @@ function createRuntimeFixture(
     startupTimeoutMs: 100,
     turnTimeoutMs: 100,
     escapeSettleMs: 1,
+    clearSettleMs: 1,
+    enterRetryMs: 5,
+    hasBackgroundWork: () => false,
   };
 
   return {
@@ -2236,6 +2534,10 @@ function createRuntimeFixture(
     pastes,
     stateAtSubmissions,
     seenPasteMarkers,
+    submittedInputs,
+    get currentInput() {
+      return currentInput;
+    },
     appendTurn,
     dependencies,
     get submissionCount() {

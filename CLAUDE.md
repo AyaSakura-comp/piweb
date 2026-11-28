@@ -1448,6 +1448,15 @@ quoting another session's launch line once held a turn on that session's task.
 Each Claude pane's tmux scope gets `OOMPolicy=continue` (`src/agent/tmux-oom.ts`):
 under systemd's default `stop`, an OOM-killed command (a llama-server Claude
 started) took Claude Code and its pane with it — "can't find pane: %8".
+A message is handed to the TUI in checked steps (`deliver()`): an idle, EMPTY
+prompt box (text left in it is emptied with one Ctrl-C), the paste seen in the
+box, Enter, the turn seen to start (transcript / running pane / box emptied;
+Enter again if not), nothing left in the box on failure, and as a last resort
+one restart of the TUI with `--resume` (not while background commands run).
+The box is found by its frame (the last two rules), never by its `❯`, which
+scrolls away once the text outgrows the box (`readPromptBox`); emptiness is
+read from a styled capture, since placeholder text is faint (`solidScreen`).
+See "Handing a message to Claude Code" in the doc before touching any of it.
 A Claude Code menu the bridge has no rule for ("Resume this conversation?",
 any new one) is put to the user as a normal reply (`readClaudeMenu`), never
 answered with Escape/Ctrl-C and never left to "did not become ready"; the

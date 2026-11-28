@@ -22,6 +22,7 @@ import type { AgentResult, ThinkingLevel } from '../types.js';
 import { convertLocalMediaLinks } from './local-media-links.js';
 import { createClaudeSubagentTracker } from './claude-subagents.js';
 import {
+  claudeSessionHasRunningCommands,
   commandProcessIds,
   createClaudeCommandTracker,
   STOP_REQUESTED,
@@ -247,6 +248,8 @@ export function translateClaudeTranscriptRecord(raw: any): ClaudeTranslatedRecor
 }
 
 const STATE_FILE = 'claude-tmux-session.json';
+/** The pane as it looked when the bridge last failed (overwritten each time). */
+const FAILURE_SCREEN_FILE = 'claude-tmux-failure-screen.txt';
 
 interface ClaudeTmuxActiveTurn {
   turnId: string;
@@ -301,6 +304,12 @@ export interface ClaudeTmuxDependencies {
   commandRunning?: (outputFile: string) => boolean;
   /** Pause after an Escape before the next key (default ESCAPE_SETTLE_MS). */
   escapeSettleMs?: number;
+  /** Least time between two Ctrl-C that empty the prompt box (default CLEAR_SETTLE_MS). */
+  clearSettleMs?: number;
+  /** How long an Enter may go unanswered before it is pressed again (default ENTER_RETRY_MS). */
+  enterRetryMs?: number;
+  /** Whether the Claude conversation still has background commands running. */
+  hasBackgroundWork?: (sessionId: string) => boolean;
 }
 
 const defaultDependencies: ClaudeTmuxDependencies = {
@@ -484,11 +493,13 @@ export async function invokeClaudeTmux(
     }
 
     const recoveringTurn = state.activeTurn?.turnId === turnId || Boolean(answeredInTurn);
-    if (!live) {
-      const transcriptPath = state.transcriptPath || deps.findTranscript(state.sessionId);
+    // Start the TUI on this channel's conversation (resumed when it has one).
+    const launch = async () => {
+      const current = state!;
+      const transcriptPath = current.transcriptPath || deps.findTranscript(current.sessionId);
       const resume = Boolean(transcriptPath && existsSync(transcriptPath));
       const args = buildClaudeArgs({
-        sessionId: state.sessionId,
+        sessionId: current.sessionId,
         modelRef,
         thinking: thinking || undefined,
         resume,
@@ -496,14 +507,15 @@ export async function invokeClaudeTmux(
       await deps.tmux(['new-session', '-d', '-s', name, '-c', cwd, deps.claudeBin, ...args]);
       ensureNotAborted();
       state = {
-        ...state,
+        ...current,
         cwd,
         modelRef,
         thinking,
         ...(transcriptPath ? { transcriptPath } : {}),
       };
       live = true;
-    }
+    };
+    if (!live) await launch();
 
     writeState(stateFile, state);
     childTracker = createClaudeSubagentTracker(sessionDir, state.sessionId, {
@@ -590,7 +602,9 @@ export async function invokeClaudeTmux(
       const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]);
       ensureNotAborted();
       if (!transcriptPath) transcriptPath = deps.findTranscript(state.sessionId);
-      const hasTranscriptBytes = fileSize(transcriptPath) > offset;
+      // Claude Code also appends bookkeeping records while idle (mode,
+      // last-prompt …): only a message or a reply shows the turn was handed over.
+      const hasTranscriptBytes = turnRecordedSince(transcriptPath, offset);
       // A non-idle pane is the strongest evidence that Enter already happened,
       // including the window before Claude has flushed its first JSONL record.
       // Do not wait for startup readiness while that recovered turn is running.
@@ -600,9 +614,13 @@ export async function invokeClaudeTmux(
     }
 
     if (shouldSubmit) {
-      // An answer can start real work first ("Resume from summary" compacts
-      // the conversation), so it gets the turn's patience, not startup's.
-      if (!recoveringTurn) {
+      let promptText: string | undefined;
+      // Hand the message to Claude Code: an idle, empty prompt box; the text
+      // seen in it; Enter; the turn seen to start. Each step is checked on the
+      // pane or the transcript, never assumed from the keys sent.
+      const deliver = async () => {
+        // An answer can start real work first ("Resume from summary" compacts
+        // the conversation), so it gets the turn's patience, not startup's.
         pane = await waitForReadyPane(
           name,
           deps,
@@ -610,60 +628,112 @@ export async function invokeClaudeTmux(
           menuAnswered ? deps.turnTimeoutMs : undefined,
           menuAnswered,
         );
-      }
-      ensureNotAborted();
-
-      let promptText = sendText;
-      if (sendAttachments) {
-        const files = await (deps.prepareAttachments ?? prepareClaudeAttachments)(
-          sendAttachments,
-          channelFolder,
-          signal,
-        );
         ensureNotAborted();
-        for (const file of files) promptText += `\n[Uploaded file: ${file}]`;
-      }
-      if (earlierTranscript) {
-        promptText +=
-          `\n[This session's earlier Claude Code conversation, not in your context; ` +
-          `read it only if the user refers to it: ${earlierTranscript}]`;
-      }
 
-      if (!transcriptPath) transcriptPath = deps.findTranscript(state.sessionId);
-      offset = fileSize(transcriptPath);
-      state.activeTurn = {
-        turnId,
-        ...(transcriptPath ? { transcriptPath } : {}),
-        transcriptOffset: offset,
+        if (promptText === undefined) {
+          let text = sendText;
+          if (sendAttachments) {
+            const files = await (deps.prepareAttachments ?? prepareClaudeAttachments)(
+              sendAttachments,
+              channelFolder,
+              signal,
+            );
+            ensureNotAborted();
+            for (const file of files) text += `\n[Uploaded file: ${file}]`;
+          }
+          if (earlierTranscript) {
+            text +=
+              `\n[This session's earlier Claude Code conversation, not in your context; ` +
+              `read it only if the user refers to it: ${earlierTranscript}]`;
+          }
+          promptText = text;
+        }
+
+        if (!transcriptPath) transcriptPath = deps.findTranscript(state!.sessionId);
+        offset = fileSize(transcriptPath);
+        state!.activeTurn = {
+          turnId,
+          ...(transcriptPath ? { transcriptPath } : {}),
+          transcriptOffset: offset,
+        };
+        writeState(stateFile, state!);
+
+        const bufferName = `${name}-input`;
+        await deps.loadBuffer(promptText, bufferName);
+        ensureNotAborted();
+        const beforePaste = await deps.tmux(['capture-pane', '-p', '-t', pane]);
+        ensureNotAborted();
+        // Claude wraps bracketed paste as quoted data. Keep an actual typed user
+        // request outside that wrapper; retain bracketed paste for multiline safety.
+        pasted = true;
+        await deps.tmux([
+          'send-keys',
+          '-t',
+          pane,
+          '-l',
+          'Please carry out the following user request: ',
+        ]);
+        ensureNotAborted();
+        await deps.tmux(['paste-buffer', '-d', '-p', '-b', bufferName, '-t', pane]);
+        ensureNotAborted();
+        await waitForPastedPrompt(pane, promptText, beforePaste, deps, signal);
+        ensureNotAborted();
+
+        // Mark active before awaiting tmux: once send-keys starts, an abort must
+        // Ctrl-C because Enter may already have reached Claude.
+        submitted = true;
+        await deps.tmux(['send-keys', '-t', pane, 'Enter']);
+        ensureNotAborted();
+        try {
+          await confirmTurnStarted(
+            pane,
+            deps,
+            () => {
+              if (!transcriptPath) transcriptPath = deps.findTranscript(state!.sessionId);
+              return turnRecordedSince(transcriptPath, offset);
+            },
+            signal,
+          );
+        } catch (error: unknown) {
+          // Nothing was handed over after all: a stop has no turn to interrupt.
+          if (error instanceof ClaudePaneNotReady) submitted = false;
+          throw error;
+        }
+        ensureNotAborted();
       };
-      writeState(stateFile, state);
 
-      const bufferName = `${name}-input`;
-      await deps.loadBuffer(promptText, bufferName);
-      ensureNotAborted();
-      const beforePaste = await deps.tmux(['capture-pane', '-p', '-t', pane]);
-      ensureNotAborted();
-      // Claude wraps bracketed paste as quoted data. Keep an actual typed user
-      // request outside that wrapper; retain bracketed paste for multiline safety.
-      pasted = true;
-      await deps.tmux([
-        'send-keys',
-        '-t',
-        pane,
-        '-l',
-        'Please carry out the following user request: ',
-      ]);
-      ensureNotAborted();
-      await deps.tmux(['paste-buffer', '-d', '-p', '-b', bufferName, '-t', pane]);
-      ensureNotAborted();
-      await waitForPastedPrompt(pane, promptText, beforePaste, deps, signal);
-      ensureNotAborted();
-
-      // Mark active before awaiting tmux: once send-keys starts, an abort must
-      // Ctrl-C because Enter may already have reached Claude.
-      submitted = true;
-      await deps.tmux(['send-keys', '-t', pane, 'Enter']);
-      ensureNotAborted();
+      try {
+        await deliver();
+      } catch (error: unknown) {
+        // Last resort for a pane the bridge cannot read or drive (a notice or
+        // dialog it has no rule for, a TUI that stopped taking keys): start
+        // Claude Code again on the same conversation and hand the message over
+        // once more. The conversation is in its transcript, so only the TUI is
+        // lost. Not after a menu answer (that work is the user's) and not while
+        // background commands run (a restart would end them).
+        if (!(error instanceof ClaudePaneNotReady) || aborted || signal?.aborted || menuAnswered) throw error;
+        const hasBackgroundWork = deps.hasBackgroundWork ?? claudeSessionHasRunningCommands;
+        if (hasBackgroundWork(state.sessionId)) {
+          throw new Error(
+            `${error.message}\n(Claude Code still has background commands running, so it was not restarted.)`,
+            { cause: error },
+          );
+        }
+        logger.warn(
+          { err: error.message, channelFolder },
+          'Claude Code pane could not take the message; restarting it on the same conversation',
+        );
+        pasted = false;
+        submitted = false;
+        await deps.tmux(['kill-session', '-t', name]).catch(() => undefined);
+        ensureNotAborted();
+        await launch();
+        writeState(stateFile, state);
+        pane = await getClaudePane(name, deps);
+        ensureNotAborted();
+        void deps.protectPane?.(pane).catch(() => undefined);
+        await deliver();
+      }
     }
 
     // This is an inactivity deadline, not a cap on a healthy multi-tool turn.
@@ -922,9 +992,9 @@ export async function invokeClaudeTmux(
     return { ok: true, text };
   } catch (err: any) {
     if (err instanceof ClaudeTmuxAbortError || aborted || signal?.aborted) {
-      if (pasted && !submitted && pane) {
-        await deps.tmux(['send-keys', '-t', pane, 'C-u']).catch(() => undefined);
-      }
+      // Stopped between paste and Enter: take the text back out of the box
+      // (C-u would take only its last row).
+      if (pasted && !submitted && pane) await clearPromptBox(pane, deps).catch(() => undefined);
       return { ok: false, text: '', aborted: true };
     }
     if (err instanceof ClaudeMenuQuestion) {
@@ -948,11 +1018,18 @@ export async function invokeClaudeTmux(
     if (pasted && !submitted && pane) {
       // An unacknowledged paste may still have landed; left in the box it
       // would be prepended to the next message. Ctrl-C clears a non-empty
-      // prompt (C-u clears only its last line); on an empty one it would arm
-      // "press again to exit", so it is sent only when text is there.
-      const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
-      if (currentPrompt(screen)) {
-        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      // prompt; on an empty one it would arm "press again to exit", so it is
+      // sent only when text is really there (clearPromptBox).
+      await clearPromptBox(pane, deps).catch(() => undefined);
+    }
+    if (pane) {
+      // The whole screen, styled, for whoever has to work out what Claude Code
+      // was showing: the log line keeps only its last 300 characters.
+      const styled = await deps.tmux(['capture-pane', '-e', '-p', '-t', pane]).catch(() => '');
+      try {
+        if (styled) writeFileSync(join(sessionDir, FAILURE_SCREEN_FILE), `${err.message}\n\n${styled}\n`);
+      } catch {
+        /* diagnostics only */
       }
     }
     logger.warn({ err: err.message, channelFolder }, 'Claude Code tmux bridge failed');
@@ -1319,6 +1396,13 @@ export function describeClaudeMenu(menu: ClaudeMenu, heldPrompt: string, again =
   ].join('\n');
 }
 
+/**
+ * The message could not be handed to Claude Code: the pane never showed an
+ * empty prompt, the paste never showed in the box, or Enter started nothing.
+ * Nothing has been sent, so the pane can be restarted and the message tried again.
+ */
+class ClaudePaneNotReady extends Error {}
+
 /** Thrown while waiting on the pane when Claude Code is asking the user something. */
 class ClaudeMenuQuestion extends Error {
   constructor(readonly menu: ClaudeMenu) {
@@ -1484,8 +1568,161 @@ export async function interruptClaudeTurn(pane: string, deps: ClaudeTmuxDependen
   }
 }
 
+/**
+ * The prompt box as Claude Code draws it: the rows between the last two rules
+ * on the screen, with at most a short footer under them.
+ *
+ * It is found by its frame, never by the ❯ on its first row: the box shows only
+ * its last rows once the text outgrows it (6 rows in an 80x23 pane, the top
+ * rule then reading "─── ↑ 2 more ───"), and with the ❯ scrolled away the pane
+ * looked like no prompt at all. Every message after an interrupt carries a
+ * handoff note that long (2026-11-28, iPhone Duo: "did not accept the pasted
+ * prompt", then "did not become ready" for every later message, the text still
+ * sitting in the box).
+ */
+export interface PromptBox {
+  /** Drawn with its two rules. False: read the old way, from the last ❯ row. */
+  framed: boolean;
+  /** The box's first row is on screen (it carries the ❯). */
+  glyph: boolean;
+  /** Rows scrolled out above the visible ones ("↑ N more"). */
+  hiddenAbove: number;
+  /** The visible text, without the ❯ and the indent. */
+  text: string;
+}
+
+const RULE_LABEL_MAX = 24;
+const BOX_FOOTER_ROWS_MAX = 5;
+
+/** A horizontal rule, plain or carrying a short label ("─── ↑ 2 more ───…"). */
+function isRuleRow(row: string): boolean {
+  const trimmed = row.trim();
+  if (!trimmed.startsWith('─') || !trimmed.endsWith('─')) return false;
+  const dashes = trimmed.match(/─/gu)?.length ?? 0;
+  return dashes >= 20 && trimmed.length - dashes <= RULE_LABEL_MAX;
+}
+
+export function readPromptBox(screen: string): PromptBox {
+  const rows = screen.split(/\r?\n/u);
+  let bottom = -1;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (isRuleRow(rows[i])) {
+      bottom = i;
+      break;
+    }
+  }
+  let top = -1;
+  for (let i = bottom - 1; i >= 0; i -= 1) {
+    if (isRuleRow(rows[i])) {
+      top = i;
+      break;
+    }
+  }
+  const footerRows = bottom < 0 ? 0 : rows.slice(bottom + 1).filter((row) => row.trim()).length;
+  // A dialog drawn under a single rule is not a prompt box.
+  if (top >= 0 && bottom - top > 1 && footerRows <= BOX_FOOTER_ROWS_MAX) {
+    const body = rows.slice(top + 1, bottom);
+    const glyph = /^\s*❯/u.test(body[0]);
+    const text = body
+      .map((row, index) => (index === 0 ? row.replace(/^\s*❯\s?/u, '') : row.replace(/^ {1,2}/u, '')))
+      .join('\n')
+      .trim();
+    return {
+      framed: true,
+      glyph,
+      hiddenAbove: Number(/↑\s*(\d+)\s+more/u.exec(rows[top])?.[1] ?? 0),
+      text,
+    };
+  }
+  // No frame (an older or newer Claude Code): the last ❯ row down to the footer.
+  let promptRow = -1;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (/^\s*❯/u.test(rows[i])) {
+      promptRow = i;
+      break;
+    }
+  }
+  if (promptRow < 0) return { framed: false, glyph: false, hiddenAbove: 0, text: '' };
+  const end = rows.findIndex(
+    (row, index) => index > promptRow && (/bypass permissions on/i.test(row) || isRuleRow(row)),
+  );
+  return {
+    framed: false,
+    glyph: true,
+    hiddenAbove: 0,
+    text: rows
+      .slice(promptRow, end < 0 ? undefined : end)
+      .join('\n')
+      .replace(/^\s*❯\s*/u, '')
+      .trim(),
+  };
+}
+
 function isReadyPaneScreen(screen: string): boolean {
-  return /bypass permissions on/i.test(screen) && /(?:^|\n)\s*❯/u.test(screen);
+  if (!/bypass permissions on/i.test(screen)) return false;
+  // The status bar appears before Ink has mounted the editable prompt, and a
+  // paste sent in that window is silently discarded: require the box itself.
+  const box = readPromptBox(screen);
+  return box.glyph || (box.framed && box.hiddenAbove > 0);
+}
+
+/**
+ * A `capture-pane -e` screen without its styling, and without the faint text
+ * Claude Code draws in an empty box (the "Try …" placeholder, a suggested next
+ * prompt): that text is not in the box, and Ctrl-C on a box that only looks
+ * full arms "Press Ctrl-C again to exit".
+ */
+export function solidScreen(styled: string, dropFaint = true): string {
+  let out = '';
+  let faint = false;
+  let last = 0;
+  const keep = (chunk: string) => {
+    out += faint && dropFaint ? chunk.replace(/[^\n]/gu, '') : chunk;
+  };
+  // eslint-disable-next-line no-control-regex
+  const sequence = /\x1b\[([0-9;]*)m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/gu;
+  for (let match = sequence.exec(styled); match; match = sequence.exec(styled)) {
+    keep(styled.slice(last, match.index));
+    last = match.index + match[0].length;
+    if (match[1] === undefined) continue;
+    const params = match[1] === '' ? ['0'] : match[1].split(';');
+    for (let i = 0; i < params.length; i += 1) {
+      const param = Number(params[i] || 0);
+      // 38/48 take a colour after them (5;n or 2;r;g;b), where 2 is not "faint".
+      if (param === 38 || param === 48) i += params[i + 1] === '5' ? 2 : params[i + 1] === '2' ? 4 : 0;
+      else if (param === 2) faint = true;
+      else if (param === 0 || param === 22) faint = false;
+    }
+  }
+  keep(styled.slice(last));
+  return out;
+}
+
+/** What the pane's prompt box really holds (see solidScreen). */
+async function lookAtPromptBox(
+  pane: string,
+  deps: ClaudeTmuxDependencies,
+): Promise<{ idle: boolean; text: string }> {
+  const styled = await deps.tmux(['capture-pane', '-e', '-p', '-t', pane]).catch(() => '');
+  // The frame's own "↑ N more" is faint too: idleness is read with it kept.
+  const plain = solidScreen(styled, false);
+  return {
+    idle: isReadyPaneScreen(plain) && !isBusyPaneScreen(plain) && !readClaudeMenu(plain),
+    text: readPromptBox(solidScreen(styled)).text,
+  };
+}
+
+/**
+ * Ctrl-C empties a prompt box that holds text, whatever its length (C-u takes
+ * one row or one line break at a time). It is sent only to an idle prompt whose
+ * box really holds text. Returns whether the key was sent.
+ */
+export const CLEAR_SETTLE_MS = 3000;
+async function clearPromptBox(pane: string, deps: ClaudeTmuxDependencies): Promise<boolean> {
+  const look = await lookAtPromptBox(pane, deps);
+  if (!look.idle || !look.text) return false;
+  await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+  return true;
 }
 
 async function waitForReadyPane(
@@ -1498,6 +1735,8 @@ async function waitForReadyPane(
   const pane = await getClaudePane(name, deps);
   const deadline = Date.now() + timeoutMs;
   let nextInterruptAt = 0;
+  let nextClearAt = 0;
+  let clears = 0;
   const watchMenu = menuWatch();
   let acceptedTrust = false;
   let trustMoves = 0;
@@ -1565,14 +1804,26 @@ async function waitForReadyPane(
         continue;
       }
     } else if (isReadyPaneScreen(lastScreen)) {
-      // The status bar appears before Ink has mounted the editable prompt.
-      // Sending the tmux paste in that narrow window is silently discarded, so
-      // require both the bypass indicator and the actual prompt glyph.
-      return pane;
+      // Ready means an EMPTY box. Text is left there by an Escape that came
+      // before Claude's first output (Claude Code puts the stopped message back
+      // for editing), by a paste that was never sent, by a stop between paste
+      // and Enter. Pasted behind it, the new message would be sent glued to the
+      // old one, so it is removed first.
+      if (!currentPrompt(lastScreen)) return pane;
+      const look = await lookAtPromptBox(pane, deps);
+      if (look.idle && !look.text) return pane;
+      if (look.idle && Date.now() >= nextClearAt) {
+        if (++clears > 3) {
+          throw new ClaudePaneNotReady(`Claude Code's prompt box could not be emptied: ${lastScreen.trim().slice(-300)}`);
+        }
+        nextClearAt = Date.now() + (deps.clearSettleMs ?? CLEAR_SETTLE_MS);
+        logger.info('Emptied text left in the Claude Code prompt box before the next message');
+        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      }
     }
     await deps.sleep(deps.pollMs);
   }
-  throw new Error(`Claude Code did not become ready: ${lastScreen.trim().slice(-300)}`);
+  throw new ClaudePaneNotReady(`Claude Code did not become ready: ${lastScreen.trim().slice(-300)}`);
 }
 
 function pasteMarkers(screen: string): Set<string> {
@@ -1583,24 +1834,7 @@ function pasteMarkers(screen: string): Set<string> {
 }
 
 function currentPrompt(screen: string): string {
-  const lines = screen.split(/\r?\n/u);
-  let promptLine = -1;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (/^\s*❯/u.test(lines[i])) {
-      promptLine = i;
-      break;
-    }
-  }
-  if (promptLine < 0) return '';
-  const end = lines.findIndex(
-    (line, index) =>
-      index > promptLine && (/bypass permissions on/i.test(line) || /^─+$/u.test(line.trim())),
-  );
-  return lines
-    .slice(promptLine, end < 0 ? undefined : end)
-    .join('\n')
-    .replace(/^\s*❯\s*/u, '')
-    .trim();
+  return readPromptBox(screen).text;
 }
 
 /** Terminal wrapping inserts breaks and indents anywhere, even inside a word or CJK run. */
@@ -1661,7 +1895,83 @@ async function waitForPastedPrompt(
     }
     await deps.sleep(deps.pollMs);
   }
-  throw new Error(`Claude Code did not accept the pasted prompt: ${lastScreen.trim().slice(-300)}`);
+  throw new ClaudePaneNotReady(`Claude Code did not accept the pasted prompt: ${lastScreen.trim().slice(-300)}`);
+}
+
+/**
+ * Enter is a keystroke, not a receipt: one that Claude Code does not take
+ * (it ignores an Enter that comes too soon after another key, see
+ * settleAfterMenu) left the message in the box until the turn's one-hour
+ * timeout. The turn has started once the transcript holds it, the pane is
+ * running, or the text has left the box; while the text is still there on an
+ * idle prompt, Enter is pressed again (twice at most).
+ */
+export const ENTER_RETRY_MS = 2500;
+async function confirmTurnStarted(
+  pane: string,
+  deps: ClaudeTmuxDependencies,
+  transcriptGrew: () => boolean,
+  signal?: AbortSignal,
+): Promise<void> {
+  const retryMs = deps.enterRetryMs ?? ENTER_RETRY_MS;
+  let enters = 1;
+  let lastEnterAt = Date.now();
+  let lastScreen = '';
+  // Bounded by the Enters, not by a clock: a stalled host must not skip them.
+  for (;;) {
+    if (signal?.aborted) throw new ClaudeTmuxAbortError();
+    if (transcriptGrew()) return;
+    lastScreen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+    if (signal?.aborted) throw new ClaudeTmuxAbortError();
+    // Running, or showing something the turn loop answers (a menu, a dialog).
+    if (!isReadyPaneScreen(lastScreen) || isBusyPaneScreen(lastScreen)) return;
+    if (!currentPrompt(lastScreen)) return;
+    const look = await lookAtPromptBox(pane, deps);
+    if (!look.idle || !look.text) return;
+    if (Date.now() - lastEnterAt >= retryMs) {
+      if (enters >= 3) break;
+      enters += 1;
+      lastEnterAt = Date.now();
+      logger.info({ enters }, 'Claude Code left the message in its prompt box; pressing Enter again');
+      await deps.tmux(['send-keys', '-t', pane, 'Enter']).catch(() => undefined);
+    }
+    await deps.sleep(deps.pollMs);
+  }
+  throw new ClaudePaneNotReady(`Claude Code did not start the turn: ${lastScreen.trim().slice(-300)}`);
+}
+
+/**
+ * Whether the transcript holds a user message or a reply after `offset`, as
+ * opposed to the bookkeeping Claude Code appends on its own.
+ */
+const TURN_SCAN_BYTES = 4 * 1024 * 1024;
+export function turnRecordedSince(file: string | undefined, offset: number): boolean {
+  if (!file) return false;
+  let fd: number | undefined;
+  try {
+    const size = statSync(file).size;
+    if (size <= offset) return false;
+    const length = Math.min(size - offset, TURN_SCAN_BYTES);
+    const buffer = Buffer.alloc(length);
+    fd = openSync(file, 'r');
+    readSync(fd, buffer, 0, length, offset);
+    for (const line of buffer.toString('utf8').split('\n')) {
+      // Cheap filter first; the parse then checks the record's own type, not
+      // one quoted inside another record.
+      if (!/"type":\s*"(?:user|assistant)"/u.test(line)) continue;
+      try {
+        const type = JSON.parse(line)?.type;
+        if (type === 'user' || type === 'assistant') return true;
+      } catch {
+        /* a record still being written */
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function fileSize(file: string | undefined): number {
