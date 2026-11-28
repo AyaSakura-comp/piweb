@@ -31,7 +31,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Place maps take the app's colours and read at a glance: dark mode was OpenFreeMap's blue fiord with teal labels; now land, buildings and labels are the app's neutrals while water is blue, parks green, motorways amber and main roads brighter than side streets, in both themes
+- Place maps take the app's colours and read at a glance: dark mode was OpenFreeMap's blue fiord with teal labels; now land, buildings and labels are the app's neutrals while water is blue, parks and woods green, motorways amber and main roads golden (dark) or pale yellow (light), brighter than side streets. Dark mode's woods (a pattern its sprite lacked) and parks (no layer) were missing and are drawn now
 - A place map loads in about a second or three instead of eight to twelve: venue names go to Photon all at once while Nominatim (one request a second) looks up only the streets, and the map's code and style load meanwhile
 - A place map's swipe now visibly moves to the next place: the other pins step back, places on neighbouring streets get two pins (zoom up to 17, not one pin on top of the other), a line with two addresses or a 鄰 is still found by its street, and a card whose place could not be found says so over the map instead of the map just not changing
 - A Pi answer written from web research now gets its place map: research's closing instructions (read after Pi's system prompt) won over the map ask, so Life answered 「民雄附近哪裡有觀光工廠」 with street addresses and no map. research (pi-nodriver-browser) now asks for the ```map block in its own closing line, beside its image rule, when Pi was started by piweb

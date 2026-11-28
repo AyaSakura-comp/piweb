@@ -386,11 +386,14 @@ alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
   vector map recoloured by `tone()` (「而且地圖顏色好怪」, 2026-11-28: fiord's blue
   land and teal labels clashed with the neutral greys; then 「至少道路顏色什麼的要
   可以區分吧？什麼都看不懂」: all-grey hid which line was a highway, a road or a
-  river). Land, buildings and labels in the app's neutrals; water blue, parks
-  green, motorways amber, main roads a step brighter than side streets. Dark
-  mode is OpenFreeMap `dark` (land #2f3136, water #20395a, parks #25382c, side
-  streets #585b64, main roads #8c919b, motorways #c4903f, labels #d6d9de on a
-  #1e1f22 halo); light mode `positron` on warm paper (land #f4f2ed, water
+  river; then 「深色版的顏色要再多一點」). Land, buildings and labels in the app's
+  neutrals; water blue, parks and woods green, motorways amber, main roads
+  golden in dark mode and pale yellow in light, side streets grey or white.
+  Dark mode is OpenFreeMap `dark` (land #2f3136, water #1d4f86, parks and woods
+  #2b5c3c, side streets #62656f, main roads #b7a25f, motorways #f0a940, labels
+  #e6e8eb on a #1e1f22 halo); its woods were a `wood-pattern` its sprite lacks
+  (drawn as nothing), so patterns are dropped, and it has no park layer, so one
+  is added; light mode `positron` on warm paper (land #f4f2ed, water
   #a9cbe5, parks #cde5c2, white side streets, main roads #fff1bd, motorways
   #f2b84b, labels #3b3935). Labels in the places' own names (臺南, not
   "Tainan 臺南") from the phone's own CJK font. The pins are framed above the

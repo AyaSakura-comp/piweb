@@ -247,10 +247,10 @@ const STYLE_URL = {
  */
 const PALETTE = {
   dark: {
-    land: '#2f3136', water: '#20395a', park: '#25382c', residential: '#34363b',
-    building: '#3d3f45', buildingLine: '#46484f', path: '#44474e', road: '#585b64',
-    roadMajor: '#8c919b', roadCasing: '#1e1f22', motorway: '#c4903f', rail: '#6a6d76',
-    boundary: '#7a7d86', label: '#d6d9de', labelMinor: '#a4a9b1', waterLabel: '#86a9cc', halo: '#1e1f22',
+    land: '#2f3136', water: '#1d4f86', park: '#2b5c3c', residential: '#35373c',
+    building: '#3e4047', buildingLine: '#4a4c54', path: '#4a4d55', road: '#62656f',
+    roadMajor: '#b7a25f', roadCasing: '#1e1f22', motorway: '#f0a940', rail: '#7a7286',
+    boundary: '#8f84a8', label: '#e6e8eb', labelMinor: '#b4b8bf', waterLabel: '#8fc0f0', halo: '#1e1f22',
   },
   light: {
     land: '#f4f2ed', water: '#a9cbe5', park: '#cde5c2', residential: '#eceae3',
@@ -294,9 +294,26 @@ function toneOf(layer) {
 /** The style recoloured to `theme`'s palette. */
 export function tone(style, theme) {
   const palette = PALETTE[theme];
+  // OpenFreeMap's dark style draws no parks (OpenMapTiles' `park` layer); positron
+  // does. Add it under everything else, so a park is green in both themes.
+  const layers = (style.layers ??= []);
+  if (style.sources?.openmaptiles && !layers.some((layer) => layer['source-layer'] === 'park')) {
+    const at = layers.findIndex((layer) => layer.type === 'background') + 1;
+    layers.splice(at, 0, {
+      id: 'park',
+      type: 'fill',
+      source: 'openmaptiles',
+      'source-layer': 'park',
+      filter: ['match', ['geometry-type'], ['MultiPolygon', 'Polygon'], true, false],
+      paint: { 'fill-color': palette.park },
+    });
+  }
   for (const layer of style.layers ?? []) {
     if (layer.type === 'symbol' && !layer.layout?.['text-field']) continue; // icons only
     const paint = (layer.paint ??= {});
+    // A pattern draws over the colour: dark's woods are a `wood-pattern` its sprite
+    // does not have, so they were not drawn at all.
+    if (layer.type === 'fill') delete paint['fill-pattern'];
     for (const [property, colour] of Object.entries(toneOf(layer))) paint[property] = palette[colour];
     if (layer.type === 'symbol') paint['text-halo-width'] = 1.2;
   }

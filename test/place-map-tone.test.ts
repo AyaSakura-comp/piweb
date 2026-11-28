@@ -9,7 +9,7 @@ import { tone } from '../public/place-map.js';
 const layers = () => [
   { id: 'background', type: 'background', paint: { 'background-color': 'rgb(12,12,12)' } },
   { id: 'water', type: 'fill', paint: { 'fill-color': 'rgb(27 ,27 ,29)' } },
-  { id: 'landcover_wood', type: 'fill', paint: { 'fill-color': 'rgb(32,32,32)' } },
+  { id: 'landcover_wood', type: 'fill', paint: { 'fill-color': 'rgb(32,32,32)', 'fill-pattern': 'wood-pattern' } },
   { id: 'building', type: 'fill', paint: { 'fill-color': 'rgb(10,10,10)', 'fill-outline-color': 'rgb(27 ,27 ,29)' } },
   { id: 'highway_minor', type: 'line', paint: { 'line-color': '#181818' } },
   { id: 'highway_major_casing', type: 'line', paint: { 'line-color': 'rgba(60,60,60,0.8)' } },
@@ -28,18 +28,28 @@ describe('the place map in the app colours', () => {
   it('dark: neutral land, blue water, green parks, amber motorways, main roads brighter than side streets', () => {
     const style = tone({ version: 8, layers: layers() }, 'dark');
     expect(paintOf(style, 'background')['background-color']).toBe('#2f3136');
-    expect(paintOf(style, 'water')['fill-color']).toBe('#20395a');
-    expect(paintOf(style, 'landcover_wood')['fill-color']).toBe('#25382c');
-    expect(paintOf(style, 'building')).toMatchObject({ 'fill-color': '#3d3f45', 'fill-outline-color': '#46484f' });
-    expect(paintOf(style, 'highway_minor')['line-color']).toBe('#585b64');
+    expect(paintOf(style, 'water')['fill-color']).toBe('#1d4f86');
+    expect(paintOf(style, 'landcover_wood')['fill-color']).toBe('#2b5c3c');
+    expect(paintOf(style, 'building')).toMatchObject({ 'fill-color': '#3e4047', 'fill-outline-color': '#4a4c54' });
+    expect(paintOf(style, 'highway_minor')['line-color']).toBe('#62656f');
     expect(paintOf(style, 'highway_major_casing')['line-color']).toBe('#1e1f22');
-    expect(paintOf(style, 'highway_motorway_inner')['line-color']).toBe('#c4903f');
+    expect(paintOf(style, 'highway_motorway_inner')['line-color']).toBe('#f0a940');
     expect(paintOf(style, 'railway_dashline')['line-color']).toBe('#2f3136');
-    expect(paintOf(style, 'place_city')).toMatchObject({ 'text-color': '#d6d9de', 'text-halo-color': '#1e1f22', 'text-halo-width': 1.2 });
-    expect(paintOf(style, 'highway_name_other')['text-color']).toBe('#a4a9b1');
-    expect(paintOf(style, 'water_name')['text-color']).toBe('#86a9cc');
+    expect(paintOf(style, 'place_city')).toMatchObject({ 'text-color': '#e6e8eb', 'text-halo-color': '#1e1f22', 'text-halo-width': 1.2 });
+    expect(paintOf(style, 'highway_name_other')['text-color']).toBe('#b4b8bf');
+    expect(paintOf(style, 'water_name')['text-color']).toBe('#8fc0f0');
     // An icon-only layer keeps its paint.
     expect(paintOf(style, 'road_oneway')).toEqual({});
+  });
+
+  // 「深色版的顏色要再多一點」: dark's woods were a pattern its sprite lacks (drawn
+  // as nothing), and dark has no park layer at all; both are green now.
+  it('dark: woods drawn in colour, not a missing pattern, and parks added', () => {
+    const style = tone({ version: 8, sources: { openmaptiles: { type: 'vector' } }, layers: layers() }, 'dark');
+    expect(paintOf(style, 'landcover_wood')).not.toHaveProperty('fill-pattern');
+    const park = style.layers.find((layer: any) => layer['source-layer'] === 'park');
+    expect(park).toMatchObject({ type: 'fill', source: 'openmaptiles', paint: { 'fill-color': '#2b5c3c' } });
+    expect(style.layers.indexOf(park)).toBe(1); // over the background, under everything else
   });
 
   it('light: warm paper, blue water, green parks, amber motorways, yellow main roads, white side streets', () => {
