@@ -387,11 +387,15 @@ alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
   `positron` in light, labels in the places' own names (臺南, not
   "Tainan 臺南") from the phone's own CJK font. The pins are framed above the
   cards (44px from the top, clear of the credit chip at the top right; 26px
-  above the cards), never past zoom 15; one place sits in the middle at zoom 14.
+  above the cards), never past zoom 17, so two buildings on neighbouring
+  streets (~50 m) stand as two pins; one place sits in the middle at zoom 14.
 - **Pins**: 22px circles in `--accent` with a 2px white ring and a white bold
   number, a 44px target. The place in front is scaled 1.3× with a soft accent
-  halo (`aria-pressed`). A pin brings its card into view; it does not leave
-  the app.
+  halo (`aria-pressed`) and the other pins step back to half opacity, so a
+  swipe visibly moves the map to the next place (iPhone recording 2026-11-28,
+  「他不會自己切」). A pin brings its card into view; it does not leave the app.
+  When the card in front has no pin, a frosted chip at the map's top left says
+  地圖上找不到這個地點 instead of the map just not changing.
 - **Cards** (「重新設計這個東西」 of the list that used to hang under the map,
   2026-11-28): frosted (`--bg` at 84%, 14px blur), 12px-rounded, 56px tall,
   10px inside the frame's foot. The number (22px accent circle), the name
@@ -414,9 +418,10 @@ transcript never runs out of WebGL contexts and a finger on the map still
 scrolls the transcript. It is redrawn when the theme switches or its size
 changes.
 
-Places are found with OpenStreetMap's Nominatim from the browser: the name,
-then the address, then the address without its house number (OpenStreetMap
-rarely has Taiwan's), one request a second as its usage policy asks, every
+Places are found with OpenStreetMap's Nominatim from the browser: the name
+(also without, and as, a bracketed alias), then the address (the first, when a
+line holds several), then its street without the house number, 鄰 and then the
+village (OpenStreetMap rarely has Taiwan's), one request a second as its usage policy asks, every
 answer kept in this browser (`localStorage` `piweb.geocode.v1`; a miss is asked
 again after a week). Nothing is looked up until the card has been on screen for
 500ms, so history looks up only the maps scrolled to and a streaming reply,

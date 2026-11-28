@@ -64,14 +64,25 @@ export function parsePlaces(code) {
   return places;
 }
 
-/** What to look a place up by, best first: its name, its address, its street. */
+/**
+ * What to look a place up by, best first: its name (and the name without, or
+ * as, its bracketed alias), its address, then its street. OpenStreetMap rarely
+ * has Taiwan's house numbers, villages or neighbourhoods (鄰): the street still
+ * puts the pin within a few hundred metres. A line with two addresses is looked
+ * up by the first (Life, 2026-11-28: 「金興玩具二廠 | 嘉義縣民雄鄉興南村3鄰工業一路
+ * 6之6號、工業五路3號」 found nothing, so its card switched to no pin).
+ */
 export function placeQueries({ name, address }) {
-  const queries = [name, address];
-  // OpenStreetMap rarely has Taiwan's house numbers; the street still puts the
-  // pin within a few hundred metres (臺南市中西區民族路二段76號 → 民族路二段).
-  const street = address.replace(/(?:\d+巷)?(?:\d+弄)?\d+(?:-\d+)?(?:之\d+)?號.*$/, '').trim();
-  if (street && street !== address) queries.push(street);
-  return [...new Set(queries.filter(Boolean))];
+  const bracket = /[（(]([^）)]*)[）)]/;
+  const bare = name.replace(new RegExp(bracket.source, 'g'), ' ').replace(/\s+/g, ' ').trim(); // KHTOY 金興玩具旗艦館
+  const alias = bracket.exec(name)?.[1]?.trim(); // 金興玩具一廠
+  const first = address.split(/[、，,；;／/]|及|或/)[0].trim();
+  const street = first
+    .replace(/\d+鄰/g, '')
+    .replace(/(?:\d+巷)?(?:\d+弄)?\d+(?:-\d+)?(?:之\d+)?號.*$/, '')
+    .trim();
+  const noVillage = street.replace(/([縣市][^縣市]{1,4}?[鄉鎮市區])[^鄉鎮市區\d]{1,4}[村里](?=.)/, '$1');
+  return [...new Set([name, bare, alias, first, street, noVillage].filter(Boolean))];
 }
 
 /** The place in Google Maps (opens the app where there is one). */
@@ -165,6 +176,11 @@ const STYLE_URL = {
 const CJK_FONT = '"PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif';
 /** Room round the pins: a pin's circle and its shadow stay inside the frame. */
 const FIT_PADDING = { top: 44, left: 30, right: 30 };
+/**
+ * How far several places may zoom in: two buildings on neighbouring streets
+ * (~50 m apart) stand as two pins, not one on top of the other.
+ */
+const CLOSE_ZOOM = 17;
 /** Above the place cards that lie over the map's foot. */
 const CARD_CLEARANCE = 26;
 const DRAW_TIMEOUT_MS = 12000;
@@ -265,7 +281,7 @@ async function drawOnce(points, width, height, bottom, theme, ratio) {
   const span = boundsOf(lonLats);
   const single = span[0][0] === span[1][0] && span[0][1] === span[1][1];
   if (single) Object.assign(options, { center: lonLats[0], zoom: 14 });
-  else Object.assign(options, { bounds: span, fitBoundsOptions: { padding, maxZoom: 15 } });
+  else Object.assign(options, { bounds: span, fitBoundsOptions: { padding, maxZoom: CLOSE_ZOOM } });
   let map;
   try {
     map = new lib.Map(options);
@@ -361,6 +377,8 @@ function select(card, index, { scroll = false } = {}) {
   });
   for (const marker of state.pins.children)
     marker.setAttribute('aria-pressed', String(Number(marker.dataset.index) === index));
+  // A place with no pin says so over the map, rather than the map just not changing.
+  state.lost.hidden = !state.cards.children[index]?.dataset.unlocated;
   if (scroll) {
     const target = state.cards.children[index];
     state.cards.scrollTo({
@@ -494,7 +512,11 @@ export function renderPlaceMap(code, doc = document) {
   const credit = doc.createElement('span');
   credit.className = 'place-map-credit';
   credit.textContent = 'OpenFreeMap © OpenMapTiles © OpenStreetMap';
-  view.append(image, pins, credit);
+  const lost = doc.createElement('span');
+  lost.className = 'place-map-lost';
+  lost.textContent = '地圖上找不到這個地點';
+  lost.hidden = true;
+  view.append(image, pins, credit, lost);
 
   // The places lie over the map's foot as cards, one in view at a time; a
   // swipe brings the next, and the pins follow.
@@ -553,7 +575,7 @@ export function renderPlaceMap(code, doc = document) {
   );
 
   card.append(view, cards);
-  states.set(card, { places, view, image, pins, cards, located: [], active: 0 });
+  states.set(card, { places, view, image, pins, cards, lost, located: [], active: 0 });
   cards.firstElementChild.dataset.active = 'true';
   whenShown(card, () => void fill(card));
   return card;

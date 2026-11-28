@@ -254,6 +254,45 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   expect(errors).toEqual([]);
 });
 
+// iPhone recording, 2026-11-28 (「他不會自己切」): two toy factories on neighbouring
+// streets; the second line held two addresses and a 鄰, so nothing found it and a
+// swipe to its card left the map as it was. Its street is found now, and the two
+// pins stand apart, the one in front standing out.
+test('a swipe to the next card moves the map to that place, even one of two on neighbouring streets', async ({ page }, info) => {
+  const { lookups } = await fakeServices(page);
+  KNOWN['嘉義縣民雄鄉興南村工業五路'] = [23.51968, 120.43309];
+  KNOWN['嘉義縣民雄鄉興南村工業一路'] = [23.51923, 120.43305];
+  const factories = [
+    { name: 'KHTOY 金興玩具旗艦館（金興玩具一廠）', address: '嘉義縣民雄鄉興南村工業五路5號' },
+    { name: '金興玩具二廠', address: '嘉義縣民雄鄉興南村3鄰工業一路6之6號、工業五路3號' },
+  ];
+  await routeApi(page, reply(`民雄的兩間廠：\n\n${block(factories)}`));
+  await open(page);
+  const card = page.locator('#messages .place-map');
+  await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
+  expect(lookups.map((l) => l.q)).toContain('嘉義縣民雄鄉興南村工業一路');
+  expect(lookups.map((l) => l.q).some((q) => q.includes('3鄰工業一路') && !q.includes('號'))).toBe(false);
+
+  const pins = await pinCentres(page);
+  expect(pins.map((p) => p.n)).toEqual(['1', '2']);
+  expect(Math.hypot(pins[0].x - pins[1].x, pins[0].y - pins[1].y)).toBeGreaterThan(26);
+  const opacity = (n: string) =>
+    card.locator('.place-map-marker', { hasText: n }).evaluate((el) => Number(getComputedStyle(el).opacity));
+  expect(await inFront(page)).toEqual({ shown: 0, active: 0, pressed: '1' });
+  await expect.poll(() => opacity('2')).toBeLessThan(0.6);
+
+  await card.locator('.place-map-cards').evaluate((strip) => {
+    const items = strip.querySelectorAll<HTMLElement>('.place-map-card');
+    strip.scrollTo({ left: items[1].offsetLeft - items[0].offsetLeft, behavior: 'instant' });
+  });
+  await expect.poll(() => inFront(page)).toEqual({ shown: 1, active: 1, pressed: '2' });
+  await expect.poll(() => opacity('1')).toBeLessThan(0.6);
+  await expect.poll(() => opacity('2')).toBe(1);
+  await expect(card.locator('.place-map-lost')).toBeHidden();
+  await card.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('neighbouring-streets.png') });
+});
+
 test('a place found nowhere keeps its row without a pin; none found leaves the list', async ({ page }) => {
   const { lookups } = await fakeServices(page);
   const unknown = { name: '不存在的地方', address: '' };
@@ -267,6 +306,18 @@ test('a place found nowhere keeps its row without a pin; none found leaves the l
   await expect(some).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
   await expect(some.locator('.place-map-marker')).toHaveText(['1']);
   await expect(some.locator('.place-map-card').nth(1)).toHaveAttribute('data-unlocated', 'true');
+  // Swiped to, the card with no pin says so over the map; back on a pin, it goes.
+  await expect(some.locator('.place-map-lost')).toBeHidden();
+  const swipeTo = (i: number) =>
+    some.locator('.place-map-cards').evaluate((strip, n) => {
+      const items = strip.querySelectorAll<HTMLElement>('.place-map-card');
+      strip.scrollTo({ left: items[n].offsetLeft - items[0].offsetLeft, behavior: 'instant' });
+    }, i);
+  await swipeTo(1);
+  await expect(some.locator('.place-map-lost')).toBeVisible();
+  await expect(some.locator('.place-map-lost')).toHaveText('地圖上找不到這個地點');
+  await swipeTo(0);
+  await expect(some.locator('.place-map-lost')).toBeHidden();
   await expect(some.locator('.place-map-card-main').nth(1)).toHaveAttribute('href', searchUrl(unknown));
   await expect(none).toHaveAttribute('data-state', 'list', { timeout: 15_000 });
   await expect(none.locator('.place-map-view')).toBeHidden();
