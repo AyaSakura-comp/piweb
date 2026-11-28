@@ -3751,7 +3751,7 @@ html.keyboard-shell .life-edge-hint {
    its foot a frosted card per place: one in view, a swipe to the next, the
    pins following. A card opens the place in Google Maps, its arrow directions. */
 .place-map {
-  --map-bg: #2a3441;
+  --map-bg: #383a3f;
   position: relative;
   width: min(100%, 560px);
   margin: 10px 0 12px;
@@ -3762,7 +3762,7 @@ html.keyboard-shell .life-edge-hint {
 }
 
 :root[data-theme='light'] .place-map {
-  --map-bg: #eceae6;
+  --map-bg: #f4f2ed;
 }
 
 .place-map-view {
@@ -4109,7 +4109,7 @@ html.keyboard-shell .life-edge-hint {
    its foot as in the transcript; ✕ at the top right as in the table and
    diagram viewers. */
 .place-map-viewer {
-  --map-bg: #2a3441;
+  --map-bg: #383a3f;
   position: fixed;
   inset: 0;
   z-index: 110;
@@ -4120,7 +4120,7 @@ html.keyboard-shell .life-edge-hint {
 }
 
 :root[data-theme='light'] .place-map-viewer {
-  --map-bg: #eceae6;
+  --map-bg: #f4f2ed;
 }
 
 @keyframes placeMapViewerIn {

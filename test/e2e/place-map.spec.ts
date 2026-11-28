@@ -85,7 +85,7 @@ async function fakeServices(page: Page) {
   });
   await page.context().route('https://tiles.openfreemap.org/styles/**', (route) => {
     styles.push(new URL(route.request().url()).pathname);
-    const dark = route.request().url().endsWith('/fiord');
+    const dark = route.request().url().endsWith('/dark');
     return route.fulfill({
       json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': dark ? '#3b4a5a' : '#dfe6da' } }] },
       headers: { 'access-control-allow-origin': '*' },
@@ -179,7 +179,7 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
   // Five lookups one a second took over five seconds; names and streets side by side, about one.
   expect(Date.now() - shownAt).toBeLessThan(3500);
-  expect(styles).toEqual(['/styles/fiord']);
+  expect(styles).toEqual(['/styles/dark']);
 
   // 「那個地圖要載入好久」: every name goes to Photon at once (it knows venues);
   // Nominatim, one request a second as its policy asks, takes the streets
@@ -261,7 +261,7 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'light';
   });
-  await expect.poll(() => styles).toEqual(['/styles/fiord', '/styles/positron']);
+  await expect.poll(() => styles).toEqual(['/styles/dark', '/styles/positron']);
   await expect(card).toHaveAttribute('data-state', 'ready');
   await page.waitForTimeout(800);
   await page.screenshot({ path: info.outputPath('place-map-light.png') });

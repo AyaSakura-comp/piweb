@@ -233,8 +233,73 @@ export async function locateAll(places) {
 const MAPLIBRE_DIR = '/vendor/maplibre-gl-6.17.0/';
 const STYLE_URL = {
   light: 'https://tiles.openfreemap.org/styles/positron',
-  dark: 'https://tiles.openfreemap.org/styles/fiord',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
 };
+
+/**
+ * The map in the app's own colours (「而且地圖顏色好怪」, 2026-11-28: fiord's blue
+ * land and teal labels sat oddly beside the app's neutral greys and the blurple
+ * pins). Two plain OpenFreeMap styles, recoloured layer by layer: dark mode on
+ * the app's greys (#313338 family, water a step darker, labels in --text-2),
+ * light mode on its warm paper (#fbfaf7 / #dedbd3 family).
+ */
+const PALETTE = {
+  dark: {
+    land: '#383a3f', water: '#1f2124', park: '#343a37', residential: '#3b3d42',
+    building: '#424449', buildingLine: '#4a4c52', path: '#404247', road: '#46484e',
+    roadMajor: '#53555c', roadCasing: '#2e3034', motorway: '#61646c', rail: '#4b4d53',
+    boundary: '#5b5e66', label: '#c4c8ce', labelMinor: '#8e9297', waterLabel: '#6f747c', halo: '#2b2d31',
+  },
+  light: {
+    land: '#f4f2ed', water: '#d6dde0', park: '#e5e9dd', residential: '#efece6',
+    building: '#e5e1d9', buildingLine: '#d9d4cb', path: '#ebe8e1', road: '#ffffff',
+    roadMajor: '#ffffff', roadCasing: '#dcd8cf', motorway: '#fdfbf6', rail: '#d6d1c7',
+    boundary: '#c5c0b5', label: '#56534d', labelMinor: '#8a867e', waterLabel: '#7b878d', halo: '#f4f2ed',
+  },
+};
+
+/** Which palette colour a layer's paint takes, by what the layer draws. */
+function toneOf(layer) {
+  const id = layer.id;
+  if (layer.type === 'background') return { 'background-color': 'land' };
+  if (layer.type === 'symbol')
+    return {
+      'text-color': /water/.test(id) ? 'waterLabel' : /highway|road/.test(id) ? 'labelMinor' : 'label',
+      'text-halo-color': 'halo',
+    };
+  if (layer.type === 'fill') {
+    if (/water/.test(id)) return { 'fill-color': 'water' };
+    if (/park|wood|grass/.test(id)) return { 'fill-color': 'park' };
+    if (/residential/.test(id)) return { 'fill-color': 'residential' };
+    if (/building/.test(id)) return { 'fill-color': 'building', 'fill-outline-color': 'buildingLine' };
+    if (/aeroway/.test(id)) return { 'fill-color': 'road' };
+    return { 'fill-color': 'land' };
+  }
+  if (layer.type === 'line') {
+    if (/water/.test(id)) return { 'line-color': 'water' };
+    if (/boundary/.test(id)) return { 'line-color': 'boundary' };
+    if (/dash|pier/.test(id)) return { 'line-color': 'land' };
+    if (/rail/.test(id)) return { 'line-color': 'rail' };
+    if (/casing/.test(id)) return { 'line-color': 'roadCasing' };
+    if (/motorway/.test(id)) return { 'line-color': 'motorway' };
+    if (/major|primary|trunk|runway/.test(id)) return { 'line-color': 'roadMajor' };
+    if (/path/.test(id)) return { 'line-color': 'path' };
+    return { 'line-color': 'road' };
+  }
+  return {};
+}
+
+/** The style recoloured to `theme`'s palette. */
+export function tone(style, theme) {
+  const palette = PALETTE[theme];
+  for (const layer of style.layers ?? []) {
+    if (layer.type === 'symbol' && !layer.layout?.['text-field']) continue; // icons only
+    const paint = (layer.paint ??= {});
+    for (const [property, colour] of Object.entries(toneOf(layer))) paint[property] = palette[colour];
+    if (layer.type === 'symbol') paint['text-halo-width'] = 1.2;
+  }
+  return style;
+}
 const CJK_FONT = '"PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif';
 /** Room round the pins: a pin's circle and its shadow stay inside the frame. */
 const FIT_PADDING = { top: 44, left: 30, right: 30 };
@@ -282,7 +347,7 @@ function loadStyle(theme) {
         if (!response.ok) throw new Error(`map style ${response.status}`);
         return response.json();
       })
-      .then(localLabels);
+      .then((style) => tone(localLabels(style), theme));
     style.catch(() => styles.delete(theme));
     styles.set(theme, style);
   }

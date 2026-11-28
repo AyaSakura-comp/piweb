@@ -383,8 +383,11 @@ foot, a card per place (`public/place-map.js`, from `renderCode()` in
 alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
 
 - **Map** (one place 16:10, 200–320px; several 4:3 up to 360px): OpenFreeMap's
-  vector map in the app's colours, `fiord` (blue-grey) in dark mode and
-  `positron` in light, labels in the places' own names (臺南, not
+  vector map recoloured to the app's palette (`tone()`; 「而且地圖顏色好怪」,
+  2026-11-28: fiord's blue land and teal labels clashed with the neutral greys):
+  dark mode is OpenFreeMap `dark` on the app's greys (land #383a3f, water a step
+  darker #1f2124, roads #46484e–#61646c, labels #c4c8ce on a #2b2d31 halo), light
+  mode `positron` on warm paper (land #f4f2ed, white roads, labels #56534d); labels in the places' own names (臺南, not
   "Tainan 臺南") from the phone's own CJK font. The pins are framed above the
   cards (44px from the top, clear of the credit chip at the top right; 26px
   above the cards), never past zoom 17, so two buildings on neighbouring
