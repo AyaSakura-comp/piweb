@@ -299,6 +299,8 @@ export interface ClaudeTmuxDependencies {
   protectPane?: (pane: string) => Promise<unknown>;
   /** Whether a background command still has processes (by its output file). */
   commandRunning?: (outputFile: string) => boolean;
+  /** Pause after an Escape before the next key (default ESCAPE_SETTLE_MS). */
+  escapeSettleMs?: number;
 }
 
 const defaultDependencies: ClaudeTmuxDependencies = {
@@ -381,10 +383,7 @@ export async function invokeClaudeTmux(
     // attachment staging, or paste acknowledgement it could interrupt unrelated
     // pane state and still allow the prompt to be submitted afterward.
     if (submitted && pane && !abortPromise) {
-      abortPromise = (async () => {
-        await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
-        await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
-      })();
+      abortPromise = interruptClaudeTurn(pane, deps);
     }
   };
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -595,7 +594,7 @@ export async function invokeClaudeTmux(
       // A non-idle pane is the strongest evidence that Enter already happened,
       // including the window before Claude has flushed its first JSONL record.
       // Do not wait for startup readiness while that recovered turn is running.
-      shouldSubmit = !hasTranscriptBytes && isReadyPaneScreen(screen);
+      shouldSubmit = !hasTranscriptBytes && isReadyPaneScreen(screen) && !isBusyPaneScreen(screen);
       // Recovered work is just as interruptible as work submitted by this process.
       submitted = !shouldSubmit;
     }
@@ -604,7 +603,13 @@ export async function invokeClaudeTmux(
       // An answer can start real work first ("Resume from summary" compacts
       // the conversation), so it gets the turn's patience, not startup's.
       if (!recoveringTurn) {
-        pane = await waitForReadyPane(name, deps, signal, menuAnswered ? deps.turnTimeoutMs : undefined);
+        pane = await waitForReadyPane(
+          name,
+          deps,
+          signal,
+          menuAnswered ? deps.turnTimeoutMs : undefined,
+          menuAnswered,
+        );
       }
       ensureNotAborted();
 
@@ -879,8 +884,7 @@ export async function invokeClaudeTmux(
       turnComplete = true;
     }
     if (!turnComplete) {
-      await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
-      await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+      await interruptClaudeTurn(pane, deps);
       return {
         ok: false,
         text: '',
@@ -1453,6 +1457,33 @@ function trustDialogSelection(screen: string): 'yes' | 'no' | undefined {
   return /Yes, I trust this folder/i.test(selected) ? 'yes' : 'no';
 }
 
+/**
+ * Ink reads an Escape followed within its escape timeout by another key as one
+ * Alt chord, so Escape then C-c sent back to back is neither: the turn ran on
+ * and later messages queued behind it (2026-11-16, Qwen image: three stops and
+ * a newer message never reached a `devicectl --console` that never ends).
+ */
+export const ESCAPE_SETTLE_MS = 400;
+
+/** Claude Code is mid-turn (its footer offers the interrupt). */
+export function isBusyPaneScreen(screen: string): boolean {
+  return /esc to interrupt/iu.test(screen);
+}
+
+/**
+ * Stop the running turn: a lone Escape, then C-c only if the turn still runs.
+ * C-c at an idle prompt arms "press Ctrl-C again to exit", so it is never sent
+ * to a pane that has already stopped.
+ */
+export async function interruptClaudeTurn(pane: string, deps: ClaudeTmuxDependencies): Promise<void> {
+  await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+  await deps.sleep(deps.escapeSettleMs ?? ESCAPE_SETTLE_MS);
+  const screen = await deps.tmux(['capture-pane', '-p', '-t', pane]).catch(() => '');
+  if (isBusyPaneScreen(screen)) {
+    await deps.tmux(['send-keys', '-t', pane, 'C-c']).catch(() => undefined);
+  }
+}
+
 function isReadyPaneScreen(screen: string): boolean {
   return /bypass permissions on/i.test(screen) && /(?:^|\n)\s*❯/u.test(screen);
 }
@@ -1462,9 +1493,11 @@ async function waitForReadyPane(
   deps: ClaudeTmuxDependencies,
   signal?: AbortSignal,
   timeoutMs = deps.startupTimeoutMs,
+  patientWithBusyPane = false,
 ): Promise<string> {
   const pane = await getClaudePane(name, deps);
   const deadline = Date.now() + timeoutMs;
+  let nextInterruptAt = 0;
   const watchMenu = menuWatch();
   let acceptedTrust = false;
   let trustMoves = 0;
@@ -1519,6 +1552,18 @@ async function waitForReadyPane(
       // conversation) is the user's to answer: put it to them, not a timeout.
       // (A trust dialog still closing after its Enter is not one.)
       throw new ClaudeMenuQuestion(menu);
+    } else if (isReadyPaneScreen(lastScreen) && isBusyPaneScreen(lastScreen)) {
+      // The prompt box shows during a turn too: pasted now, the message would
+      // only queue behind a turn nobody waits on any more (one that ignored its
+      // stop, a background notification's). A newer message stops it, as it
+      // stops any run; after a menu answer the work is the user's, so wait.
+      if (!patientWithBusyPane && Date.now() >= nextInterruptAt) {
+        nextInterruptAt = Date.now() + 2000;
+        logger.info('Interrupting a Claude Code turn still running before the next message');
+        await deps.tmux(['send-keys', '-t', pane, 'Escape']).catch(() => undefined);
+        await deps.sleep(deps.escapeSettleMs ?? ESCAPE_SETTLE_MS);
+        continue;
+      }
     } else if (isReadyPaneScreen(lastScreen)) {
       // The status bar appears before Ink has mounted the editable prompt.
       // Sending the tmux paste in that narrow window is silently discarded, so
