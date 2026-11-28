@@ -418,14 +418,23 @@ transcript never runs out of WebGL contexts and a finger on the map still
 scrolls the transcript. It is redrawn when the theme switches or its size
 changes.
 
-Places are found with OpenStreetMap's Nominatim from the browser: the name
-(also without, and as, a bracketed alias), then the address (the first, when a
-line holds several), then its street without the house number, 鄰 and then the
-village (OpenStreetMap rarely has Taiwan's), one request a second as its usage policy asks, every
-answer kept in this browser (`localStorage` `piweb.geocode.v1`; a miss is asked
-again after a week). Nothing is looked up until the card has been on screen for
-500ms, so history looks up only the maps scrolled to and a streaming reply,
-which re-renders the block as its lines arrive, never sends a half-written line.
+Places are found from the browser by two OpenStreetMap lookups side by side
+(「那個地圖要載入好久」, 2026-11-28: two factories took 8.8 s, 7.7 s of it one
+Nominatim request a second, eight deep; seven places 12.4 s). Photon
+(komoot, no per-second limit) gets every name at once (the name, without and
+as its bracketed alias): it knows venues but not Chinese street names.
+Nominatim, one request a second as its usage policy asks, works through the
+streets meanwhile (the street without house number or 鄰, then without its
+village, then the address as written; the first address when a line holds
+several; OpenStreetMap rarely has Taiwan's house numbers), then the names
+Photon did not know; a place Photon has found leaves its queue, and a name
+Photon found wins over a street. The map's code and style load while the
+places are looked up. Now ~1.9 s and ~3.2–3.8 s for those two maps (first
+view, fresh browser). Every answer is kept in this browser (`localStorage`
+`piweb.geocode.v1`, Photon's as `photon:<query>`; a miss is asked again after a
+week). Nothing is looked up until the card has been on screen for 500ms, so
+history looks up only the maps scrolled to and a streaming reply, which
+re-renders the block as its lines arrive, never sends a half-written line.
 
 Why not Google's embed (the first version, 2026-11-28, 「這個很醜，改好看一點」):
 without a Maps API key the only embed that pins several places is a driving

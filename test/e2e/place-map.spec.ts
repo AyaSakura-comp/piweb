@@ -1,5 +1,6 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { expect, test, type Page } from 'playwright/test';
+import { placeQueries } from '../../public/place-map.js';
 
 // The user, 2026-11-28 (a Life reply listing this weekend's markets and fairs,
 // each with its venue): 「如果有偵測到地址，他就會 embedded google map pin 著，如果
@@ -25,7 +26,12 @@ const session = {
   lastActivity: '2026-11-28 01:00:00',
 };
 
-// Made-up coordinates: north to south, 1 → 3.
+// Made-up coordinates: north to south, 1 → 3. Photon knows venues by name;
+// Nominatim (KNOWN) knows streets, and some names too.
+const PHOTON_KNOWN: Record<string, [number, number]> = {
+  中埔穀倉農創園區: [23.447, 120.494],
+  總爺藝文中心: [23.186, 120.269],
+};
 const KNOWN: Record<string, [number, number]> = {
   中埔穀倉農創園區: [23.447, 120.494],
   總爺藝文中心: [23.186, 120.269],
@@ -54,10 +60,20 @@ const searchUrl = (p: { name: string; address: string }) =>
 const directionsUrl = (p: { name: string; address: string }) =>
   `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.address ? `${p.name} ${p.address}` : p.name)}`;
 
-/** Fake Nominatim and map style; Google Maps pages for the links. */
+/** Fake Nominatim, Photon and map style; Google Maps pages for the links. */
 async function fakeServices(page: Page) {
   const lookups: Array<{ q: string; at: number }> = [];
+  const photon: Array<{ q: string; at: number }> = [];
   const styles: string[] = [];
+  await page.context().route('https://photon.komoot.io/**', (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q') ?? '';
+    photon.push({ q, at: Date.now() });
+    const hit = PHOTON_KNOWN[q];
+    return route.fulfill({
+      json: { type: 'FeatureCollection', features: hit ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [hit[1], hit[0]] }, properties: { name: q } }] : [] },
+      headers: { 'access-control-allow-origin': '*' },
+    });
+  });
   await page.context().route('https://nominatim.openstreetmap.org/**', (route) => {
     const q = new URL(route.request().url()).searchParams.get('q') ?? '';
     lookups.push({ q, at: Date.now() });
@@ -78,7 +94,7 @@ async function fakeServices(page: Page) {
   await page.context().route('https://www.google.com/maps/**', (route) =>
     route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<title>Google Maps</title>' }),
   );
-  return { lookups, styles };
+  return { lookups, photon, styles };
 }
 
 async function routeApi(page: Page, events: unknown[], ssePort?: number) {
@@ -148,29 +164,32 @@ const inFront = (page: Page) =>
 test('a reply\'s places are numbered pins on one map with a card each over its foot', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const { lookups, styles } = await fakeServices(page);
+  const { lookups, photon, styles } = await fakeServices(page);
   await routeApi(page, reply(REPLY));
   await open(page);
 
   const card = page.locator('#messages .place-map');
   await expect(card).toHaveCount(1);
+  const shownAt = Date.now();
   // The block is the map, not a code listing of its lines.
   await expect(page.locator('#messages .msg-text pre')).toHaveCount(0);
   // The list is there at once; the map once the places are found.
   await expect(card.locator('.place-map-name')).toHaveText(PLACES.map((p) => p.name));
   await expect(card.locator('.place-map-address')).toHaveText(PLACES.map((p) => p.address));
   await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+  // Five lookups one a second took over five seconds; names and streets side by side, about one.
+  expect(Date.now() - shownAt).toBeLessThan(3500);
   expect(styles).toEqual(['/styles/fiord']);
 
-  // Name first, then the address, then its street (OpenStreetMap rarely has
-  // Taiwan's house numbers); one request a second, as Nominatim asks.
-  expect(lookups.map((l) => l.q)).toEqual([
-    '中埔穀倉農創園區',
-    '總爺藝文中心',
-    '府城市集',
-    '臺南市中西區民族路二段76號',
-    '臺南市中西區民族路二段',
-  ]);
+  // 「那個地圖要載入好久」: every name goes to Photon at once (it knows venues);
+  // Nominatim, one request a second as its policy asks, takes the streets
+  // (OpenStreetMap rarely has Taiwan's house numbers) of the places Photon did
+  // not know, and never a name Photon found.
+  expect(photon.map((l) => l.q).sort()).toEqual(PLACES.map((p) => p.name).sort());
+  expect(photon.at(-1)!.at - photon[0].at).toBeLessThan(500);
+  const asked = lookups.map((l) => l.q);
+  expect(asked).toContain('臺南市中西區民族路二段');
+  for (const q of ['中埔穀倉農創園區', '總爺藝文中心', '府城市集', '臺南市中西區民族路二段76號']) expect(asked).not.toContain(q);
   for (let i = 1; i < lookups.length; i++) expect(lookups[i].at - lookups[i - 1].at).toBeGreaterThanOrEqual(1000);
 
   // Three pins, numbered as the cards, inside the frame and clear of the cards
@@ -238,7 +257,7 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   await expect(page.locator('#toast')).toBeHidden();
 
   // The theme switch redraws in the day colours; the places are not asked again.
-  const asked = lookups.length;
+  const lookedUp = lookups.length + photon.length;
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'light';
   });
@@ -250,7 +269,7 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
   // A reload finds them in this browser's cache.
   await page.reload();
   await expect(page.locator('#messages .place-map')).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
-  expect(lookups.length).toBe(asked);
+  expect(lookups.length + photon.length).toBe(lookedUp);
   expect(errors).toEqual([]);
 });
 
@@ -323,7 +342,9 @@ test('a place found nowhere keeps its row without a pin; none found leaves the l
   await expect(none.locator('.place-map-view')).toBeHidden();
   await expect(none.locator('.place-map-card-main')).toHaveText(['1查無此處']);
   await expect(none.locator('.place-map-card-main')).toBeVisible();
-  expect(lookups.map((l) => l.q).sort()).toEqual(['不存在的地方', '查無此處', '總爺藝文中心'].sort());
+  const asked = lookups.map((l) => l.q);
+  expect(asked).toEqual(expect.arrayContaining(['不存在的地方', '查無此處']));
+  expect(asked).not.toContain('總爺藝文中心'); // Photon knew it
 });
 
 test.describe('a streaming reply', () => {
@@ -350,7 +371,7 @@ test.describe('a streaming reply', () => {
   test('looks up only the places as written, never a half-written line', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
-    const { lookups } = await fakeServices(page);
+    const { lookups, photon } = await fakeServices(page);
     await routeApi(page, reply(REPLY).slice(0, 1), port);
     await open(page);
     await expect.poll(() => clients.length).toBeGreaterThan(0);
@@ -371,8 +392,8 @@ test.describe('a streaming reply', () => {
     const card = page.locator('#messages .place-map');
     await expect(card).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
     await expect(card.locator('.place-map-marker')).toHaveText(['1', '2', '3']);
-    const whole = new Set(['中埔穀倉農創園區', '總爺藝文中心', '府城市集', '臺南市中西區民族路二段76號', '臺南市中西區民族路二段']);
-    for (const { q } of lookups) expect(whole.has(q), q).toBe(true);
+    const whole = new Set(PLACES.flatMap((p) => Object.values(placeQueries(p)).flat()));
+    for (const { q } of [...lookups, ...photon]) expect(whole.has(q), q).toBe(true);
     expect(errors).toEqual([]);
   });
 });

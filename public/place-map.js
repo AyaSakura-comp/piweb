@@ -65,12 +65,14 @@ export function parsePlaces(code) {
 }
 
 /**
- * What to look a place up by, best first: its name (and the name without, or
- * as, its bracketed alias), its address, then its street. OpenStreetMap rarely
- * has Taiwan's house numbers, villages or neighbourhoods (鄰): the street still
- * puts the pin within a few hundred metres. A line with two addresses is looked
- * up by the first (Life, 2026-11-28: 「金興玩具二廠 | 嘉義縣民雄鄉興南村3鄰工業一路
- * 6之6號、工業五路3號」 found nothing, so its card switched to no pin).
+ * What to look a place up by. Its names, best first: the name, the name
+ * without its bracketed alias, the alias. Its address, best first: the street
+ * (OpenStreetMap rarely has Taiwan's house numbers, villages or neighbourhoods
+ * (鄰), and the street still puts the pin within a few hundred metres), the
+ * street without its village, then the address as written; a line with two
+ * addresses is looked up by the first (Life, 2026-11-28: 「金興玩具二廠 |
+ * 嘉義縣民雄鄉興南村3鄰工業一路6之6號、工業五路3號」 found nothing, so its card
+ * switched to no pin).
  */
 export function placeQueries({ name, address }) {
   const bracket = /[（(]([^）)]*)[）)]/;
@@ -82,7 +84,8 @@ export function placeQueries({ name, address }) {
     .replace(/(?:\d+巷)?(?:\d+弄)?\d+(?:-\d+)?(?:之\d+)?號.*$/, '')
     .trim();
   const noVillage = street.replace(/([縣市][^縣市]{1,4}?[鄉鎮市區])[^鄉鎮市區\d]{1,4}[村里](?=.)/, '$1');
-  return [...new Set([name, bare, alias, first, street, noVillage].filter(Boolean))];
+  const unique = (list) => [...new Set(list.filter(Boolean))];
+  return { names: unique([name, bare, alias]), addresses: unique([street, noVillage, first]) };
 }
 
 /** The place in Google Maps (opens the app where there is one). */
@@ -116,47 +119,106 @@ function remember(query, value) {
   }
 }
 
+// Two lookups run side by side (「那個地圖要載入好久」, 2026-11-28: two factories
+// took 8.8 s, 7.7 s of it Nominatim's one-request-a-second queue, eight
+// requests deep). Photon (komoot, OpenStreetMap too, no per-second limit)
+// knows venues by name but not Chinese street names; Nominatim knows the
+// streets. Every name goes to Photon at once while Nominatim works through the
+// streets, one a second; a place Photon has found leaves Nominatim's queue.
+
 let queue = Promise.resolve();
 let lastRequestAt = 0;
 const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+const LOOKUP_TIMEOUT_MS = 6000;
 
-/** [lat, lon] for a query, or null; one Nominatim request at a time. */
-export function geocode(query) {
-  const hit = readCache()[query];
-  if (Array.isArray(hit)) return Promise.resolve(hit);
-  if (hit && Date.now() - hit.miss < MISS_TTL_MS) return Promise.resolve(null);
+/** One lookup, kept in this browser under `key`: a point, a remembered miss, or null for "ask again". */
+async function lookup(key, url, read) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
+    if (!response.ok) return null; // busy or refused: not remembered, asked again next time
+    const point = read(await response.json());
+    if (point && point.every(Number.isFinite)) {
+      remember(key, point);
+      return point;
+    }
+    remember(key, { miss: Date.now() });
+    return null;
+  } catch {
+    return null; // offline or slow: asked again next time
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function cached(key) {
+  const hit = readCache()[key];
+  if (Array.isArray(hit)) return hit;
+  if (hit && Date.now() - hit.miss < MISS_TTL_MS) return null;
+  return undefined;
+}
+
+/** [lat, lon] for a query from Nominatim, or null; one request at a time, a second apart. */
+export function geocode(query, skip = () => false) {
+  const known = cached(query);
+  if (known !== undefined) return Promise.resolve(known);
   const run = queue.then(async () => {
-    const again = readCache()[query];
-    if (Array.isArray(again)) return again;
+    const again = cached(query);
+    if (again !== undefined) return again;
+    if (skip()) return null; // found meanwhile by name: no request
     await wait(Math.max(0, lastRequestAt + GEOCODE_GAP_MS - Date.now()));
+    if (skip()) return null;
     lastRequestAt = Date.now();
     const lang = globalThis.navigator?.language || 'zh-TW';
-    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=${encodeURIComponent(lang)}&q=${encodeURIComponent(query)}`;
-    try {
-      const response = await fetch(url, { headers: { accept: 'application/json' } });
-      if (!response.ok) return null; // busy or refused: not remembered, asked again next time
-      const [first] = await response.json();
-      const point = first ? [Number(first.lat), Number(first.lon)] : null;
-      if (point && point.every(Number.isFinite)) {
-        remember(query, point);
-        return point;
-      }
-      remember(query, { miss: Date.now() });
-      return null;
-    } catch {
-      return null; // offline: asked again next time
-    }
+    return lookup(
+      query,
+      `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=${encodeURIComponent(lang)}&q=${encodeURIComponent(query)}`,
+      ([first]) => (first ? [Number(first.lat), Number(first.lon)] : null),
+    );
   });
   queue = run.catch(() => null);
   return run;
 }
 
-async function locate(place) {
-  for (const query of placeQueries(place)) {
-    const point = await geocode(query);
+/** [lat, lon] for a name from Photon, or null; asked at once, no queue. */
+export function photon(query) {
+  const key = `photon:${query}`;
+  const known = cached(key);
+  if (known !== undefined) return Promise.resolve(known);
+  return lookup(key, `https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(query)}`, (body) => {
+    const [lon, lat] = body?.features?.[0]?.geometry?.coordinates ?? [];
+    return lat === undefined ? null : [Number(lat), Number(lon)];
+  });
+}
+
+/** The first point of `queries` (best first) that `find` knows, asked all at once. */
+async function firstFound(queries, find) {
+  const answers = queries.map((query) => find(query));
+  for (const answer of answers) {
+    const point = await answer;
     if (point) return point;
   }
   return null;
+}
+
+/** Each place's point, or null where neither lookup knows it. */
+export async function locateAll(places) {
+  const queries = places.map(placeQueries);
+  const byName = queries.map(({ names }) => firstFound(names, photon));
+  const named = places.map(() => null);
+  byName.forEach((answer, i) => answer.then((point) => (named[i] = point)));
+  // Nominatim: the streets, then the names Photon did not know.
+  const nominatim = queries.map(async ({ names, addresses }, i) => {
+    for (const query of [...addresses, ...names]) {
+      if (named[i]) return null;
+      const point = await geocode(query, () => Boolean(named[i]));
+      if (point) return point;
+    }
+    return null;
+  });
+  // A name found by Photon wins over a street: it is the place itself.
+  return Promise.all(places.map(async (_, i) => (await byName[i]) ?? (await nominatim[i])));
 }
 
 // ── drawing ────────────────────────────────────────────────────────────────
@@ -391,8 +453,10 @@ function select(card, index, { scroll = false } = {}) {
 async function fill(card) {
   const state = states.get(card);
   card.dataset.state = 'locating';
-  const points = [];
-  for (const place of state.places) points.push(await locate(place));
+  // The map's code and style load while the places are looked up.
+  loadMapLibre().catch(() => {});
+  loadStyle(themeNow()).catch(() => {});
+  const points = await locateAll(state.places);
   if (!card.isConnected) return;
   state.located = [];
   state.places.forEach((place, i) => {
