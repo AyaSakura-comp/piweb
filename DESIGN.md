@@ -396,13 +396,15 @@ alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
   is added; light mode `positron` on warm paper (land #f4f2ed, water
   #a9cbe5, parks #cde5c2, white side streets, main roads #fff1bd, motorways
   #f2b84b, labels #3b3935). Labels in the places' own names (臺南, not
-  "Tainan 臺南") from the phone's own CJK font. The pins are framed above the
-  cards (44px from the top, clear of the credit chip at the top right; 26px
-  above the cards), never past zoom 17, so two buildings on neighbouring
+  "Tainan 臺南") from the phone's own CJK font. The places are framed above
+  the cards (66px from the top, so a pin's head stays under the credit chip at
+  the top right; 26px above the cards), never past zoom 17, so two buildings on neighbouring
   streets (~50 m) stand as two pins; one place sits in the middle at zoom 14.
-- **Pins**: 22px circles in `--accent` with a 2px white ring and a white bold
-  number, a 44px target. The place in front is scaled 1.3× with a soft accent
-  halo (`aria-pressed`) and the other pins step back to half opacity, so a
+- **Pins** (「標記我想要改成2D圖針加上號碼」, 2026-11-28): flat 2D map pins,
+  28×36 teardrops in `--accent` with a 2px white edge and a soft drop shadow,
+  the white bold number (12px) in the head and the tip on the place; a 44px
+  target. The place in front grows 1.2× up from its tip (`aria-pressed`) and
+  the other pins step back to half opacity, so a
   swipe visibly moves the map to the next place (iPhone recording 2026-11-28,
   「他不會自己切」). A pin brings its card into view; it does not leave the app.
   When the card in front has no pin, a frosted chip at the map's top left says

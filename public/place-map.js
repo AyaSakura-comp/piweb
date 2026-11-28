@@ -320,8 +320,11 @@ export function tone(style, theme) {
   return style;
 }
 const CJK_FONT = '"PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif';
-/** Room round the pins: a pin's circle and its shadow stay inside the frame. */
-const FIT_PADDING = { top: 44, left: 30, right: 30 };
+/**
+ * Room round the places: a pin stands 36px above its tip (43px for the place
+ * in front), and its head stays under the credit chip at the top (20px).
+ */
+const FIT_PADDING = { top: 66, left: 30, right: 30 };
 /**
  * How far several places may zoom in: two buildings on neighbouring streets
  * (~50 m apart) stand as two pins, not one on top of the other.
@@ -685,8 +688,14 @@ function marker(doc, place, onPick) {
   pin.type = 'button';
   pin.className = 'place-map-marker';
   pin.dataset.index = String(place.index);
-  pin.textContent = String(place.index + 1);
   pin.setAttribute('aria-label', `${place.index + 1}. ${place.name}`);
+  // A flat 2D map pin, its tip on the place, the number in its head
+  // (「標記我想要改成2D圖針加上號碼」, 2026-11-28).
+  pin.append(svgIcon(doc, PIN_PATH, 'place-map-marker-shape', PIN_VIEWBOX));
+  const number = doc.createElement('span');
+  number.className = 'place-map-marker-number';
+  number.textContent = String(place.index + 1);
+  pin.append(number);
   pin.addEventListener('click', (event) => {
     event.stopPropagation();
     onPick(place.index);
@@ -694,9 +703,9 @@ function marker(doc, place, onPick) {
   return pin;
 }
 
-function svgIcon(doc, d, className) {
+function svgIcon(doc, d, className, viewBox = '0 0 24 24') {
   const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('viewBox', viewBox);
   svg.setAttribute('aria-hidden', 'true');
   if (className) svg.classList.add(className);
   const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -707,6 +716,10 @@ function svgIcon(doc, d, className) {
 
 const EXPAND_PATH = 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7';
 const CLOSE_PATH = 'M18 6 6 18M6 6l12 12';
+/** A 28×36 teardrop pin: a 24px head round (14,13), the tip at (14,35). */
+const PIN_VIEWBOX = '0 0 28 36';
+const PIN_PATH =
+  'M14 1C7.4 1 2 6.4 2 13c0 8.4 9.8 19.6 11.2 21.2a1.1 1.1 0 0 0 1.6 0C16.2 32.6 26 21.4 26 13 26 6.4 20.6 1 14 1z';
 
 // ── the map in your fingers ────────────────────────────────────────────────
 //
@@ -835,7 +848,7 @@ export async function openPlaceMapViewer(card) {
       const wrap = doc.createElement('div');
       wrap.className = 'place-map-viewer-pin';
       wrap.append(pin);
-      new lib.Marker({ element: wrap, anchor: 'center' }).setLngLat([place.point[1], place.point[0]]).addTo(map);
+      new lib.Marker({ element: wrap, anchor: 'bottom' }).setLngLat([place.point[1], place.point[0]]).addTo(map);
     }
     for (const pin of pins) pin.setAttribute('aria-pressed', String(Number(pin.dataset.index) === shown));
     lost.hidden = state.located.some((p) => p.index === shown);

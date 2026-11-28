@@ -131,17 +131,24 @@ const reply = (content: string) => [
   { id: 2, kind: 'message', role: 'assistant', content, createdAt: '2026-11-28T01:01:00Z' },
 ];
 
-/** Each pin's centre relative to the map, and where the cards begin. */
-const pinCentres = (page: Page) =>
+/**
+ * Each pin's tip relative to the map (where it points), the place it was put
+ * on, its top, and where the cards begin.
+ */
+const pinTips = (page: Page) =>
   page.locator('#messages .place-map').evaluate((card) => {
     const view = card.querySelector('.place-map-view')!.getBoundingClientRect();
     const cards = card.querySelector('.place-map-cards')!.getBoundingClientRect();
     return [...card.querySelectorAll<HTMLElement>('.place-map-marker')].map((pin) => {
-      const r = pin.getBoundingClientRect();
+      const r = pin.querySelector('.place-map-marker-shape')!.getBoundingClientRect();
       return {
         n: pin.textContent,
         x: r.left + r.width / 2 - view.left,
-        y: r.top + r.height / 2 - view.top,
+        y: r.bottom - view.top,
+        at: { x: parseFloat(pin.style.left), y: parseFloat(pin.style.top) },
+        top: r.top - view.top,
+        tall: r.height,
+        creditBottom: card.querySelector('.place-map-credit')!.getBoundingClientRect().bottom - view.top,
         w: view.width,
         cardsTop: cards.top - view.top,
       };
@@ -194,12 +201,18 @@ test('a reply\'s places are numbered pins on one map with a card each over its f
 
   // Three pins, numbered as the cards, inside the frame and clear of the cards
   // over its foot, north above south and east right of west, as the places lie.
-  const pins = await pinCentres(page);
+  // 「標記我想要改成2D圖針加上號碼」: each is a 2D map pin standing on its
+  // place, the tip (not the middle) on the point the map put it at.
+  const pins = await pinTips(page);
   expect(pins.map((p) => p.n)).toEqual(['1', '2', '3']);
   for (const p of pins) {
-    expect(p.x).toBeGreaterThanOrEqual(12);
-    expect(p.x).toBeLessThanOrEqual(p.w - 12);
-    expect(p.y).toBeGreaterThanOrEqual(30);
+    expect(Math.abs(p.x - p.at.x)).toBeLessThan(1);
+    expect(Math.abs(p.y - p.at.y)).toBeLessThan(1);
+    expect(p.tall).toBeGreaterThan(30);
+    // (Its head stays clear of the credit chip at the top.)
+    expect(p.top).toBeGreaterThanOrEqual(p.creditBottom);
+    expect(p.x).toBeGreaterThanOrEqual(14);
+    expect(p.x).toBeLessThanOrEqual(p.w - 14);
     expect(p.y).toBeLessThanOrEqual(p.cardsTop - 16);
   }
   expect(pins[0].y).toBeLessThan(pins[1].y);
@@ -287,7 +300,9 @@ test('a tap opens the map full screen, where it moves with the finger and zooms'
   const canvases = await page.locator('canvas').count();
   const appClass = await page.locator('#app').getAttribute('class');
 
-  await card.locator('.place-map-view').click();
+  // (A tap on a pin picks its place; the map opens from anywhere else, here
+  // where the expand mark at the top left says so.)
+  await card.locator('.place-map-view').click({ position: { x: 22, y: 22 } });
   const viewer = page.locator('.place-map-viewer');
   await expect(viewer).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
   await expect(viewer).toHaveAttribute('role', 'dialog');
@@ -356,7 +371,7 @@ test('a tap opens the map full screen, where it moves with the finger and zooms'
   await page.keyboard.press('Escape');
   await expect(viewer).toHaveCount(0);
   expect(await page.locator('canvas').count()).toBe(canvases);
-  await card.locator('.place-map-view').click();
+  await card.locator('.place-map-view').click({ position: { x: 22, y: 22 } });
   await expect(viewer).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
   await viewer.locator('.place-map-viewer-close').click();
   await expect(viewer).toHaveCount(0);
@@ -382,7 +397,7 @@ test('a swipe to the next card moves the map to that place, even one of two on n
   expect(lookups.map((l) => l.q)).toContain('嘉義縣民雄鄉興南村工業一路');
   expect(lookups.map((l) => l.q).some((q) => q.includes('3鄰工業一路') && !q.includes('號'))).toBe(false);
 
-  const pins = await pinCentres(page);
+  const pins = await pinTips(page);
   expect(pins.map((p) => p.n)).toEqual(['1', '2']);
   expect(Math.hypot(pins[0].x - pins[1].x, pins[0].y - pins[1].y)).toBeGreaterThan(26);
   const opacity = (n: string) =>

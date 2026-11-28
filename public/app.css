@@ -3821,33 +3821,54 @@ html.keyboard-shell .life-edge-hint {
   position: absolute;
   z-index: 1;
   box-sizing: border-box;
-  width: 22px;
-  height: 22px;
-  margin: -11px 0 0 -11px;
+  width: 28px;
+  height: 36px;
+  /* The tip, not the middle, stands on the place. */
+  margin: -36px 0 0 -14px;
   padding: 0;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: var(--accent);
+  border: 0;
+  background: none;
   color: #fff;
-  font: 700 11px/18px system-ui, sans-serif;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));
   cursor: pointer;
   transition:
     transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 180ms ease,
+    filter 180ms ease,
     opacity 180ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 
-/* The place whose card is in view stands out. */
+/* A flat 2D map pin: accent with a 2px white edge, the number in its head. */
+.place-map-marker-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.place-map-marker-number {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 26px;
+  font: 700 12px/26px system-ui, sans-serif;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* The place whose card is in view stands out, grown up from its tip. */
 .place-map-marker[aria-pressed='true'] {
   z-index: 2;
-  transform: scale(1.3);
-  box-shadow:
-    0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent),
-    0 2px 8px rgb(0 0 0 / 0.4);
+  transform: scale(1.2);
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.45));
 }
 
 /* With a place in front, the other pins step back, so a swipe visibly moves
@@ -3920,11 +3941,11 @@ html.keyboard-shell .life-edge-hint {
   display: none;
 }
 
-/* A 44px target round the small pin. */
+/* A 44px target round the pin. */
 .place-map-marker::before {
   content: '';
   position: absolute;
-  inset: -11px;
+  inset: -4px -8px;
 }
 
 .place-map-marker:focus-visible {
@@ -4205,8 +4226,8 @@ html.keyboard-shell .life-edge-hint {
 /* MapLibre places each pin's wrapper with a transform of its own; the pin's
    scale for the place in front stays on the pin inside. */
 .place-map-viewer-pin {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 36px;
 }
 
 .place-map-viewer .place-map-marker {
