@@ -377,31 +377,41 @@ continue icon button, and it will send continue message to session agent」.)
 ## Place maps
 
 A reply's ```map block (one place per line, `name | address`, or just one of
-them) is drawn as one still map with a numbered pin per place
-(`public/place-map.js`, from `renderCode()` in `public/markdown.js`, so
-assistant replies, other events and Dashboard panes alike). It is the table's
-sheet: a 12px-rounded frame (1px `--border`) on `--bg-alt`, at most 560px wide.
+them) is drawn as one still map with a numbered pin per place and, over its
+foot, a card per place (`public/place-map.js`, from `renderCode()` in
+`public/markdown.js`, so assistant replies, other events and Dashboard panes
+alike). The frame is 14px-rounded with a 1px `--border`, at most 560px wide.
 
-- **Map** (16:10, 170–300px): OpenFreeMap's vector map in the app's colours,
-  `fiord` (blue-grey) in dark mode and `positron` in light, labels in the
-  places' own names (臺南, not "Tainan 臺南") from the phone's own CJK font.
-  Several places are framed together (30px padding, never past zoom 15); one
-  place sits at zoom 14. Credit line bottom right (9px, on a translucent chip).
-- **Pins**: 24px circles in `--accent`, a 2px white ring, a white bold number
-  and a soft shadow, with a 44px target; a pin opens its place in Google Maps.
-- **List**: the same numbers as 20px accent circles, the name (13.5px, 600,
-  `--text-bright`) over the address (12px, `--text-2`), an outline ↗ in
-  `--text-dim`; 44px rows with a hairline above each. A row opens the place in
-  Google Maps (the app on a phone) instead of copying like a transcript link.
-  A place that could not be found keeps its row with an outline number and no
-  pin; if none is found (or no map can be drawn) the card is the list alone.
+- **Map** (one place 16:10, 200–320px; several 4:3 up to 360px): OpenFreeMap's
+  vector map in the app's colours, `fiord` (blue-grey) in dark mode and
+  `positron` in light, labels in the places' own names (臺南, not
+  "Tainan 臺南") from the phone's own CJK font. The pins are framed above the
+  cards (44px from the top, clear of the credit chip at the top right; 26px
+  above the cards), never past zoom 15; one place sits in the middle at zoom 14.
+- **Pins**: 22px circles in `--accent` with a 2px white ring and a white bold
+  number, a 44px target. The place in front is scaled 1.3× with a soft accent
+  halo (`aria-pressed`). A pin brings its card into view; it does not leave
+  the app.
+- **Cards** (「重新設計這個東西」 of the list that used to hang under the map,
+  2026-11-28): frosted (`--bg` at 84%, 14px blur), 12px-rounded, 56px tall,
+  10px inside the frame's foot. The number (22px accent circle), the name
+  (14px, 600, `--text-bright`) over the address (12px, `--text-2`), each on
+  one line with an ellipsis, then a borderless 44px directions arrow in the
+  accent. The card opens the place in Google Maps (the app on a phone); the
+  arrow opens directions to it. One card is in view; several snap one at a time
+  with the next peeking in 26px from the right, and the pins follow the swipe.
+  The strip keeps its touches (`touchstart` stops there), so a swipe near the
+  screen's edge moves the cards, not the drawer or Life. A place that could not
+  be found keeps its card with an outline number and no pin; if none is found
+  (or no map can be drawn) the cards stand alone one under another, hairline
+  between, on `--bg-alt`.
 
-The list shows at once; the map area says 定位中… until the pins are placed,
+The cards show at once; the map area says 定位中… until the pins are placed,
 then fades in (240ms). The map is not interactive: it is drawn off screen by
 MapLibre (`public/vendor/maplibre-gl-6.17.0/`, loaded only when a reply has a
 map), kept as a picture and the WebGL map thrown away, one at a time, so a long
 transcript never runs out of WebGL contexts and a finger on the map still
-scrolls the transcript. It is redrawn when the theme switches or its width
+scrolls the transcript. It is redrawn when the theme switches or its size
 changes.
 
 Places are found with OpenStreetMap's Nominatim from the browser: the name,

@@ -13,8 +13,10 @@
  *     ```
  *
  * and this draws it: a still map in the app's own colours (OpenFreeMap's light
- * or dark map, OpenStreetMap data) with a numbered pin per place, and under it
- * the same numbers in a list, each row opening that place in Google Maps.
+ * or dark map, OpenStreetMap data) with a numbered pin per place, and over its
+ * foot a card per place (「重新設計這個東西」 of the list that used to hang under
+ * the map): one in view, a swipe to the next, the pins following. A card opens
+ * the place in Google Maps; its arrow, directions to it.
  *
  * Why not Google's embed: with no Maps API key, the only embed that pins
  * several places is a driving route (A → B → C), which covers the map with its
@@ -161,8 +163,10 @@ const STYLE_URL = {
   dark: 'https://tiles.openfreemap.org/styles/fiord',
 };
 const CJK_FONT = '"PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif';
-/** Room round the pins: a pin's circle (24px) and its shadow stay inside the frame. */
-const FIT_PADDING = { top: 30, bottom: 26, left: 30, right: 30 };
+/** Room round the pins: a pin's circle and its shadow stay inside the frame. */
+const FIT_PADDING = { top: 44, left: 30, right: 30 };
+/** Above the place cards that lie over the map's foot. */
+const CARD_CLEARANCE = 26;
 const DRAW_TIMEOUT_MS = 12000;
 
 let mapLibre = null;
@@ -223,12 +227,15 @@ const pictures = new Map();
 const MAX_PICTURES = 24;
 let drawing = Promise.resolve();
 
-/** A picture of the map and where each place falls on it, in CSS px. */
-function picture(points, width, height, theme) {
+/**
+ * A picture of the map and where each place falls on it, in CSS px. `bottom`
+ * is the map's foot under the place cards: the pins are framed above it.
+ */
+function picture(points, width, height, bottom, theme) {
   const ratio = Math.min(globalThis.devicePixelRatio || 1, 3);
-  const key = JSON.stringify([theme, width, height, ratio, points]);
+  const key = JSON.stringify([theme, width, height, bottom, ratio, points]);
   if (pictures.has(key)) return pictures.get(key);
-  const run = drawing.then(() => drawOnce(points, width, height, theme, ratio));
+  const run = drawing.then(() => drawOnce(points, width, height, bottom, theme, ratio));
   drawing = run.catch(() => null);
   run.catch(() => pictures.delete(key));
   pictures.set(key, run);
@@ -236,7 +243,7 @@ function picture(points, width, height, theme) {
   return run;
 }
 
-async function drawOnce(points, width, height, theme, ratio) {
+async function drawOnce(points, width, height, bottom, theme, ratio) {
   const [lib, style] = await Promise.all([loadMapLibre(), loadStyle(theme)]);
   const doc = globalThis.document;
   const host = doc.createElement('div');
@@ -254,12 +261,16 @@ async function drawOnce(points, width, height, theme, ratio) {
     localIdeographFontFamily: CJK_FONT,
     canvasContextAttributes: { preserveDrawingBuffer: true },
   };
+  const padding = { ...FIT_PADDING, bottom };
   const span = boundsOf(lonLats);
-  if (span[0][0] === span[1][0] && span[0][1] === span[1][1]) Object.assign(options, { center: lonLats[0], zoom: 14 });
-  else Object.assign(options, { bounds: span, fitBoundsOptions: { padding: FIT_PADDING, maxZoom: 15 } });
+  const single = span[0][0] === span[1][0] && span[0][1] === span[1][1];
+  if (single) Object.assign(options, { center: lonLats[0], zoom: 14 });
+  else Object.assign(options, { bounds: span, fitBoundsOptions: { padding, maxZoom: 15 } });
   let map;
   try {
     map = new lib.Map(options);
+    // One place sits in the middle of the map above the cards.
+    if (single) map.jumpTo({ center: lonLats[0], zoom: 14, padding: { top: 0, left: 0, right: 0, bottom } });
     await new Promise((done) => {
       const timer = setTimeout(done, DRAW_TIMEOUT_MS);
       map.once('idle', () => {
@@ -285,13 +296,14 @@ async function draw(card) {
   const width = Math.round(state.view.clientWidth);
   const height = Math.round(state.view.clientHeight);
   if (!width || !height) return;
+  const bottom = Math.round(state.cards.offsetHeight + CARD_CLEARANCE);
   const theme = themeNow();
-  const want = `${theme}|${width}|${height}`;
+  const want = `${theme}|${width}|${height}|${bottom}`;
   if (state.drawn === want || state.wanted === want) return;
   state.wanted = want;
   let result;
   try {
-    result = await picture(state.located.map((place) => place.point), width, height, theme);
+    result = await picture(state.located.map((place) => place.point), width, height, bottom, theme);
   } catch {
     if (state.wanted === want && !state.drawn) card.dataset.state = 'list';
     return;
@@ -333,6 +345,31 @@ function watch(card) {
   themeObserver.observe(card.ownerDocument.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 
+const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * The place in front: its card is the one shown (scrolled to when `scroll`),
+ * its pin stands out. A pin tap and a swipe through the cards both land here.
+ */
+function select(card, index, { scroll = false } = {}) {
+  const state = states.get(card);
+  if (!state) return;
+  state.active = index;
+  state.cards.querySelectorAll('.place-map-card').forEach((item, i) => {
+    if (i === index) item.dataset.active = 'true';
+    else delete item.dataset.active;
+  });
+  for (const marker of state.pins.children)
+    marker.setAttribute('aria-pressed', String(Number(marker.dataset.index) === index));
+  if (scroll) {
+    const target = state.cards.children[index];
+    state.cards.scrollTo({
+      left: target.offsetLeft - state.cards.firstElementChild.offsetLeft,
+      behavior: reducedMotion() ? 'auto' : 'smooth',
+    });
+  }
+}
+
 async function fill(card) {
   const state = states.get(card);
   card.dataset.state = 'locating';
@@ -342,7 +379,7 @@ async function fill(card) {
   state.located = [];
   state.places.forEach((place, i) => {
     if (points[i]) state.located.push({ ...place, point: points[i], index: i });
-    else state.rows[i].classList.add('unlocated');
+    else state.cards.children[i].dataset.unlocated = 'true';
   });
   if (!state.located.length) {
     card.dataset.state = 'list';
@@ -351,17 +388,20 @@ async function fill(card) {
   const doc = card.ownerDocument;
   state.pins.replaceChildren(
     ...state.located.map((place) => {
-      const marker = doc.createElement('a');
+      const marker = doc.createElement('button');
+      marker.type = 'button';
       marker.className = 'place-map-marker';
-      marker.href = placeSearchUrl(place);
-      marker.target = '_blank';
-      marker.rel = 'noopener noreferrer';
+      marker.dataset.index = String(place.index);
       marker.textContent = String(place.index + 1);
-      marker.setAttribute('aria-label', `${place.index + 1}. ${place.name}，在 Google 地圖開啟`);
-      marker.addEventListener('click', (event) => event.stopPropagation());
+      marker.setAttribute('aria-label', `${place.index + 1}. ${place.name}`);
+      marker.addEventListener('click', (event) => {
+        event.stopPropagation();
+        select(card, place.index, { scroll: true });
+      });
       return marker;
     }),
   );
+  select(card, state.active ?? 0);
   await draw(card);
   watch(card);
 }
@@ -400,17 +440,35 @@ function whenShown(card, run) {
   showObserver.observe(card);
 }
 
-const ARROW_PATH = 'M7 17L17 7M9 7h8v8';
+/** Lucide "navigation": the arrow a maps app draws for directions. */
+const GO_PATH = 'M3 11l19-9-9 19-2-8-8-2z';
 
-function arrowIcon(doc) {
+function goIcon(doc) {
   const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
-  svg.classList.add('place-map-open');
   const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', ARROW_PATH);
+  path.setAttribute('d', GO_PATH);
   svg.append(path);
   return svg;
+}
+
+/** Directions to the place in Google Maps, from where the phone is. */
+export function placeDirectionsUrl({ name, address }) {
+  const query = address ? `${name} ${address}` : name;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(query)}`;
+}
+
+function externalLink(doc, className, href, label) {
+  const link = doc.createElement('a');
+  link.className = className;
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.setAttribute('aria-label', label);
+  // It opens; transcript links otherwise copy on tap (app.js).
+  link.addEventListener('click', (event) => event.stopPropagation());
+  return link;
 }
 
 /** The card for a ```map block, or null when it names no place. */
@@ -437,18 +495,19 @@ export function renderPlaceMap(code, doc = document) {
   credit.className = 'place-map-credit';
   credit.textContent = 'OpenFreeMap © OpenMapTiles © OpenStreetMap';
   view.append(image, pins, credit);
-  card.append(view);
 
-  const list = doc.createElement('ol');
-  list.className = 'place-map-list';
-  const rows = places.map((place, i) => {
-    const item = doc.createElement('li');
-    const link = doc.createElement('a');
-    link.className = 'place-map-place';
-    link.href = placeSearchUrl(place);
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.setAttribute('aria-label', `${i + 1}. ${place.name}${place.address ? `，${place.address}` : ''}，在 Google 地圖開啟`);
+  // The places lie over the map's foot as cards, one in view at a time; a
+  // swipe brings the next, and the pins follow.
+  const cards = doc.createElement('div');
+  cards.className = 'place-map-cards';
+  cards.setAttribute('role', 'list');
+  cards.setAttribute('aria-label', '地點');
+  for (const [i, place] of places.entries()) {
+    const item = doc.createElement('div');
+    item.className = 'place-map-card';
+    item.setAttribute('role', 'listitem');
+    const label = `${place.name}${place.address ? `，${place.address}` : ''}`;
+    const main = externalLink(doc, 'place-map-card-main', placeSearchUrl(place), `${i + 1}. ${label}，在 Google 地圖開啟`);
     const number = doc.createElement('span');
     number.className = 'place-map-num';
     number.textContent = String(i + 1);
@@ -464,16 +523,38 @@ export function renderPlaceMap(code, doc = document) {
       address.textContent = place.address;
       text.append(address);
     }
-    link.append(number, text, arrowIcon(doc));
-    // A place opens; transcript links otherwise copy on tap (app.js).
-    link.addEventListener('click', (event) => event.stopPropagation());
-    item.append(link);
-    list.append(item);
-    return link;
-  });
-  card.append(list);
+    main.append(number, text);
+    const go = externalLink(doc, 'place-map-go', placeDirectionsUrl(place), `導航到 ${place.name}`);
+    go.append(goIcon(doc));
+    item.append(main, go);
+    cards.append(item);
+  }
+  // A swipe on the cards is theirs: not the transcript's drawer or Life edge.
+  cards.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+  let frame = 0;
+  cards.addEventListener(
+    'scroll',
+    () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (card.dataset.state === 'list') return;
+        const start = cards.firstElementChild.offsetLeft;
+        let nearest = 0;
+        let distance = Infinity;
+        [...cards.children].forEach((item, i) => {
+          const d = Math.abs(item.offsetLeft - start - cards.scrollLeft);
+          if (d < distance) [nearest, distance] = [i, d];
+        });
+        if (nearest !== states.get(card).active) select(card, nearest);
+      });
+    },
+    { passive: true },
+  );
 
-  states.set(card, { places, rows, view, image, pins, located: [] });
+  card.append(view, cards);
+  states.set(card, { places, view, image, pins, cards, located: [], active: 0 });
+  cards.firstElementChild.dataset.active = 'true';
   whenShown(card, () => void fill(card));
   return card;
 }
