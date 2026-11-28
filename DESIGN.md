@@ -280,6 +280,16 @@ shell is pinned to the visual viewport (`public/viewport-shell.js`,
   `cubic-bezier(0.25, 0.4, 0, 1)`) instead of showing a keyboard-tall blank band.
 - **Send mid-composition** commits the IME text before reading the box, so marked
   text is sent rather than left behind.
+- **A viewport that shrinks after Send is not the keyboard.** Once typing focus
+  has left, the keyboard only goes down and what is visible only grows. With
+  the iPhone turned sideways iOS reported a visual viewport a few dozen px tall
+  instead; the shell then stops following and eases back to its resting place,
+  so the screen never goes blank (iPhone recording 2026-11-28).
+- **Sheets and menus measure the layout viewport unless the keyboard is up.**
+  `--sheet-max`, the autocomplete cap and the session row menu read the visual
+  viewport only while `html.keyboard-shell` is set (`visibleHeight()` in
+  `app.js`). A short reading with no keyboard up must not shrink the Model or
+  Thinking sheet to its title.
 
 ## Login details (🔑)
 

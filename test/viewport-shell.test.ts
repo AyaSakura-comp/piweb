@@ -137,6 +137,51 @@ describe('viewport shell', () => {
     expect(log.join()).not.toContain('easing');
   });
 
+  it('stops following a viewport that shrinks after Send and eases back to rest (sideways iPhone)', () => {
+    const { win, viewport, doc, log } = setup();
+    const root = doc.documentElement;
+    // iPhone turned sideways: 669px tall, the keyboard leaves ~330px.
+    win.innerHeight = 669;
+    root.clientHeight = 669;
+    viewport.height = 330;
+    viewport.offsetTop = 339;
+    viewport.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(300);
+    expect(log).toContain('--keyboard-shell-height=330px');
+    // Send blurs the box; iOS lowers the keyboard but reports a viewport a few
+    // dozen px tall (iPhone recording 2026-11-28), then keeps reporting it.
+    doc.activeElement = { tagName: 'BODY' };
+    doc.dispatchEvent(new Event('focusout'));
+    log.length = 0;
+    viewport.height = 40;
+    viewport.offsetTop = 0;
+    viewport.dispatchEvent(new Event('resize'));
+    // The shell is never squeezed to the bogus height: it eases back to rest.
+    expect(log.join()).not.toContain('--keyboard-shell-height=40px');
+    expect(log).toContain('+keyboard-shell-leaving');
+    expect(log).toContain('--keyboard-shell-height=669px');
+    vi.advanceTimersByTime(320);
+    expect(root.classList.remove).toHaveBeenCalledWith('keyboard-shell', 'keyboard-shell-leaving');
+    // Later reports of the same short viewport inside the follow window do not pin it again.
+    root.classList.add.mockClear();
+    viewport.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(700);
+    expect(root.classList.add).not.toHaveBeenCalled();
+  });
+
+  it('a viewport that shrinks while typing is still the keyboard (candidate bar)', () => {
+    const { viewport, log } = setup();
+    viewport.height = 480;
+    viewport.offsetTop = 364;
+    viewport.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(300);
+    log.length = 0;
+    viewport.height = 436;
+    viewport.offsetTop = 408;
+    viewport.dispatchEvent(new Event('resize'));
+    expect(log).toEqual(['--keyboard-shell-top=408px', '--keyboard-shell-height=436px', '+keyboard-shell']);
+  });
+
   it('releases the pin when typing focus goes, even if iOS 26 leaves the viewport short', () => {
     const { viewport, doc } = setup();
     const root = doc.documentElement;

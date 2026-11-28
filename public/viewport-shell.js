@@ -41,6 +41,15 @@
  * straight there showed a keyboard-tall blank band that closed as the pan
  * caught up. Such jumps ease along the pan instead; the curves are fitted to
  * that recording.
+ *
+ * Once typing focus has left, the keyboard only goes down and what is visible
+ * only grows. With the iPhone turned sideways, iOS instead reported a visual
+ * viewport a few dozen px tall while the keyboard went down after Send, and
+ * kept reporting it after the keyboard had gone: the shell followed it down
+ * to nothing and the whole screen stayed blank until the follow window ran
+ * out (iPhone recording 2026-11-28, 「每次送出都會整個螢幕不見」). A viewport
+ * reported smaller than the pin after typing focus left is therefore not the
+ * keyboard: the shell stops following and eases back to its resting place.
  */
 
 /** A visual viewport this much shorter than the layout one is a keyboard. */
@@ -54,6 +63,8 @@ const BLUR_FOLLOW_MS = 650;
  * animating. Frame-by-frame steps while the keyboard goes down reach ~185px.
  */
 const JUMP_PX = 240;
+/** Rounding noise; a keyboard going down never shrinks the viewport by more. */
+const SHRINK_PX = 8;
 const ENTER_EASE = { ms: 190, curve: 'cubic-bezier(0.3, 0.2, 0.6, 0.95)' };
 const LEAVE_EASE = { ms: 320, curve: 'cubic-bezier(0.25, 0.4, 0, 1)' };
 
@@ -138,9 +149,14 @@ export function bindViewportShell(win, doc, onViewportChange = () => {}) {
     // still covers a little would leave the rest of iOS's pan to a jump.
     const covered = layoutHeight - viewport.height >= (pinned ? 1 : KEYBOARD_MIN_PX);
     const keyboard = covered && following;
-    const next = keyboard
+    let next = keyboard
       ? { top: Math.round(viewport.offsetTop || 0), height: Math.round(viewport.height) }
       : null;
+    if (next && pinned && !typing && next.height < pinned.height - SHRINK_PX) {
+      // Not the keyboard going down: stop following and go back to rest.
+      typingLeftAt = -Infinity;
+      next = null;
+    }
     if (next?.top === pinned?.top && next?.height === pinned?.height) return;
     const rest = { top: 0, height: layoutHeight };
     const from = pinned || rest;

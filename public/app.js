@@ -1460,7 +1460,7 @@ function placeSessionRowMenu() {
     return;
   }
   const menu = $('session-row-menu');
-  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const viewportHeight = visibleHeight();
   const floor = Math.max(8, list.getBoundingClientRect().top);
   const height = menu.offsetHeight;
   const below = rect.bottom + 4;
@@ -6459,16 +6459,30 @@ $('btn-restore-inline').addEventListener('click', async () => {
  * this the list is sized against a viewport taller than what you can see and
  * runs off the top of the screen instead of scrolling.
  */
+/**
+ * The height sheets, menus and the autocomplete may use. Only the on-screen
+ * keyboard makes it less than the layout viewport, and the shell knows when
+ * the keyboard is up (`keyboard-shell`, viewport-shell.js). With no keyboard
+ * iOS can still report a visual viewport a few dozen px tall (iPhone turned
+ * sideways, after Send): the Model and Thinking sheets were capped to it and
+ * showed only their title at the bottom edge (iPhone screenshot 2026-11-28,
+ * 「Thinking 也會看不見」).
+ */
+function visibleHeight() {
+  const root = document.documentElement;
+  const layout = Math.max(window.innerHeight || 0, root.clientHeight || 0);
+  const vv = window.visualViewport;
+  if (!vv || !root.classList.contains('keyboard-shell')) return layout;
+  return Math.min(layout, vv.height);
+}
+
 /** Sheets are capped to the visible viewport, which the keyboard shrinks. */
 function syncSheetHeight() {
-  const vv = window.visualViewport;
-  const available = vv ? vv.height : window.innerHeight;
-  document.documentElement.style.setProperty('--sheet-max', `${Math.round(available * 0.86)}px`);
+  document.documentElement.style.setProperty('--sheet-max', `${Math.round(visibleHeight() * 0.86)}px`);
 }
 
 function syncAutocompleteHeight() {
-  const vv = window.visualViewport;
-  const available = vv ? vv.height : window.innerHeight;
+  const available = visibleHeight();
   const composer = $('composer').getBoundingClientRect().height;
   // Leave room for the composer, the attachment chips and a little breathing space.
   const max = Math.max(140, Math.round(available - composer - 90));
