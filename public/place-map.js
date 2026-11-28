@@ -239,22 +239,24 @@ const STYLE_URL = {
 /**
  * The map in the app's own colours (「而且地圖顏色好怪」, 2026-11-28: fiord's blue
  * land and teal labels sat oddly beside the app's neutral greys and the blurple
- * pins). Two plain OpenFreeMap styles, recoloured layer by layer: dark mode on
- * the app's greys (#313338 family, water a step darker, labels in --text-2),
- * light mode on its warm paper (#fbfaf7 / #dedbd3 family).
+ * pins), yet readable at a glance (「至少道路顏色什麼的要可以區分吧？什麼都看不懂」:
+ * an all-grey map hid which line was a highway, a road or a river). Two plain
+ * OpenFreeMap styles recoloured layer by layer: land, buildings and labels in the
+ * app's neutrals; water blue, parks green, motorways amber, main roads a step
+ * brighter than side streets, as maps are read.
  */
 const PALETTE = {
   dark: {
-    land: '#383a3f', water: '#1f2124', park: '#343a37', residential: '#3b3d42',
-    building: '#424449', buildingLine: '#4a4c52', path: '#404247', road: '#46484e',
-    roadMajor: '#53555c', roadCasing: '#2e3034', motorway: '#61646c', rail: '#4b4d53',
-    boundary: '#5b5e66', label: '#c4c8ce', labelMinor: '#8e9297', waterLabel: '#6f747c', halo: '#2b2d31',
+    land: '#2f3136', water: '#20395a', park: '#25382c', residential: '#34363b',
+    building: '#3d3f45', buildingLine: '#46484f', path: '#44474e', road: '#585b64',
+    roadMajor: '#8c919b', roadCasing: '#1e1f22', motorway: '#c4903f', rail: '#6a6d76',
+    boundary: '#7a7d86', label: '#d6d9de', labelMinor: '#a4a9b1', waterLabel: '#86a9cc', halo: '#1e1f22',
   },
   light: {
-    land: '#f4f2ed', water: '#d6dde0', park: '#e5e9dd', residential: '#efece6',
-    building: '#e5e1d9', buildingLine: '#d9d4cb', path: '#ebe8e1', road: '#ffffff',
-    roadMajor: '#ffffff', roadCasing: '#dcd8cf', motorway: '#fdfbf6', rail: '#d6d1c7',
-    boundary: '#c5c0b5', label: '#56534d', labelMinor: '#8a867e', waterLabel: '#7b878d', halo: '#f4f2ed',
+    land: '#f4f2ed', water: '#a9cbe5', park: '#cde5c2', residential: '#eceae3',
+    building: '#e1dcd2', buildingLine: '#d2ccc1', path: '#e2ddd4', road: '#ffffff',
+    roadMajor: '#fff1bd', roadCasing: '#cfc9bd', motorway: '#f2b84b', rail: '#bdb7aa',
+    boundary: '#a8a296', label: '#3b3935', labelMinor: '#6d6a63', waterLabel: '#3f6f98', halo: '#f9f8f4',
   },
 };
 

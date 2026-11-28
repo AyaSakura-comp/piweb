@@ -23,26 +23,32 @@ const layers = () => [
 const paintOf = (style: any, id: string) => style.layers.find((layer: any) => layer.id === id).paint ?? {};
 
 describe('the place map in the app colours', () => {
-  it('dark: land on the app greys, water a step darker, labels light grey on a grey halo', () => {
+  // 「至少道路顏色什麼的要可以區分吧？」: water, parks and the kinds of road each
+  // have a colour of their own; land, buildings and labels stay in the app's neutrals.
+  it('dark: neutral land, blue water, green parks, amber motorways, main roads brighter than side streets', () => {
     const style = tone({ version: 8, layers: layers() }, 'dark');
-    expect(paintOf(style, 'background')['background-color']).toBe('#383a3f');
-    expect(paintOf(style, 'water')['fill-color']).toBe('#1f2124');
-    expect(paintOf(style, 'building')).toMatchObject({ 'fill-color': '#424449', 'fill-outline-color': '#4a4c52' });
-    expect(paintOf(style, 'highway_minor')['line-color']).toBe('#46484e');
-    expect(paintOf(style, 'highway_major_casing')['line-color']).toBe('#2e3034');
-    expect(paintOf(style, 'highway_motorway_inner')['line-color']).toBe('#61646c');
-    expect(paintOf(style, 'railway_dashline')['line-color']).toBe('#383a3f');
-    expect(paintOf(style, 'place_city')).toMatchObject({ 'text-color': '#c4c8ce', 'text-halo-color': '#2b2d31', 'text-halo-width': 1.2 });
-    expect(paintOf(style, 'highway_name_other')['text-color']).toBe('#8e9297');
-    expect(paintOf(style, 'water_name')['text-color']).toBe('#6f747c');
+    expect(paintOf(style, 'background')['background-color']).toBe('#2f3136');
+    expect(paintOf(style, 'water')['fill-color']).toBe('#20395a');
+    expect(paintOf(style, 'landcover_wood')['fill-color']).toBe('#25382c');
+    expect(paintOf(style, 'building')).toMatchObject({ 'fill-color': '#3d3f45', 'fill-outline-color': '#46484f' });
+    expect(paintOf(style, 'highway_minor')['line-color']).toBe('#585b64');
+    expect(paintOf(style, 'highway_major_casing')['line-color']).toBe('#1e1f22');
+    expect(paintOf(style, 'highway_motorway_inner')['line-color']).toBe('#c4903f');
+    expect(paintOf(style, 'railway_dashline')['line-color']).toBe('#2f3136');
+    expect(paintOf(style, 'place_city')).toMatchObject({ 'text-color': '#d6d9de', 'text-halo-color': '#1e1f22', 'text-halo-width': 1.2 });
+    expect(paintOf(style, 'highway_name_other')['text-color']).toBe('#a4a9b1');
+    expect(paintOf(style, 'water_name')['text-color']).toBe('#86a9cc');
     // An icon-only layer keeps its paint.
     expect(paintOf(style, 'road_oneway')).toEqual({});
   });
 
-  it('light: warm paper, white roads, the app’s dark text', () => {
+  it('light: warm paper, blue water, green parks, amber motorways, yellow main roads, white side streets', () => {
     const style = tone({ version: 8, layers: layers() }, 'light');
     expect(paintOf(style, 'background')['background-color']).toBe('#f4f2ed');
+    expect(paintOf(style, 'water')['fill-color']).toBe('#a9cbe5');
+    expect(paintOf(style, 'landcover_wood')['fill-color']).toBe('#cde5c2');
     expect(paintOf(style, 'highway_minor')['line-color']).toBe('#ffffff');
-    expect(paintOf(style, 'place_city')['text-color']).toBe('#56534d');
+    expect(paintOf(style, 'highway_motorway_inner')['line-color']).toBe('#f2b84b');
+    expect(paintOf(style, 'place_city')['text-color']).toBe('#3b3935');
   });
 });

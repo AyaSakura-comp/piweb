@@ -3751,7 +3751,7 @@ html.keyboard-shell .life-edge-hint {
    its foot a frosted card per place: one in view, a swipe to the next, the
    pins following. A card opens the place in Google Maps, its arrow directions. */
 .place-map {
-  --map-bg: #383a3f;
+  --map-bg: #2f3136;
   position: relative;
   width: min(100%, 560px);
   margin: 10px 0 12px;
@@ -4109,7 +4109,7 @@ html.keyboard-shell .life-edge-hint {
    its foot as in the transcript; ✕ at the top right as in the table and
    diagram viewers. */
 .place-map-viewer {
-  --map-bg: #383a3f;
+  --map-bg: #2f3136;
   position: fixed;
   inset: 0;
   z-index: 110;
